@@ -8,8 +8,8 @@
 
 #include "delta_scene.hpp"
 
-#include "ksim/save.hpp"
-#include "ksim/token_fight.hpp"
+#include "ksim/save/save.hpp"
+#include "ksim/combat/token_fight.hpp"
 
 #include <cstdio>
 #include <iostream>

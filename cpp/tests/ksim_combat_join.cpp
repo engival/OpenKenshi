@@ -7,10 +7,10 @@
 // pick runs is the row's task type, which the arena reports as a Goal event (the fixture reads every pick, because the joined
 // attacker can answer in the same tick and the joiner then runs SELF_PRESERVATION 32 - the exe's outranking, not a failure).
 
-#include "ksim/combat.hpp"
-#include "ksim/join_rules.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/routines.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/world/join_rules.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/ai/routines.hpp"
 
 #include "kworld/gamedata.hpp"
 

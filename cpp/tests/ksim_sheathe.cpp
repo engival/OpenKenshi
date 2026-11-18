@@ -4,15 +4,15 @@
 //   - an attacked sleeper draws again as it wakes (the plan's 6 before the fight).
 // The weapon recheck of a running bed (a sleeper handed a weapon wakes) is in ksim_get_out_of_bed.
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/goap.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/trader.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/ai/goap.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/economy/trader.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

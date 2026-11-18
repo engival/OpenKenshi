@@ -3,7 +3,7 @@
 // faction relation command writes the live state::Relation pair between
 // FactionState instances, never the template's starting value.
 
-#include "ksim/simulation.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/loadorder.hpp"
 

@@ -11,10 +11,10 @@
 // paths are always on (UNSURE).
 // A bare world (Simulation::load), no AI and no navmesh: an inventory, a squad, a box and stepMeals are all the fixture needs.
 
-#include "ksim/combat_data.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/world.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/world/world.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

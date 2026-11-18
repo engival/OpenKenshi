@@ -5,10 +5,10 @@
 // saveGame -> loadGame keeps the clock, the state hash, the region-engine
 // mirror and the pending commands. ksim_continue checks the continuation.
 
-#include "ksim/save.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/spawn.hpp"
-#include "ksim/state.hpp"
+#include "ksim/save/save.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/world/spawn.hpp"
+#include "ksim/core/state.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

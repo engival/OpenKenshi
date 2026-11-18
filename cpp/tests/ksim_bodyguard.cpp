@@ -8,11 +8,11 @@
 // A bare world (Simulation::load): the squad is hand-made (a SquadInstance of a real template whose package carries the row),
 // the hostile is spawned and its sight record written by hand, so no sensing or navigation is needed.
 
-#include "ksim/combat_data.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/world.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/world/world.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

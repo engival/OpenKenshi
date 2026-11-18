@@ -4,11 +4,11 @@
 // within a second, an unchanged one is not resent, the focus is never a sim command (logged as session control, like 50) and a bad id is refused.
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/carry.hpp"
-#include "ksim/combat.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/combat/carry.hpp"
+#include "ksim/combat/combat.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

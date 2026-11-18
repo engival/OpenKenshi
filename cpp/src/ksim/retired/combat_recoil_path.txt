@@ -1,4 +1,4 @@
-Retired 2026-11-01 from src/ksim/combat.cpp (kRecoilTime / kRecoilPath / recoilPath, Ctx::integrate). A fitted displacement curve
+Retired 2026-11-01 from src/ksim/combat/combat.cpp (kRecoilTime / kRecoilPath / recoilPath, Ctx::integrate). A fitted displacement curve
 (0.2 u at 0.1 s ... 12.6 u at 1.1 s, median over the servant's 154 staggers of r1-r20) applied from the stagger start, never restarted
 by the combo's second hit. Replaced by the hit-reaction clips' own root motion (`mid blow` for a heavy first hit, cut at 1.2 s;
 `mid blow light` for every reaction after it, restarted by a heavy hit during a reaction): kinspect item 26 (b).

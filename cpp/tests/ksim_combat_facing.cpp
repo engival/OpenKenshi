@@ -6,7 +6,7 @@
 //  - the body yaw of a fighter with a technique running changes by at most 4 rad/s x dt per tick (no snap);
 //  - a fighter started facing away from its opponent turns round and ends up facing it (and keeps facing it through the swing).
 
-#include "ksim/combat.hpp"
+#include "ksim/combat/combat.hpp"
 
 #include "kworld/gamedata.hpp"
 

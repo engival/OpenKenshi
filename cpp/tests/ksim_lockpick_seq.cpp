@@ -2,15 +2,15 @@
 // no witness reaction; the crime and the reaction start when picking starts; the reaction does not end the order; a 0% order walks to the lock, never starts
 // picking (no crime, no reaction) and ends refused there (kenshi-k16.6.366); a targeting stops the running task and the order restarts from its beginning, no fight alongside (kenshi-k16.6.335, rwh.165).
 
-#include "ksim/clock.hpp"
-#include "ksim/crime.hpp"
-#include "ksim/door_plan.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/interact.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/law/crime.hpp"
+#include "ksim/nav/door_plan.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/world/interact.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

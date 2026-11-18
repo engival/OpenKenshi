@@ -3,7 +3,7 @@
 // recipe (navigator.cpp kNativeCacheRecipe) is bumped and both pins here are updated, so cached entries of the old bake are
 // never read as the new one. Runs against the install (KENSHI_DATA); exit 77 without the navtiles.
 
-#include "ksim/navigator.hpp"
+#include "ksim/nav/navigator.hpp"
 
 #include "knav/native.hpp"
 

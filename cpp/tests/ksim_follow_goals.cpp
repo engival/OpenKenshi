@@ -6,22 +6,22 @@
 //     captor - the squad's own leader follow must not take it back - and a free member with the same follow goes back to the leader.
 // No NPC is ordered: the cases only set the state a cage release or a cuff would have written (slave state, the captor hand).
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/crime.hpp"
-#include "ksim/detail.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/goap.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/trader.hpp"
-#include "ksim/world.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/law/crime.hpp"
+#include "ksim/core/detail.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/ai/goap.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/economy/trader.hpp"
+#include "ksim/world/world.hpp"
 
-#include "world_resolvers.hpp"
+#include "world/world_resolvers.hpp"
 
 #include "knav/navmesh.hpp"
 

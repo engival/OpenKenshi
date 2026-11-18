@@ -6,9 +6,9 @@
 //
 // argv[1]: unused (kept so the test takes the census arguments).
 
-#include "ksim/simulation.hpp"
-#include "ksim/state.hpp"
-#include "ksim/world.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/state.hpp"
+#include "ksim/world/world.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

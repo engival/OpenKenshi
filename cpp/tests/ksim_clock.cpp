@@ -1,7 +1,7 @@
 // Game clock: tick <-> day/hour/minute round-trips, the new-game start time
 // (Day 1, 10:00) and the derived intervals (clock.hpp). No game data needed.
 
-#include "ksim/clock.hpp"
+#include "ksim/core/clock.hpp"
 
 #include "test_util.hpp"
 

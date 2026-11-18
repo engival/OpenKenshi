@@ -2,7 +2,7 @@
 // ninja raid force 700 u out already carrying the raid order through the `town` / `container` / `raid` records). Asserted within 3 game minutes: the
 // force reaches the town (its order is Staying), a raider's pack holds Bread from the chest, and the force leaves (Retreating, Returning, Done or gone).
 // Needs the world navmesh bake (argv[1], exit 77 without the Heft region).
-#include "ksim/simulation.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "scenario_rig.hpp"
 #include "sim_access.hpp"

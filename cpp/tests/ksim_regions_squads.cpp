@@ -3,8 +3,8 @@
 // its order regardless of region, and the result matches a single-region
 // reference run (ARCHITECTURE.md "Threading").
 
-#include "ksim/region.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/world/region.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "ksim_region_test_util.hpp"
 #include "test_util.hpp"

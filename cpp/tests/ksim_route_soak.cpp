@@ -4,8 +4,8 @@
 // must stay under its limit (CPU time of the thread, so a loaded host does not fail it). argv[1]: the world bake (`knav_bake --world DIR`, the world_sample fixture), like ksim_world_hub.
 // Exit 77 without it.
 
-#include "ksim/navigator.hpp"
-#include "ksim/simlink_scenario.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink_scenario.hpp"
 
 #include "DetourNavMesh.h"
 

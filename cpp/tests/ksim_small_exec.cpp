@@ -4,7 +4,7 @@
 
 #include "dt27_rig.hpp"
 
-#include "ksim/routines.hpp"
+#include "ksim/ai/routines.hpp"
 
 namespace {
 

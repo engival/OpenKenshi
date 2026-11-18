@@ -14,13 +14,13 @@
 // carries at most kCaravanCapacity. The killed caravan is removed by the RemoveSquad command (the same path a real death takes); no
 // player character is ordered to fight it.
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/economy.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/trader.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/economy/economy.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/economy/trader.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/loadorder.hpp"

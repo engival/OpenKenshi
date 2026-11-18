@@ -1,4 +1,4 @@
-Retired 2026-10-31 from src/ksim/combat.cpp (CombatArena::Ctx::walkOrder). Replaced by route
+Retired 2026-10-31 from src/ksim/combat/combat.cpp (CombatArena::Ctx::walkOrder). Replaced by route
 following on the navmesh (knav::Walker::follow). Pathfinding is the server's alone and there is
 no straight-line fallback (docs/formats/SIMLINK.md section 12). Kept for reference only; not built.
 

@@ -4,14 +4,14 @@
 // bandit, its target and why (awareness of the player, the distance to the player and to the crew, who targets it), and for the
 // player its step speed against its run speed with the state that lowered it. Set KSIM_AGGRO_VERBOSE=1 to print the timeline.
 // Needs the world bake (argv[1], like ksim_bar_fight; exit 77 without it).
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 #include "knav/navmesh.hpp"
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

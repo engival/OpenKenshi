@@ -3,7 +3,7 @@
 #pragma once
 
 #include "hub_point.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include <algorithm>
 #include <cstdint>

@@ -8,13 +8,13 @@
 // The script is a process setting (Simulation::setEconomyHooks), never saved; the test's script logs its events through ksim.log and the
 // hook set's log sink collects them.
 
-#include "ksim/clock.hpp"
-#include "ksim/command.hpp"
-#include "ksim/economy.hpp"
-#include "ksim/economy_script.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/trade.hpp"
-#include "ksim/trader.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/economy/economy.hpp"
+#include "ksim/economy/economy_script.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/economy/trade.hpp"
+#include "ksim/economy/trader.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

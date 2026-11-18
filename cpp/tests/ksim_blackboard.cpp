@@ -2,8 +2,8 @@
 // game data and no world. Pins the priority walk, the faction fallback's place, the contract override and its expiry, `change
 // AI`, and the `inherits from` row merge (append, dedupe a row the list already holds).
 
-#include "ksim/blackboard.hpp"
-#include "ksim/routines.hpp"
+#include "ksim/ai/blackboard.hpp"
+#include "ksim/ai/routines.hpp"
 
 #include "test_util.hpp"
 

@@ -19,4 +19,4 @@ World readers on top of kdata: `Heightmap` (fullmap.tif, bilinear), `Zones` (all
 
 flecs (v4.0.4, `third_party/flecs`) world model on kdata+kworld: one prefab per live record (factions, towns, squad templates, characters, buildings, races, AI packages), relationships as pairs, 11,714 placed instances (layer-merged), and a fixed 20 Hz headless tick (`Simulation`) with Full/Squad/Strategic scheduling, per-subsystem RNG and a command queue as the only writer. Tools `ksim_stats`, `ksim_run`; tests `ksim_*`. See `NOTES.md` (ksim sections, UNSURE list, review).
 
-Region scheduler (`ksim/region.hpp`): region-owned two-phase multithreaded tick over a stand-in workload (`RegionEngine`, tests `ksim_regions_*`). Design and review: `NOTES.md` ("ksim regions", "regions review"). TSan: configure a separate `cpp/build-tsan` with `-DCMAKE_CXX_FLAGS=-fsanitize=thread`.
+Region scheduler (`ksim/world/region.hpp`): region-owned two-phase multithreaded tick over a stand-in workload (`RegionEngine`, tests `ksim_regions_*`). Design and review: `NOTES.md` ("ksim regions", "regions review"). TSan: configure a separate `cpp/build-tsan` with `-DCMAKE_CXX_FLAGS=-fsanitize=thread`.

@@ -3,7 +3,7 @@
 // towns and their active variant/owner, squads per source and per faction,
 // and squad positions at their home town.
 
-#include "ksim/spawn.hpp"
+#include "ksim/world/spawn.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

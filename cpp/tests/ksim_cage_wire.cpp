@@ -9,10 +9,10 @@
 // A Session on scenarios/cage_prisoner (the Heft slave shop's cage). argv[1]: the world navmesh bake (exit 77 without the Heft region). With
 // KSIM_WRITE_FIXTURE=1 the fixture is rewritten instead of compared.
 
-#include "ksim/door_plan.hpp"
-#include "ksim/interact.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/nav/door_plan.hpp"
+#include "ksim/world/interact.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

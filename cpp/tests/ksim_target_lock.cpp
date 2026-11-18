@@ -2,7 +2,7 @@
 // the timer counts up and only a re-pick resets it. A 3v3 whose held targets drop out of the scan every 0.4 s (a better candidate wins
 // only then): a re-pick swap never comes with the timer under 1.0 s, and one does come once it is up. At hold 0 it swaps at once.
 
-#include "ksim/combat.hpp"
+#include "ksim/combat/combat.hpp"
 
 #include "kworld/gamedata.hpp"
 

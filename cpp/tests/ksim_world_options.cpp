@@ -5,12 +5,12 @@
 // into sim seconds. The NEW_GAME frame's optional trailing options block is pinned in ksim_newgame; the debug wire in
 // ksim_debug_weather_time.
 
-#include "ksim/clock.hpp"
-#include "ksim/combat.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/save.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/state.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/save/save.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/state.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

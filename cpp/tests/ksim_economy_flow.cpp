@@ -7,11 +7,11 @@
 //  - `mode = original` (the default) creates no T4 state, its state hash equals a run without the overlay and differs from real.
 // No bake is needed.
 
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/economy.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/soak.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/economy/economy.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/soak.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/loadorder.hpp"

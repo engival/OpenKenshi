@@ -18,9 +18,9 @@
 //
 // The fixtures order only the player (the talk and the reply); the pushed events stand in for the sim's own producers.
 
-#include "ksim/clock.hpp"
-#include "ksim/dialogue_events.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/dialogue/dialogue_events.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

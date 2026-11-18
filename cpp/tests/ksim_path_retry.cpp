@@ -5,11 +5,11 @@
 // Part 2 (needs the install, KENSHI_DATA; skipped without): Simulation::routeRetry for a walker whose goal has no route (outside the loaded
 // window): the owner gets a failed route (NoRoute) on every ask, never a hang, and routeStuck() says when the ladder is used up (the exe's vf10).
 
-#include "ksim/combat_data.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/path_retry.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/nav/path_retry.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

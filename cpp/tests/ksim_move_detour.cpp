@@ -8,10 +8,10 @@
 // and eight short moves near the Hub, open ground in a straight line, that ran 1.4-3.3x the straight distance before the fix.
 // Each route must stay under 1.3x the distance to its own end. Needs the install (KENSHI_DATA); exit 77 without it.
 
-#include "ksim/combat_data.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/simlink_scenario.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/net/simlink_scenario.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

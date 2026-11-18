@@ -1,9 +1,9 @@
 // kenshi-h2v.22.2: scenarios/raid_takeover.kscen itself (Old Village the player's, one player character, a Crab Raiders force 400 u out carrying the
 // raid order). Asserted: the force assaults and switches to `hostile occupy town` (FACTIONS.md 2.1b); the player character is downed; the town's owner never changes; and when the test kills every occupier the occupation ends
 // within 4 s of play (the leader's death ends it at once; 5 s allowed for the 1 Hz pass). Run twice: Old Village, then Heft (walled; the file moved there as ksim_food_raid_scenario does, kenshi-h2v.22.6): both occupy; the Heft stay is watched 60 s and the throw-out is reported, not asserted (FACTIONS.md 2.1b, TQ2). Needs the world navmesh bake (argv[1], exit 77 without the Old Village region).
-#include "ksim/blackboard.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/blackboard.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "scenario_rig.hpp"
 #include "sim_access.hpp"

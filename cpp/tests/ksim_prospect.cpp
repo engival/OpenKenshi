@@ -1,14 +1,14 @@
-// Prospecting (SIMLINK.md order 79 and PROSPECT 35, ksim/prospect.hpp; kinspect findings/prospecting.md and prosp19_static.md): the exe's
+// Prospecting (SIMLINK.md order 79 and PROSPECT 35, ksim/world/prospect.hpp; kinspect findings/prospecting.md and prosp19_static.md): the exe's
 // maths as pure functions (trap, N and r for two Science levels, the deposit falloff), what every biome group resolves to in the merged
 // game data, the order's answers and its cancel paths, the 1.0 s duration, the deposits, the Stone noise against kinspect's worked values and live points, and frame 35 decoded by
 // hand against values the test computes from the raw records and the heightmap, with save, load and continue.
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/navigator.hpp"
-#include "ksim/prospect.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/world/prospect.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/coords.hpp"
 #include "kworld/gamedata.hpp"

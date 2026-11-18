@@ -5,7 +5,7 @@
 // width is applied at query time), so radius 0 and radius 4 see the very same polygons.
 
 #include "knav/navmesh.hpp"
-#include "ksim/navigator.hpp"
+#include "ksim/nav/navigator.hpp"
 
 #include "DetourNavMesh.h"
 #include "DetourNavMeshBuilder.h"

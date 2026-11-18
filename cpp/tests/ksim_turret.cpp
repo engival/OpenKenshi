@@ -2,11 +2,11 @@
 // and its Turrets skill, in range and in the arc, not outside either; it lets go when moved off the post or when told to. And the wiring: a
 // resident whose running goal is 149 on a turret building, standing at its post, mounts it, shoots, and dismounts when the goal moves on.
 
-#include "ksim/combat.hpp"
-#include "ksim/goap.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/ai/goap.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/collision.hpp"

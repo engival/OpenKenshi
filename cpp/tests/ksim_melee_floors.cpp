@@ -12,10 +12,10 @@
 // The AQ part used to order the player up the stair; that is now the fighter's own chase (routeFrom with the target's
 // click height), which is the AS change.
 
-#include "ksim/combat.hpp"
-#include "ksim/command.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "knav/world.hpp"
 #include "kworld/collision.hpp"

@@ -4,8 +4,8 @@
 // (ARCHITECTURE.md "Threading": references are IDs; effects are messages with
 // one tick of delay).
 
-#include "ksim/region.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/world/region.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "ksim_region_test_util.hpp"
 #include "test_util.hpp"

@@ -9,18 +9,18 @@
 //   - the trip runs in the real tick (score -> walk -> transaction), survives a save / load and the loaded run makes the same
 //     decisions as the straight one (the v86 fields: the list, its day, the timer and the latch).
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/shopping.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/templates.hpp"
-#include "ksim/trader.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/economy/shopping.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/templates.hpp"
+#include "ksim/economy/trader.hpp"
 
-#include "../src/ksim/world_resolvers.hpp"
+#include "../src/ksim/world/world_resolvers.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

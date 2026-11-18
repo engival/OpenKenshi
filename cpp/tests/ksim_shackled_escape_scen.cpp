@@ -4,15 +4,15 @@
 // worn and open; a break by Strong leaves them worn and open at once. The control reruns it with Strong's strength and Picker's tool taken out of the file: the break and the cut
 // then fail (the check that fails before the scenario had them).
 // Needs the world navmesh bake (argv[1], exit 77 without the Heft region).
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/scenario_file.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/save/scenario_file.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "knav/navmesh.hpp"
 #include "kworld/coords.hpp"

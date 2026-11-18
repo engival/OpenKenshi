@@ -2,8 +2,8 @@
 
 // Deterministic helpers shared by the region scheduler tests.
 
-#include "ksim/region.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/world/region.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "test_util.hpp"
 

@@ -3,14 +3,14 @@
 // ksim_raid_takeover_scenario each carried a copy; a new scenario test starts here. Needs KENSHI_DATA and KSIM_AI_TABLE.
 #pragma once
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/scenario_file.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/save/scenario_file.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "knav/navmesh.hpp"
 #include "kworld/coords.hpp"

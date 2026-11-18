@@ -8,7 +8,7 @@
 // The navigator is opened by a test's own queries; a sim route asks the character's clearance (Simulation::pathRadius,
 // NAVMESH_CACHE.md "Clearance"), which the tests pass where they make one.
 
-#include "ksim/navigator.hpp"
+#include "ksim/nav/navigator.hpp"
 
 #include "knav/native.hpp"
 #include "knav/navmesh.hpp"

@@ -7,7 +7,7 @@
 //  - the board restore drops a lead whose successor is not on the restored board;
 //  - D: 140290450's town rule (blackboard::assaultsTown): a player-owned town is assaulted whatever the relation, unless allied.
 
-#include "ksim/blackboard.hpp"
+#include "ksim/ai/blackboard.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

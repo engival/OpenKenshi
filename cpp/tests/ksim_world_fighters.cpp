@@ -7,14 +7,14 @@
 //   - with and without the squad AI;
 //   - a save in the middle of the fight loads to the same hash and continues identically (the marker is rebuilt from the arena).
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/trader.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/economy/trader.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

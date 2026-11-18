@@ -6,10 +6,10 @@
 //   - the same orders on another character's shackles.
 // A Session on the duel scenario (the enemy lies knocked out). argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/door_plan.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/nav/door_plan.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

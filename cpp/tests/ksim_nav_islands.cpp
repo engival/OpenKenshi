@@ -26,7 +26,7 @@
 //       2, a 38,066 u2 island before k16.6.260's selectParts chance-0 rule and connected after it).
 // Cold (no nav cache) and cached wall times and the peak RSS are printed. Exit 77 without the navtiles.
 
-#include "ksim/navigator.hpp"
+#include "ksim/nav/navigator.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/collision_area.hpp"
@@ -77,7 +77,7 @@ constexpr double kClipDepth = 40.0; // u under the terrain at the polygon's cent
 constexpr double kBaselineFloorTol = 8.0; // a baseline line matches an island of the same owner whose floor height is this near (u)
 constexpr double kBaselineAreaBand = 1.3; // ... and whose area is within this factor (a band: a recipe change moves an island's rim, not its size class)
 constexpr double kHullTerrainDepth = 15.0; // u: an island this far under the owner's base is terrain under its hull, not a floor
-constexpr double kBuildingHeightSlack = 3.0; // Simulation::buildingAt's height tolerance (ksim/carry.cpp)
+constexpr double kBuildingHeightSlack = 3.0; // Simulation::buildingAt's height tolerance (ksim/combat/carry.cpp)
 constexpr int kBlockZones = 5;
 constexpr double kGridCell = 64.0;
 
@@ -295,7 +295,7 @@ std::vector<BaselineEntry> readBaseline(const std::string& path)
 }
 
 // The extent of a list of shapes along the placement's own axes (ax, az) on the plane and in y: Simulation::buildingAt's
-// oriented box (ksim/world.cpp addBuildingSite), doors left out.
+// oriented box (ksim/world/world.cpp addBuildingSite), doors left out.
 struct Bounds
 {
 	double minA = 1e30, maxA = -1e30, minB = 1e30, maxB = -1e30, minY = 1e30, maxY = -1e30;

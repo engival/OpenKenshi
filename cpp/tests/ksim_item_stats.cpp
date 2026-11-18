@@ -4,9 +4,9 @@
 // refusals (bad_target, bad_value) are covered, and the reply goes to the asking session only, never into the input log.
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

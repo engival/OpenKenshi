@@ -5,8 +5,8 @@
 // along its route, and the crowd run costs no more than the baseline plus the original's price per landed hit.
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/combat.hpp"
-#include "ksim/navigator.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/nav/navigator.hpp"
 
 #include "kworld/gamedata.hpp"
 

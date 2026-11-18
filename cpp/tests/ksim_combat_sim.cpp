@@ -3,7 +3,7 @@
 // save at tick N loaded and run M ticks equals the uninterrupted N + M run (state hash). The
 // fighters are flecs instances (state::Fighter, mirrored from the arena's hot array each tick).
 
-#include "ksim/simulation.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

@@ -4,10 +4,10 @@
 // a long move between two towns takes them. Part 3 (needs the install and its navtiles): Simulation::routeRetry takes a move over
 // 1000 u through the road's markers when the use test passes, and the ladder's road rung (roadNetworkRoute) walks them.
 
-#include "ksim/combat_data.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

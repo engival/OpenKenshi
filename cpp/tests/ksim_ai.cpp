@@ -1,4 +1,4 @@
-// The squad AI (include/ksim/ai.hpp) on the default world:
+// The squad AI (include/ksim/ai/ai.hpp) on the default world:
 //
 //  1. the behaviour registry covers the spawned squads (coverage report), with
 //     patrol and territory implemented;
@@ -26,12 +26,12 @@
 //     Sections 1..7 use the one-squad-per-template wilderness
 //     (wildernessByDensity = false), as the earlier slices did.
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/soak.hpp"
-#include "ksim/squad_alive.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/soak.hpp"
+#include "ksim/world/squad_alive.hpp"
 
 #include "knav/navmesh.hpp"
 #include "kdata/gamedata.hpp"

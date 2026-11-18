@@ -5,7 +5,7 @@
 
 #include "trade_rig.hpp"
 
-#include "ksim/scenario_file.hpp"
+#include "ksim/save/scenario_file.hpp"
 
 #ifndef KSIM_SCENARIOS_DIR
 #error KSIM_SCENARIOS_DIR must be defined

@@ -12,7 +12,7 @@
 //  - the threat list counts an attacker whose target is me OR who has me in its hit list (buildIncomingThreatList), not the target alone;
 //  - an attacker left out of the 5-slot engaged list waits (state 6) instead of circling (ENGAGEMENT.md 4.4).
 
-#include "ksim/combat.hpp"
+#include "ksim/combat/combat.hpp"
 
 #include "kworld/gamedata.hpp"
 

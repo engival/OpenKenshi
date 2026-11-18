@@ -2,7 +2,7 @@
 // bandits on open ground). Measures the numbers the capture gives, per step, on a bare combat arena (no navmesh): the defender's engaged count, the
 // attack-slot holders, the Circle / Wait counts and their distance bands, the closest attacker pair, the per-step position jumps against the gait step,
 // and the hits by attackers that were not in the defender's engaged list. With an argument it writes the table (tsv) there.
-#include "ksim/combat.hpp"
+#include "ksim/combat/combat.hpp"
 
 #include "kworld/gamedata.hpp"
 

@@ -7,14 +7,14 @@
 // working, and that the session replayed from the order log reaches the same state hash. Then
 // the recorded sample stream in docs/formats decodes without error.
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
 #include "ksim/debugview/enums.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #if KSIM_DEBUG_VIEW
 #include "ksim/debugview/decisions.hpp"

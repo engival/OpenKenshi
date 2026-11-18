@@ -4,8 +4,8 @@
 // translation (SIMLINK.md section 12). Pure functions first, then the same through the simulation on the Hub mesh.
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/navigator.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "knav/walk.hpp"
 #include "kworld/gamedata.hpp"

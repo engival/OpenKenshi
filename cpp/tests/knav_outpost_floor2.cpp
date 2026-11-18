@@ -5,7 +5,7 @@
 // Runs on the runtime mesh (MeshNavigator::openNative: s-IV's zone is stale and is rebaked from our collision); exit 77 without
 // the game's navtiles. Also checks that a refused route names the check that refused it (Route::check, the server log's `check=`).
 
-#include "ksim/navigator.hpp"
+#include "ksim/nav/navigator.hpp"
 
 #include "knav/native.hpp"
 #include "test_util.hpp"

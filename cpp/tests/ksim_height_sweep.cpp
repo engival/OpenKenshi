@@ -10,13 +10,13 @@
 // height_sweep.tsv in the working directory.
 // argv[1]: the world navmesh bake directory. [2]: the known-gap file (default the checked-in one). Exit 77 without the navigation data.
 
-#include "ksim/combat_data.hpp"
-#include "ksim/interact.hpp"
-#include "ksim/command.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/los.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/world/interact.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/nav/los.hpp"
 
 #include "kworld/coords.hpp"
 #include "kworld/gamedata.hpp"

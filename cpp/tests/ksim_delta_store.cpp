@@ -7,7 +7,7 @@
 
 #include "delta_scene.hpp"
 
-#include "ksim/save.hpp"
+#include "ksim/save/save.hpp"
 
 #include <cstdio>
 #include <iostream>

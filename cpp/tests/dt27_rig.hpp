@@ -5,14 +5,14 @@
 
 #pragma once
 
-#include "ksim/blackboard.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/towncircle.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/trader.hpp"
-#include "ksim/world.hpp"
+#include "ksim/ai/blackboard.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/world/towncircle.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/economy/trader.hpp"
+#include "ksim/world/world.hpp"
 
 #include "kdata/format.hpp"
 #include "kdata/gamedata.hpp"

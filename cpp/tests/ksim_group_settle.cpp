@@ -4,9 +4,9 @@
 // of the last moving frames); the facing at rest is the travel direction.
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache). With a second argument "table" it prints the oracle's tables.
 
-#include "ksim/navigator.hpp"
-#include "ksim/rng.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/rng.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

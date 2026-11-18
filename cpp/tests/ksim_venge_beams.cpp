@@ -12,13 +12,13 @@
 //     for a race immune to type 3.
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/beams.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/placement.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/weather.hpp"
+#include "ksim/world/beams.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/nav/placement.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/world/weather.hpp"
 
 #include "kworld/coords.hpp"
 #include "kworld/gamedata.hpp"

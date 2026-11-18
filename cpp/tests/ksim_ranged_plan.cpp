@@ -1,7 +1,7 @@
 // Task ds/ranged step 1: the planner rows of the Task_Blank combat nodes 9 / 10 / 11, 59 GET_READY_FOR_ACTION (between the equip and the melee
 // swing), 64 MAKE_TARGET_STAND_STILL, 236 WORSHIP_TARGET and the splint pair 249 / 250. Pure: a staged world of symbols and the real registry.
 
-#include "ksim/goap.hpp"
+#include "ksim/ai/goap.hpp"
 
 #include "test_util.hpp"
 

@@ -8,13 +8,13 @@
 //
 // argv[1]: the world navmesh bake directory (knav_cache).
 
-#include "ksim/ai.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/dialogue_book.hpp"
-#include "ksim/command.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/dialogue/dialogue_book.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

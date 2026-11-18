@@ -1,4 +1,4 @@
-Retired 2026-10-31 from src/ksim/combat.cpp (CombatArena::Ctx::stumble). The re-roll used the BLOCK chance against the
+Retired 2026-10-31 from src/ksim/combat/combat.cpp (CombatArena::Ctx::stumble). The re-roll used the BLOCK chance against the
 strongest incoming swing at the end of the 1.1 s stagger and, on success, re-armed the stagger for another 1.1 s (the
 fitted "stumble re-roll", IMPLEMENTATION.md UNSURE item 10). The traced rule (docs/reference/combat/BLOCK_TIMING_LIVE.md):
 `updateStumbleState` rolls calcDodgeChance, and success LEAVES the stagger into a defence; the logged staggers end at

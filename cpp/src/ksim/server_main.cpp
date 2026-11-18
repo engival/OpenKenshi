@@ -89,24 +89,24 @@
 //   - the library internals runServer calls (Simulation, MeshNavigator's native cache under $XDG_CACHE_HOME, enableServerAi, the
 //     debugview sinks, SimLinkServer's socket) were not looked at; two servers in one process are untested.
 
-#include "ksim/behaviours.hpp"
-#include "ksim/cli.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/simdata.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/cli.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/simdata.hpp"
 #if KSIM_DEBUG_VIEW
 #include "ksim/debugview/decisions.hpp"
 #endif
-#include "ksim/dialogue_book.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_saves.hpp"
-#include "ksim/scenario_file.hpp"
-#include "ksim/scenario_run.hpp"
-#include "ksim/server_ai.hpp"
+#include "ksim/dialogue/dialogue_book.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_saves.hpp"
+#include "ksim/save/scenario_file.hpp"
+#include "ksim/save/scenario_run.hpp"
+#include "ksim/ai/server_ai.hpp"
 #include "ksim/server_main.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

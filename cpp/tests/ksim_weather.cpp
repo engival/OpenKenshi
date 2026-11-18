@@ -3,9 +3,9 @@
 // unattended, a season change cutting the weather, the fallback for unknown ids on load, the wind direction of an
 // instance, and save, load and continue.
 
-#include "ksim/clock.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/weather.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/world/weather.hpp"
 
 #include "kworld/gamedata.hpp"
 

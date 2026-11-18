@@ -1,7 +1,7 @@
-// Goal display names (kenshi-k16.6.206): every AI_TASK enum in the game data has an exe display name (ksim/task_names.hpp), except the ids
+// Goal display names (kenshi-k16.6.206): every AI_TASK enum in the game data has an exe display name (ksim/ai/task_names.hpp), except the ids
 // listed below. The table must be sorted and unique, and the Goal row never falls back to the data record's own name.
 
-#include "ksim/task_names.hpp"
+#include "ksim/ai/task_names.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

@@ -5,11 +5,11 @@
 // kChaseClearOrders (66 game minutes, kinspect s73_static.md section 3) and the target is skipped for kBlockedTarget (20 s). The state is Fighter::{faction, attacksNeutrals,
 // aggroBlockId, aggroBlock} (save v52); a save and load mid-chase equals the straight run.
 
-#include "ksim/clock.hpp"
-#include "ksim/combat.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

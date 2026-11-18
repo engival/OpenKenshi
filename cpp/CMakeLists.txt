@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Apple libc++ gates std::jthread (ksim/region.cpp) behind -fexperimental-library (compile and link) (kenshi-379.32.1).
+# Apple libc++ gates std::jthread (ksim/world/region.cpp) behind -fexperimental-library (compile and link) (kenshi-379.32.1).
 if(APPLE AND NOT CMAKE_CXX_FLAGS MATCHES "fexperimental-library")
 	string(APPEND CMAKE_CXX_FLAGS " -fexperimental-library")
 	string(APPEND CMAKE_EXE_LINKER_FLAGS " -fexperimental-library")
@@ -39,7 +39,7 @@ else()
 	add_compile_definitions(KSIM_DEV=0)
 endif()
 
-# Per-system tick profiling (docs/PROFILING.md). OFF by default: the tick holds no profile code (the macros in ksim/profile.hpp expand to
+# Per-system tick profiling (docs/PROFILING.md). OFF by default: the tick holds no profile code (the macros in ksim/core/profile.hpp expand to
 # nothing). ON times each stage of Simulation::tick into a fixed ring and adds the breakdown to the soak report.
 option(KSIM_PROFILE "Compile the per-system tick profiler" OFF)
 if(KSIM_PROFILE)
@@ -444,107 +444,107 @@ target_compile_options(lua55 PRIVATE -O2 -w)
 target_link_libraries(lua55 PUBLIC m)
 
 add_library(ksim
-	src/ksim/world.cpp
-	src/ksim/simulation.cpp
-	src/ksim/region.cpp
-	src/ksim/state.cpp
-	src/ksim/world_state.cpp
-	src/ksim/clock.cpp
-	src/ksim/rng.cpp
-	src/ksim/spawn.cpp
-	src/ksim/placement.cpp
-	src/ksim/wilderness.cpp
-	src/ksim/squad_alive.cpp
-	src/ksim/corpses.cpp
-	src/ksim/stored_medical.cpp
-	src/ksim/token_fight.cpp
-	src/ksim/token_fights.cpp
-	src/ksim/weather.cpp
-	src/ksim/beams.cpp
-	src/ksim/save.cpp
-	src/ksim/snapshot.cpp
-	src/ksim/behaviours.cpp
-	src/ksim/navigator.cpp
-	src/ksim/ai.cpp
-	src/ksim/factions.cpp
-	src/ksim/factions_script.cpp
-	src/ksim/dialogue_book.cpp
-	src/ksim/dialogue_packages.cpp
-	src/ksim/dialogue_events.cpp
-	src/ksim/dialogue_sim.cpp
-	src/ksim/individual_goals.cpp
-	src/ksim/doors.cpp
-	src/ksim/script.cpp
-	src/ksim/soak.cpp
-	src/ksim/profile.cpp
-	src/ksim/combat_data.cpp
-	src/ksim/combat_rules.cpp
-	src/ksim/combat.cpp
-	src/ksim/join_rules.cpp
-	src/ksim/perception.cpp
-	src/ksim/sensor.cpp
-	src/ksim/decision_trace.cpp
-	src/ksim/goalsel.cpp
-	src/ksim/goap.cpp
-	src/ksim/goap_sim.cpp
-	src/ksim/server_ai.cpp
-	src/ksim/blackboard.cpp
-	src/ksim/interact.cpp
-	src/ksim/inventory_grid.cpp
-	src/ksim/inventory_orders.cpp
-	src/ksim/player_squads.cpp
-	src/ksim/jobs.cpp
-	src/ksim/trader.cpp
-	src/ksim/economy.cpp
-	src/ksim/economy_script.cpp
-	src/ksim/los.cpp
-	src/ksim/routines.cpp
-	src/ksim/residents.cpp
-	src/ksim/world_squad_log.cpp
-	src/ksim/routine_scorer.cpp
-	src/ksim/shopping.cpp
-	src/ksim/shopping_sim.cpp
-	src/ksim/navcoverage.cpp
-	src/ksim/prospect.cpp
-	src/ksim/producers.cpp
-	src/ksim/trade.cpp
-	src/ksim/buildings.cpp
-	src/ksim/discovery.cpp
-	src/ksim/newgame.cpp
-	src/ksim/creator.cpp
-	src/ksim/door_plan.cpp
-	src/ksim/door_goap.cpp
-	src/ksim/carry.cpp
-	src/ksim/slave_state.cpp
-	src/ksim/stealth_ko.cpp
-	src/ksim/world_tasks.cpp
-	src/ksim/loot_storage.cpp
-	src/ksim/crime_goals.cpp
+	src/ksim/world/world.cpp
+	src/ksim/core/simulation.cpp
+	src/ksim/world/region.cpp
+	src/ksim/core/state.cpp
+	src/ksim/world/world_state.cpp
+	src/ksim/core/clock.cpp
+	src/ksim/core/rng.cpp
+	src/ksim/world/spawn.cpp
+	src/ksim/nav/placement.cpp
+	src/ksim/world/wilderness.cpp
+	src/ksim/world/squad_alive.cpp
+	src/ksim/combat/corpses.cpp
+	src/ksim/combat/stored_medical.cpp
+	src/ksim/combat/token_fight.cpp
+	src/ksim/combat/token_fights.cpp
+	src/ksim/world/weather.cpp
+	src/ksim/world/beams.cpp
+	src/ksim/save/save.cpp
+	src/ksim/save/snapshot.cpp
+	src/ksim/ai/behaviours.cpp
+	src/ksim/nav/navigator.cpp
+	src/ksim/ai/ai.cpp
+	src/ksim/world/factions.cpp
+	src/ksim/world/factions_script.cpp
+	src/ksim/dialogue/dialogue_book.cpp
+	src/ksim/dialogue/dialogue_packages.cpp
+	src/ksim/dialogue/dialogue_events.cpp
+	src/ksim/dialogue/dialogue_sim.cpp
+	src/ksim/ai/individual_goals.cpp
+	src/ksim/nav/doors.cpp
+	src/ksim/core/script.cpp
+	src/ksim/core/soak.cpp
+	src/ksim/core/profile.cpp
+	src/ksim/combat/combat_data.cpp
+	src/ksim/combat/combat_rules.cpp
+	src/ksim/combat/combat.cpp
+	src/ksim/world/join_rules.cpp
+	src/ksim/ai/perception.cpp
+	src/ksim/ai/sensor.cpp
+	src/ksim/ai/decision_trace.cpp
+	src/ksim/ai/goalsel.cpp
+	src/ksim/ai/goap.cpp
+	src/ksim/ai/goap_sim.cpp
+	src/ksim/ai/server_ai.cpp
+	src/ksim/ai/blackboard.cpp
+	src/ksim/world/interact.cpp
+	src/ksim/economy/inventory_grid.cpp
+	src/ksim/economy/inventory_orders.cpp
+	src/ksim/world/player_squads.cpp
+	src/ksim/ai/jobs.cpp
+	src/ksim/economy/trader.cpp
+	src/ksim/economy/economy.cpp
+	src/ksim/economy/economy_script.cpp
+	src/ksim/nav/los.cpp
+	src/ksim/ai/routines.cpp
+	src/ksim/world/residents.cpp
+	src/ksim/world/world_squad_log.cpp
+	src/ksim/ai/routine_scorer.cpp
+	src/ksim/economy/shopping.cpp
+	src/ksim/economy/shopping_sim.cpp
+	src/ksim/nav/navcoverage.cpp
+	src/ksim/world/prospect.cpp
+	src/ksim/economy/producers.cpp
+	src/ksim/economy/trade.cpp
+	src/ksim/world/buildings.cpp
+	src/ksim/world/discovery.cpp
+	src/ksim/save/newgame.cpp
+	src/ksim/save/creator.cpp
+	src/ksim/nav/door_plan.cpp
+	src/ksim/nav/door_goap.cpp
+	src/ksim/combat/carry.cpp
+	src/ksim/law/slave_state.cpp
+	src/ksim/combat/stealth_ko.cpp
+	src/ksim/world/world_tasks.cpp
+	src/ksim/economy/loot_storage.cpp
+	src/ksim/law/crime_goals.cpp
 	src/ksim/server_main.cpp
-	src/ksim/simdata.cpp
-	src/ksim/animal_goals.cpp
-	src/ksim/raid_phases.cpp
-	src/ksim/talk_goals.cpp
-	src/ksim/standing_goals.cpp
-	src/ksim/lock_tasks.cpp
-	src/ksim/arrest.cpp
-	src/ksim/crops.cpp
-	src/ksim/char_stats.cpp
-	src/ksim/task_names.cpp
-	src/ksim/crime.cpp
-	src/ksim/research.cpp
-	src/ksim/recipes.cpp
-	src/ksim/gatecrew.cpp
-	src/ksim/medical.cpp
-	src/ksim/bloodtrail.cpp
-	src/ksim/simlink.cpp
-	src/ksim/simlink_saves.cpp
-	src/ksim/simlink_playtest.cpp
-	src/ksim/simlink_server.cpp
-	src/ksim/simlink_scenario.cpp
-	src/ksim/scenario_file.cpp
-	src/ksim/save_import.cpp
-	src/ksim/import_squad.cpp
+	src/ksim/core/simdata.cpp
+	src/ksim/ai/animal_goals.cpp
+	src/ksim/ai/raid_phases.cpp
+	src/ksim/ai/talk_goals.cpp
+	src/ksim/ai/standing_goals.cpp
+	src/ksim/nav/lock_tasks.cpp
+	src/ksim/law/arrest.cpp
+	src/ksim/economy/crops.cpp
+	src/ksim/combat/char_stats.cpp
+	src/ksim/ai/task_names.cpp
+	src/ksim/law/crime.cpp
+	src/ksim/economy/research.cpp
+	src/ksim/economy/recipes.cpp
+	src/ksim/ai/gatecrew.cpp
+	src/ksim/combat/medical.cpp
+	src/ksim/combat/bloodtrail.cpp
+	src/ksim/net/simlink.cpp
+	src/ksim/net/simlink_saves.cpp
+	src/ksim/net/simlink_playtest.cpp
+	src/ksim/net/simlink_server.cpp
+	src/ksim/net/simlink_scenario.cpp
+	src/ksim/save/scenario_file.cpp
+	src/ksim/save/save_import.cpp
+	src/ksim/save/import_squad.cpp
 )
 if(KSIM_DEBUG_VIEW)
 	# All of it lives here (docs/formats/SIMLINK.md "DEBUG VIEW"); the hooks outside are the four listed there.
@@ -553,7 +553,7 @@ endif()
 if(KSIM_DEV)
 	target_sources(ksim PRIVATE src/ksim/dev/checkpoint_log.cpp)
 endif()
-target_include_directories(ksim PUBLIC include)
+target_include_directories(ksim PUBLIC include PRIVATE src/ksim)	# private headers beside their sources, as "<subsystem>/x.hpp" (kenshi-k16.6.387)
 target_link_libraries(ksim PUBLIC kworld knav flecs PRIVATE lua55 kutil)
 # The shipped default behaviour scripts (data/behaviour/default).
 # The build's git hash (SIMLINK SCENARIO_STARTED simHash, server --version): written at build time into one generated file, so a new HEAD
@@ -572,10 +572,10 @@ set(KSIM_SCENARIOS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../scenarios")
 if(KSIM_DEV)
 	target_compile_definitions(ksim PRIVATE KSIM_SCENARIOS_DIR="${KSIM_SCENARIOS_DIR}")
 endif()
-# Sim data (behaviour/, ksim_ai_behaviours.tsv) is resolved at runtime (src/ksim/simdata.cpp): --sim-data, else simdata/ beside the
+# Sim data (behaviour/, ksim_ai_behaviours.tsv) is resolved at runtime (src/ksim/core/simdata.cpp): --sim-data, else simdata/ beside the
 # executable, else the source tree's data/ only when KSIM_BAKE_DATA_PATH.
 if(KSIM_BAKE_DATA_PATH)
-	set_source_files_properties(src/ksim/simdata.cpp PROPERTIES COMPILE_DEFINITIONS
+	set_source_files_properties(src/ksim/core/simdata.cpp PROPERTIES COMPILE_DEFINITIONS
 		"KSIM_SIMDATA_BAKED=\"${CMAKE_CURRENT_SOURCE_DIR}/data\"")
 endif()
 kdata_warnings(ksim)
@@ -2056,7 +2056,7 @@ target_compile_definitions(ksim_economy_price PRIVATE
 kdata_warnings(ksim_economy_price)
 add_test(NAME ksim_economy_price COMMAND ksim_economy_price)
 
-# The dialogue book (include/ksim/dialogue_book.hpp, docs/DIALOGUE.md 1): the compile census, the package
+# The dialogue book (include/ksim/dialogue/dialogue_book.hpp, docs/DIALOGUE.md 1): the compile census, the package
 # sets and the static pre-pass. The coverage tool prints the census; the test asserts it and, through
 # tests/ksim_py/dialogue_compare.py, compares the sets with tools/dialogue.py.
 add_executable(ksim_dialogue_coverage tools/ksim_dialogue_coverage.cpp)
@@ -2068,7 +2068,7 @@ target_link_libraries(ksim_dialogue_book PRIVATE ksim)
 target_compile_definitions(ksim_dialogue_book PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(ksim_dialogue_book)
 add_test(NAME ksim_dialogue_book COMMAND ksim_dialogue_book)
-# The dialogue events, the gate and the root selection (include/ksim/dialogue_events.hpp, docs/DIALOGUE.md 8 slice 1 steps 3 and 4).
+# The dialogue events, the gate and the root selection (include/ksim/dialogue/dialogue_events.hpp, docs/DIALOGUE.md 8 slice 1 steps 3 and 4).
 add_executable(ksim_dialogue_events tests/ksim_dialogue_events.cpp)
 target_link_libraries(ksim_dialogue_events PRIVATE ksim)
 target_compile_definitions(ksim_dialogue_events PRIVATE KENSHI_DATA="${KENSHI_DATA}")

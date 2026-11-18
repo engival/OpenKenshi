@@ -6,8 +6,8 @@
 //   - the heal pool (first aid) cancels the leak; the sink stops at -3M (intact -300, severed -15);
 //   - the severed state survives save + load.
 
-#include "ksim/combat.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

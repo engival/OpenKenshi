@@ -6,13 +6,13 @@
 // walks into the Bar and stays out of it while the crew fights. One bandit a crew member is fighting is put down (a
 // leg at its KO point: down and conscious, the live collapse law) and watched; then the rest of the patrol is KO'd and
 // the crew's targets and footing are checked after the fight. Needs the world bake (argv[1]; exit 77 without it).
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 #include "knav/navmesh.hpp"
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

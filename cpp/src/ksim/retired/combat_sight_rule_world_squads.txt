@@ -1,4 +1,4 @@
-Retired 2026-11-02 (BQ13 / BQ14 join rules, cpp/src/ksim/join_rules.cpp): the sight rule for package-driven characters.
+Retired 2026-11-02 (BQ13 / BQ14 join rules, cpp/src/ksim/world/join_rules.cpp): the sight rule for package-driven characters.
 
 Replaced by: CombatArena::Ctx::joinAllows (combat.cpp) + joins::allows (join_rules.cpp). A character with an AI package now picks a fight only through
 the attack goals of its role list (16 / 15 / 143 / 34) or because it is targeted. A plain fighter (no package: duels, tests) still uses this rule.

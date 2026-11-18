@@ -4,9 +4,9 @@
 
 #include "dt27_rig.hpp"
 
-#include "ksim/door_plan.hpp"
-#include "ksim/goap.hpp"
-#include "ksim/routines.hpp"
+#include "ksim/nav/door_plan.hpp"
+#include "ksim/ai/goap.hpp"
+#include "ksim/ai/routines.hpp"
 
 namespace {
 

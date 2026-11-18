@@ -1,4 +1,4 @@
-Retired 2026-10-31 from src/ksim/interact.cpp (Simulation::equipItem) and include/ksim/interact.hpp (kEquipWeaponLevel).
+Retired 2026-10-31 from src/ksim/world/interact.cpp (Simulation::equipItem) and include/ksim/world/interact.hpp (kEquipWeaponLevel).
 Replaced by item instances with quality (state::ItemQuality on every Inventory::Entry / GroundItem): equipping rebuilds the
 fighter's weapon / armour from the instance (CombatData::buildWeapon / buildArmour), so a piece keeps the manufacturer, model and
 level it was generated with across unequip, drop, pick up, loot and transfer. Kept for reference only; not built.

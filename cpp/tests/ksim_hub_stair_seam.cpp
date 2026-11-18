@@ -5,7 +5,7 @@
 //  - no surface between y 1626 and 1640 at (-51138, 2616.7) (the slab is at 1645.4, the stair 6 u or more below);
 //  - within 60 u of the stair, no polygon whose corners are level (within the climb) has a detail vertex more than the climb off them.
 
-#include "ksim/navigator.hpp"
+#include "ksim/nav/navigator.hpp"
 
 #include "test_util.hpp"
 

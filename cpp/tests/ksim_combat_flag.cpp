@@ -2,11 +2,11 @@
 // kenshi-k16.6.129: CHAR_DYNAMIC flags bit 0 (combat mode) on the wire follows the original's is-combat rule: clear through the approach to an attack
 // target (state 11, jog / run lower clips), set from the hub / circle / wait / attack / defend states or a technique on (COMBAT_ANIM.md 3). A fighter
 // ordered to attack a target 400 u away on open ground, watched through a Session as a client sees it. Needs the world bake (argv[1]; exit 77 without).
-#include "ksim/combat.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/coords.hpp"

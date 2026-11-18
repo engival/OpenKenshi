@@ -1,7 +1,7 @@
 // DEV ONLY (include/ksim/dev/checkpoint_log.hpp): the per-NPC checkpoint log of a two-squad fight, in the shape of rwh.91's.
 #include "ksim/dev/checkpoint_log.hpp"
 
-#include "ksim/fighter_state.hpp"
+#include "ksim/combat/fighter_state.hpp"
 
 #include <algorithm>
 #include <cmath>

@@ -15,9 +15,9 @@
 // Also the squads' side shares (`sideShares`, one per sim second): per squad the members on its own side of the perpendicular bisector between the two squad
 // centroids ("held the line", the user 2026-11-12).
 
-#include "ksim/combat.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include <cstdint>
 #include <iosfwd>

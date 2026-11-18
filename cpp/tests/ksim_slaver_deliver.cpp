@@ -3,14 +3,14 @@
 // finder installs the camp, the squad walks there by the world route and the leader gives every owned slave to the camp's keeper;
 // the emptied set finishes the package and the ladder falls back. Runs on the server's Hub game with the squad AI; the camp is
 // placed next to the Hub (the data's own camps are tens of km away). Needs the world bake (argv[1]); exit 77 without it.
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 #include "knav/navmesh.hpp"
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

@@ -3,8 +3,8 @@
 // behaviour only when there is no goal. A KO'd or dead character has none (the original clears it) and reads "Aimless". The names are
 // the exe's display strings (ORIGINAL_AI.md 5a).
 
-#include "ksim/command.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 

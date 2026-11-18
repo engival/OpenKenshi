@@ -8,7 +8,7 @@
 //      wakes, and dies hours of game time later if nobody treats it: this is the original's rule, not a bug.
 //   3. Treatment ends the sink: a bandaged body does not die in the same time.
 
-#include "ksim/simulation.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 

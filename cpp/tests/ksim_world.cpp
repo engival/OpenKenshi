@@ -2,7 +2,7 @@
 // kmod.py overlay, stringID lookup, and placed building transforms against
 // kworld::Zones::place.
 
-#include "ksim/world.hpp"
+#include "ksim/world/world.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/heightmap.hpp"

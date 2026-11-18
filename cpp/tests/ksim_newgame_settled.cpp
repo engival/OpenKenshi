@@ -7,15 +7,15 @@
 // KSIM_SETTLE=S: the settle in seconds (default: SpawnOptions'; 0 = off, the world as before 5.40: this test fails). KSIM_SETTLE_VERBOSE=1: the census.
 // argv[1]: the world navmesh bake directory (knav_cache).
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "knav/navmesh.hpp"
 

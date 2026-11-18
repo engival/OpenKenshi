@@ -3,8 +3,8 @@
 
 #include "dt27_rig.hpp"
 
-#include "ksim/routines.hpp"
-#include "ksim/save.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/save/save.hpp"
 
 #include <cstdio>
 

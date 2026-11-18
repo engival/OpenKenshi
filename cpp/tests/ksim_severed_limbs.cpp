@@ -9,7 +9,7 @@
 
 #include "dt27_rig.hpp"
 
-#include "ksim/save.hpp"
+#include "ksim/save/save.hpp"
 
 #include <cstdio>
 

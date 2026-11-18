@@ -7,12 +7,12 @@
 
 #include "dt27_rig.hpp"
 
-#include "ksim/buildings.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/crime.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/goap.hpp"
-#include "ksim/routines.hpp"
+#include "ksim/world/buildings.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/law/crime.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/ai/goap.hpp"
+#include "ksim/ai/routines.hpp"
 
 #include <functional>
 #include <memory>

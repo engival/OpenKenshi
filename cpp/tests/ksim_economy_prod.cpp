@@ -10,12 +10,12 @@
 //    counting).
 // No bake is needed.
 
-#include "ksim/clock.hpp"
-#include "ksim/command.hpp"
-#include "ksim/economy.hpp"
-#include "ksim/producers.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/trader.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/economy/economy.hpp"
+#include "ksim/economy/producers.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/economy/trader.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

@@ -2,8 +2,8 @@
 // through a barrel and counter"; kenshi-k16.6.368). The Storm House of zone 21,31 (-50566, -1168, the playtest's): fights with their backs to the
 // bar counter and the barrel, over several seeds, 60 s each; no fighter sample (every step) is inside a solid placed prop (prop_clip.hpp).
 // KSIM_PROP_BODY: see below. argv[1]: the navworld bake directory (the runtime mesh unless KSIM_NAVWORLD_BAKE is set).
-#include "ksim/combat.hpp"
-#include "ksim/navigator.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/nav/navigator.hpp"
 #include "knav/navmesh.hpp"
 
 #include "kworld/gamedata.hpp"

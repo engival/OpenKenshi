@@ -1,4 +1,4 @@
-Retired 2026-10-31 from src/ksim/combat.cpp (CombatArena::Ctx::attackState). A swing under an incoming enemy swing ended at
+Retired 2026-10-31 from src/ksim/combat/combat.cpp (CombatArena::Ctx::attackState). A swing under an incoming enemy swing ended at
 the technique's stop frame (fitted to the "logged swing durations" 0.90 / 1.78 / 2.3 / 2.5 s). The traced rule
 (docs/reference/combat/BLOCK_TIMING_LIVE.md 14b): the attacker stays in state 0 for the rest of its clip after the impact (a
 combo's second hit included); impact -> swing end is chop left-3 0.16 s, combo 0.35, bigchopv2 1.49, heavy swing 1.88. Not built.

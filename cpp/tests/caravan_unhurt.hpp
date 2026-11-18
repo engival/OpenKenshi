@@ -2,8 +2,8 @@
 // The original's caravan took one hit in the whole fight (rwh.89 3): the guards spawn with a first aid kit now (their CHARACTER `inventory`,
 // k16.6.287), so a guard the test's fight grazed would go on 58 before 167 (package order: Medic 100, Capture Slaves 24) and the downed
 // player could wake first. A test that pins the capture, not the aid, keeps the caravan unhurt until the player is cuffed.
-#include "ksim/combat_data.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/simulation.hpp"
 #include <algorithm>
 
 #include <cstdint>

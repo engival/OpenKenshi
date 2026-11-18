@@ -5,17 +5,17 @@
 // bad_value, no_route), an interrupted order, and save + load mid-walk giving the uninterrupted state hash.
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/crime.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/door_plan.hpp"
-#include "ksim/interact.hpp"
-#include "ksim/inventory_grid.hpp"
+#include "ksim/law/crime.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/nav/door_plan.hpp"
+#include "ksim/world/interact.hpp"
+#include "ksim/economy/inventory_grid.hpp"
 #include "knav/walk.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

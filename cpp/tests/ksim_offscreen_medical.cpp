@@ -10,9 +10,9 @@
 
 #include "delta_scene.hpp"
 
-#include "ksim/clock.hpp"
-#include "ksim/corpses.hpp"
-#include "ksim/save.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/corpses.hpp"
+#include "ksim/save/save.hpp"
 
 #include <cstdio>
 #include <iostream>

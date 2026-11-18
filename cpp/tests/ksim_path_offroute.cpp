@@ -4,10 +4,10 @@
 // CombatArena::offPathRepaths) and arrives. Held off for 2 s and let go, it steers back onto the route and the timer resets: no re-plan.
 // Needs the install (KENSHI_DATA); exit 77 without it.
 
-#include "ksim/combat_data.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

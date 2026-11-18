@@ -12,9 +12,9 @@
 //  2. DC_PLAYERMONEY: with 5000 cats the hire answer is not offered (the "not interested" one is);
 //  3. DC_IS_RECRUITABLE's roster cap: a full faction (30) roots nothing, so no menu opens.
 
-#include "ksim/clock.hpp"
-#include "ksim/dialogue_events.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/dialogue/dialogue_events.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

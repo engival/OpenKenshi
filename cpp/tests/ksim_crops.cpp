@@ -5,9 +5,9 @@
 
 #include "dt27_rig.hpp"
 
-#include "ksim/crime.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/save.hpp"
+#include "ksim/law/crime.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/save/save.hpp"
 
 #include <cstdio>
 

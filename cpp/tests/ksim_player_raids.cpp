@@ -3,12 +3,12 @@
 // in range of a hostile raider, does get one; with it on, the NPC towns are targeted as before.
 // The same new game three times: on (to find a raid), off with no player town, off with the first raid's target town owned by a player faction.
 
-#include "ksim/ai.hpp"
-#include "ksim/buildings.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/world/buildings.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

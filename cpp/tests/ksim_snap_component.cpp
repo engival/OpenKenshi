@@ -3,7 +3,7 @@
 // (x 20..40, z 20..40) and a deck 30 u over the floor (x 120..180, z 20..80) that nothing connects to.
 
 #include "knav/navmesh.hpp"
-#include "ksim/navigator.hpp"
+#include "ksim/nav/navigator.hpp"
 
 #include "DetourNavMesh.h"
 #include "DetourNavMeshBuilder.h"

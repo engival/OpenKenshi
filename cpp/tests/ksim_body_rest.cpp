@@ -3,9 +3,9 @@
 // seeded, on the navmesh, and the same after a save/load. PHYSICS.md 6 tests 1 and 4.
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/combat.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

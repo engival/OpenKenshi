@@ -8,7 +8,7 @@
 // stepFwd/stepLat equal the body's measured displacement divided by dt, rotated into the character's facing, within 1e-6 u/s;
 // the displacement is what the wire carries, so a value that matches it is what the client will animate.
 
-#include "ksim/combat.hpp"
+#include "ksim/combat/combat.hpp"
 
 #include "kworld/gamedata.hpp"
 

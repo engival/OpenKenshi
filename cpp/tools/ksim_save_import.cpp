@@ -1,10 +1,10 @@
 // ksim_save_import SAVEDIR [--no-snap] [--radius R] [--seed N] [--ticks N] [--platoons]: imports an original Kenshi save's platoons and characters
-// (ksim/save_import.hpp, docs/reference/SAVE_IMPORT.md "Stage 2") into a new game's world and prints what happened: the platoons by outcome, the
+// (ksim/save/save_import.hpp, docs/reference/SAVE_IMPORT.md "Stage 2") into a new game's world and prints what happened: the platoons by outcome, the
 // members, the gaps. --ticks N then runs N sim ticks (the imported world must survive them); --platoons lists every platoon with its outcome.
 // The save is only read (quick.save and the platoon files it names); nothing is written.
-#include "ksim/combat_data.hpp"
-#include "ksim/save_import.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/save/save_import.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/loadorder.hpp"
 

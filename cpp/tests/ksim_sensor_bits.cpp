@@ -2,10 +2,10 @@
 // the 167 capture resolver reading the sensor list (capture_target.hpp): the ally and dead mask bits, the per-body tests, a remembered
 // body (bit 8 not excluded) and the memory's expiry. Pure: a relation table stands in for the faction layer, no game data and no world.
 
-#include "ksim/perception.hpp"
-#include "ksim/sensor.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/ai/sensor.hpp"
 
-#include "../src/ksim/capture_target.hpp"
+#include "../src/ksim/law/capture_target.hpp"
 
 #include "test_util.hpp"
 

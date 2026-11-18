@@ -2,11 +2,11 @@
 // player, and the walk away (the squad demoted to a token) and back (promoted again).
 #pragma once
 
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/trader.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/economy/trader.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

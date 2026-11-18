@@ -3,11 +3,11 @@
 // KSIM_PROFILE build) or `unsupported` (an OFF build); a non-admin session gets `not_allowed` in both, checked first; a body is refused
 // as malformed; the order log never sees 120. argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/navigator.hpp"
-#include "ksim/profile.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/profile.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

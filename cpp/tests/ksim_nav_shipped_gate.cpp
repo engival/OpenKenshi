@@ -17,7 +17,7 @@
 //       `--write-baseline FILE`, `--zones X0 Z0 X1 Z1` (a window: only those zones, no world-total gate), `--cell C` (default 4 u).
 // Exit 77 without the navtiles.
 
-#include "ksim/navigator.hpp"
+#include "ksim/nav/navigator.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/collision_area.hpp"

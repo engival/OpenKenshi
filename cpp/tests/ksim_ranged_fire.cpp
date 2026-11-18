@@ -3,9 +3,9 @@
 // shot (the arena's shotBlocker hook; LineOfSight::firstBlocker itself is in ksim_los), an ally in the line (no shot), an enemy in the line
 // (no block), and the skill's effect on the deviation.
 
-#include "ksim/combat.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 

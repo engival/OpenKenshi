@@ -2,9 +2,9 @@
 // on the Hub navmesh: an attacked non-fighter runs from its attacker's centroid and takes no fight; 35 ends with the aggression, 280 is the
 // same executor; a runner that is not moving re-rolls a random point 1000..1400 u away, and one with no way to run never holds the goal.
 
-#include "ksim/clock.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "knav/walk.hpp"

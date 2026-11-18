@@ -4,13 +4,13 @@
 // metric its header names, in the header's order, with a finite number. The wire itself (list, load, started, end, metrics) is
 // ksim_simlink's; this is the content: the files the peer's client will list must all load.
 // Needs the world bake (argv[1], like ksim_aggro_drop; exit 77 without the regions the scenarios stand in).
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/scenario_file.hpp"
-#include "ksim/scenario_run.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/save/scenario_file.hpp"
+#include "ksim/save/scenario_run.hpp"
+#include "ksim/core/simulation.hpp"
 #include "kdata/gamedata.hpp"
 #include "kworld/coords.hpp"
 #include "kworld/loadorder.hpp"

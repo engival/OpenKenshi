@@ -1,4 +1,4 @@
-// Town gates in the simulation (include/ksim/doors.hpp, docs/reference/DOORS.md):
+// Town gates in the simulation (include/ksim/nav/doors.hpp, docs/reference/DOORS.md):
 //
 //  1. data: every door of the placements gets a key like the navmesh bake's, the gate doors
 //     are found (BUILDING `is wall gate` / `is gateway`) and belong to towns, non-public towns
@@ -14,12 +14,12 @@
 //  6. 1 worker == 4 workers with a town lost and an override in play, and save + load + run == the
 //     uninterrupted run, the book rebuilt after the load.
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/doors.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/nav/doors.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/loadorder.hpp"
 

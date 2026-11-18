@@ -2,12 +2,12 @@
 // more (k16.8.31: no terrain snap). Pinned for the scenario file (scenario::apply) and the squad import (importPromote, the save importer's route):
 // open ground on a slope and the Bar's ground floor both end exactly on the mesh point.
 // argv[1]: the world navmesh bake (or KSIM_NATIVE_NAV=1 for the runtime mesh, nav_source.hpp); exit 77 without it.
-#include "ksim/combat_data.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/scenario_file.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/save/scenario_file.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 #include "kworld/heightmap.hpp"
 #include "kworld/loadorder.hpp"
 #include "test_util.hpp"

@@ -7,24 +7,24 @@
 //    every search point they look around at stands inside a building on its ground floor (OURS by the user's ruling, FEATURES).
 // Needs the world bake (argv[1], like ksim_capture_live; exit 77 without it).
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/blackboard.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/trader.hpp"
-#include "ksim/towncircle.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/ai/blackboard.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/economy/trader.hpp"
+#include "ksim/world/towncircle.hpp"
 
 #include "knav/navmesh.hpp"
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
 
-#include "../src/ksim/world_resolvers.hpp"
+#include "../src/ksim/world/world_resolvers.hpp"
 
 #include "test_util.hpp"
 #include "nav_source.hpp"

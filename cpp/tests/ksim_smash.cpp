@@ -3,9 +3,9 @@
 
 #include "dt27_rig.hpp"
 
-#include "ksim/buildings.hpp"
-#include "ksim/interact.hpp"
-#include "ksim/routines.hpp"
+#include "ksim/world/buildings.hpp"
+#include "ksim/world/interact.hpp"
+#include "ksim/ai/routines.hpp"
 
 namespace {
 

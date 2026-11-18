@@ -10,16 +10,16 @@
 // The squads are SQUAD_TEMPLATE "Sand ninja cell" built at Full detail on the server's new game and the navmesh bake (as ksim_raid_goals);
 // the orders are written as the faction layer writes them (the group layer's own walk is not under test). Needs the bake (argv[1]; exit 77).
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/blackboard.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/newgame.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/ai/blackboard.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/save/newgame.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/coords.hpp"

@@ -5,7 +5,7 @@
 // target. The reference is the user's vanilla shot (findings/fight_spacing/vanilla_good_spacing_tower_lab.jpg).
 // Run with KSIM_SPREAD_VERBOSE=1 to print the numbers; the test itself only checks that the fight ran and that nobody stacked.
 
-#include "ksim/combat.hpp"
+#include "ksim/combat/combat.hpp"
 
 #include "kworld/gamedata.hpp"
 

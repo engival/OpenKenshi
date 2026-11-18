@@ -5,11 +5,11 @@
 // hook, the wanted-reaction thresholds, the trespass sensor with the house locked, and the witness case-4 betrayal write on an
 // allied thief.
 
-#include "ksim/clock.hpp"
-#include "ksim/crime.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/law/crime.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

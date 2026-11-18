@@ -1,0 +1,534 @@
+#pragma once
+
+// The simulation's view of coarse navigation: where squads may go and the
+// route between two ground points (ARCHITECTURE.md "Pathfinding": at Squad
+// and Strategic level squads move along the coarse region/portal graph, so a
+// position is always on walkable ground).
+//
+// The navigator is derived data (a bake of the world plus a graph over it),
+// never saved: the loader configures the same navigator again, as it does the
+// load order. Queries are const and deterministic. It is used from the serial
+// squad step only (simulation.hpp), so an implementation need not be thread
+// safe.
+
+#include "ksim/combat/body.hpp"
+#include "ksim/core/profile.hpp"
+#include "ksim/core/state.hpp"
+
+#include "knav/door.hpp"
+#include "knav/navmesh.hpp"
+#include "knav/walk.hpp"
+#include "kworld/coords.hpp"
+
+#include <array>
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
+#include <optional>
+#include <set>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace kdata {
+class GameData;
+}
+
+namespace kworld {
+class AreaGatherer;
+class Heightmap;
+class NavHashSource;
+}
+
+namespace ksim {
+
+struct Route
+{
+	bool found = false;
+	// OffMesh, NoRoute or OutsideWindow when not found.
+	state::AiReason failure = state::AiReason::None;
+	// The check that refused it, for the server log (a literal; empty when found or when no check named itself): which of
+	// "no poly near the goal", "goal in another island", "search closed", "out of nodes" ... (kenshi-k16.6.260).
+	std::string_view check;
+	// A search with a body radius failed and the radius-0 search fails too (the bare mesh does not reach the goal): no retry at 0 helps.
+	bool plainFailed = false;
+	// Walkable ground, start to end. The first point is the walkable point
+	// nearest the requested start, the last the one nearest the requested end.
+	std::vector<state::GroundPoint> points;
+	// The surface height of each point, parallel to `points`; empty when the navigator does not
+	// know heights (only MeshNavigator fills it).
+	std::vector<double> heights;
+	// MeshNavigator::routeFrom: the route ends at an approach point (the clicked spot was off the
+	// mesh, or only a partial path leads towards it), not at the clicked spot itself.
+	bool approach = false;
+	// MeshNavigator::routeFrom: the start was off the mesh or in a connected set with no way to the goal, and `points` begin at the
+	// nearest ground of the goal's set instead (PATHFINDING_STATIC 1.11: the search for the nearest ground widens 1000 u, then 10000 u).
+	// The caller moves the character onto points[0] first.
+	bool reseated = false;
+	// combat's routeForBody: this route is the radius-0 retry after the body's own search failed (kenshi-k16.7.62).
+	bool radiusFallback = false;
+};
+
+// Who is asking, as far as gates are concerned: the traveller class (knav door classes, 0..7)
+// the door policy of the place it is going to treats it as (doors.hpp). The default is class 0.
+struct Traveller
+{
+	int doorClass = 0;
+	// A raid that bashes its way through: gates are passable whatever their state or policy (the sets and the coarse
+	// graph see every door open). The caller adds the time the bashing takes (doors.hpp, DoorAccess::bashing).
+	bool bash = false;
+	// The traveller's body: the routing clearance radius (CombatData::pathRadius, NAVMESH_CACHE.md "Clearance").
+	// 0 = no body (a squad token at Strategic level); the local route then asks for no clearance, and the coarse graph
+	// does not apply one yet either way.
+	float footprint = 0.0f;
+};
+
+#if KSIM_PROFILE
+struct NavStats;
+#endif
+
+class Navigator
+{
+public:
+	virtual ~Navigator() = default;
+#if KSIM_PROFILE
+	// The query counters, when this navigator keeps them (the tick profiler reads their running totals); null otherwise.
+	virtual const NavStats* profileStats() const noexcept { return nullptr; }
+#endif
+
+	// The queries below for a given traveller. The defaults ignore the traveller, which is right
+	// for a navigator without doors (the straight-line doubles of the tests).
+	virtual Route routeFor(const Traveller&, double fromX, double fromZ, double toX, double toZ) const
+	{
+		return route(fromX, fromZ, toX, toZ);
+	}
+	virtual Route localRouteFor(const Traveller&, double fromX, double fromZ, double toX,
+		double toZ) const
+	{
+		return localRoute(fromX, fromZ, toX, toZ);
+	}
+	virtual std::optional<state::GroundPoint> nearestReachableFor(const Traveller&, double x,
+		double z, double reach, double fromX, double fromZ) const
+	{
+		return nearestReachable(x, z, reach, fromX, fromZ);
+	}
+	// Makes `book` the state of every door (the gates of doors.hpp): at a tick boundary, before
+	// the next query. The queries are const, so is this; the state it changes is the
+	// navigator's door view, not anything saved.
+	virtual void applyDoors(const knav::DoorBook&) const
+	{
+	}
+
+	// True when routes may start or end at (x, z): its mesh tiles are loaded.
+	virtual bool covers(double x, double z) const = 0;
+
+	virtual Route route(double fromX, double fromZ, double toX, double toZ) const = 0;
+
+	// As route, for a goal near its start (a patrol leg, a territory walk): an
+	// implementation may answer from a cheaper bounded search. The default is route.
+	virtual Route localRoute(double fromX, double fromZ, double toX, double toZ) const
+	{
+		return route(fromX, fromZ, toX, toZ);
+	}
+
+	// The walkable ground nearest (x, z) within `reach` horizontally: dry land
+	// if there is any in reach, otherwise any walkable surface (the sea floor,
+	// for swimmers). Empty when there is none, or (x, z) is outside the
+	// window. The default is for test doubles: a covered point is walkable.
+	// `radius` above 0 keeps a body that wide: only ground where it fits (a point at least `radius` from every wall).
+	virtual std::optional<state::GroundPoint> nearestWalkable(double x, double z,
+		double reach, double radius = 0.0) const;
+
+	// As nearestWalkable, but only ground connected to the walkable ground at (fromX, fromZ), so a
+	// walk from there to the answer cannot fail for want of a connection. Empty when none is in
+	// reach. The default is nearestWalkable.
+	virtual std::optional<state::GroundPoint> nearestReachable(double x, double z, double reach,
+		double fromX, double fromZ) const;
+};
+
+// Calls and wall time of the navigator's queries (metrics, not state).
+struct NavStats
+{
+	std::uint64_t routeCalls = 0; // coarse graph
+	std::uint64_t routeFound = 0;
+	std::uint64_t routeNs = 0;
+	// routeFrom's failures by knav::PathResult::Failure (index 0 unused), the polygons its clearance searches closed, and the
+	// radius-0 retries combat's routeForBody made after a body route failed (kenshi-k16.7.62).
+	std::array<std::uint64_t, 6> routeFailures{};
+	std::uint64_t routeClearanceNodes = 0;
+	std::uint64_t radiusZeroRetries = 0;
+	std::uint64_t localCalls = 0; // bounded Detour search
+	std::uint64_t localFound = 0;
+	std::uint64_t localNs = 0;
+	std::uint64_t crossCalls = 0; // local goals over a region border (window mesh)
+	std::uint64_t crossFound = 0;
+	std::uint64_t wideRetries = 0; // closed searches retried in a wider window
+	std::uint64_t wideFound = 0;
+	std::uint64_t crossNs = 0; // ... wall time including building the window
+	// Local walks that failed, by knav::PathResult::Failure (index 0 unused): start off mesh, end
+	// off mesh, no path, search closed (end in another connected set), node pool exhausted.
+	std::array<std::uint64_t, 6> localFailures{};
+	std::array<std::uint64_t, 6> crossFailures{}; // ... of which over a region border
+	std::uint64_t snapCalls = 0;
+	std::uint64_t snapNs = 0;
+	std::uint64_t snapSearches = 0; // reachable snaps that needed the full polygon search
+	// Doors: applyDoors calls, coarse routes that failed only because a gate refused the
+	// traveller (Route::failure DoorRefused), and polygons skipped by a goal pick because a
+	// gate would have to be passed.
+	std::uint64_t doorApplies = 0;
+	std::uint64_t doorRefusedRoutes = 0;
+	std::uint64_t routeSetRefusals = 0; // coarse routes answered by the connected sets, no graph search
+	std::uint64_t doorSkippedPolys = 0;
+	std::uint64_t doorApplyNs = 0;
+};
+
+// The native loader's disk cache (docs/formats/NAVMESH_CACHE.md "Patch cache"): the converted shipped regions and our zone
+// rebakes, kept between runs in an XDG cache tree. Entries are immutable and content-addressed (a temp file, then a rename); a
+// corrupt one is deleted, logged and rebuilt, never a crash and never a silent fallback (MeshNavigator::openNative).
+struct NativeCacheOptions
+{
+	// The cache root. Empty: KENSHI_NAV_CACHE, else $XDG_CACHE_HOME/kenshi-sim/navmesh (default ~/.cache/kenshi-sim/navmesh).
+	std::string dir;
+	// false: no cache at all (ksim_server --no-nav-cache): nothing is read or written.
+	bool enabled = true;
+	// The load order's content hash (kworld::dataHash), the tree's world key: one tree per mod set, order and game data.
+	// 0 = no key, so no tree: the cache stays off (a test or a tool that has no load order).
+	std::uint64_t worldKey = 0;
+	// Probe only (ksim_nav_islands --oracle, kenshi-k16.7.53): skip the stale-tile check, so the mesh is the shipped navtiles as
+	// converted, the original's own, with no rebake. nativeReport() then has no decisions.
+	bool shippedOnly = false;
+};
+struct NativeCacheStats
+{
+	std::size_t regionHits = 0; // a converted region read from the cache
+	std::size_t regionMisses = 0; // converted and written
+	std::size_t zoneHits = 0; // a zone rebake read from the cache
+	std::size_t zoneMisses = 0; // rebaked and written
+	std::size_t filesWritten = 0;
+	std::size_t bytesWritten = 0;
+	std::size_t loadFailures = 0; // corrupt, truncated or another version: deleted, logged and rebuilt
+};
+
+// One navmesh (a bake of a few zones, or a `knav_bake --out` cache file) and the movement step on
+// it: what characters at full detail need (docs/formats/SIMLINK.md section 12). Routes are one
+// Detour search over the whole mesh, so the local/long split of KnavNavigator does not exist here:
+// route and localRoute are the same. Not thread safe (one query state); the sim uses it serially.
+class MeshNavigator final : public Navigator
+{
+public:
+	explicit MeshNavigator(knav::NavMesh mesh);
+	~MeshNavigator() override; // out of line: the world-data members are forward-declared
+	// Bakes the zone cells min..max inclusive from the game data (the Hub zone takes ~3 s).
+	static std::shared_ptr<MeshNavigator> bake(const std::string& dataDir, kworld::ZoneCell min,
+		kworld::ZoneCell max, int threads);
+	// Reads a `knav_bake --out` cache file.
+	static std::shared_ptr<MeshNavigator> load(const std::string& path, const std::string& dataDir = {});
+
+	bool covers(double x, double z) const override;
+	Route route(double fromX, double fromZ, double toX, double toZ) const override;
+	std::optional<state::GroundPoint> nearestWalkable(double x, double z, double reach, double radius = 0.0) const override;
+#if KSIM_PROFILE
+	const NavStats* profileStats() const noexcept override { return &stats_; }
+#endif
+	// The route counters, kept in every build (kenshi-k16.7.62).
+	const NavStats& routeStats() const noexcept { return stats_; }
+	void noteRadiusZeroRetry() const noexcept { ++stats_.radiusZeroRetries; }
+
+	// The route from a character standing at `from` (y included, so a deck and the ground under
+	// it are told apart) to the walkable point nearest the click (toX, toY, toZ). Heights filled.
+	// With `toY` (the click's surface height, SIMLINK move_to yValid) the snap is the original's, in 3D:
+	// the closest walkable point within kClickReach of the click point. Without it the distance is
+	// horizontal and any height counts. A click off the mesh snaps ("walk as close as you can": click a
+	// rock and you walk up to it); `approach` is set when the route does not end on the clicked spot.
+	// The original accepts only a complete path (MOVE_CLICK_LIVE.md): a goal in another connected area,
+	// or one the search cannot reach, is not found (`no_route`), never a walk to the closest reachable point.
+	// `planned`: the route of a character that plans its own door steps (DOORS.md section 6): locked doors are passable
+	// in the search, because the owner unlocks them and others bash them (interact.hpp). A player's move order is not
+	// planned: a locked door is a wall to it.
+	// `body`: the character's clearance radius (CombatData::pathRadius; NAVMESH_CACHE.md "Clearance"): the route crosses
+	// only gaps a body that wide fits through and both ends are pushed off the walls. Every character route passes it;
+	// 0 is Detour's raw search, for a route no body walks (a campaign's travel estimate).
+	// `straighten`: a short route (under 300 u) keeps to the straight line over big polygons instead of Detour's portal middles
+	// (TravelFilter::straighten; NAVMESH_CACHE.md "Node placement"). On by default: the player's click, AI, follow and chase routes alike;
+	// a route over 300 u keeps Detour's placement (speed), radius 0 has none.
+	// `clickGoal`: the player's click without a height (the client sends one only from its heightmap): the goal is the ground nearest the click in xz at
+	// ITS height, not the floor level with the walker; internal callers that know the height leave it off (kenshi-k16.8.10).
+	Route routeFrom(const knav::Position& from, double toX, double toZ, std::optional<double> toY = std::nullopt,
+		bool planned = false, Body body = {}, bool straighten = true, bool clickGoal = false) const;
+	// The talk / trade approach (docs/FEATURES.md "Talk / trade approach stops on the near side of a counter"): picks the GOAL first.
+	// Candidates are navmesh points on rings round the target (tx, ty, tz) within `reach` (xz; the stopped reach) that have a clear
+	// line to it (lineClear), each pathed with routeFrom; the one with the shortest path from `from` wins. Not found (found false)
+	// when no candidate has a route: the caller falls back to routeFrom to the target itself.
+	// `body` as routeFrom: passed to every candidate's path.
+	Route routeToStand(const knav::Position& from, double tx, double ty, double tz, double reach, bool planned = false,
+		Body body = {}) const;
+	// True when a character at (ax, ay, az) can talk across to (tx, ty, tz): the straight line is on the mesh, or leaves it only for
+	// a stretch of at most kThinObstacle (a counter, a table: the mesh is inset by the agent radius) AND the walk between the two
+	// is a detour of the kind a free-standing obstacle makes (at most kDetourRatio x the straight line + kDetourSlack). A wall
+	// between rooms has the same thin gap but its way round is through a door, far longer, so it blocks.
+	// UNSURE: no wall / furniture classification exists in the navmesh; this is the stand-in.
+	bool lineClear(double ax, double ay, double az, double tx, double ty, double tz) const;
+	static constexpr double kThinObstacle = 40.0;
+	static constexpr double kDetourRatio = 3.0;
+	static constexpr double kDetourSlack = 60.0;
+
+	// How far from the mesh a clicked destination may be and still be routed to its nearest point.
+	// MEASURED (docs/reference/MOVE_CLICK_LIVE.md): the original finds a point at 347 u (diagonal) and 330 u
+	// (vertical) and refuses 354 / 340: a 335-347 bracket; 340 is the pick.
+	static constexpr double kClickReach = 340.0;
+	// A route end this close (xz) to the click counts as the clicked spot, not an approach point.
+	static constexpr double kClickExact = 0.75;
+	// How far from the mesh a walker's own start may be and still be snapped on (route()).
+	static constexpr double kEndReach = 40.0;
+
+	// Paints the door polygons of the mesh from `book` (knav::NavMesh::applyDoors): a closed door stays passable at the
+	// DoorClosed cost, a locked one is excluded from every search and slide. Changed tiles get a new tileVersion and a patch
+	// for the tile stream. Call at a tick boundary (Simulation::syncDoorPaint does).
+	void applyDoors(const knav::DoorBook& book) const override
+	{
+		mesh_.applyDoors(book);
+		++doorPaints_;
+	}
+	// Door books applied so far: a changed door changes routability (a shut gate fails routeFrom), so a failed-route ladder started before it
+	// is stale (Simulation::routeRetry, LOCOMOTION.md 9 D8).
+	std::uint64_t doorPaints() const noexcept { return doorPaints_; }
+
+	const knav::NavMesh& mesh() const noexcept { return mesh_; }
+	const knav::Walker& walker() const noexcept { return walker_; }
+
+	// ---- Streaming coverage (docs/formats/NAVMESH_CACHE.md "Streaming coverage") ----
+	// A mesh over a `knav_bake --world DIR` bake that holds only the zones it is told to (setCoverage): the sim follows the
+	// players with it (Simulation::syncNavCoverage). Starts with `initial` loaded. Throws when DIR has no region file for them.
+	// `dataDir` is unused by the walker now (no terrain snap: the navmesh point is the y, k16.8.31).
+	static std::shared_ptr<MeshNavigator> openWorld(const std::string& dir, const std::vector<kworld::ZoneCell>& initial,
+		const std::string& dataDir = {});
+	const NativeCacheStats& nativeCacheStats() const noexcept { return cacheStats_; }
+	// openNative: the resolved cache tree (empty = off).
+	const std::string& nativeCacheDir() const noexcept { return cacheTree_; }
+	// The one line per open: the hits and misses and the bytes written, so a cold start is visible.
+	void logNativeCache() const;
+
+	// The same coverage over the game's SHIPPED navtiles instead of a bake: each region is converted to Detour tiles in memory
+	// the first time a zone of it is wanted (the knav_native conversion, NAVMESH_CACHE.md "Runtime mesh"). A converted region is
+	// kept while a zone of it is resident (a returning zone is instant) and for the two most recently used regions besides (a step
+	// back across a border does not convert again); the rest are dropped, so a long walk does not grow the cache without bound.
+	// Starts with `initial` loaded; throws without the navtiles in dataDir.
+	// `gameData` is the sim's own merged data (it loaded one anyway): the stale check and the rebakes read that instead
+	// of a second copy, which costs the process one whole game data set less. Null: the loader loads its own. Either
+	// way it must live as long as the navigator.
+	static std::shared_ptr<MeshNavigator> openNative(const std::string& dataDir, const std::vector<kworld::ZoneCell>& initial,
+		std::function<void(const std::string&)> log = {}, const kdata::GameData* gameData = nullptr,
+		NativeCacheOptions cache = NativeCacheOptions{});
+
+	// ---- The original's stale-tile check (docs/formats/NAVMESH_CACHE.md "The stale-tile check in the loader") ----
+	// A shipped tile is a cache: its zone and each interior carry a hash of the world they were baked from. A zone
+	// whose recomputed hash differs from the stored one is rebaked with our recipe, its shipped world mesh and all its
+	// interiors left out; in a fresh zone a stale interior alone is rebaked, the shipped zone mesh kept. A unit whose
+	// hash cannot be verified (no stored hash, an unpaired uid, an interior whose children's gather order we do not
+	// reproduce) is rebaked too and counted apart. A rebake is our bake's tiles at the zone's (or the interior's) tile
+	// square, clipped to the same 256 u borders (kworld/navhash_source.hpp).
+	enum class NativeChoice
+	{
+		Shipped, // the stored hash matched
+		Rebaked, // the stored hash differed
+		NotComputable, // no usable hash on either side: rebaked unverified
+	};
+	struct NativeUnitReport
+	{
+		NativeChoice choice = NativeChoice::Shipped;
+		std::string reason; // empty when shipped; otherwise the hash verdict or why it could not be computed
+		std::optional<std::uint32_t> stored;
+		std::optional<std::uint32_t> ours;
+	};
+	struct NativeInteriorReport
+	{
+		std::uint64_t uid = 0; // the tile Info's hex id
+		NativeUnitReport decision;
+	};
+	struct NativeTileReport
+	{
+		kworld::ZoneCell zone{};
+		NativeUnitReport decision;
+		std::vector<NativeInteriorReport> interiors; // as shipped in the tile, in file order
+		// The tiles this decision replaced with our bake: the zone's whole square for a rebaked zone, the interior's own
+		// square in a fresh one. A polygon in one of them is ours, not the original's (ksim_nav_islands' source column).
+		std::vector<knav::TileCoord> rebaked;
+	};
+	struct NativeStaleStats
+	{
+		std::size_t zonesShipped = 0;
+		std::size_t zonesRebaked = 0; // a stale zone hash
+		std::size_t zonesNotComputable = 0; // rebaked without a verdict
+		std::size_t interiorsShipped = 0;
+		std::size_t interiorsRebaked = 0; // a stale interior hash, in a fresh zone
+		std::size_t interiorsNotComputable = 0;
+		std::size_t interiorChildOrder = 0; // ... of the not computable: children whose gather order is unknown
+		std::size_t interiorUnpaired = 0; // ... no placement for the uid
+		std::size_t interiorUnjoined = 0; // ... a layout not in interiors.level
+		std::size_t zonesScanned = 0; // zones decided so far (lazily: a zone is decided when a coverage wants it)
+		double checkMs = 0.0; // the hashes
+		double bakeMs = 0.0; // the rebakes
+	};
+	// The decision on a zone from the last conversion that saw it (nullptr when it has not been decided).
+	const NativeTileReport* nativeReport(kworld::ZoneCell zone) const;
+	const NativeStaleStats& nativeStaleStats() const noexcept { return staleStats_; }
+
+	bool streaming() const noexcept { return !worldDir_.empty() || nativeSource_; }
+	// The zones come from the shipped navtiles (openNative), not from a world bake.
+	bool native() const noexcept { return nativeSource_; }
+	// openNative: the regions (rx, rz) whose converted tiles are held now (the loader's own test/probe view).
+	std::vector<std::pair<int, int>> nativeCachedRegions() const;
+	// Most zones resident at once: kMaxResidentTiles / (18 x 18 tiles per zone).
+	static constexpr std::size_t kMaxZones = 25;
+	// What one setCoverage call did.
+	struct CoverageChange
+	{
+		std::size_t added = 0; // zones loaded
+		std::size_t removed = 0; // zones dropped
+		std::size_t tilesAdded = 0;
+		std::size_t tilesRemoved = 0;
+		std::size_t overflow = 0; // wanted zones left out for kMaxZones
+		double readMs = 0.0; // obtaining the new tiles: reading the region files, or converting the shipped navtiles
+		double applyMs = 0.0; // NavMesh::replaceTiles (Detour tiles, links, door index and paint)
+		bool changed() const noexcept { return added != 0 || removed != 0; }
+	};
+	// Makes the resident zones exactly `wanted` (the first kMaxZones of it, in the caller's priority order; zones outside the
+	// world or without shipped tiles are skipped): tiles of dropped zones leave, tiles of new zones join and link across the
+	// seams. Door paint is kept (NavMesh::replaceTiles re-applies the book). Tile versions of changed tiles go up by one, so the
+	// client's tile stream sends the new ones and removes the dropped ones. At a tick boundary only, like applyDoors; const for
+	// the same reason (the mesh is the navigator's own view). Not streaming: does nothing.
+	CoverageChange setCoverage(const std::vector<kworld::ZoneCell>& wanted) const;
+	// The resident zones, ascending by zone index.
+	std::vector<kworld::ZoneCell> coveredZones() const;
+	// A region file exists for the zone: it can be covered.
+	bool canCover(kworld::ZoneCell zone) const;
+	// Totals over all setCoverage calls.
+	const CoverageChange& coverageTotals() const noexcept { return totals_; }
+
+	// The nav cache's recipe number, and a digest of one zone's fresh bake (the canary test pins the two together:
+	// tests/ksim_nav_cache_canary.cpp). Needs openNative.
+	static std::uint32_t nativeCacheRecipe();
+	std::uint64_t bakedZoneDigest(kworld::ZoneCell zone) const;
+
+private:
+	// The stale check's inputs, loaded once by openNative (the gatherer loads the game data the audit and the rebake
+	// both read; declaration order matters: the hash source refers into the gatherer, the gatherer into the terrain).
+	void openNativeData();
+	std::vector<knav::BakedTile> bakeNativeZone(kworld::ZoneCell zone) const;
+	std::vector<knav::BakedTile> convertNativeRegion(int rx, int rz) const;
+	bool applyStaleCheck(std::vector<knav::BakedTile>& tiles, kworld::ZoneCell zone) const;
+
+	// The disk cache (docs/formats/NAVMESH_CACHE.md "Patch cache"): resolve the tree, key the entries, read and write them.
+	void openNativeCache(const NativeCacheOptions& cache);
+	std::uint64_t regionCacheKey(int rx, int rz) const;
+	std::uint64_t zoneCacheKey(kworld::ZoneCell zone, const std::vector<std::uint64_t>& interiorUids) const;
+	std::string cacheEntryPath(const char* kind, int x, int z, std::uint64_t key) const;
+	std::optional<std::vector<knav::BakedTile>> readCacheEntry(const std::string& path, const knav::NavConfig& expected,
+		const knav::TileRect& keep) const;
+	bool writeCacheEntry(const std::string& path, const knav::NavConfig& config, const std::vector<knav::BakedTile>& tiles) const;
+
+	std::string worldDir_; // the world bake (openWorld); empty otherwise
+	std::string nativeDir_; // the navtiles directory (openNative); empty otherwise
+	std::string dataDir_; // the game data directory (openNative: the stale check and its rebakes)
+	const kdata::GameData* sharedGameData_ = nullptr; // openNative: the caller's game data (not owned)
+	bool nativeSource_ = false;
+	NativeCacheOptions cacheOptions_;
+	std::string cacheTree_; // <root>/w<recipe>_<worldKey> (openNative); empty = no cache
+	mutable NativeCacheStats cacheStats_;
+	std::unique_ptr<kworld::Heightmap> terrain_;
+	std::unique_ptr<kworld::AreaGatherer> gatherer_;
+	std::unique_ptr<kworld::NavHashSource> hashSource_;
+	mutable std::vector<knav::Point> seedsDef_; // openNative: navtiles/seeds.def, read once
+	std::function<void(const std::string&)> log_;
+	mutable std::map<int, NativeTileReport> staleReports_; // openNative: by zone index, last conversion
+	mutable NativeStaleStats staleStats_;
+	mutable std::map<int, std::vector<knav::BakedTile>> nativeRegions_; // openNative: the converted tiles of each region held now
+	mutable std::vector<int> nativeRecent_; // ... in use order, most recent first (the small LRU beside the resident regions)
+	mutable std::set<int> zones_; // resident zone indices (kworld::zoneIndexOf)
+	mutable std::map<int, bool> fileOk_; // canCover answers (a stat per zone per tick would be waste)
+	mutable CoverageChange totals_;
+	// Mutable for applyDoors only: the paint is the navigator's door view, the tiles themselves never change.
+	mutable knav::NavMesh mesh_;
+	mutable std::uint64_t doorPaints_ = 0;
+	mutable NavStats stats_; // routeFrom's calls and time, for the tick profiler; the failure counters run in every build
+	Route routeFromUntimed(const knav::Position& from, double toX, double toZ, std::optional<double> toY, bool planned, Body body,
+		bool straighten, bool clickGoal) const;
+	// The connected-set label (area flags without doors) of a polygon: sets are rebuilt lazily when the mesh revision changes.
+	std::uint32_t setOf(const knav::PolyLoc& loc) const;
+	// Polygons in set `label` (as setOf).
+	std::uint32_t setSize(std::uint32_t label) const;
+	mutable std::vector<std::uint32_t> setSizes_;
+	mutable std::optional<knav::PolyComponents> sets_;
+	mutable std::uint64_t setsRevision_ = 0;
+	knav::Walker walker_;
+	knav::NavQuery query_;
+};
+
+// knav navmesh regions of a `knav_bake --world DIR` bake plus the coarse graph
+// built over them.
+class KnavNavigator final : public Navigator
+{
+public:
+	// Loads the bake regions rx0..rx1 x rz0..rz1 (inclusive, regions of 4 x 4
+	// zones) from bakeDir and builds the graph on `threads` workers. The
+	// terrain height (for the y of the route ends) comes from dataDir.
+	static std::unique_ptr<KnavNavigator> open(const std::string& dataDir,
+		const std::string& bakeDir, int rx0, int rz0, int rx1, int rz1, int threads);
+
+	// As open, but the coarse graph is read from a `knav_graph` file instead of
+	// being built (it must cover the regions: the swimmer or dry-only graph of
+	// the world bake). The way to open the whole world.
+	static std::unique_ptr<KnavNavigator> openWithGraph(const std::string& dataDir,
+		const std::string& bakeDir, int rx0, int rz0, int rx1, int rz1,
+		const std::string& graphPath);
+
+	~KnavNavigator() override;
+
+	bool covers(double x, double z) const override;
+	Route route(double fromX, double fromZ, double toX, double toZ) const override;
+	// One Detour search (bounded node pool) on the mesh of the region both ends are in,
+	// or, over a region border, on a window of tiles of both regions (cached). A goal it
+	// cannot reach is NoRoute; it is not handed to the coarse graph.
+	Route localRoute(double fromX, double fromZ, double toX, double toZ) const override;
+	std::optional<state::GroundPoint> nearestWalkable(double x, double z,
+		double reach, double radius = 0.0) const override;
+	std::optional<state::GroundPoint> nearestReachable(double x, double z, double reach,
+		double fromX, double fromZ) const override;
+
+	// Gate-aware versions: the door classes' view of `book` (applyDoors) decides which gates
+	// the route may use and which side of a gate a goal can be on. A coarse route that fails only
+	// because of a gate says DoorRefused (the ends are one connected set with every door open).
+	Route routeFor(const Traveller& who, double fromX, double fromZ, double toX,
+		double toZ) const override;
+	Route localRouteFor(const Traveller& who, double fromX, double fromZ, double toX,
+		double toZ) const override;
+	std::optional<state::GroundPoint> nearestReachableFor(const Traveller& who, double x,
+		double z, double reach, double fromX, double fromZ) const override;
+	// Repaints the door polygons of every region mesh and of the windows built later, and
+	// re-derives which connected sets a class can cross between.
+	void applyDoors(const knav::DoorBook& book) const override;
+	const knav::DoorBook& doors() const noexcept;
+	// The connected-set labels the goal picks use: the set of the polygon nearest (x, z), as the
+	// representative a traveller class can reach from there through the doors of the book;
+	// kNone off the mesh. Two points are mutually reachable on foot (barring the node pool of a
+	// long search) when their sets are equal.
+	std::uint32_t reachSet(const Traveller& who, double x, double z) const;
+	static constexpr std::uint32_t kNoSet = ~0u;
+
+	std::size_t clusterCount() const;
+	const NavStats& stats() const noexcept { return stats_; }
+#if KSIM_PROFILE
+	const NavStats* profileStats() const noexcept override { return &stats_; }
+#endif
+
+private:
+	struct Impl;
+	Route routeUntimed(const Traveller& who, double fromX, double fromZ, double toX, double toZ) const;
+	explicit KnavNavigator(std::unique_ptr<Impl> impl);
+
+	std::unique_ptr<Impl> impl_;
+	mutable NavStats stats_;
+};
+
+} // namespace ksim

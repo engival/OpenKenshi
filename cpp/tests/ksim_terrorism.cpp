@@ -5,9 +5,9 @@
 
 #include "dt27_rig.hpp"
 
-#include "ksim/crime.hpp"
-#include "ksim/placement.hpp"
-#include "ksim/rng.hpp"
+#include "ksim/law/crime.hpp"
+#include "ksim/nav/placement.hpp"
+#include "ksim/core/rng.hpp"
 
 #include <algorithm>
 #include <set>

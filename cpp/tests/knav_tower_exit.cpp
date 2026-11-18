@@ -11,8 +11,8 @@
 // somewhere on the roof, not exactly where the log rounds it), to each of the two refused ground clicks, and back up. Needs the bake
 // only, never the game install; without a region file for the Hub's zone the test is skipped (exit 77).
 
-#include "ksim/navigator.hpp"
-#include "ksim/state.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/state.hpp"
 
 #include "test_util.hpp"
 

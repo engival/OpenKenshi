@@ -2,10 +2,10 @@
 // 42262-rebirth "Border Zone", and a homeless squad is drawn by weight = w - liveCopies x totalW / (zones x pop x amount).
 // Prints the Border Zone census of newGame (seed 1) against the proportions the list asks for; KSIM_WILDERNESS_VERBOSE=1
 // prints every slot.
-#include "ksim/placement.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/wilderness.hpp"
+#include "ksim/nav/placement.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/world/wilderness.hpp"
 #include "kdata/gamedata.hpp"
 #include "kworld/coords.hpp"
 #include "kworld/gamedata.hpp"

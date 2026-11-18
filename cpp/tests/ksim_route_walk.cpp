@@ -5,8 +5,8 @@
 // (door: within kDoorNear of a door on the route; height: the leg's ends differ by > kHeightCause: stair, ramp, ledge; flat: a wall, prop or
 // mesh edge). The stall count is pinned (kPinnedStalls): it must not rise. argv[1]: the world bake, like ksim_route_soak. Exit 77 without it.
 
-#include "ksim/navigator.hpp"
-#include "ksim/simlink_scenario.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink_scenario.hpp"
 
 #include "DetourNavMesh.h"
 

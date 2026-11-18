@@ -2,8 +2,8 @@
 // files load it; the prisoner's position, read from the sim (the Fighter the CHAR_DYNAMIC snapshot is written from), is inside a solid prop's collision
 // (the cage's closed box, prop_clip.hpp) at the spawn and every second of 60 game s of the fight, and never moves. Needs the world navmesh bake
 // (argv[1], exit 77 without the Heft region).
-#include "ksim/simlink.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "prop_clip.hpp"
 #include "scenario_rig.hpp"

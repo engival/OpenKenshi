@@ -12,7 +12,7 @@ a plain distance. With the exe's Town radius (buildings::townRadius: the base by
 Q2/Q3 in BUILDINGS_SLICE - TOWN 2500, POI 437.5, ...) both bars fall inside their own town, and the walled region is a gate
 circle that no longer adds anything a town circle does not already cover.
 
-Replaced by: `CombatArena::pickTarget`'s `sameTown` (cpp/src/ksim/combat.cpp) = the same town circle via
+Replaced by: `CombatArena::pickTarget`'s `sameTown` (cpp/src/ksim/combat/combat.cpp) = the same town circle via
 `Environment::townOf`, or the same building (the admission 14099b820's place test). `hasTown` is now `myTown >= 0` alone, the
 exe's `myTown == 0 -> return 0`. See dt24_34 in ~/kinspect_bu (step 0 and step 2), FEATURES "The town crew joins a fight it
 sees" and reference/combat/ENGAGEMENT.md s13; test `ksim_town_circle`.

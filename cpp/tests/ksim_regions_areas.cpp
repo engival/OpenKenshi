@@ -3,8 +3,8 @@
 // regions at ~1 s (ARCHITECTURE.md "Threading" per-level table and
 // "Simulation").
 
-#include "ksim/region.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/world/region.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "ksim_region_test_util.hpp"
 #include "test_util.hpp"

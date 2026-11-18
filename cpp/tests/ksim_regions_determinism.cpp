@@ -7,9 +7,9 @@
 // count, with a command still queued) must reach the same hashes as the
 // uninterrupted run, and re-save to the same bytes.
 
-#include "ksim/region.hpp"
-#include "ksim/save.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/world/region.hpp"
+#include "ksim/save/save.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "ksim_region_test_util.hpp"
 #include "test_util.hpp"

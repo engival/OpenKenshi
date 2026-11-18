@@ -3,12 +3,12 @@
 // Each of those tests carries its own Game fixture on these; a new one starts here. Needs KENSHI_DATA.
 #pragma once
 
-#include "ksim/clock.hpp"
-#include "ksim/command.hpp"
-#include "ksim/newgame.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/towncircle.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/save/newgame.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/world/towncircle.hpp"
 
 #include "kworld/coords.hpp"
 #include "sim_access.hpp"

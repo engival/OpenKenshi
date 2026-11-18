@@ -1,4 +1,4 @@
-Retired 2026-11-01 (cadence follow-up 13, kinspect 48 (c)) from src/ksim/combat.cpp (Ctx::waitingRing, follow-up 12). The hold's steer was
+Retired 2026-11-01 (cadence follow-up 13, kinspect 48 (c)) from src/ksim/combat/combat.cpp (Ctx::waitingRing, follow-up 12). The hold's steer was
 off only while `pending == Defend` and the target was in the swing state. `pending` (our hub-pick field) is stale in the hold, so the servant
 after a blocked BB read as "standing" and never pushed. Replaced by Member::hold (trackPending: the exe's +0x1f4 set on the opponent's swing
 start, cleared by the holder's own swing start or the opponent's swing end; entry rule from own swing vs from a block) and holdPush (the

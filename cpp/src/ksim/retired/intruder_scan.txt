@@ -1,10 +1,10 @@
-Retired 2026-11-07 (task CH, dt24_223 section 2) from src/ksim/carry.cpp Simulation::stepIntruders and from
-src/ksim/routine_scorer.cpp's PICKUP_INTRUDERS case. The pick was a hand-written nearest scan over the arena's members:
+Retired 2026-11-07 (task CH, dt24_223 section 2) from src/ksim/combat/carry.cpp Simulation::stepIntruders and from
+src/ksim/ai/routine_scorer.cpp's PICKUP_INTRUDERS case. The pick was a hand-written nearest scan over the arena's members:
 a KO'd, uncarried, non-ally body in the resident's building, filtered by a door-ownership test (the building's door
 ownerSid had to be the resident's faction) and, in the scorer, by `alliedTo`. The exe's resolver 14099c110 reads the
 member's SENSOR LIST instead (include 0x400e, exclude 0x201), tests the body's interior against MY HOME building
 (ownerships+0x38), and takes the first hit - there is no distance test beyond the sensor range, no door test, and no
-squad claim. Replaced by worldres::pickupIntruders223 (cpp/src/ksim/world_resolvers.hpp), used by both call sites; the
+squad claim. Replaced by worldres::pickupIntruders223 (cpp/src/ksim/world/world_resolvers.hpp), used by both call sites; the
 223 plan (67 Running -> 68 LIFT_PERSON) now drives the take-out (the old state::TakeOut.phase 0 / 1 pair became the
 plan's steps).
 

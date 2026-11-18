@@ -1,4 +1,4 @@
-// Dialogue events, conditions and root selection (include/ksim/dialogue_events.hpp, docs/DIALOGUE.md 8 slice 1 steps 3 and 4), on the real data:
+// Dialogue events, conditions and root selection (include/ksim/dialogue/dialogue_events.hpp, docs/DIALOGUE.md 8 slice 1 steps 3 and 4), on the real data:
 //
 //  1. the condition coverage: which kinds the evaluator implements, which fail closed (and are counted), how many of the slice-1 roots and
 //     first lines are fully evaluable;
@@ -7,13 +7,13 @@
 //     the mugging root ("starver marks a target"), whose attack waits for the player's reply (slice 2);
 //  3. determinism: the same inputs give the same picks, a different seed does not have to, and the personality input moves the line.
 
-#include "ksim/buildings.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/crime.hpp"
-#include "ksim/dialogue_events.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/world/buildings.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/law/crime.hpp"
+#include "ksim/dialogue/dialogue_events.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "knav/walk.hpp"

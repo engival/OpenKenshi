@@ -2,7 +2,7 @@
 // no more than the tick, a save lands in the Save section, and the JSON line names every section. An OFF build checks the macros
 // compile away (the build itself is the test: Simulation has no profiler()).
 
-#include "ksim/simulation.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/loadorder.hpp"
 #include "test_util.hpp"

@@ -3,7 +3,7 @@ Retired 2026-11-02 (wilderness weight-rule slice): the placer also read the BIOM
 record (kinspect s71_static.md section 1, ccf1940): only BIOME_GROUP carries homeless spawns. Placement now uses BIOME_GROUP lists,
 then FACTION `biomes`, then the faction's other spawn areas.
 
-Removed pieces of Placer (cpp/src/ksim/placement.cpp):
+Removed pieces of Placer (cpp/src/ksim/nav/placement.cpp):
 
 	Candidate::legacy; Placer::biomes_ (kworld::BiomeMap::load(.../biomemap.png)); biomeType_ = itemTypeByName("BIOMES");
 	constructor: for (type : {groupType_, biomeType_}) for (record : byType(type)) collect(*record, type == biomeType_);

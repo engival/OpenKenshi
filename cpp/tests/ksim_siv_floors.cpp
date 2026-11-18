@@ -13,9 +13,9 @@
 //  3. the open ground outside s-IV reads building 0, floor 0.
 
 #include "knav/native.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/zones.hpp"

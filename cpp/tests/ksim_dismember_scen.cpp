@@ -3,15 +3,15 @@
 //     wound; the four limbs wear down together (they may sever on the same tick; items are made Left Arm, Right Arm, Left Leg, Right Leg), each with one ground item; head and torso are never touched (rwh97 7); the cage then lets go.
 //   - dismember_fight: the player attacks a Dust bandit whose arms are at -118; a hit takes an arm off with one ground item.
 // Needs the world navmesh bake (argv[1], exit 77 without the Heft and Hub regions).
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/scenario_file.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/save/scenario_file.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "knav/navmesh.hpp"
 #include "kworld/coords.hpp"

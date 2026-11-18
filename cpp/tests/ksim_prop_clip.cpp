@@ -4,8 +4,8 @@
 // kTolerance from every solid (k16.6.321; the runtime mesh has no erosion, so 0 u slides along a prop would show here). That margin check is
 // opt-in (KSIM_PROP_MARGIN=1) until the follow slots that rest 0-2 u from a prop are fixed: it fails today (see the bead's report). Needs the world navmesh bake (argv[1], exit 77 without the Heft
 // region); KSIM_NATIVE_NAV=1 runs it on the runtime mesh (the shipped tiles), else on the bake.
-#include "ksim/simlink.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "prop_clip.hpp"
 #include "scenario_rig.hpp"

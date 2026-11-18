@@ -2,7 +2,7 @@
 // timer floor3(((max(0, maxBlood - blood) x 0.5(3 - 2.25t) + 40) x (1 - t) x 4)) x U(0,1); an arm sever, a leg sever of a victim already down
 // or out, set none; an active hunger KO refills the timer to lerp(t, 60, 10) x U(0.25, 2) whenever it runs down to 1.
 
-#include "ksim/combat.hpp"
+#include "ksim/combat/combat.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

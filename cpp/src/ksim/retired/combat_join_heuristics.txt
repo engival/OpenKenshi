@@ -1,10 +1,10 @@
 Retired 2026-11-07 (task CF, G3/G4 combat joining): the hand-written join goals of joins::goalOf (join_rules.cpp) for 16
 ATTACK_ENEMIES, 15 PROTECT_ALLIES and 143 PROTECT_OWN_SQUAD.
 
-Replaced by: the goals' own resolvers (cpp/src/ksim/world_resolvers.hpp: attackEnemies16 14059f3a0, protectAllies15
+Replaced by: the goals' own resolvers (cpp/src/ksim/world/world_resolvers.hpp: attackEnemies16 14059f3a0, protectAllies15
 14099ca10, protectOwnSquad143 14099d510 - kinspect dt24_16 / dt24_15 / dt24_143), their registry rows and the planner
-(cpp/src/ksim/goap.cpp; the plan 40 GET_NEAR_TO -> 4 MELEE_ATTACK -> 13 ATTACK_ATTACKERS_OF -> the goal), and the arena's
-live evaluators (cpp/src/ksim/combat.cpp, Ctx::combatHolds / combatPlan / joinGoal). A pick with no plan is refused; the
+(cpp/src/ksim/ai/goap.cpp; the plan 40 GET_NEAR_TO -> 4 MELEE_ATTACK -> 13 ATTACK_ATTACKERS_OF -> the goal), and the arena's
+live evaluators (cpp/src/ksim/combat/combat.cpp, Ctx::combatHolds / combatPlan / joinGoal). A pick with no plan is refused; the
 next tick re-plans. There is no fallback to the heuristics below.
 
 What stayed in join_rules.cpp: the goal bits (bitOfTask), goal 34 ATTACK_TROUBLE_MAKERS' record test (task BZ), and the

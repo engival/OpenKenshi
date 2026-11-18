@@ -9,14 +9,14 @@
 //       captor's squad never re-engages it (the slave rule).
 // The player is the only character ordered; no NPC is told what to do. Fixture A runs without the squad AI (the bare world-squad
 // build) and B and C with it, on the server's Hub game. Needs the world bake (argv[1]); exit 77 without it.
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 #include "knav/navmesh.hpp"
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

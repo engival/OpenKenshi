@@ -1,4 +1,4 @@
-Retired 2026-11-01 (gate crews, DOORS.md section 8) from src/ksim/doors.cpp DoorSystem::update / build and state.hpp (state::Posture,
+Retired 2026-11-01 (gate crews, DOORS.md section 8) from src/ksim/nav/doors.cpp DoorSystem::update / build and state.hpp (state::Posture,
 state::TownDoors, the saved component; DoorTuning::alertHoldHours; DoorStats::alertsRaised / townHoursAlert).
 
 The first door slice (2026-10-31) had the town's gates CLOSE on an "Alert": the owner faction's intent was Defend, or a hostile

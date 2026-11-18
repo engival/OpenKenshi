@@ -11,7 +11,7 @@
 // The log receives one line per converted region, with the shipped/rebaked/unverifiable counts. Runs against the install
 // (KENSHI_DATA); exit 77 without the navtiles.
 
-#include "ksim/navigator.hpp"
+#include "ksim/nav/navigator.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

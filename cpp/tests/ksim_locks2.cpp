@@ -1,8 +1,8 @@
 // Task ds/locks-save part 2: the planner rows of the lift twins (170 / 213 / 225 / 240 / 246), 203 ARREST_TARGET, 187 _SLAVE_OBEDIENCE and 272
 // SMASH_BUILDING. Pure: a staged world of symbols and the real task registry (the lift twins' executor is the 68 lift: carry.cpp isLiftTask).
 
-#include "ksim/goap.hpp"
-#include "ksim/routines.hpp"
+#include "ksim/ai/goap.hpp"
+#include "ksim/ai/routines.hpp"
 
 #include "test_util.hpp"
 

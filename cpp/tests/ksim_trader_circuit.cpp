@@ -6,14 +6,14 @@
 //   - a dead squad costs its faction 10 prosperity, which regenerates, and nothing replaces it;
 //   - save and load in the middle of a stay give the uninterrupted run's state hash.
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/rng.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/trade.hpp"
-#include "ksim/trader.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/core/rng.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/economy/trade.hpp"
+#include "ksim/economy/trader.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

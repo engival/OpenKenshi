@@ -17,19 +17,19 @@
 // order's sub-goals) hand out; the job-to-goal table itself is not decoded (UNSURE). The executor is therefore driven here
 // through a direct state::Routine on a built world squad member, as the 112 ladder is in ksim_town_guards.
 // argv[1]: the Hub navmesh bake (KSIM_NAVWORLD).
-#include "../src/ksim/world_resolvers.hpp"
+#include "../src/ksim/world/world_resolvers.hpp"
 
-#include "ksim/clock.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/goap.hpp"
-#include "ksim/inventory_grid.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/producers.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/ai/goap.hpp"
+#include "ksim/economy/inventory_grid.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/economy/producers.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "knav/walk.hpp"

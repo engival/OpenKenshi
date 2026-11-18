@@ -17,12 +17,12 @@
 //     while the attacker never targeted it (STEALTH_CLEAR.md section 4).
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/clock.hpp"
-#include "ksim/combat.hpp"
-#include "ksim/command.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

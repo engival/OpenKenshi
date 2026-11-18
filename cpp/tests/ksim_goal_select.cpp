@@ -1,12 +1,12 @@
 // G2/G3 of the native AI runtime, phase C (task BW): the goal selector core (kinspect dt14) and the consumer resolvers a world
 // squad runs (dt15/dt16). Pure: staged Fighters and sensor records, no game data and no world.
 
-#include "ksim/crime.hpp"
-#include "ksim/goalsel.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/sensor.hpp"
+#include "ksim/law/crime.hpp"
+#include "ksim/ai/goalsel.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/ai/sensor.hpp"
 
-#include "../src/ksim/world_resolvers.hpp"
+#include "../src/ksim/world/world_resolvers.hpp"
 
 #include "test_util.hpp"
 

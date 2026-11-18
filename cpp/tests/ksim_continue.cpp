@@ -5,7 +5,7 @@
 // save, has the stand-in workload moving every squad, and saves with a
 // command still queued.
 
-#include "ksim/simulation.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/loadorder.hpp"
 

@@ -1,4 +1,4 @@
-Retired 2026-11-02 (interior membership, INTERIORS.md "Building membership") from src/ksim/carry.cpp Simulation::stepBuildings. Fighter::building
+Retired 2026-11-02 (interior membership, INTERIORS.md "Building membership") from src/ksim/combat/carry.cpp Simulation::stepBuildings. Fighter::building
 was set only by crossing a door slab on its inX / inZ side (and cleared by crossing back). A way in that does not cross the slab
 (the Storm House east ramp, a teleport, a load, a spawn, a drop) left it 0, and a wrongly signed inX (Storm House Door A: the
 probe-by-walkability rule gave the outward normal) inverted it. Replaced by a test of where the character is (the building's

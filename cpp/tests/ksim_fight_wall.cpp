@@ -9,8 +9,8 @@
 // "Crossed" is: off the mesh, or on another level than the house floor (outside, the ground is about 40 u lower).
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/combat.hpp"
-#include "ksim/navigator.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/nav/navigator.hpp"
 
 #include "kworld/gamedata.hpp"
 

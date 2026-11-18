@@ -8,14 +8,14 @@
 //     orders before the package tiers. The control is a free squadmate over the same down body: the squad does run CAPTURE_NEW_SLAVES
 //     167 over it (ksim_capture_live), so the check is not vacuous.
 // Needs the world bake (argv[1], like ksim_aggro_drop; exit 77 without it). KSIM_BW_ORDERS_VERBOSE=1 prints the timeline.
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 #include "knav/navmesh.hpp"
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

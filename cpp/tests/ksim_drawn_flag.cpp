@@ -1,8 +1,8 @@
 // CHAR_DYNAMIC kFlagDrawn is the weapon in the hand (kenshi-k16.6.132, rwh.105): scenarios/cage_prisoner, the Wanderer fights the Slaver boss and his
 // guards; the flag stays set through the fight and clears once a guard's next goal is a patrol (the plan's 7 in front of PATROL 22 / PATROL_TOWN 36),
 // the sheathed weapon staying equipped (Inventory::kSheathed, on the wire in section 0). argv[1]: the world navmesh bake (exit 77 without Heft).
-#include "ksim/simlink.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/core/simulation.hpp"
 #include "net/simlink.hpp" // client/src/net/simlink.hpp
 
 #include "scenario_rig.hpp"

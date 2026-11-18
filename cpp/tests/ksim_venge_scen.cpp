@@ -6,15 +6,15 @@
 //  - approach: the start is outside the Venge group and a beam is within the range the BEAMS frame is sent to, before the character enters;
 //  - night: nobody burns over 60 s with the world's own weather.
 // Needs the world navmesh bake (argv[1], exit 77 without the Venge region).
-#include "ksim/beams.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/placement.hpp"
-#include "ksim/scenario_file.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/weather.hpp"
+#include "ksim/world/beams.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/nav/placement.hpp"
+#include "ksim/save/scenario_file.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/world/weather.hpp"
 
 #include "knav/navmesh.hpp"
 #include "kworld/coords.hpp"

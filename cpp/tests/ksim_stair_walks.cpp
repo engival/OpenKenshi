@@ -5,10 +5,10 @@
 // The walks below are the bar's first floor behind a door and upper floors 80-110 u over the street, both ways.
 // Needs the install (KENSHI_DATA); exit 77 without it.
 
-#include "ksim/combat_data.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

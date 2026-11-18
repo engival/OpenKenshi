@@ -7,8 +7,8 @@
 //   - no candidate (the target in a hole wider than the reach): the fallback is the route to the target's own position.
 // The mesh is one tile of rectangles round omitted cells (the counter, the wall).
 
-#include "ksim/interact.hpp"
-#include "ksim/navigator.hpp"
+#include "ksim/world/interact.hpp"
+#include "ksim/nav/navigator.hpp"
 #include "knav/navmesh.hpp"
 #include "knav/travel.hpp"
 #include "knav/walk.hpp"

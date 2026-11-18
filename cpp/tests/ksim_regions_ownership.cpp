@@ -3,8 +3,8 @@
 // entity's owning region. It also checks that the flecs Region component
 // value matches the engine's owner after migration.
 
-#include "ksim/region.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/world/region.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "ksim_region_test_util.hpp"
 #include "test_util.hpp"

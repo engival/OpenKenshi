@@ -1,7 +1,7 @@
 Retired 2026-11-07 (task BW, ROADMAP item 0 C): the hand-written world-task selection of stepWorldTasks.
 
-Replaced by: the native goal selector (cpp/include/ksim/goalsel.hpp, cpp/src/ksim/goalsel.cpp) and the G3 resolvers
-(cpp/src/ksim/world_resolvers.hpp), run in Simulation::stepWorldTasks over a world squad's package goal rows (kinspect dt14, dt15,
+Replaced by: the native goal selector (cpp/include/ksim/ai/goalsel.hpp, cpp/src/ksim/ai/goalsel.cpp) and the G3 resolvers
+(cpp/src/ksim/world/world_resolvers.hpp), run in Simulation::stepWorldTasks over a world squad's package goal rows (kinspect dt14, dt15,
 dt16). A goal is now a candidate of the member's role list with its own tier, weight and hour window; the resolvers 167, 177, 183,
 260, 168, 112 and 173 replace the two hard-coded scans. The first aid effect (58 / 25) stayed.
 

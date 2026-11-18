@@ -7,13 +7,13 @@
 //   to the other admin session after save, load and delete, the order log never sees 80-83, and the save directory rules.
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/clock.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/save.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_saves.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/save/save.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_saves.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

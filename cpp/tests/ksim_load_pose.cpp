@@ -2,14 +2,14 @@
 // combat and the squad AI on runs a few seconds, is saved and loaded in place (Simulation::reload, the server's load), and the player's
 // fighter is checked at the load and a few ticks later: not down, not KO'd, no prone flag on the wire, the same ground height. Needs the
 // world navmesh bake (argv[1], exit 77 without).
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/newgame.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/save/newgame.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/coords.hpp"

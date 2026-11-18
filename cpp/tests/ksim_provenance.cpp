@@ -3,8 +3,8 @@
 
 #include "dt27_rig.hpp"
 
-#include "ksim/inventory_grid.hpp"
-#include "ksim/save.hpp"
+#include "ksim/economy/inventory_grid.hpp"
+#include "ksim/save/save.hpp"
 
 #include <cstdio>
 

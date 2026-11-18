@@ -7,15 +7,15 @@
 //   - no terminal state: over several game hours every promoted member always has a goal, and the book agrees with the Routines;
 //   - release: death and demotion free the claim.
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/inventory_grid.hpp"
-#include "ksim/producers.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/economy/inventory_grid.hpp"
+#include "ksim/economy/producers.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

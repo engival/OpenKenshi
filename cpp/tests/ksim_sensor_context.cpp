@@ -4,9 +4,9 @@
 // updateHostility builds) the flags follow the data. The scenario here sets the relations itself, so the test pins the wiring, not
 // the vanilla relation table (that one is ksim_sensor_bits' staged table and ksim_factionrel's).
 
-#include "ksim/sensor.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/state.hpp"
+#include "ksim/ai/sensor.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/state.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

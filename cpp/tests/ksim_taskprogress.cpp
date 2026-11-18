@@ -3,13 +3,13 @@
 // characters at once, the client's extrapolation against the sim, save, load and continue mid-lockpick.
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/door_plan.hpp"
-#include "ksim/goap.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/prospect.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/nav/door_plan.hpp"
+#include "ksim/ai/goap.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/world/prospect.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

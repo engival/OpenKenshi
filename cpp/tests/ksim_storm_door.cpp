@@ -2,9 +2,9 @@
 // leave through the door, it grinds against the frame, and the route in zig-zags. PROBE: prints routes and walks.
 // argv[1]: the navworld bake directory (exit 77 without the region file).
 
-#include "ksim/navigator.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "knav/navmesh.hpp"
 #include "kworld/coords.hpp"

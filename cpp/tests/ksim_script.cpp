@@ -1,8 +1,8 @@
-// The sandboxed Lua host (include/ksim/script.hpp): what a script can and cannot
+// The sandboxed Lua host (include/ksim/core/script.hpp): what a script can and cannot
 // reach, the instruction and memory budgets, error reporting, the data boundary and
 // reproducible iteration order. No game data needed.
 
-#include "ksim/script.hpp"
+#include "ksim/core/script.hpp"
 
 #include "test_util.hpp"
 

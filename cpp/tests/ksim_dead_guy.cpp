@@ -4,23 +4,23 @@
 //   - the registry: 138 is a goal on IS_CARRYING_TARGET that effects isCarriedDudeDead, planned [67, 68, 138];
 //   - live, over the real Heft world: a world squad whose package carries 138 walks to a corpse and lifts it (beginInteract Carry).
 
-#include "ksim/crime.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/sensor.hpp"
+#include "ksim/law/crime.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/ai/sensor.hpp"
 
-#include "../src/ksim/world_resolvers.hpp"
+#include "../src/ksim/world/world_resolvers.hpp"
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/goap.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/trader.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/ai/goap.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/economy/trader.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

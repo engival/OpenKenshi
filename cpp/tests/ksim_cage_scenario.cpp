@@ -3,8 +3,8 @@
 // the cage (cageBuilding, at its slot, locked: CHAR_STATS state 5 with the cage's lock level, the value the wire sends); over 60 game seconds nothing
 // shoots, hits, knocks out or targets it, while the slavers do fight the free Wanderer; a `cage=` the world has no free cage for is refused at load.
 // Needs the world navmesh bake (argv[1], exit 77 without the Heft region).
-#include "ksim/simlink.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "scenario_rig.hpp"
 #include "sim_access.hpp"

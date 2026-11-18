@@ -10,7 +10,7 @@
 //  - the state-6 wait ring takes n = the TARGET's engaged list + its last-step refusals (never the waiter's own slots): 7 on 1 with
 //    5 engaged and 4 refused gives n = 9 (inner 17.25, outer 52 before the follow offset).
 
-#include "ksim/combat.hpp"
+#include "ksim/combat/combat.hpp"
 
 #include "kworld/gamedata.hpp"
 

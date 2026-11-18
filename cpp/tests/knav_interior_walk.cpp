@@ -6,8 +6,8 @@
 // character is inside the building: y within 3 u of the floor (1174.75), no tick moves it by more than a stair step; the door's ramp (outside the interior
 // mask) is only bounded. It passes on the base too: it guards the sim's y, it does not discriminate.
 // Needs the world navmesh bake (argv[1], exit 77 without the Heft region).
-#include "ksim/simlink.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "scenario_rig.hpp"
 #include "sim_access.hpp"

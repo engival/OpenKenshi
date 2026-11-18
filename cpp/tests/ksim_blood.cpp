@@ -1,8 +1,8 @@
-// Ground-blood trackers (ksim/bloodtrail.hpp; SIMLINK events 2, 16, 17): a KO'd bleeder lying still grows a
+// Ground-blood trackers (ksim/combat/bloodtrail.hpp; SIMLINK events 2, 16, 17): a KO'd bleeder lying still grows a
 // monotonic pool capped at 2; a dragged one smears; a standing one that does not move sends no drops; a walking
 // one does; the pool restarts after a move; the dead freeze; determinism.
 
-#include "ksim/bloodtrail.hpp"
+#include "ksim/combat/bloodtrail.hpp"
 
 #include "test_util.hpp"
 

@@ -1,17 +1,17 @@
 // ksim_skin_harvest (kenshi-cym.28, rwh.97): the Skin Bandits' skin-harvest chain. PROBE (SkinHouse, KSIM_SKINHOUSE).
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/save_import.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/soak.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/save/save_import.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/soak.hpp"
 #include "kworld/loadorder.hpp"
 #include "test_util.hpp"
 
 #include <cstdlib>
-#include "ksim/towncircle.hpp"
+#include "ksim/world/towncircle.hpp"
 #include <iostream>
 
 #ifndef KENSHI_DATA

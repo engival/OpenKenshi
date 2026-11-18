@@ -2,7 +2,7 @@
 // checked are the live ones: hunger per game hour M / T, the bandage pool rate for skill 19.33 and a quality-5 kit
 // (5.06 / s, live 5.06), the kit drain 1.63 / s (live 1.65), the order head, chest, arm, clotting at the data's rate.
 
-#include "ksim/simulation.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 

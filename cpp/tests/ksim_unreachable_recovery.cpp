@@ -8,11 +8,11 @@
 // The mesh is built in the test (no game data beyond the fighters' own): a 4 u grid with one row omitted, like
 // ksim_chase_stuck.
 
-#include "ksim/combat.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "knav/navmesh.hpp"
 #include "knav/travel.hpp"

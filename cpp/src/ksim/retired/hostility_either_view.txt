@@ -1,4 +1,4 @@
-Retired 2026-11-07 (task BV, kinspect dt11): the "either view" hostility test in cpp/src/ksim/residents.cpp.
+Retired 2026-11-07 (task BV, kinspect dt11): the "either view" hostility test in cpp/src/ksim/world/residents.cpp.
 
 Replaced by: the directional relation test in worldTeam (residents.cpp) and the directional hostile set in Simulation::stepCombat (simulation.cpp):
 an enemy only when MY faction's relation to the target is at or below FactionBook::kHostile (-30), or the target carries a personal enemy tag

@@ -1,10 +1,10 @@
 // Task ds/ranged S2: the ranged goals. The planner rows 262 / 263 / 266 / 264 / 235 (a crossbow hand plans [262], a melee hand keeps its melee
 // plan), and an NPC with a crossbow at range: its attack runs as the ranged task, it shoots from where it stands and never closes to melee.
 
-#include "ksim/combat.hpp"
-#include "ksim/goap.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/ai/goap.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 

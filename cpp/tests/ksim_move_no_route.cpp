@@ -1,12 +1,12 @@
 // A move order onto walkable ground inside a crowded building is not refused (kenshi-h2v.25, the user's bar_lure capture of 2026-11-11:
 // the Rebel Base "Storm House", ten clicks all no_route). Needs the world bake: argv[1] is its directory; without it the test is skipped (exit 77).
 
-#include "ksim/combat_data.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/scenario_file.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/placement.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/save/scenario_file.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/nav/placement.hpp"
 
 #include "kworld/loadorder.hpp"
 

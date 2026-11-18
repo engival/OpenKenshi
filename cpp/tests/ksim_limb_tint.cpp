@@ -8,10 +8,10 @@
 
 #include "dt27_rig.hpp"
 
-#include "ksim/navigator.hpp"
-#include "ksim/save.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/save/save.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
 
 #include <cstdio>
 #include <cstring>

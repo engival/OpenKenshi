@@ -1,12 +1,12 @@
 // ksim_soak: runs the squad AI on the default world for N game-days and
-// reports the soak metrics (include/ksim/soak.hpp).
+// reports the soak metrics (include/ksim/core/soak.hpp).
 //
 //   ksim_soak --bake DIR [--regions RX0 RZ0 RX1 RZ1] [--days N] [--seed N]
 //             [--graph FILE] [--workers N] [--log N] [--save PATH]
 //             [--import-save SAVEDIR] [--csv BASE] [--token-speeds on|off] [--offscreen-medical on|off] [--offscreen-fights on|off] [--campaign-victory-ai on|off] [--npc-raids on|off] [--player-nav on|off]
 //
 // --csv BASE writes the living-world CSVs, one row per game-hour: BASE.csv (world totals) and BASE.factions.csv (per faction) and BASE.player.csv (each player squad member).
-// --import-save SAVEDIR starts from an original Kenshi save (ksim/save_import.hpp, SAVE_IMPORT.md) instead of a new game's world: the squads and
+// --import-save SAVEDIR starts from an original Kenshi save (ksim/save/save_import.hpp, SAVE_IMPORT.md) instead of a new game's world: the squads and
 // the world state as the save has them, at the save's clock; the CSV hours count from there. The combat data is loaded for it.
 // --token-speeds is the living-world setting ai.token_speeds (COMBAT_OPTIONS.md 7), --offscreen-medical world.offscreen_medical (8); one
 // flag per such setting, off by default.
@@ -22,16 +22,16 @@
 // of the same bake (the swimmer or the dry-only graph; the graph is read, not
 // built). With no player area every squad runs at Squad/Strategic level.
 
-#include "ksim/behaviours.hpp"
-#include "ksim/cli.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/dialogue_book.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/save_import.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/soak.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/cli.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/dialogue/dialogue_book.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/save/save_import.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/soak.hpp"
 
 #include "kworld/loadorder.hpp"
 

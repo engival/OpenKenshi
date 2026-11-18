@@ -12,11 +12,11 @@
 //     crossings and squad losses wake a script; its typed fields are saved;
 //  4. 1 = 4 workers and save + load + run == the uninterrupted run, scripts on.
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/loadorder.hpp"

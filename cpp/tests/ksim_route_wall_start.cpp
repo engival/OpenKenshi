@@ -2,7 +2,7 @@
 // 2026-11-17 (order seq 211: a click 11 u away on open floor gave a route whose first point lay 17 u behind the character) and the sideways
 // moves along the inside of the wall that left the building. argv[1]: the navworld bake directory (exit 77 without the region file).
 
-#include "ksim/navigator.hpp"
+#include "ksim/nav/navigator.hpp"
 
 #include "knav/navmesh.hpp"
 #include "kworld/coords.hpp"

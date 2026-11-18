@@ -1,4 +1,4 @@
-Retired 2026-10-31 from src/ksim/navigator.cpp (MeshNavigator::routeFrom). The original accepts only a complete
+Retired 2026-10-31 from src/ksim/nav/navigator.cpp (MeshNavigator::routeFrom). The original accepts only a complete
 path (docs/reference/MOVE_CLICK_LIVE.md): a goal in another connected area is refused, so the "walk to the closest
 reachable point when Detour's path is partial" branch is gone. Kept for reference only; not built.
 

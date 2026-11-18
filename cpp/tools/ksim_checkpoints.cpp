@@ -8,16 +8,16 @@
 // --kscen runs scenarios/NAME.kscen (default spectate_fight); --import-save runs the original's own save (saveimport::importSave, snapFull on) and finds the two
 // fighting squads by their factions near the fight. Writes PREFIX.jsonl (the checkpoints) and PREFIX.sides.csv (per sim second: each squad's members on its own side of the
 // bisector between the squad centroids, and the centroid gap). --seconds is the sim seconds to run (default 300 = the original's 60 wall s at speed 5).
-#include "ksim/combat.hpp"
-#include "ksim/combat_data.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/combat/combat_data.hpp"
 #include "ksim/dev/checkpoint_log.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/save_import.hpp"
-#include "ksim/scenario_file.hpp"
-#include "ksim/server_ai.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/save/save_import.hpp"
+#include "ksim/save/scenario_file.hpp"
+#include "ksim/ai/server_ai.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/coords.hpp"
 #include "kworld/loadorder.hpp"

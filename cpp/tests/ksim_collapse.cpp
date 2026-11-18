@@ -6,11 +6,11 @@
 // recomputed, never a timer); a severed limb fires the same writer (3.0 floor) and leaking. Needs the Hub navmesh cache
 // (argv[1]; the knav_cache fixture).
 
-#include "ksim/clock.hpp"
-#include "ksim/combat.hpp"
-#include "ksim/command.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 

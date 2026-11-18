@@ -4,10 +4,10 @@
 // means 125 units. Checked: blood regenerates while KO'd; a shallow KO wakes and is re-KO'd without a hit and dies; a deep KO
 // never wakes and dies; a vital part above 0 sinks at 1/4 of the negative rate.
 
-#include "ksim/combat.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 

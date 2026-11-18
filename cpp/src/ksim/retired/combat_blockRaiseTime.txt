@@ -1,4 +1,4 @@
-Retired 2026-10-31 from src/ksim/combat_rules.cpp and include/ksim/combat.hpp (CombatRules::blockRaiseTime).
+Retired 2026-10-31 from src/ksim/combat/combat_rules.cpp and include/ksim/combat/combat.hpp (CombatRules::blockRaiseTime).
 Replaced by the exe's rule (docs/reference/combat/BLOCK_TIMING_LIVE.md): a block holds iff the direction matches and
 the technique's clip progress is > 0.5 (CombatClass::resolveIncomingHit 140665fa0), i.e. raise time = 0.5 x clip
 length / (defender clip speed x anim speed mult). The per-technique constants below were fits to 453 resolves.

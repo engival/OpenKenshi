@@ -2,11 +2,11 @@
 // knockout clip and rolls; success puts the victim down for the forced-KO time and pays Assassination XP, failure is an assault that makes the
 // victim notice, and a victim that faces the assassin, or knows it, is not knocked out. The order answers the reasons an order 60 would.
 
-#include "ksim/combat.hpp"
-#include "ksim/carry.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/stealth_ko.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/combat/carry.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/combat/stealth_ko.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

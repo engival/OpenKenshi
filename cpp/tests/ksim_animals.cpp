@@ -5,8 +5,8 @@
 
 #include "dt27_rig.hpp"
 
-#include "ksim/combat_data.hpp"
-#include "ksim/routines.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/ai/routines.hpp"
 
 namespace {
 

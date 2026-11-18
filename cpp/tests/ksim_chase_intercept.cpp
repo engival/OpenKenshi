@@ -3,10 +3,10 @@
 // and one NPC ordered to attack it, a slower and a faster chaser. The slower half is compared with rwh108 section 4 (live: heading error 1.7 mean / 0.6
 // median against the predicted point, 22.7 / 12.4 against the current position); the faster half is CODE-DERIVED in the original (rwh108 section 8,
 // not captured), so the numbers here are our pin.
-#include "ksim/combat.hpp"
-#include "ksim/command.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/coords.hpp"
 #include "nav_source.hpp"

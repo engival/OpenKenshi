@@ -22,11 +22,11 @@
 #include "kworld/towns.hpp"
 #include "kworld/zones.hpp"
 
-#include "ksim/interact.hpp"
-#include "ksim/los.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/world/interact.hpp"
+#include "ksim/nav/los.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "test_util.hpp"
 

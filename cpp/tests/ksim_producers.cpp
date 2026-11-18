@@ -3,13 +3,13 @@
 // Hub navmesh) are worked through the very same function; nothing here names an ore except to look one up in the data.
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/inventory_grid.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/producers.hpp"
-#include "ksim/save.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/economy/inventory_grid.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/economy/producers.hpp"
+#include "ksim/save/save.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/coords.hpp"
 #include "kworld/gamedata.hpp"

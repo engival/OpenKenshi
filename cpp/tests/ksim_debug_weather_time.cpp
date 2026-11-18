@@ -4,14 +4,14 @@
 // release picks fresh, a time set jumps forward and its send carries CLOCK, and every refusal carries its reason. The hold
 // is not saved; the options are (state::WorldOptions).
 
-#include "ksim/clock.hpp"
-#include "ksim/combat.hpp"
-#include "ksim/combat_data.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/combat/combat_data.hpp"
 #include "ksim/debugview/enums.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/state.hpp"
-#include "ksim/weather.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/state.hpp"
+#include "ksim/world/weather.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

@@ -6,11 +6,11 @@
 //     unique special items survive every wipe and are never re-created, what a player sold in is wiped;
 //   - save and load in the middle of a timer give the uninterrupted run's state hash.
 
-#include "ksim/rng.hpp"
-#include "ksim/save.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/trade.hpp"
-#include "ksim/trader.hpp"
+#include "ksim/core/rng.hpp"
+#include "ksim/save/save.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/economy/trade.hpp"
+#include "ksim/economy/trader.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

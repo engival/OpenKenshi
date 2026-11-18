@@ -2,14 +2,14 @@
 // as ksim_server runs it, one Session; the ORDER frame the client sends (attack, id 2). kFlagCombat stays clear and the walk is one move from the order
 // until in range. argv[2]: ticks the scenario runs before the order (0: the boss 300 u away; 177: the client's run, the boss walking at the player).
 // Needs the world bake (argv[1]; exit 77 without).
-#include "ksim/combat_data.hpp"
-#include "ksim/scenario_file.hpp"
-#include "ksim/server_ai.hpp"
-#include "ksim/simdata.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/placement.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/save/scenario_file.hpp"
+#include "ksim/ai/server_ai.hpp"
+#include "ksim/core/simdata.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/nav/placement.hpp"
 
 #include "kworld/coords.hpp"
 #include "kworld/loadorder.hpp"

@@ -2,8 +2,8 @@
 // 231, 232, 238, 259, 261, 277, 278, 279), from the registry facts of dt24_plantasks / dt24_47 / dt24_eat / dt24_131. Pure: a staged world of
 // symbols and the real task registry. The rows are orderOnly, so the chains that already have providers for their symbols keep their plans.
 
-#include "ksim/goap.hpp"
-#include "ksim/routines.hpp"
+#include "ksim/ai/goap.hpp"
+#include "ksim/ai/routines.hpp"
 
 #include "test_util.hpp"
 

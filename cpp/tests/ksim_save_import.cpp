@@ -7,15 +7,15 @@
 // Stage 3a (kenshi-cym.3): the same hand-written save carries the world-wide records (clock, money, finished research, two factions with relations and prosperity,
 // towns with an owner and a `replacementTown`, one weather slot, a bounty on the player's member), each checked where our save keeps it. The real save (the
 // SkinHouse folder, never in the repo; KSIM_SKINHOUSE) is checked against values read by tools/ksave.py when it is given.
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/save.hpp"
-#include "ksim/save_import.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/soak.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/save/save.hpp"
+#include "ksim/save/save_import.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/soak.hpp"
 
 #include "kdata/format.hpp"
 #include "kworld/gamedata.hpp"

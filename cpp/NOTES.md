@@ -290,18 +290,18 @@ hash. The game install is read-only; no `kdata`/`kworld` files were changed.
 ## Layout
 
 ```
-include/ksim/templates.hpp    template components + relation types (ksim::tmpl)
-include/ksim/state.hpp        instance components, Id, Clock (ksim::state)
-include/ksim/detail.hpp       DetailLevel / Detail
-include/ksim/clock.hpp        tick length, game day/hour, new-game start
-include/ksim/rng.hpp          RngStream, streamSeed, stream numbers
-include/ksim/spawn.hpp        spawnDefaultWorld (default-world rules)
-include/ksim/save.hpp         runtime save v0, stateHash
-include/ksim/snapshot.hpp     squad JSON snapshot
-include/ksim/world.hpp        World::load, stringID lookup, counts
-include/ksim/simulation.hpp   fixed tick, detail systems, RNG, commands, hash
-src/ksim/world.cpp            prefab/relationship construction, placement
-src/ksim/simulation.cpp       scheduler, command queue, per-subsystem RNG
+include/ksim/core/templates.hpp    template components + relation types (ksim::tmpl)
+include/ksim/core/state.hpp        instance components, Id, Clock (ksim::state)
+include/ksim/core/detail.hpp       DetailLevel / Detail
+include/ksim/core/clock.hpp        tick length, game day/hour, new-game start
+include/ksim/core/rng.hpp          RngStream, streamSeed, stream numbers
+include/ksim/world/spawn.hpp        spawnDefaultWorld (default-world rules)
+include/ksim/save/save.hpp         runtime save v0, stateHash
+include/ksim/save/snapshot.hpp     squad JSON snapshot
+include/ksim/world/world.hpp        World::load, stringID lookup, counts
+include/ksim/core/simulation.hpp   fixed tick, detail systems, RNG, commands, hash
+src/ksim/world/world.cpp            prefab/relationship construction, placement
+src/ksim/core/simulation.cpp       scheduler, command queue, per-subsystem RNG
 tools/ksim_stats.cpp          counts + load time + VmRSS
 tools/ksim_run.cpp            new game / --load, date, squads per faction,
                               --save, --snapshot, --ticks
@@ -540,7 +540,7 @@ drivers; save the RNG streams; one tick counter; `SetFactionRelation` writes
   interval divides the **absolute Clock tick** (phase survives a load) ->
   region engine phases 1/2 + boundary mirror -> scheduler mirror.
   `tickCount()` is gone; `clockTick()` is the only counter.
-- **One command type** (`include/ksim/command.hpp`): plain data naming
+- **One command type** (`include/ksim/core/command.hpp`): plain data naming
   instances by `state::Id`, tick-stamped (`enqueue` stamps
   `max(tick, clock + 1)`), saved in the save trailer. Types:
   `SetFactionRelation` (FactionState Ids -> `state::Relation` pair; template
@@ -586,7 +586,7 @@ Noted, not fixed:
 
 # ksim regions (region-owned two-phase tick)
 
-Implemented in `include/ksim/region.hpp` and `src/ksim/region.cpp`; tests are
+Implemented in `include/ksim/world/region.hpp` and `src/ksim/world/region.cpp`; tests are
 `tests/ksim_regions_*.cpp`. `kdata` and `kworld` are unchanged.
 
 ## Design

@@ -8,7 +8,7 @@
 // The routes: the Longhouse case, the Storm House door's legs (ksim_storm_door's points) and 24 seeded routes round the Hub bar.
 // Needs the world mesh only; without the Longhouse zone's region file the test is skipped (exit 77).
 
-#include "ksim/navigator.hpp"
+#include "ksim/nav/navigator.hpp"
 
 #include "knav/navmesh.hpp"
 #include "kworld/coords.hpp"

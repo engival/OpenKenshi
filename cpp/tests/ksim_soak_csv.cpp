@@ -3,12 +3,12 @@
 // same state hash with and without it).
 // argv[1]: the world bake (`knav_bake --world DIR`, the world_sample fixture). Exit 77 without it.
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/soak.hpp"
-#include "ksim/spawn.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/soak.hpp"
+#include "ksim/world/spawn.hpp"
 
 #include "kworld/loadorder.hpp"
 

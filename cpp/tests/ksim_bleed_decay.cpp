@@ -21,8 +21,8 @@
 // UNSURE: the exe's decay mechanism is a fit (a linear per-wound clot at the cadence above); the data names
 // (`bleeding clot rate`, `bleed rate`) are the likely inputs, not a traced path.
 
-#include "ksim/clock.hpp"
-#include "ksim/combat.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat.hpp"
 
 #include "kworld/gamedata.hpp"
 

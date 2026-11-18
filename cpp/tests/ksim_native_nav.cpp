@@ -11,8 +11,8 @@
 // both the shipped zones around it and the rebaked Hub stream through the same mesh. Runs against the install
 // (KENSHI_DATA); exit 77 without the navtiles.
 
-#include "ksim/navigator.hpp"
-#include "ksim/simlink_scenario.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink_scenario.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

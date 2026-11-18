@@ -3,9 +3,9 @@
 // the target has been unsensed for more than 12 U = 13.2 game minutes (or the chaser stands within 60 u of the record's position),
 // with EV_GIVE_UP_CHASE (whose dialogues all go home). Timed in game minutes: a game day is kGameDaySeconds = 1440 game minutes.
 
-#include "ksim/combat.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 

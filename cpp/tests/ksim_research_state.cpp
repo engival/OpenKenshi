@@ -3,9 +3,9 @@
 // locked with that reason, a record above the tech level is locked with that one; a requirement chain lists only the first link; a level upgrade
 // raises the tech level. KSIM_RESEARCH_VERBOSE=1 prints the census.
 
-#include "ksim/newgame.hpp"
-#include "ksim/recipes.hpp"
-#include "ksim/research.hpp"
+#include "ksim/save/newgame.hpp"
+#include "ksim/economy/recipes.hpp"
+#include "ksim/economy/research.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

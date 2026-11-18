@@ -4,8 +4,8 @@
 // +5 / +10 beat every other enemy otherwise): the number of target changes must be clearly higher at 0 than at 1.0 (both counts are printed). The scenario header's
 // `retarget_hold=S` field parses and a value out of range is refused.
 
-#include "ksim/combat.hpp"
-#include "ksim/scenario_file.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/save/scenario_file.hpp"
 
 #include "kworld/gamedata.hpp"
 

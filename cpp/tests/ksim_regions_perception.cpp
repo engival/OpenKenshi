@@ -2,8 +2,8 @@
 // exactly as it would in a single-region run. The strip is a spatial-query
 // acceleration, not a visibility limit (ARCHITECTURE.md "Threading").
 
-#include "ksim/region.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/world/region.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "ksim_region_test_util.hpp"
 #include "test_util.hpp"

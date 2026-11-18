@@ -6,9 +6,9 @@
 //   - the miner's approach route for OPERATE_MACHINERY 87 ends at the original's approach point (65 u from the origin), beside the rocks;
 // The cut area and the cover area are printed.
 
-#include "ksim/interact.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/state.hpp"
+#include "ksim/world/interact.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/state.hpp"
 
 #include "knav/native.hpp"
 

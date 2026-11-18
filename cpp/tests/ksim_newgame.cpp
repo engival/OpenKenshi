@@ -8,14 +8,14 @@
 
 #include "net/simlink.hpp" // the client's decoder (client/src), compiled in unchanged
 
-#include "ksim/clock.hpp"
-#include "ksim/creator.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/save.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_saves.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/save/creator.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/save/save.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_saves.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

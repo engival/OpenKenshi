@@ -4,13 +4,13 @@
 // The expected times are summed from the same circles along the line, so the test checks the rule and the constants, not the layer's
 // arithmetic twice. Straight-line navigator: no navmesh, no bake. The world's own hashes with the setting off are the other tests'.
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/spawn.hpp"
-#include "ksim/towncircle.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/world/spawn.hpp"
+#include "ksim/world/towncircle.hpp"
 
 #include "kworld/loadorder.hpp"
 

@@ -1,4 +1,4 @@
-// The dialogue book (include/ksim/dialogue_book.hpp, docs/DIALOGUE.md 8 slice 1 steps 1 and 2):
+// The dialogue book (include/ksim/dialogue/dialogue_book.hpp, docs/DIALOGUE.md 8 slice 1 steps 1 and 2):
 //
 //  1. the compile reproduces the census of docs/reference/DIALOGUE_DATA.md (1,890 dialogues, 22,783 lines,
 //     293 packages, 10,938 + 13 condition refs over 69 kinds, 5,011 effects over 51 kinds ...); numbers the
@@ -9,7 +9,7 @@
 //
 // tests/ksim_py/dialogue_compare.py (ksim_dialogue_compare) checks the same sets against tools/dialogue.py.
 
-#include "ksim/dialogue_book.hpp"
+#include "ksim/dialogue/dialogue_book.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

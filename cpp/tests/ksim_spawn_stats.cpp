@@ -3,7 +3,7 @@
 // and `stats randomise` 3; kinspect crowd_melee measured the exe's Dust bandits at strength ~7-13 and 50-92% load. Reading the 0
 // literally gave every spawned bandit strength 1 at 150%+ load. A CHARACTER with a STATS record keeps reading that record.
 
-#include "ksim/combat_data.hpp"
+#include "ksim/combat/combat_data.hpp"
 #include "kdata/format.hpp"
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

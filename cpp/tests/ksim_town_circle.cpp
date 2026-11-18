@@ -4,10 +4,10 @@
 // stands 356 u from the Hub's centre and the Rebel Base's bar 187 u from the Rebel Base's centre. The bar fixtures' joins (goal 34's
 // `getTown(t) == myTown`) and the 144 home ring read these circles, so the test pins both bars inside their towns.
 
-#include "ksim/combat_data.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/state.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/state.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

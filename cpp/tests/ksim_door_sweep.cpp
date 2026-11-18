@@ -16,9 +16,9 @@
 //       on a build without k16.6.229's recipe 5).
 // Cold and cached wall times and the peak RSS are printed. Exit 77 without the navtiles.
 
-#include "ksim/combat_data.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/coords.hpp"

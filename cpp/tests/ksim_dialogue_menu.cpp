@@ -18,14 +18,14 @@
 // squad for the bandits), the Hold-policy hash comparison (no pause_policy option forces Hold for a Freeze dialogue), and row 3's
 // uninterrupted-hash equality (the grace's Hold ticks are real sim time, so only an instantaneous reconnect would match).
 
-#include "ksim/clock.hpp"
-#include "ksim/command.hpp"
-#include "ksim/dialogue_book.hpp"
-#include "ksim/dialogue_events.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/dialogue/dialogue_book.hpp"
+#include "ksim/dialogue/dialogue_events.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/heightmap.hpp"

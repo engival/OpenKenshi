@@ -6,8 +6,8 @@
 // The per-member decision trace (Simulation::setDecisionTrace, decision_trace.hpp) also lands here: a ring of the last 8 picks per
 // member, read by DEBUG_QUERY kind 1's decisions subtree.
 
-#include "ksim/ai.hpp"
-#include "ksim/decision_trace.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/decision_trace.hpp"
 
 #include <cstdint>
 #include <functional>

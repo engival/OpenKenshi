@@ -14,7 +14,7 @@
 //    the slab at the impact frame and is hit; a slide begun at the start or at 0.5 s is 19+ u off the line by then and the swing
 //    whiffs (nothing enters the swing's hit list).
 
-#include "ksim/combat.hpp"
+#include "ksim/combat/combat.hpp"
 
 #include "kworld/gamedata.hpp"
 

@@ -6,7 +6,7 @@
 // log; the game's RNG cannot be replayed, so those are distributions. The table printed at the
 // end is the validation table of docs/reference/combat/IMPLEMENTATION.md.
 
-#include "ksim/combat.hpp"
+#include "ksim/combat/combat.hpp"
 
 #include "kworld/gamedata.hpp"
 

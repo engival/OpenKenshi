@@ -1,4 +1,4 @@
-Retired 2026-10-31 (faction kinds for the door planner, DOORS.md section 6) from src/ksim/interact.cpp Simulation::stepDoorSteps.
+Retired 2026-10-31 (faction kinds for the door planner, DOORS.md section 6) from src/ksim/world/interact.cpp Simulation::stepDoorSteps.
 At a locked door a non-owner bashed if its faction was hostile to the owner (relation <= -30, a factionless actor counted as
 hostile), whatever it held, and waited otherwise. Replaced by planDoorAccess (door_plan.hpp): bash needs a weapon in hand, a door
 that is not allied and (for a non-hostile owner) a law / military / slave / slaver / bandit faction kind; empty hands may pick the

@@ -1,9 +1,9 @@
 // The steal chance (crime.hpp stealChance, kenshi-rwh.163, CRIME_STATIC.md "Steal chance"): the formula per factor, inspecting an owned
 // container as no crime, and the GUI take's roll (a forced failure aborts the take with theft 3 + event 8; a forced pass takes the item).
 
-#include "ksim/clock.hpp"
-#include "ksim/crime.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/law/crime.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

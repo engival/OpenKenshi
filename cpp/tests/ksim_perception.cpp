@@ -2,10 +2,10 @@
 // numbers, the scan on hand-built fighters (ranges by day, night, dust and indoors; cone edges; noise; the sneak meter; memory),
 // and the arena with a save and load in the middle of a meter.
 
-#include "ksim/combat.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/perception.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/ai/perception.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 

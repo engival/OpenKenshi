@@ -3,17 +3,17 @@
 // goal, walks toward it (the raid order its own planner gives, the group layer's Raid candidate). An unknown template, a spawn
 // off the navmesh and the view switched off all answer squad 0 with a reason.
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/combat.hpp"
-#include "ksim/combat_data.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/combat/combat_data.hpp"
 #include "ksim/debugview/enums.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/state.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/state.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

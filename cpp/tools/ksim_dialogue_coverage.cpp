@@ -1,4 +1,4 @@
-// ksim_dialogue_coverage: what the dialogue compile (include/ksim/dialogue_book.hpp) saw in the game data and
+// ksim_dialogue_coverage: what the dialogue compile (include/ksim/dialogue/dialogue_book.hpp) saw in the game data and
 // what it dropped, in the shape of tools/dialogue.py stats / docs/reference/DIALOGUE_DATA.md.
 //
 //   ksim_dialogue_coverage [--data DIR]                 the census
@@ -9,7 +9,7 @@
 //                                                       SPEC = key=value,... of personality leader female robot trader
 //                                                       race faction character: adds the static pass per root
 
-#include "ksim/dialogue_book.hpp"
+#include "ksim/dialogue/dialogue_book.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

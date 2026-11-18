@@ -1,7 +1,7 @@
 Retired 2026-11-07 (task CB, ROADMAP item 0 D): the hand-written slave chain of stepSlaveTrade (carry.cpp).
 
-Replaced by: the GOAP planner (cpp/include/ksim/goap.hpp, cpp/src/ksim/goap.cpp; kinspect dt18_goap_search.md) and its live
-evaluators (cpp/src/ksim/goap_sim.cpp, Simulation::planSlaveChain). The selector plans a goal row that has preconditions (world_tasks.cpp
+Replaced by: the GOAP planner (cpp/include/ksim/ai/goap.hpp, cpp/src/ksim/ai/goap.cpp; kinspect dt18_goap_search.md) and its live
+evaluators (cpp/src/ksim/ai/goap_sim.cpp, Simulation::planSlaveChain). The selector plans a goal row that has preconditions (world_tasks.cpp
 for the world squads, routine_scorer.cpp for the town) and stores the chain in state::Routine::plan / step (save v79); stepSlaveTrade
 now runs the plan's steps - 67 Running, 181 STRIP_TARGETS_WEAPONS, 166 CHAIN_TARGET, 168 CARRY_WOUNDED_SLAVES, 108 Put in prison and the
 goal task - and re-plans a goal whose plan fails; there is no hand-written fallback. A goal whose plan does not exist scores 0 and is

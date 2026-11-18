@@ -4,7 +4,7 @@
 // (docs/reference/combat/fights/COMBATLOG.md; read through `xz -dc`) and fighters built from
 // their join records.
 
-#include "ksim/combat.hpp"
+#include "ksim/combat/combat.hpp"
 
 #include "kdata/gamedata.hpp"
 

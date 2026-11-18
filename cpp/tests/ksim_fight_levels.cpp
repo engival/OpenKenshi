@@ -13,8 +13,8 @@
 // (a flip-flop between two heights). Walking down a stair flight is not one: the stairs' top joins the floor in the mesh (a fight at it is not a test of this).
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/combat.hpp"
-#include "ksim/navigator.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/nav/navigator.hpp"
 
 #include "kworld/gamedata.hpp"
 

@@ -9,7 +9,7 @@
 // rewritten with one building moved 8 u, which moves that cell's zone hash and nothing else. Runs against the install
 // (KENSHI_DATA); exit 77 without the navtiles.
 
-#include "ksim/navigator.hpp"
+#include "ksim/nav/navigator.hpp"
 
 #include "kdata/format.hpp"
 #include "knav/native.hpp"

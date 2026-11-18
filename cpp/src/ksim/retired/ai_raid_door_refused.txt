@@ -1,4 +1,4 @@
-Retired 2026-10-31 (door slice, DOORS.md section 6) from src/ksim/ai.cpp UtilityGroupLayer::adopt. A Raid whose route was refused
+Retired 2026-10-31 (door slice, DOORS.md section 6) from src/ksim/ai/ai.cpp UtilityGroupLayer::adopt. A Raid whose route was refused
 only by a gate (AiReason::DoorRefused) failed its order at once, with a cooldown on the goal:
 
 	if (!route.found)

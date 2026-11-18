@@ -6,9 +6,9 @@
 
 #include "delta_scene.hpp"
 
-#include "ksim/corpses.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/save.hpp"
+#include "ksim/combat/corpses.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/save/save.hpp"
 
 #include <cstdio>
 #include <iostream>

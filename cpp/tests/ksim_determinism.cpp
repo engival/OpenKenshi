@@ -3,7 +3,7 @@
 // diverge, and a different command only from the tick it applies
 // (ARCHITECTURE.md "Simulation": seeded RNG, deterministic tick).
 
-#include "ksim/simulation.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/loadorder.hpp"
 

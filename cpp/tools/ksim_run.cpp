@@ -8,13 +8,13 @@
 // --mods FILE: our mod list (kworld/loadorder.hpp grammar); the install's own data/mods.cfg
 // is never read.
 // --save writes a runtime save (docs/formats/RUNTIME_SAVE.md), --snapshot the
-// squad JSON (ksim/snapshot.hpp). --force loads a save made with another
+// squad JSON (ksim/save/snapshot.hpp). --force loads a save made with another
 // load order. --seed is a new game's seed; a save keeps its own.
 
-#include "ksim/clock.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/snapshot.hpp"
-#include "ksim/state.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/save/snapshot.hpp"
+#include "ksim/core/state.hpp"
 
 #include "kworld/loadorder.hpp"
 

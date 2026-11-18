@@ -8,16 +8,16 @@
 //     list) and two Corpse Furnaces stand in the town. No NPC is ordered; the corpse is spawned by hand.
 // No navmesh is needed (a straight navigator walks the legs).
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/towncircle.hpp"
-#include "ksim/world.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/world/towncircle.hpp"
+#include "ksim/world/world.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

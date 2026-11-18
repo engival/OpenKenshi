@@ -1,7 +1,7 @@
 // ksim_stats: loads the world model and prints prefab/instance/relationship
 // counts, load time and resident memory.
 
-#include "ksim/world.hpp"
+#include "ksim/world/world.hpp"
 
 #include <cstddef>
 #include <fstream>

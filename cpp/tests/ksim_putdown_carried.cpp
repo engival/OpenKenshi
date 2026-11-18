@@ -6,11 +6,11 @@
 // A bare world (Simulation::load): the carrier is hand-made, the burden is set in its arms directly, and no lift, walk or
 // navigation is involved (a carry step in flight is the carry machinery's own, not this goal's).
 
-#include "ksim/combat_data.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/world.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/world/world.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

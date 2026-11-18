@@ -4,15 +4,15 @@
 // Routine; the ex-servant (the citizen's squadmate) joins the fight against the bandit. The patron of another squad does NOT join (BQ14: its
 // package has none of 16 / 15 / 34, so a bandit one fight away is nothing to it; BAR_FIGHT_LOOP "bar_crowd: join rules").
 // Needs the world navmesh bake (argv[1], exit 77 without it).
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/scenario_file.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/save/scenario_file.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "knav/navmesh.hpp"
 #include "kworld/loadorder.hpp"

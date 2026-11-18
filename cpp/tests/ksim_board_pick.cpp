@@ -4,9 +4,9 @@
 // and bar-hangout overrides are gone: the rebirth Caravan (wandering at 1 over a bar at 0) is a trade circuit by priority alone.
 // argv: none (KENSHI_DATA, KSIM_AI_TABLE).
 
-#include "ksim/behaviours.hpp"
-#include "ksim/blackboard.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/ai/blackboard.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

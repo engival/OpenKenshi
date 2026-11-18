@@ -10,7 +10,7 @@
 // the katana duel with many seeds and compares the outcome distributions. The printed table feeds
 // docs/reference/combat/IMPLEMENTATION.md.
 
-#include "ksim/combat.hpp"
+#include "ksim/combat/combat.hpp"
 
 #include "kworld/gamedata.hpp"
 

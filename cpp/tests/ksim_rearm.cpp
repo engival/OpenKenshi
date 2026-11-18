@@ -6,12 +6,12 @@
 // A bare world (Simulation::load): a hand-made Berserker squad (package "Patrol map: Aggressive" carries 42 on both lists), the
 // weapon is a spawned GroundItem within the pick-up reach, so no navigation is needed.
 
-#include "ksim/combat_data.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/interact.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/world.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/world/interact.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/world/world.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

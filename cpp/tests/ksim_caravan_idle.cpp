@@ -1,7 +1,7 @@
 // kenshi-k16.6.254: the Slaver caravan of scenarios/cage_prisoner.kscen is spawned inside Heft. A trade_circuit squad that starts in a town gets the
 // same stay as one that walks in (TOWN_LIFE_SLICE 4.2), so within the arrival window its members are on a real routine (bar hangout: relax / shopping /
 // patrol), not 141 FOLLOW_SQUADLEADER at score 0, and the boss decides too. Needs the world navmesh bake (argv[1], exit 77 without the Heft region).
-#include "ksim/simulation.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "scenario_rig.hpp"
 #include "sim_access.hpp"

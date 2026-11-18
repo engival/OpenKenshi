@@ -4,7 +4,7 @@
 
 #include "dt27_rig.hpp"
 
-#include "ksim/combat_data.hpp"
+#include "ksim/combat/combat_data.hpp"
 
 namespace {
 

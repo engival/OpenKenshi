@@ -1,4 +1,4 @@
-// The live WORLD_EVENT_STATE set (include/ksim/world_state.hpp, docs/reference/WORLD_MODEL.md "WORLD_EVENT_STATE semantics", task AN), on the
+// The live WORLD_EVENT_STATE set (include/ksim/world/world_state.hpp, docs/reference/WORLD_MODEL.md "WORLD_EVENT_STATE semantics", task AN), on the
 // real data:
 //
 //  1. the evaluator: a state is the AND of its entries; `NPC is` / `NPC is NOT` compare a unique character's status (alive 1, dead 0,
@@ -12,11 +12,11 @@
 //  3. the involvement set: the player's kill and a direct `noteNpcImprisoned` both land in state::WorldEventState::playerTouched, and a save
 //     and load keep the dead and involvement sets (v72) with the same state hash.
 
-#include "ksim/clock.hpp"
-#include "ksim/dialogue_events.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/state.hpp"
-#include "ksim/world_state.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/dialogue/dialogue_events.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/state.hpp"
+#include "ksim/world/world_state.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

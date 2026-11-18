@@ -6,7 +6,7 @@
 //  2. dialogue off: the talk opens the trade directly, as before (the direct open of MINE_SELL_SLICE M4).
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "ksim/dialogue_book.hpp"
+#include "ksim/dialogue/dialogue_book.hpp"
 
 #include "trade_rig.hpp"
 

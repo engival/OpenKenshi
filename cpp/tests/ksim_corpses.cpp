@@ -4,10 +4,10 @@
 // evaluated only inside a player's full-detail area, is destroyed when no player area or player load range covers it ("corpse
 // unloaded"), a player corpse is always evaluated, nothing is evaluated while no player area exists.
 
-#include "ksim/clock.hpp"
-#include "ksim/corpses.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/state.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/corpses.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/state.hpp"
 
 #include "kworld/coords.hpp"
 #include "kworld/loadorder.hpp"

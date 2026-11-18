@@ -8,17 +8,17 @@
 // argv[1]: the world navmesh bake directory (knav_cache). argv[2] (optional): the faction name of the victim ("Mercenary Guild" by default: the
 // nearest seated patron of that faction).
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/trader.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/dialogue_book.hpp"
-#include "ksim/command.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/economy/trader.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/dialogue/dialogue_book.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

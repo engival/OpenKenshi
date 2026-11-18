@@ -9,12 +9,12 @@
 // OURS / UNSURE: 7.4 says k, lo and hi are data; no data holds them, so economy.hpp has kPriceExponent 1, lo 0.5, hi 2 and an amount
 // floor of 1. The factor applies to any item the town stocks (gear included, through the same quote) and to both sides of the spread.
 
-#include "ksim/clock.hpp"
-#include "ksim/economy.hpp"
-#include "ksim/inventory_grid.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/trade.hpp"
-#include "ksim/trader.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/economy/economy.hpp"
+#include "ksim/economy/inventory_grid.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/economy/trade.hpp"
+#include "ksim/economy/trader.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

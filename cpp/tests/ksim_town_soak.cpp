@@ -7,14 +7,14 @@
 //  - the coverage view of the same numbers: a world spawned and not stepped still reports a phase for every squad with a package.
 // argv[1]: the world bake (`knav_bake --world DIR`, the world_sample fixture). Exit 77 without it.
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/soak.hpp"
-#include "ksim/spawn.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/soak.hpp"
+#include "ksim/world/spawn.hpp"
 
 #include "kworld/loadorder.hpp"
 

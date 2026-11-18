@@ -1,4 +1,4 @@
-// The faction layer, first slice (include/ksim/factions.hpp):
+// The faction layer, first slice (include/ksim/world/factions.hpp):
 //
 //  1. data: the FactionBook loads the campaigns and factions of the real data
 //     (counts, a known campaign's fields, default relations);
@@ -12,12 +12,12 @@
 //  4. 1 worker == 4 workers, and save + load + run == the uninterrupted run
 //     with raids in flight.
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/clock.hpp"
-#include "ksim/factions.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/soak.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/world/factions.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/core/soak.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/loadorder.hpp"

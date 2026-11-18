@@ -1,5 +1,5 @@
 // ksim_ai_coverage: how much of the default world's squad behaviour maps to a
-// behaviour we implement, by AI package (include/ksim/behaviours.hpp).
+// behaviour we implement, by AI package (include/ksim/ai/behaviours.hpp).
 //
 //   ksim_ai_coverage [--table TSV] [--seed N] [--top N | --all] [--aggressive]
 //
@@ -8,9 +8,9 @@
 // (implemented behaviour), planned (named by a rule, not implemented: runs
 // the generic fallback) or unmapped (no rule: generic fallback).
 
-#include "ksim/behaviours.hpp"
-#include "ksim/routines.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "kworld/loadorder.hpp"
 

@@ -1,4 +1,4 @@
-Retired 2026-11-01 from src/ksim/combat.cpp (Ctx::waitingRing). The state-6 recovery hold (and the circle's Wait) steered with backOff = false:
+Retired 2026-11-01 from src/ksim/combat/combat.cpp (Ctx::waitingRing). The state-6 recovery hold (and the circle's Wait) steered with backOff = false:
 inside the ring's inner edge (args + 2.4 = 17.65) the fighter stood at rest (CADENCE_LIVE.md Item 34 (d), "0.00 / 0.01 / 0.09"). That figure was the
 speed inside the band; kinspect item 46 measured the hold pushing a fighter below the edge outward at 12-15 u/s unless a defence is pending and
 the opponent is swinging. Replaced by backOff = !(pending Defend && target in Attack).

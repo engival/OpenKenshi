@@ -1,8 +1,8 @@
 // G4 of the native AI runtime, phase D (task CB): the GOAP planner (kinspect dt18_goap_search.md). Pure: a stage world of
 // symbols, the real task registry, and the slaver chain's expected plans.
 
-#include "ksim/goap.hpp"
-#include "ksim/routines.hpp"
+#include "ksim/ai/goap.hpp"
+#include "ksim/ai/routines.hpp"
 
 #include "test_util.hpp"
 

@@ -8,14 +8,14 @@
 //
 // Player orders only: the world AI is not enabled (the default-world camp around the spot would push the pair apart with its
 // avoidance, a separate import question). Needs the world navmesh bake (argv[1], exit 77 without it, like ksim_scenario_ai).
-#include "ksim/clock.hpp"
-#include "ksim/combat.hpp"
-#include "ksim/combat_data.hpp"
-#include "ksim/command.hpp"
-#include "ksim/scenario_file.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/combat/combat_data.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/save/scenario_file.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "knav/navmesh.hpp"
 #include "kworld/loadorder.hpp"

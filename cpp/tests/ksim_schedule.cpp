@@ -2,7 +2,7 @@
 // second), Strategic every 2182 ticks (one game-hour, clock.hpp), including the exact
 // boundary ticks (ARCHITECTURE.md "Simulation").
 
-#include "ksim/simulation.hpp"
+#include "ksim/core/simulation.hpp"
 
 #include "test_util.hpp"
 

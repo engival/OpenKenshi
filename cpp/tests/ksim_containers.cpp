@@ -9,13 +9,13 @@
 //  4. a save keeps the boxes, their keys, their locks and their contents (the loaded state hash of the straight run).
 // argv[1]: the Hub navmesh cache (the ctest fixture knav_cache).
 
-#include "ksim/clock.hpp"
-#include "ksim/door_plan.hpp"
-#include "ksim/interact.hpp"
-#include "ksim/navigator.hpp"
-#include "ksim/simlink_scenario.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/routines.hpp"
+#include "ksim/core/clock.hpp"
+#include "ksim/nav/door_plan.hpp"
+#include "ksim/world/interact.hpp"
+#include "ksim/nav/navigator.hpp"
+#include "ksim/net/simlink_scenario.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/ai/routines.hpp"
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"

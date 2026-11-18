@@ -6,16 +6,16 @@
 #include "ksim/debugview/view.hpp"
 #include "ksim/debugview/decisions.hpp"
 
-#include "ksim/ai.hpp"
-#include "ksim/behaviours.hpp"
-#include "ksim/combat.hpp"
-#include "ksim/decision_trace.hpp"
-#include "ksim/detail.hpp"
-#include "ksim/player_squads.hpp"
-#include "ksim/simlink.hpp"
-#include "ksim/simulation.hpp"
-#include "ksim/squad_alive.hpp"
-#include "ksim/state.hpp"
+#include "ksim/ai/ai.hpp"
+#include "ksim/ai/behaviours.hpp"
+#include "ksim/combat/combat.hpp"
+#include "ksim/ai/decision_trace.hpp"
+#include "ksim/core/detail.hpp"
+#include "ksim/world/player_squads.hpp"
+#include "ksim/net/simlink.hpp"
+#include "ksim/core/simulation.hpp"
+#include "ksim/world/squad_alive.hpp"
+#include "ksim/core/state.hpp"
 
 #include <algorithm>
 #include <cmath>

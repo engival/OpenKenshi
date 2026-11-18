@@ -2,7 +2,7 @@
 // synthetic records, the hour windows, the 24 h no-goal-less sweep over every package, the site index on a real interior layout and on a
 // bare building, and the reservation book.
 
-#include "ksim/routines.hpp"
+#include "ksim/ai/routines.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"

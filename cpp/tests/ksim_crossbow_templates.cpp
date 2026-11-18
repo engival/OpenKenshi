@@ -2,7 +2,7 @@
 // makeFighter must arm Fighter::ranged from either: `v1` of a `crossbows` entry is the percent chance per spawn (100 always, 0 never).
 // Prints the counts for the report.
 
-#include "ksim/combat.hpp"
+#include "ksim/combat/combat.hpp"
 
 #include "kworld/gamedata.hpp"
 

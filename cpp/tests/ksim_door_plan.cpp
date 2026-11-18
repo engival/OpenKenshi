@@ -1,8 +1,8 @@
 // The bash / pick / wait decision (door_plan.hpp, DOORS.md section 6) and the lockpicking chance, as pure functions.
 
-#include "ksim/door_plan.hpp"
-#include "ksim/goap.hpp"
-#include "ksim/interact.hpp"
+#include "ksim/nav/door_plan.hpp"
+#include "ksim/ai/goap.hpp"
+#include "ksim/world/interact.hpp"
 
 #include "test_util.hpp"
 

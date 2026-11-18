@@ -4,7 +4,7 @@
 //   3b Rag Loincloth (2308, value 100, slot 6, no part coverage): Value 50, Sell 12.
 // Plus the rest of the s72 3a table, and the crafted-armour table path (s72 2c Chainmail example).
 
-#include "ksim/trade.hpp"
+#include "ksim/economy/trade.hpp"
 
 #include "kdata/format.hpp"
 #include "kdata/gamedata.hpp"
