@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -39,6 +40,8 @@ static const cfg::Bool kCharDefer{ cfg::Group{ "Character loading" }, "sim.char_
 static const cfg::Bool kCharWarm{ cfg::Group{ "Character loading" }, "sim.char_warm", true, "A race new to the scene is built ahead of its first character: its body, that character's gear meshes and a race-only build (morph, foot contacts), one step a frame in the add budget's leftover, so its add does not pay them all in one frame (kenshi-k16.2.205.12.77)" };
 static const cfg::Float kWarmSlackMs{ cfg::Group{ "Character loading" }, "sim.char_warm_slack_ms", 0.0, 0.0, 100.0, "The race warm-up (sim.char_warm) also runs in a frame whose adds took up to this many ms past sim.char_add_budget_ms (0: only in the budget's leftover; kenshi-k16.2.205.12.77)" };
 static const cfg::Float kAddBudgetMs{ cfg::Group{ "Character loading" }, "sim.char_add_budget_ms", 4.0, 0.5, 1000.0, "New characters (race, meshes, textures load on the main thread) are built per frame until this many ms are spent; the rest wait for the next frame (kenshi-k16.2.205.10)" };
+static const cfg::Bool kBodyNudge{ cfg::Group{ "Locomotion" }, "anim.body_nudge", true, "Display depenetration (kenshi-k16.2.345): a drawn standing body is nudged (cap 0.45 u, eased) out of the client collision and other bodies; never fed to the sim, picks or orders. Off = the drawn body stands at the sim's x, z" };
+static int64_t nudgeKey(int cx, int cz) { return ((int64_t)cx << 32) ^ (int64_t)(uint32_t)cz; }
 static const cfg::Float kSlopTau{ cfg::Group{ "Locomotion" }, "anim.slop_tau", 0.25, 0.0, 2.0, "Display slop: the drawn position eases to the sim with this time constant (s), speed-capped; a small offset rides. 0 = the capped catch-up chase" };
 // The run file's three case lines (kenshi-k16.2.264.1). The user's 2026-11-15 walk into Outpost s-IV: "running in place ... movement spurts every
 // second or two", the body gone indoors while its tag drew, and nothing in the run file. kN: how long the wire's own position must stand still while
@@ -510,8 +513,32 @@ int SimView::severedOf(uint64_t id, const std::string& race, const Characters& c
 	return out;
 }
 
+bool SimView::nudgeOk(const Dynamic& d, uint64_t id) const
+{
+	return !(d.flags & (kKO | kDead | kProne | kSeated | kAsleep | kCombat | kMounted)) && !d.carriedBy && !dec_.cages.count(id);
+}
+
 void SimView::sync(Characters& chars, const std::function<double(double, double)>& ground)
 {
+	rayStats_.maxFrameCasts = std::max(rayStats_.maxFrameCasts, rayStats_.frameCasts);	// the standing ray's last frame (kenshi-k16.2.344)
+	rayStats_.maxFrameMs = std::max(rayStats_.maxFrameMs, rayStats_.frameMs);
+	rayStats_.frameCasts = 0; rayStats_.frameMs = 0;
+	if (rayStats_.casts + rayStats_.cached > 0 && tick_ - rayLogTick_ >= 10 * kTickRate)	// one summary line every 10 s of sim time
+	{
+		rayLogTick_ = tick_;
+		const RayStats& r = rayStats_;
+		evlog::add("standray", tick_, 0, "casts %llu cached %llu hits %llu (drawn faces %llu) misses %llu unloaded %llu; %.3f ms/cast, frame max %d casts %.2f ms; shift mean %.2f max %.2f u", (unsigned long long)r.casts, (unsigned long long)r.cached,
+			(unsigned long long)r.hits, (unsigned long long)r.faces, (unsigned long long)r.misses, (unsigned long long)r.unloaded, r.casts ? r.ms / (double)r.casts : 0.0, r.maxFrameCasts, r.maxFrameMs, r.hits ? r.sumShift / (double)r.hits : 0.0, r.maxShift);
+	}
+	if (nudge_.frames > 0 && tick_ - nudgeLogTick_ >= 10 * kTickRate)	// kenshi-k16.2.345: one summary line every 10 s of sim time
+	{
+		nudgeLogTick_ = tick_;
+		for (const auto& [sid, ss] : slots_)	// the bodies nudged now (where to frame a before / after shot)
+		{
+			if (const double o = std::hypot(ss.nudge[0], ss.nudge[1]); o > 0.1) { std::string why; double pu[2]; if (depen_) { depen_(ss.pos[0] - ss.nudge[0], ss.pos[2] - ss.nudge[1], ss.pos[1], 0.45, 0.45, pu, &why); } evlog::add("nudge", tick_, sid, "nudged now: %.2f u (%.2f, %.2f) at %.1f,%.1f y %.1f: %s", o, ss.nudge[0], ss.nudge[1], ss.pos[0], ss.pos[2], ss.pos[1], why.c_str()); }
+		}
+		evlog::add("nudge", tick_, 0, "body nudge: %.2f bodies a frame (frame max %d), largest offset %.3f u (cap 0.45); %.4f ms a frame mean, %.3f ms frame max", (double)nudge_.nudgedSum / (double)nudge_.frames, nudge_.maxFrameNudged, nudge_.maxOffset, nudge_.msSum / (double)nudge_.frames, nudge_.maxFrameMs);
+	}
 	bool worldReset = false;	// a load / new game: no drawn pose of the old world carries over (kenshi-k16.2.144)
 	if (resetSeen_ != dec_.resetSerial)
 	{
@@ -675,6 +702,14 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		if (chars.replace((size_t)sl.index, s, err)) { sl.carry = s.carry; sl.action = 0; sl.actionStart = 0; }
 		else { charError("build", tick_, id, err); }
 	}
+	// kenshi-k16.2.345: the other drawn standing bodies by last frame's drawn x, z (cell = one body diameter), for the nudge's body-body part
+	nudgeGrid_.clear();
+	nudge_.frames++; nudge_.nudgedSum += (uint64_t)nudge_.frameNudged; nudge_.maxFrameNudged = std::max(nudge_.maxFrameNudged, nudge_.frameNudged); nudge_.msSum += nudge_.frameMs; nudge_.maxFrameMs = std::max(nudge_.maxFrameMs, nudge_.frameMs); nudge_.frameMs = 0; nudge_.frameNudged = 0; nudge_.frameMax = 0;
+	for (const uint64_t id : order_)
+	{
+		const Slot& sl = slots_[id];
+		if (sl.drawn && nudgeOk(dec_.chars.at(id).cur, id)) { nudgeGrid_[nudgeKey((int)std::floor(sl.pos[0] / 0.9), (int)std::floor(sl.pos[2] / 0.9))].push_back(id); }
+	}
 	haveFocus_ = false;
 	bool focusPlayer = false;
 	for (const uint64_t id : order_)
@@ -703,28 +738,55 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		float dy = ib->yaw - ia->yaw;
 		dy -= 6.2831853f * std::floor((dy + 3.14159265f) / 6.2831853f);
 		float yaw = ia->yaw + dy * t;
-		if (id == local_.id) { predict(c, p, yaw); }
+		if (id == local_.id) { predictYOff_ = 0; predict(c, p, yaw); }
 		float byaw = yaw;	// the drawn body's yaw: the sim's, or the travel facing (kenshi-k16.2.237.10); sl.yaw (the camera follow's) stays the sim's
 		const bool posed = (b.flags & (kSeated | kAsleep)) && b.poseClip;	// snapped to the furniture (kinspect bed_seat_pose.md): no interpolation, no ground fit
-		// feet on the drawn ground: the sim's navmesh y is a coarse fit of the terrain (it floats or sinks by a few units), so on open ground the
-		// terrain's height; on a floor or deck (MINE: over 4 u above the terrain) or a sunk interior floor (Longhouse: over 4 u below, kenshi-kyat.1) the sim's y, blended over 2..4 u so stepping up or down has no pop
+		// The drawn y is the sim's wire y (kenshi-k16.2.339, standing height stage 1: no terrain blend, no interior hull or indoors-flag branch; the
+		// sim's ground ray is the one authority, retired/simview_ground_blend.cpp). Only without a navmesh y (yValid clear) the heightmap stands in.
 		const double terrain = ground(p[0], p[2]);
-		// Inside a carved interior (insideInterior: the interior mask hulls, CPU) the sim's y alone: its floor is the ground there, the terrain under it is
-		// the dune the building is sunk into. Outside: the terrain unless the sim is over 2 u above it (a deck), blended 2..4 u (the kyat.1 symmetric blend is not needed outdoors).
-		// A character the wire puts INDOORS is on a floor too, whether or not the interior mask covers it (kenshi-k16.2.264.1, the user's 2026-11-15 dip
-		// under the outside walkway: the Outpost s-IV's outer deck is no interior, and where the hill runs above the deck the blend clamped at 0 and drew
-		// the character up to the heightmap -- 38.4 u for id 943 at the deck's 1203.4, terrain 1242).
 		const double simY = p[1];
-		bool inside = false;
-		if (ib->flags & kYValid)
+		if (!(ib->flags & kYValid)) { p[1] = terrain; }
+		else if (groundRay_ && !((b.flags & (kSeated | kAsleep)) && b.poseClip))
 		{
-			inside = (ib->flags & kIndoors) || (insideInterior && insideInterior(p));	// the hull test: ~2.5 us a call mean, 178 us worst (kenshi-kyat.2, 230 characters)
-			p[1] = inside ? simY : terrain + (simY - terrain) * std::clamp((simY - terrain - 2.0) / 2.0, 0.0, 1.0);
+			// kenshi-k16.2.344: the wire y is the sim's point; the body stands on the nearest collision surface under its x, z (CollisionPick buildings) or the
+			// heightmap there, within [wire - kRayDown, wire + kRayUp]. No hit / not loaded: the wire y, counted.
+			constexpr double kRayUp = 1.5, kRayDown = 4.5;	// the navmesh floats 0.45-0.71 u over the plank floor and up to ~4 u off on slopes (k16.7.36, k16.6.271)
+			const double wy = p[1] - (id == local_.id ? predictYOff_ : 0.0);	// the driven character's prediction carries the wire offset: ray from the navmesh point
+			const double rx = p[0], rz = p[2];
+			const bool same = std::fabs(rx - sl.rayX) < 0.02 && std::fabs(rz - sl.rayZ) < 0.02 && std::fabs(wy - sl.rayWireY) < 0.02;
+			const void* gen = nullptr;
+			double ry = 0;
+			int res;
+			if (same && sl.rayRes != -2 && sl.rayRes != -1 && sl.rayGen == (groundGen_ ? groundGen_() : nullptr)) { res = sl.rayRes; ry = sl.rayY; rayStats_.cached++; }
+			else
+			{
+				const auto t0 = std::chrono::steady_clock::now();
+				res = groundRay_(rx, rz, wy, kRayUp, kRayDown, ry, &gen);
+				const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+				rayStats_.casts++; rayStats_.ms += ms; rayStats_.frameCasts++; rayStats_.frameMs += ms;
+				sl.rayX = rx; sl.rayZ = rz; sl.rayWireY = wy; sl.rayRes = res; sl.rayY = ry; sl.rayGen = gen;
+			}
+			// the terrain competes by the same rule: nearest the wire y (a floor under a dune, a dune over a floor)
+			if (res != -1)
+			{
+				const double th = terrain;
+				if (th <= wy + kRayUp && th >= wy - kRayDown && (res < 1 || std::fabs(th - wy) < std::fabs(ry - wy))) { ry = th; res = 1; }
+			}
+			if (res >= 1) { rayStats_.hits++; if (res == 2) { rayStats_.faces++; } rayStats_.sumShift += std::fabs(ry - p[1]); rayStats_.maxShift = std::max(rayStats_.maxShift, std::fabs(ry - p[1])); p[1] = ry; }
+			else
+			{
+				if (res == 0) { rayStats_.misses++; } else { rayStats_.unloaded++; }
+				if (id == local_.id) { p[1] = wy + predictYOff_; }
+				if (std::hypot(rx - sl.missX, rz - sl.missZ) > 3.0)
+				{
+					sl.missX = rx; sl.missZ = rz;
+					evlog::add("standmiss", tick_, id, "standing ray: %s at %.1f,%.1f wire y %.2f (window %.1f up %.1f down); drawn at the wire y", res == 0 ? "no collision" : "collision not loaded", rx, rz, wy, kRayUp, kRayDown);
+				}
+			}
 		}
-		else { p[1] = terrain; }
 #ifdef KCLIENT_DEV_TOOLS
-		static const bool ylog = std::getenv("KYLOG") != nullptr;	// KYLOG=1: per character per frame: id tick x z sim terrain inside drawn (kenshi-kyat.2)
-		if (ylog) { fprintf(stderr, "YLOG %llu %.0f %.2f %.2f %.2f %.2f %d %.2f\n", (unsigned long long)id, tick_, p[0], p[2], simY, terrain, inside ? 1 : 0, p[1]); }
+		static const bool ylog = std::getenv("KYLOG") != nullptr;	// KYLOG=1: per character per frame: id tick x z sim terrain drawn (kenshi-kyat.2)
+		if (ylog) { fprintf(stderr, "YLOG %llu %.0f %.2f %.2f %.2f %.2f %.2f\n", (unsigned long long)id, tick_, p[0], p[2], simY, terrain, p[1]); }
 #endif
 		if (posed)
 		{
@@ -857,6 +919,69 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 				p[0] = sl.pos[0]; p[2] = sl.pos[2];	// paused, no slop: hold the drawn where it is (the base is frozen anyway)
 			}
 		}
+		// kenshi-k16.2.345: display depenetration. The drawn body is pushed out of the client collision (walls, props, furniture) and out of the other drawn
+		// standing bodies by a small offset (cap kNudgeCap = one body radius), eased in and out (tau kNudgeTau), then the standing ray re-runs at the nudged
+		// x, z. Display only: sl.sim, the pick, orders and the wire never see it. Off (target 0, so it eases out) for the seated / asleep / KO / dead /
+		// prone / carried / caged / mounted, and for anyone with the combat flag: a fighter in contact is the animation's clip (a lunge, a grapple), and
+		// the wire's combat bit is the only contact test the client has, so a body in combat stands where the sim says.
+		if (kBodyNudge.get() && sl.drawn && !posed && depen_)
+		{
+			const auto nudgeT0 = std::chrono::steady_clock::now();
+			constexpr double kNudgeCap = 0.45, kNudgeTau = 0.15, kBodyR = 0.45;
+			double target[2] = { 0, 0 };
+			if (nudgeOk(b, id))
+			{
+				double push[2];
+				if (depen_(p[0], p[2], p[1], kBodyR, kNudgeCap, push, nullptr)) { target[0] += push[0]; target[1] += push[1]; }
+				for (int cx = -1; cx <= 1; cx++)
+				{
+					for (int cz = -1; cz <= 1; cz++)
+					{
+						const auto it = nudgeGrid_.find(nudgeKey((int)std::floor(p[0] / 0.9) + cx, (int)std::floor(p[2] / 0.9) + cz));
+						if (it == nudgeGrid_.end()) { continue; }
+						for (const uint64_t oid : it->second)
+						{
+							if (oid == id) { continue; }
+							const Slot& os = slots_.at(oid);
+							const double dx = p[0] - os.pos[0], dz = p[2] - os.pos[2];
+							const double d = std::hypot(dx, dz);
+							if (d >= 2 * kBodyR || std::fabs(os.pos[1] - p[1]) > 1.0) { continue; }
+							// each of the pair takes half of the overlap; exactly stacked: the lower id steps +x, the other -x
+							const double half = 0.5 * (2 * kBodyR - d);
+							if (d < 1e-4) { target[0] += id < oid ? half : -half; }
+							else { target[0] += dx / d * half; target[1] += dz / d * half; }
+						}
+					}
+				}
+				const double tl = std::hypot(target[0], target[1]);
+				if (tl > kNudgeCap) { target[0] *= kNudgeCap / tl; target[1] *= kNudgeCap / tl; }
+			}
+			if (dtSim_ > 0)
+			{
+				const double k = 1.0 - std::exp(-dtSim_ / kNudgeTau);
+				sl.nudge[0] += (target[0] - sl.nudge[0]) * k;
+				sl.nudge[1] += (target[1] - sl.nudge[1]) * k;
+			}
+			const double nl = std::hypot(sl.nudge[0], sl.nudge[1]);
+			if (!sl.nudgeOn && nl > 0.1) { sl.nudgeOn = true; std::string why; double pu[2]; depen_(p[0] - sl.nudge[0], p[2] - sl.nudge[1], p[1], kBodyR, kNudgeCap, pu, &why); evlog::add("nudge", tick_, id, "nudged %.2f u (%.2f, %.2f) at %.1f,%.1f y %.1f: target %.2f (%s)", nl, sl.nudge[0], sl.nudge[1], p[0], p[2], p[1], std::hypot(target[0], target[1]), why.empty() ? "another body" : why.c_str()); }
+			else if (sl.nudgeOn && nl < 0.02) { sl.nudgeOn = false; }
+			if (nl > 0.005)
+			{
+				p[0] += sl.nudge[0]; p[2] += sl.nudge[1];
+				nudge_.frameNudged++; nudge_.frameMax = std::max(nudge_.frameMax, nl); nudge_.maxOffset = std::max(nudge_.maxOffset, nl);
+				if ((ib->flags & kYValid) && groundRay_)
+				{
+					const double wy = simY - (id == local_.id ? predictYOff_ : 0.0);
+					double ry = 0; const void* gen = nullptr;
+					int res = groundRay_(p[0], p[2], wy, 1.5, 4.5, ry, &gen);
+					const double th = ground(p[0], p[2]);
+					if (res != -1 && th <= wy + 1.5 && th >= wy - 4.5 && (res < 1 || std::fabs(th - wy) < std::fabs(ry - wy))) { ry = th; res = 1; }
+					if (res >= 1) { p[1] = ry; }
+				}
+			}
+			nudge_.frameMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - nudgeT0).count();
+		}
+		else { sl.nudge[0] = sl.nudge[1] = 0; }
 		sl.catchV[0] = catchV[0]; sl.catchV[1] = catchV[1];
 		sl.basePrev[0] = baseX; sl.basePrev[1] = baseZ;	// the next frame's base-jump test
 		sl.sim[0] = baseX; sl.sim[1] = p[1]; sl.sim[2] = baseZ;	// gameplay reads the sim, never the display offset
@@ -1077,14 +1202,12 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 			evlog::add("walkstall", tick_, id, "walking at %.1f u/s while the wire's position has not moved for %.1f s (%.0f ticks; newest sample %llu at %.1f,%.1f,%.1f, drawn at %.1f,%.1f)",
 				(double)s.move, still / kTickRate, still, (unsigned long long)b.tick, b.pos[0], b.pos[1], b.pos[2], p[0], p[2]);
 		}
-		// 2. The drawn y off the wire's y: the ground blend (terrain -> the sim's y over 2..4 u) or the interior snap placed the feet away from the
-		//    wire's surface, which reads as sinking under a deck (the blend) or into a floor (a sunk interior the mask missed).
+		// 2. The drawn y off the wire's y: the drawn y is the wire's y, so this fires only for a character drawn off it (the interpolation, the easing offset).
 		const double dyOff = p[1] - simY;
 		if (sl.drawn && !posed && dtSim_ > 0 && (b.flags & kYValid) && std::fabs(dyOff) > kDrawYOff.get() && tick_ - (double)sl.offLogTick >= kCaseGap)
 		{
 			sl.offLogTick = (uint64_t)tick_;
-			evlog::add("drawnoff", tick_, id, "drawn y %.1f is %+.1f u off the wire's %.1f (terrain %.1f, %s, blend %.2f)", p[1], dyOff, simY, terrain,
-				inside ? "inside an interior" : "outside", std::clamp((simY - terrain - 2.0) / 2.0, 0.0, 1.0));
+			evlog::add("drawnoff", tick_, id, "drawn y %.1f is %+.1f u off the wire's %.1f (terrain %.1f)", p[1], dyOff, simY, terrain);
 		}
 		// 3. Drawn with no body: the character is in the scene (its feet place, so its tag and marker draw) but the last prepare() left its body out of
 		//    the set; the reason is that pass's draw state (one frame old). A changed reason is named at once, a held one every 5 s.
@@ -1508,7 +1631,13 @@ void SimView::predict(const Character& c, double p[3], float& yaw)
 	local_.pos[2] = mine.at.z + (target.at.z - mine.at.z) * pull;
 	if (dtSim_ > 0) { const double a = std::min(1.0, dtSim_ / 0.1); local_.vel[0] += ((local_.pos[0] - prevX) / dtSim_ - local_.vel[0]) * a; local_.vel[1] += ((local_.pos[2] - prevZ) / dtSim_ - local_.vel[1]) * a; }	// the predicted velocity (kenshi-k16.2.237.10: the travel facing), 0.1 s smoothed
 	if (!local_.drive && !local_.strafe && !s.drive && !wireStrafe && e < kSettle) { local_.on = false; }
+	// The walker's y is the raw navmesh height; the server sends the ground ray's y (kenshi-k16.2.339, report k16.2.338 section 4 "Prediction"): carry the newest
+	// sample's (wire y - navmesh y at the same x, z) onto the prediction so driving draws the height the server sends. Dropped (0) off the mesh or past 6 u.
+	double yOff = 0;
+	if (const auto ny = walker_->surfaceY(s.pos[0], s.pos[1], s.pos[2])) { yOff = s.pos[1] - *ny; if (std::fabs(yOff) > 6.0) { yOff = 0; } }
 	for (int k = 0; k < 3; k++) { p[k] = local_.pos[k]; }
+	predictYOff_ = yOff;
+	p[1] += yOff;
 	if (local_.drive == 1 || local_.strafe) { yaw = (float)local_.heading; }
 }
 

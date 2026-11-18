@@ -394,6 +394,9 @@ public:
 	// drawnHitIn: the nearest drawn triangle hit with t in [tMin, tMax] on the building shells and layout pieces near the world box lo..hi (the box of a collision
 	// solid): false = nothing is drawn along the ray inside that span, so the solid there is an undrawn proxy volume.
 	bool drawnHitIn(const double origin[3], const double dir[3], const double lo[3], const double hi[3], double tMin, double tMax, double& t) const;
+	// kenshi-k16.2.344: the drawn building surface nearest `wireY` under (x, z) within up above / down below: the standing ray's fallback where a part has no
+	// collision. The nearest of the first drawn triangle hit going down and going up. False: nothing drawn in the window.
+	bool groundDrawn(double x, double z, double wireY, double up, double down, double& y) const;
 	// The world box of everything a prop draws (its parts' mesh boxes, this frame), grown by `grow`; false: no such prop or nothing drawn yet.
 	// pick_at: a click whose world hit point is on the prop's own drawn box is that prop (its collision proxy may sit just outside it)
 	bool propBox(uint64_t id, double lo[3], double hi[3], double grow = 0) const;

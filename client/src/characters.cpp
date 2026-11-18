@@ -93,6 +93,7 @@ const cfg::Float kStandinHold{ cfg::Group{ "Character loading", "", "Debug" }, "
 #endif
 
 // The contact table's resolution (MINE): phase samples per clip cycle, and how close to the cycle's lowest sole a point is on the ground.
+constexpr double kOnTerrain = 0.1;	// the heightmap within this of the wire y: the character stands on terrain (kenshi-k16.2.339; stage 4 replaces it with the wire surface-kind byte)
 constexpr int kContactSamples = 96;
 constexpr float kContactHeight = 0.4f;
 // anim.action_root (fix 2): the seconds the drawn action path takes to ease onto the wire where the two differ (the sim's navmesh clamp, separation
@@ -3930,13 +3931,13 @@ bool Characters::lockStopped(const Char& c)
 // (the clip is authored for flat ground at the node), the body takes the lowest vote, so the lower foot stands on the ground and the higher one
 // is the IK's to reach (a knee bend, never a leg past its reach). A foot is down when its lower sole point is within kPlanted of the lowest sole
 // of the two. Same frame: read from the pose being drawn, not the one before it. Independent of anim.foot_lock (it is the original's slope
-// compensation, user 2026-11-06); without the ground callback, or on a floor (SimView's 2 u rule), no offset.
+// compensation, user 2026-11-06); without the ground callback, or off the terrain (the heightmap not within kOnTerrain of the wire y: a floor, step or deck), no offset.
 void Characters::footOffset(Char& c, const std::vector<kworld::SkelTransform>& model, float dt)
 {
 	constexpr float kPlanted = 0.3f;	// a sole this close to the lowest one's height (u) is down with it (MINE: a walk's swing foot is past it within a few frames)
 	constexpr float kRate = 24.0f;	// the smoothing of the offset's steps when the voting foot changes, 1/s (MINE: ~0.04 s)
 	float target = 0;
-	if (ground && dt > 0 && std::fabs(ground(c.spec.pos[0], c.spec.pos[2]) - c.spec.pos[1]) < 2.0)
+	if (ground && dt > 0 && std::fabs(ground(c.spec.pos[0], c.spec.pos[2]) - c.spec.pos[1]) < kOnTerrain)
 	{
 		double gx[2] = {}, gz[2] = {};
 		float y[2] = { 1e9f, 1e9f };
@@ -4044,10 +4045,10 @@ void Characters::lockFeet(Char& c, std::vector<kworld::SkelTransform>& local, st
 		model[(size_t)b].pos = { pt.pos.x + o.x, pt.pos.y + o.y, pt.pos.z + o.z };
 		model[(size_t)b].rot = kworld::multiply(pt.rot, l.rot);
 	};
-	// foot IK slice 2: the drawn ground under a world x/z and its slope normal, from the ground callback (the terrain's triangles). Over 2 u
-	// above it the body stands on a floor (SimView's rule, simview.cpp sync): a flat plane at the body's own y, the height the gravity settle
+	// foot IK slice 2: the drawn ground under a world x/z and its slope normal, from the ground callback (the terrain's triangles). Off the
+	// terrain (the heightmap not within kOnTerrain of the wire y) the body stands on a floor, step or deck: a flat plane at the body's own y, the height the gravity settle
 	// fits the soles to. Without the option or the callback the slice-1 lock stands (the plant stays where the animation put it).
-	const bool onTerrain = footTerrain_ && ground && std::fabs(ground(c.spec.pos[0], c.spec.pos[2]) - c.spec.pos[1]) < 2.0;
+	const bool onTerrain = footTerrain_ && ground && std::fabs(ground(c.spec.pos[0], c.spec.pos[2]) - c.spec.pos[1]) < kOnTerrain;
 	auto groundAt = [&](double x, double z, kworld::SkelVec3* n) -> double
 	{
 		if (n) { *n = { 0, 1, 0 }; }

@@ -175,6 +175,204 @@ bool CollisionPick::ray(const double origin[3], const double dir[3], double maxT
 	return true;
 }
 
+int CollisionPick::groundY(double x, double z, double wireY, double up, double down, double& y, const void** gen) const
+{
+	std::shared_ptr<const std::vector<kworld::WorldShape>> shapes;
+	size_t buildings;
+	int done[2];
+	{
+		std::lock_guard<std::mutex> lk(m_);
+		shapes = shapes_;
+		buildings = buildingShapes_;
+		done[0] = done_[0];
+		done[1] = done_[1];
+	}
+	if (gen) { *gen = shapes.get(); }
+	if (!shapes) { return -1; }
+	const kworld::ZoneCell cell = kworld::zoneCellOf(x, z);
+	if (std::abs(cell.x - done[0]) > 1 || std::abs(cell.z - done[1]) > 1) { return -1; }
+	const double top = wireY + up, bottom = wireY - down;
+	double best = 1e30;
+	bool found = false;
+	const size_t n = std::min(buildings, shapes->size());
+	for (size_t si = 0; si < n; si++)
+	{
+		const kworld::WorldShape& s = (*shapes)[si];
+		if (s.use == kworld::NavUse::Door) { continue; }
+		if (x < s.min[0] || x > s.max[0] || z < s.min[2] || z > s.max[2] || s.max[1] < bottom || s.min[1] > top) { continue; }
+		const float box[6] = { (float)s.min[0], (float)s.min[1], (float)s.min[2], (float)s.max[0], (float)s.max[1], (float)s.max[2] };
+		if (thin(box)) { continue; }
+		for (size_t i = 0; i + 2 < s.indices.size(); i += 3)
+		{
+			double v[3][3];
+			for (int j = 0; j < 3; j++) { for (int k = 0; k < 3; k++) { v[j][k] = s.vertices[s.indices[i + j] * 3 + k]; } }
+			// 2D point-in-triangle on (x, z), then the plane's y there
+			const double d = (v[1][2] - v[2][2]) * (v[0][0] - v[2][0]) + (v[2][0] - v[1][0]) * (v[0][2] - v[2][2]);
+			if (std::abs(d) < 1e-9) { continue; }
+			const double a = ((v[1][2] - v[2][2]) * (x - v[2][0]) + (v[2][0] - v[1][0]) * (z - v[2][2])) / d;
+			const double b = ((v[2][2] - v[0][2]) * (x - v[2][0]) + (v[0][0] - v[2][0]) * (z - v[2][2])) / d;
+			const double c = 1 - a - b;
+			if (a < 0 || b < 0 || c < 0) { continue; }
+			const double hy = a * v[0][1] + b * v[1][1] + c * v[2][1];
+			if (hy > top || hy < bottom) { continue; }
+			if (!found || std::abs(hy - wireY) < std::abs(best - wireY)) { best = hy; found = true; }
+		}
+	}
+	if (!found) { return 0; }
+	y = best;
+	return 1;
+}
+
+// One wall face (|normal y| < 0.7) of a shape near a grid cell, with everything depenetrate() derives from it that does not depend on the body's position.
+struct NudgeFace { double v0x, v0z, hx, hz, tx, tz, t0, t1, ymin, ymax; };
+struct NudgeItem { size_t si; std::vector<NudgeFace> faces; };
+struct CollisionPick::NudgeCell
+{
+	std::shared_ptr<const std::vector<kworld::WorldShape>> shapes;	// keeps the gather the indices point into alive
+	std::vector<size_t> doors;
+	std::vector<NudgeItem> items;
+};
+
+namespace
+{
+	constexpr double kNudgeCellSize = 8.0, kNudgeMaxR = 1.0;	// radii up to kNudgeMaxR are served from a cell's cache
+	constexpr double kNudgeHalfDiag = 0.7072 * kNudgeCellSize;	// a body in the cell is at most this far from its centre
+}
+
+bool CollisionPick::depenetrate(double x, double z, double y, double radius, double maxPush, double out[2], std::string* why) const
+{
+	out[0] = out[1] = 0;
+	std::shared_ptr<const std::vector<kworld::WorldShape>> shapes;
+	size_t buildings;
+	int done[2];
+	{
+		std::lock_guard<std::mutex> lk(m_);
+		shapes = shapes_;
+		buildings = buildingShapes_;
+		done[0] = done_[0];
+		done[1] = done_[1];
+	}
+	if (!shapes) { return false; }
+	const kworld::ZoneCell cell = kworld::zoneCellOf(x, z);
+	if (std::abs(cell.x - done[0]) > 1 || std::abs(cell.z - done[1]) > 1) { return false; }
+	const double lo = y + 0.35, hi = y + 1.5;
+	const size_t n = std::min(buildings, shapes->size());
+	// The cell's candidates (kenshi-k16.2.350): the geometry is static, so the shapes and faces that can matter to a body in this cell are gathered once
+	const int gx = (int)std::floor(x / kNudgeCellSize), gz = (int)std::floor(z / kNudgeCellSize);
+	const int64_t key = ((int64_t)gx << 32) ^ (int64_t)(uint32_t)gz;
+	std::shared_ptr<NudgeCell> nc;
+	if (radius <= kNudgeMaxR)
+	{
+		std::lock_guard<std::mutex> lk(nudgeM_);
+		if (nudgeGen_ != shapes.get()) { nudgeCells_.clear(); nudgeGen_ = shapes.get(); }
+		auto it = nudgeCells_.find(key);
+		if (it != nudgeCells_.end()) { nc = it->second; }
+		else
+		{
+			nc = std::make_shared<NudgeCell>();
+			nc->shapes = shapes;
+			const double c0x = gx * kNudgeCellSize, c0z = gz * kNudgeCellSize, c1x = c0x + kNudgeCellSize, c1z = c0z + kNudgeCellSize;
+			const double ccx = 0.5 * (c0x + c1x), ccz = 0.5 * (c0z + c1z);
+			for (size_t si = 0; si < n; si++)
+			{
+				const kworld::WorldShape& s = (*shapes)[si];
+				if (c1x < s.min[0] - kNudgeMaxR || c0x > s.max[0] + kNudgeMaxR || c1z < s.min[2] - kNudgeMaxR || c0z > s.max[2] + kNudgeMaxR) { continue; }
+				if (s.use == kworld::NavUse::Door) { nc->doors.push_back(si); continue; }
+				if (s.solid) { continue; }
+				const double cx = 0.5 * (s.min[0] + s.max[0]), cz = 0.5 * (s.min[2] + s.max[2]);
+				NudgeItem item; item.si = si;				for (size_t i = 0; i + 2 < s.indices.size(); i += 3)
+				{
+					double v[3][3];
+					for (int j = 0; j < 3; j++) { for (int k = 0; k < 3; k++) { v[j][k] = s.vertices[s.indices[i + j] * 3 + k]; } }
+					const double e1[3] = { v[1][0] - v[0][0], v[1][1] - v[0][1], v[1][2] - v[0][2] }, e2[3] = { v[2][0] - v[0][0], v[2][1] - v[0][1], v[2][2] - v[0][2] };
+					const double nrm[3] = { e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0] };
+					const double nl = std::sqrt(nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]);
+					if (nl < 1e-9 || std::fabs(nrm[1] / nl) >= 0.7) { continue; }
+					NudgeFace f;
+					double hx = nrm[0], hz = nrm[2];
+					const double hl = std::hypot(hx, hz);
+					hx /= hl; hz /= hl;
+					if (s.closed && hx * (cx - v[0][0]) + hz * (cz - v[0][2]) > 0) { hx = -hx; hz = -hz; }
+					f.v0x = v[0][0]; f.v0z = v[0][2]; f.hx = hx; f.hz = hz; f.tx = -hz; f.tz = hx;
+					f.t0 = 1e30; f.t1 = -1e30;
+					for (int j = 0; j < 3; j++) { const double t = f.tx * (v[j][0] - v[0][0]) + f.tz * (v[j][2] - v[0][2]); f.t0 = std::min(f.t0, t); f.t1 = std::max(f.t1, t); }
+					f.ymin = std::min({ v[0][1], v[1][1], v[2][1] }); f.ymax = std::max({ v[0][1], v[1][1], v[2][1] });
+					// Keep the face when it can matter to a body in the cell: its segment passes within a radius (nearest-point push), or, for a closed shape,
+					// its plane is within 1.5 radii of the cell (the inside test's largest signed distance; a face further behind never is that maximum)
+					const double tp = std::clamp(f.tx * (ccx - f.v0x) + f.tz * (ccz - f.v0z), f.t0, f.t1);
+					const double dseg = std::hypot(ccx - (f.v0x + f.tx * tp), ccz - (f.v0z + f.tz * tp));
+					const double dpl = f.hx * (ccx - f.v0x) + f.hz * (ccz - f.v0z);
+					const bool near = dseg < kNudgeMaxR + kNudgeHalfDiag + 1e-6, inside = s.closed && dpl + kNudgeHalfDiag + 1e-6 >= -1.5 * kNudgeMaxR;
+					if (near || inside) { item.faces.push_back(f); }
+				}
+				if (!item.faces.empty()) { nc->items.push_back(std::move(item)); }
+			}
+			nudgeCells_.emplace(key, nc);
+		}
+	}
+	double best[2] = { 0, 0 }, bestLen = 0;
+	size_t bestShape = 0;
+	bool bestInside = false;
+	if (nc)
+	{
+		// In a doorway (inside a door shape's footprint, grown by a radius) the body is where the passage is: no push, so a walker through a door never sways
+		for (const size_t si : nc->doors)
+		{
+			const kworld::WorldShape& s = (*shapes)[si];
+			if (x >= s.min[0] - radius && x <= s.max[0] + radius && z >= s.min[2] - radius && z <= s.max[2] + radius && s.max[1] >= y - 0.5 && s.min[1] <= y + 2.5) { return false; }
+		}
+		for (const NudgeItem& item : nc->items)
+		{
+			const size_t si = item.si;
+			const kworld::WorldShape& s = (*shapes)[si];
+			if (x < s.min[0] - radius || x > s.max[0] + radius || z < s.min[2] - radius || z > s.max[2] + radius || s.max[1] < lo || s.min[1] > hi) { continue; }
+			// Thin shapes too (kenshi-k16.2.345 rework): a barrel, a stool or a table is a small box the camera's thin() calls a bar. Floors and ramps
+			// (|normal y| >= 0.7) are the ground ray's; every other face stands in the body's way.
+			double inDepth = -1e30, inDir[2] = { 0, 0 };	// a closed (convex) shape: the largest signed distance over its wall faces; <= 0 means the body's centre is inside
+			bool faces = false;
+			for (const NudgeFace& f : item.faces)
+			{
+				if (f.ymax < lo || f.ymin > hi) { continue; }
+				const double hx = f.hx, hz = f.hz;
+				const double d = hx * (x - f.v0x) + hz * (z - f.v0z);
+				faces = true;
+				if (s.closed && d > inDepth) { inDepth = d; inDir[0] = hx; inDir[1] = hz; }
+				// the face's horizontal footprint is a segment along the tangent; the nearest point of it to the body, and the push away from that point
+				const double tp = std::clamp(f.tx * (x - f.v0x) + f.tz * (z - f.v0z), f.t0, f.t1);
+				const double qx = f.v0x + f.tx * tp, qz = f.v0z + f.tz * tp;
+				const double dist = std::hypot(x - qx, z - qz);
+				if (dist >= radius) { continue; }
+				const double push = radius - dist;
+				if (push <= bestLen) { continue; }
+				bestLen = push; bestShape = si; bestInside = false;
+				if (dist > 1e-4) { best[0] = (x - qx) / dist; best[1] = (z - qz) / dist; }
+				else if (s.closed) { best[0] = hx; best[1] = hz; }
+				else { best[0] = d >= 0 ? hx : -hx; best[1] = d >= 0 ? hz : -hz; }
+			}
+			// the centre inside a closed solid: out through its nearest wall face (the segment test above only saw the surface)
+			// Only a shallow overlap counts (the centre within 1.5 radii of a wall face): a room-sized closed solid (the building's volume hull, 183 u across at
+			// the Bar) holds every body inside it, and its nearest face is 9-40 u away (the first rework's false pushes, all at the cap)
+			if (faces && s.closed && inDepth <= 0 && inDepth >= -1.5 * radius && radius - inDepth > bestLen) { bestLen = radius - inDepth; best[0] = inDir[0]; best[1] = inDir[1]; bestShape = si; bestInside = true; }
+		}
+	}
+	else { return false; }	// radius above the cache's: not asked for
+	if (bestLen <= 0) { return false; }
+	if (why)
+	{
+		const kworld::WorldShape& w = (*shapes)[bestShape];
+		char b[256];
+		std::shared_ptr<const std::vector<std::string>> names;
+		{ std::lock_guard<std::mutex> lk(m_); names = names_; }
+		snprintf(b, sizeof b, "%s %s box %.0f %.0f %.0f - %.0f %.0f %.0f push %.2f dir %.2f,%.2f", w.closed ? (bestInside ? "closed-inside" : "closed") : "surface", names && bestShape < names->size() ? (*names)[bestShape].c_str() : "?",
+			w.min[0], w.min[1], w.min[2], w.max[0], w.max[1], w.max[2], bestLen, best[0], best[1]);
+		*why = b;
+	}
+	const double m = std::min(bestLen, maxPush);
+	out[0] = best[0] * m;
+	out[1] = best[1] * m;
+	return true;
+}
+
 bool CollisionPick::thin(const float b[6])
 {
 	float d[3] = { b[3] - b[0], b[4] - b[1], b[5] - b[2] };

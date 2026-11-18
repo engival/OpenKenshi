@@ -6,6 +6,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "kworld/collision.hpp"
@@ -30,6 +31,16 @@ public:
 	using DoorOffset = std::function<bool(const kworld::WorldShape&, double offset[3])>;
 	bool ray(const double origin[3], const double dir[3], double maxT, double& t, float bounds[6] = nullptr, const DoorOffset& door = {}, kworld::DoorKey* key = nullptr,
 		bool* solid = nullptr, bool* building = nullptr, std::string* hitName = nullptr) const;
+	// Standing height (kenshi-k16.2.344): a vertical ray down from (x, wireY + up, z) onto the building collision shapes (not foliage, not door leaves, not
+	// thin props) and the hit NEAREST wireY wins (not the first: a lintel or an upper floor above, a sunk floor below must not take it); range up above and
+	// down below wireY. Returns 1 hit (y set), 0 no shape in the window, -1 the collision under (x, z) is not gathered (the zone cell is outside the newest
+	// gather's 3x3). gen: the gather's address (a new gather invalidates a caller's cache).
+	int groundY(double x, double z, double wireY, double up, double down, double& y, const void** gen = nullptr) const;
+	// Display depenetration (kenshi-k16.2.345): the horizontal push that takes a body of the given radius at (x, z), feet at y, out of the building
+	// collision (not foliage, not door leaves, not thin props, not floors): out = the (dx, dz) to add, capped at maxPush. Only the wall-like faces
+	// (|normal y| < 0.7) between y + 0.35 and y + 1.5 count; the face's outward side is away from its shape's box centre. False: nothing to push from
+	// or the collision under (x, z) is not gathered.
+	bool depenetrate(double x, double z, double y, double radius, double maxPush, double out[2], std::string* why = nullptr) const;
 	// The direct-drive camera boom (kenshi-k16.2.289.1): a sphere of the given radius swept from origin along dir (unit); the first contact within maxT
 	// (t: the centre's distance travelled). Building shapes that thin() calls thin are passed (the occluder fade dithers those); foliage shapes and
 	// everything else block. A shape the sphere already overlaps at the start blocks only when the sweep moves into it. False: nothing in the way.
@@ -47,6 +58,7 @@ public:
 	bool failed() const;
 
 private:
+	struct NudgeCell;
 	void worker(std::string dataDir, const kworld::Heightmap* terrain);
 	std::thread thread_;
 	mutable std::mutex m_;
@@ -56,4 +68,9 @@ private:
 	size_t buildingShapes_ = 0;	// shapes_ holds the buildings' shapes first, then foliage
 	int want_[2] = { -1, -1 }, have_[2] = { -1, -1 }, done_[2] = { -1, -1 };	// zone cell asked for / being gathered / gathered
 	bool stop_ = false, failed_ = false;
+	// depenetrate()'s per-cell candidate cache (kenshi-k16.2.350): the shapes and wall faces near a 8 u grid cell, built once per cell and gather (a new gather
+	// is a new shapes_ vector, so its address drops the cache)
+	mutable std::mutex nudgeM_;
+	mutable const void* nudgeGen_ = nullptr;
+	mutable std::unordered_map<int64_t, std::shared_ptr<NudgeCell>> nudgeCells_;
 };

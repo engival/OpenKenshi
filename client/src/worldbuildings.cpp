@@ -505,6 +505,17 @@ bool WorldBuildings::drawnHitIn(const double origin[3], const double dir[3], con
 	return hit;
 }
 
+bool WorldBuildings::groundDrawn(double x, double z, double wireY, double up, double down, double& y) const
+{
+	const double o[3] = { x, wireY, z }, dn[3] = { 0, -1, 0 }, upd[3] = { 0, 1, 0 };
+	const double lo[3] = { x - 1, wireY - down, z - 1 }, hi[3] = { x + 1, wireY + up, z + 1 };
+	double tDown = 0, tUp = 0;
+	const bool d = drawnHitIn(o, dn, lo, hi, 0, down, tDown), u = drawnHitIn(o, upd, lo, hi, 0, up, tUp);
+	if (!d && !u) { return false; }
+	y = d && (!u || tDown <= tUp) ? wireY - tDown : wireY + tUp;
+	return true;
+}
+
 int WorldBuildings::layoutPieceInstance(uint64_t building, uint32_t piece) const
 {
 	const auto it = layoutPieces_.find(std::make_pair(building, piece));

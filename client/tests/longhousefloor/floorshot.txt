@@ -1,0 +1,20 @@
+# longhousefloor floorshot (kenshi-k16.2.339): the Wanderer walks to the Longhouse's inside point and stands; a floor-level free camera (follow off, alt is over the TERRAIN, the
+# floor sits ~20 u under it) shoots the sunk floor. Compare the shots of a build before and after the wire-y change; KYLOG=1 gives drawn vs sim per frame.
+# Run: KYLOG=1 client/tests/longhousefloor/run.sh floorshot OUT
+10 set animate 1
+100 select id=@Wanderer@
+110 camera char Wanderer
+310 move 68349.1 -71139.1
+700 follow off
+700 set pos 68340,-71150
+700 set alt 22
+700 set yaw 90
+700 set pitch -4
+900 screenshot OUTDIR/floor_a.png
+900 set pos 68352,-71139
+900 set alt 12
+900 set yaw 270
+900 set pitch -75
+920 screenshot OUTDIR/floor_b.png
+1000 dump chars
+1100 quit

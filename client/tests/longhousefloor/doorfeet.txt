@@ -1,0 +1,38 @@
+# longhousefloor door (kenshi-k16.2.339; run with KSCEN=scenarios/ik_calm.kscen): the Wanderer walks out of the Storm House by a move order (door step at -50621.5,-1148.7,
+# y 1076), free camera (follow off first: camera ops are ignored while following) at the door, shots every 40 frames; then direct drive (V, W held) back in over the step.
+# KYLOG=1 gives drawn vs sim per frame; `drawnoff` events go to the evlog (client.log). Run: KYLOG=1 KSCEN=... client/tests/longhousefloor/run.sh door OUT
+10 set animate 1
+100 select id=@Wanderer@
+110 camera char Wanderer
+300 move -50624 -1135
+380 follow off
+380 set pos -50621.5,-1120
+380 set alt 12
+380 set yaw 0
+380 set pitch -22
+340 dump feetfloor id=@Wanderer@
+355 dump feetfloor id=@Wanderer@
+370 dump feetfloor id=@Wanderer@
+385 dump feetfloor id=@Wanderer@
+400 dump feetfloor id=@Wanderer@
+415 dump feetfloor id=@Wanderer@
+430 dump feetfloor id=@Wanderer@
+445 dump feetfloor id=@Wanderer@
+460 dump feetfloor id=@Wanderer@
+475 dump feetfloor id=@Wanderer@
+490 dump feetfloor id=@Wanderer@
+505 dump feetfloor id=@Wanderer@
+520 dump feetfloor id=@Wanderer@
+535 dump feetfloor id=@Wanderer@
+550 dump feetfloor id=@Wanderer@
+565 dump feetfloor id=@Wanderer@
+580 dump feetfloor id=@Wanderer@
+595 dump feetfloor id=@Wanderer@
+610 dump feetfloor id=@Wanderer@
+625 dump feetfloor id=@Wanderer@
+640 dump feetfloor id=@Wanderer@
+480 screenshot OUTDIR/door_480.png
+520 screenshot OUTDIR/door_520.png
+560 screenshot OUTDIR/door_560.png
+600 screenshot OUTDIR/door_600.png
+700 quit

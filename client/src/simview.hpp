@@ -38,8 +38,6 @@ public:
 	double startTick = -1;	// replay: start at this tick (> 0) instead of the first snapshot
 	// dt: real seconds. ground(x, z): terrain height, used while yValid is clear (the sim has no heights yet).
 	void update(double dt, Characters& chars, const std::function<double(double, double)>& ground);
-	// Is a world point inside an interior mask hull (WorldBuildings::insideInterior)? Set by the host; walkers there draw at the sim's y (kenshi-kyat.2).
-	std::function<bool(const double[3])> insideInterior;
 	double dtSim() const { return dtSim_; }	// this frame's sim seconds (0 paused, x the game speed), set by update
 	// The render delay for the current game speed, in ticks: the ~100 ms of wall time the client draws behind the newest snapshot
 	// (kDelayTicks at 1x, x5 at 5x; SIMLINK 4). A speed below 1 (slow motion) keeps at least a quarter tick of history.
@@ -212,6 +210,17 @@ public:
 	// the path) steps with the mouse, not in 20 Hz stairs
 	void aim(uint64_t id, double heading) { if (local_.id == id) { local_.heading = heading; } }
 	double localHeading() const { return local_.heading; }	// the heading the last drive order sent (kenshi-k16.2.237.9 log)
+	// The standing ray (kenshi-k16.2.344): a drawn standing character's y is the collision surface nearest the wire's y under its x, z (CollisionPick::groundY).
+	// res: 1 hit (y), 2 a drawn-face hit (a part with no collision), 0 no shape in the window, -1 the collision is not loaded there; gen changes with the gather (the per-character cache's key).
+	using GroundRay = std::function<int(double x, double z, double wireY, double up, double down, double& y, const void** gen)>;
+	// Display depenetration (kenshi-k16.2.345): the collision's push (dx, dz) for a body at (x, z) with feet y; false: none. Never fed back to the sim.
+	using Depenetrate = std::function<bool(double x, double z, double y, double radius, double maxPush, double out[2], std::string* why)>;
+	void setDepenetrate(Depenetrate d) { depen_ = std::move(d); }
+	struct NudgeStats { uint64_t frames = 0, nudgedSum = 0; int frameNudged = 0, maxFrameNudged = 0; double maxOffset = 0, frameMax = 0, msSum = 0, frameMs = 0, maxFrameMs = 0; };
+	const NudgeStats& nudgeStats() const { return nudge_; }
+	void setGroundRay(GroundRay r, std::function<const void*()> gen) { groundRay_ = std::move(r); groundGen_ = std::move(gen); }
+	struct RayStats { uint64_t faces = 0, casts = 0, cached = 0, hits = 0, misses = 0, unloaded = 0; double ms = 0, maxFrameMs = 0; int frameCasts = 0, maxFrameCasts = 0; double frameMs = 0; double maxShift = 0, sumShift = 0; };
+	const RayStats& rayStats() const { return rayStats_; }	// totals since the start; a dev counter (dump / the evlog standray line)
 	void setWalker(const knav::Walker* w) { walker_ = w; }	// ClientNav's, for drive prediction (each frame; null: none)
 	// A character's interpolated feet, yaw and route (the waypoints still ahead); false when it is not on screen.
 	bool pose(uint64_t id, double pos[3], double& yaw, const simlink::Route*& route) const;
@@ -278,7 +287,7 @@ public:
 private:
 	enum Mode { None, File, Live };
 	enum Down { Up, Lying, Crawling, Carried, Seated, Asleep };
-	struct Slot { int index = -1; uint32_t version = 0; uint32_t action = 0, poseClip = 0; uint64_t actionStart = 0; bool loop = false; Down down = Up; bool rising = false, seen = false; int carry = 0, severed = 0; double pos[3] = {}, yaw = 0, bodyYaw = 0; bool bodyOn = false; float hull[3] = { 5, 20, 5 }; bool drawn = false; float vFwd = 0, vLat = 0, vSim = 0; float speedWin[2][8] = {}; int speedHead = -1; bool failed = false; Down failedDown = Up; uint32_t failedClip = 0; bool ragdollHeld = false; double catchStart = -1, catchMax = 0; uint64_t jumpTick = 0; double off[2] = {}, basePrev[2] = {}, sim[3] = {}, catchV[2] = {}; uint64_t wireTick = 0, wireMoveTick = 0, stallLogTick = 0, offLogTick = 0, nobodyLogTick = 0; float wireLast[2] = {}; uint8_t nobodyState = 255, nobodyPending = 255, nobodyPendingCount = 0; };	// bodyYaw / bodyOn: the drawn body's own yaw while drive.facing = travel (or easing back from it; k16.2.237.10); the tail (kenshi-k16.2.264.1): wireTick = the newest sample's tick last seen, wireLast its xz, wireMoveTick the sample tick it last changed at (a walkstall line); stallLogTick / offLogTick / nobodyLogTick = the render tick each case line was last written at (5 s apart); nobodyState = the DrawState the last nobody line named, nobodyPending / nobodyPendingCount = the state being confirmed (two frames: the draw state is one prepare behind, and a rebuild renumbers the indices); off: display slop, the drawn position's offset from the sim (xz; eased to 0, kenshi-k16.2.74); basePrev: the sim's interpolated position last frame (the base-jump test); sim: the sim's interpolated position this frame (gameplay (pick) reads it, never the drawn pos); jumpTick: the wire sample last logged as a sim jump (evlog simjump); catchStart / catchMax: the catch-up episode under way (its first sim tick, -1: none) and its largest error, logged when it ends (evlog); drawn: pos holds last frame's drawn position; vFwd / vLat: its filtered velocity in the body frame (the legs); speedWin / speedHead: the last 8 raw fwd / lat speeds, the next write at speedHead (-1: empty); rising: playing the get-up while down stays Lying; seen: drawn once (a character first seen already down is snapped, not fallen into); failed / failedDown / failedClip: the down state the last rebuild failed to build (no retry while the wire still reads it, sl.down keeps the pose); ragdollHeld: sl.down's Lying was committed for an unbuildable lying pose that a ragdoll carries (the get-up is Characters::riseLive)
+	struct Slot { int index = -1; uint32_t version = 0; uint32_t action = 0, poseClip = 0; uint64_t actionStart = 0; bool loop = false; Down down = Up; bool rising = false, seen = false; int carry = 0, severed = 0; double pos[3] = {}, yaw = 0, bodyYaw = 0; bool bodyOn = false; float hull[3] = { 5, 20, 5 }; bool drawn = false; float vFwd = 0, vLat = 0, vSim = 0; float speedWin[2][8] = {}; int speedHead = -1; bool failed = false; Down failedDown = Up; uint32_t failedClip = 0; bool ragdollHeld = false; double catchStart = -1, catchMax = 0; uint64_t jumpTick = 0; double off[2] = {}, basePrev[2] = {}, sim[3] = {}, catchV[2] = {}; uint64_t wireTick = 0, wireMoveTick = 0, stallLogTick = 0, offLogTick = 0, nobodyLogTick = 0; float wireLast[2] = {}; uint8_t nobodyState = 255, nobodyPending = 255, nobodyPendingCount = 0; double rayX = 1e30, rayZ = 0, rayWireY = 0, rayY = 0; int rayRes = -2; const void* rayGen = nullptr; double missX = 1e30, missZ = 0; double nudge[2] = {}; bool nudgeOn = false; };	// the standing ray's cache (kenshi-k16.2.344): the input (x, z, wire y, gather) and its result (rayRes 1 hit at rayY, 0 miss, -1 not loaded; -2 none); missX / missZ: where a miss was last logged	// bodyYaw / bodyOn: the drawn body's own yaw while drive.facing = travel (or easing back from it; k16.2.237.10); the tail (kenshi-k16.2.264.1): wireTick = the newest sample's tick last seen, wireLast its xz, wireMoveTick the sample tick it last changed at (a walkstall line); stallLogTick / offLogTick / nobodyLogTick = the render tick each case line was last written at (5 s apart); nobodyState = the DrawState the last nobody line named, nobodyPending / nobodyPendingCount = the state being confirmed (two frames: the draw state is one prepare behind, and a rebuild renumbers the indices); off: display slop, the drawn position's offset from the sim (xz; eased to 0, kenshi-k16.2.74); basePrev: the sim's interpolated position last frame (the base-jump test); sim: the sim's interpolated position this frame (gameplay (pick) reads it, never the drawn pos); jumpTick: the wire sample last logged as a sim jump (evlog simjump); catchStart / catchMax: the catch-up episode under way (its first sim tick, -1: none) and its largest error, logged when it ends (evlog); drawn: pos holds last frame's drawn position; vFwd / vLat: its filtered velocity in the body frame (the legs); speedWin / speedHead: the last 8 raw fwd / lat speeds, the next write at speedHead (-1: empty); rising: playing the get-up while down stays Lying; seen: drawn once (a character first seen already down is snapped, not fallen into); failed / failedDown / failedClip: the down state the last rebuild failed to build (no retry while the wire still reads it, sl.down keeps the pose); ragdollHeld: sl.down's Lying was committed for an unbuildable lying pose that a ragdoll carries (the get-up is Characters::riseLive)
 	std::vector<SoundCue> cues_;
 	struct DoorSound { int type = 0; float speed = 0.5f; };
 	std::unordered_map<std::string, DoorSound> doorSounds_;
@@ -320,6 +329,16 @@ private:
 	// gait: the target speed learnt from the server's steady forward samples (0: not yet; run: the flag it was learnt under); fwd: our ramped speed
 	struct Local { uint64_t id = 0; uint8_t drive = 0; int strafe = 0; double heading = 0, gait = 0, fwd = 0, pos[3] = {}, vel[2] = {}; bool on = false, run = true; } local_;
 	const knav::Walker* walker_ = nullptr;
+	GroundRay groundRay_;
+	Depenetrate depen_;
+	std::unordered_map<int64_t, std::vector<uint64_t>> nudgeGrid_;
+	bool nudgeOk(const simlink::Dynamic& d, uint64_t id) const;
+	NudgeStats nudge_;
+	uint64_t nudgeLogTick_ = 0;
+	std::function<const void*()> groundGen_;
+	RayStats rayStats_;
+	double predictYOff_ = 0;	// predict's wire-navmesh y offset: the drawn y when the standing ray has no hit
+	double rayLogTick_ = 0;
 	double dtSim_ = 0;	// this frame's sim seconds
 	uint64_t drivenId_ = 0;	// the character under direct drive (the follow camera on a player), 0 none (setDriven; kenshi-k16.2.237.10: the travel facing)
 	void predict(const simlink::Character& c, double p[3], float& yaw);

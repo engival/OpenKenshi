@@ -1,0 +1,40 @@
+# longhousefloor door (kenshi-k16.2.339; run with KSCEN=scenarios/ik_calm.kscen): the Wanderer walks out of the Storm House by a move order (door step at -50621.5,-1148.7,
+# y 1076), free camera (follow off first: camera ops are ignored while following) at the door, shots every 40 frames; then direct drive (V, W held) back in over the step.
+# KYLOG=1 gives drawn vs sim per frame; `drawnoff` events go to the evlog (client.log). Run: KYLOG=1 KSCEN=... client/tests/longhousefloor/run.sh door OUT
+10 set animate 1
+100 select id=@Wanderer@
+110 camera char Wanderer
+300 move -50624 -1135
+380 follow off
+380 set pos -50621.5,-1120
+380 set alt 12
+380 set yaw 0
+380 set pitch -22
+400 screenshot OUTDIR/door_400.png
+440 screenshot OUTDIR/door_440.png
+480 screenshot OUTDIR/door_480.png
+520 screenshot OUTDIR/door_520.png
+560 screenshot OUTDIR/door_560.png
+600 screenshot OUTDIR/door_600.png
+640 screenshot OUTDIR/door_640.png
+680 screenshot OUTDIR/door_680.png
+720 screenshot OUTDIR/door_720.png
+760 screenshot OUTDIR/door_760.png
+800 screenshot OUTDIR/door_800.png
+840 screenshot OUTDIR/door_840.png
+880 screenshot OUTDIR/door_880.png
+920 screenshot OUTDIR/door_920.png
+960 screenshot OUTDIR/door_960.png
+1000 screenshot OUTDIR/door_1000.png
+1050 dump chars
+1060 select id=@Wanderer@
+1070 follow char id=@Wanderer@
+1070 set dist 40
+1100 key W down
+1160 screenshot OUTDIR/drive_1160.png
+1220 screenshot OUTDIR/drive_1220.png
+1280 screenshot OUTDIR/drive_1280.png
+1340 screenshot OUTDIR/drive_1340.png
+1400 key W up
+1420 dump chars
+1500 quit

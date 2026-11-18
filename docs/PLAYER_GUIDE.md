@@ -412,8 +412,8 @@ The orders panel is the bottom-right corner. Down its left side, the selection's
 tooltip says the same):
 
 - `BLOCK`: hold a defensive stance.
-- `HOLD`: stay in place and fight from there.
-- `PASSIVE`: never start a fight, only defend.
+- `HOLD`: hold position: the selection does not run to help allies, and answers only an enemy that comes into close range (the sim's range is our own choice, not yet measured against the original). Order 10 `which` 7; the tick shows the sim's state for the shown character. Not the same as a stop order, which makes a character stand still.
+- `PASSIVE`: never start a fight, only defend: the selection does not join an ally's fight but still answers its own attacker. Order 10 `which` 6; the tick shows the sim's state.
 - `JOBS`: work through the job list; off, only the jobs that always run.
 - `RANGED`: fight with a ranged weapon.
 - `TAUNT`: draw the enemy's attacks.
@@ -426,7 +426,7 @@ tooltip says the same):
   above head height along the line; strangers and townsfolk draw them too — they are usually not enemies, only
   people whose attention your sneaking caught. The arrows go when the sneak is switched off (or a fight starts).
 
-Enabled today: Block, Hold, Jobs, Sneak (Passive, Ranged and Taunt are shown disabled: **not built yet**).
+Enabled today: Block, Hold, Passive, Jobs, Sneak (Ranged and Taunt are shown disabled: **not built yet**).
 
 Right of the ticks, the selected character's **job list**: numbered in priority order, the X removes one, a row dragged
 onto another takes its place (onto empty space it goes last). Under it: `RESCUE` (**not built yet**), `MEDIC` (the

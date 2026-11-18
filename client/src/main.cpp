@@ -975,6 +975,8 @@ static void progress_frame()
 // none while F7 hides the interface. Sneaking shows the stealth icon as "hidden" and the light icon at full light until the sim sends detection and
 // the light level (not on the wire yet).
 static bool char_cut_hidden(uint64_t id, const double pos[3]);	// the body's floor cut (its definition reads app; below cut_hidden)
+const cfg::Bool kStandRayFaces{ cfg::Group{ "Simulation" }, "sim.stand_ray_faces", false, "Standing ray fallback (kenshi-k16.2.344): where no collision shape is under a standing character, the nearest drawn building triangle stands in. Off by default: the first decode of a building mesh costs ~100 ms on the logic thread, and in the Heft crowd it found 70 of 4606 misses" };
+const cfg::Bool kStandRay{ cfg::Group{ "Simulation" }, "sim.stand_ray", true, "Standing height (kenshi-k16.2.344): a drawn standing character is placed by a vertical ray from its wire y onto the client collision (nearest hit) and the heightmap; off draws the wire y" };
 const cfg::Bool kShowNames{ cfg::Group{ "HUD and labels" }, "ui.show_names", true, "Show character names: the player characters' names over their heads (the original's \"Show names\")" };
 static void name_labels_frame()
 {
@@ -3001,7 +3003,7 @@ void update_follow(double dt)
 	if (app.scripted() && app.frames % 10 == 0 && app.sim.predicting())
 	{
 		const simlink::Dynamic& d = app.sim.decoder().chars.at(app.followId).cur;
-		printf("predict: shown %.1f %.1f  server %.1f %.1f (tick %llu, drive %u)\n", pos[0], pos[2], d.pos[0], d.pos[2], (unsigned long long)d.tick, d.drive);
+		printf("predict: shown %.1f %.1f  server %.1f %.1f (tick %llu, drive %u) y shown %.2f server %.2f\n", pos[0], pos[2], d.pos[0], d.pos[2], (unsigned long long)d.tick, d.drive, pos[1], (double)d.pos[1]);
 	}
 	constexpr double kBoomMin = 4.0;	// u
 	double f[3];
@@ -3841,6 +3843,12 @@ void exec_cmd(const Cmd& c)
 					feet[2], shape.c_str(), (int)solid, (int)building, bounds[0], bounds[3], bounds[1], bounds[4], bounds[2], bounds[5]);
 			}
 			else { printf("  collision ray: no hit within 6 u\n"); }
+			{
+				// the drawn render triangles under the feet, the first hit down from the wire y + 1.5 (kenshi-k16.2.344): what the body would stand on by faces
+				const double o2[3] = { feet[0], feet[1] + 1.5, feet[2] }, lo[3] = { feet[0] - 1, feet[1] - 8, feet[2] - 1 }, hi[3] = { feet[0] + 1, feet[1] + 3, feet[2] + 1 };
+				double td = 0;
+				if (app.buildings.drawnHitIn(o2, dir, lo, hi, 0, 8.0, td)) { printf("  drawn ray: y %.3f (wire %.3f)\n", o2[1] - td, feet[1]); } else { printf("  drawn ray: no drawn triangle within 8 u\n"); }
+			}
 			printf("%s", app.buildings.drawnFloorReport(ch.cur.building, feet[0], feet[2], feet[1] + 1.0, 6.0).c_str());
 		}
 	}
@@ -7839,11 +7847,16 @@ void sim_opened()
 {
 	logicthread::renderIdle();	// overlap (rule 12): the new game's link, collision and the buildings' callbacks change under no draw
 	app.collide.start(app.opt.data, &*app.hm);
+	app.sim.setDepenetrate([](double x, double z, double y, double r, double cap, double out[2], std::string* why) { return app.collide.depenetrate(x, z, y, r, cap, out, why); });
+	if (kStandRay.get())
+	{
+		app.sim.setGroundRay([](double x, double z, double wy, double up, double down, double& y, const void** gen) { const int r = app.collide.groundY(x, z, wy, up, down, y, gen); if (r == 0 && kStandRayFaces.get() && app.buildings.groundDrawn(x, z, wy, up, down, y)) { return 2; } return r; },
+			[]() -> const void* { const auto g = app.collide.gathered(); return g.get(); });
+	}
 #ifdef KCLIENT_DEBUG_VIEW
 	app.debugView.reset();
 	app.debugSubscribed = false;
 	dev::shotTreesReset();	// no shot's trees capture is pending at a session's start
-	app.sim.insideInterior = [](const double p[3]) { return app.buildings.insideInterior(p); };	// walkers in a carved interior draw at the sim's y (kenshi-kyat.2)
 	app.sim.setDebugSink([](uint16_t type, const uint8_t* p, size_t n)
 	{
 		const uint32_t before = app.debugView.treeSerial;
@@ -8108,7 +8121,15 @@ void init_ui()
 		// (ui/hud.cpp) so the click is this one, not a generic click as well
 		else if (t == ui::HudToggle::kSneak) { if (app.sim.setToggle(1, value)) { if (value) { post_event(audio::kStealth, "Stealth"); } else { post_event(audio::kGeneralClick, "General_Click"); } } }
 		else if (t == ui::HudToggle::kRun) { app.sim.setToggle(2, value); }
-		else if (t == ui::HudToggle::kHold) { app.sim.stop(value); }	// order 4: hold 1 stands and holds (CHAR_DYNAMIC kHold), 0 a plain stop
+		// PASSIVE / HOLD: order 10 which 6 / 7 (k16.6.313), the opposite of the shown character's state for the whole selection (as the exe does);
+		// order 4 hold (CHAR_DYNAMIC kHold, bit 13) stays on the script's `stop on` only
+		else if (t == ui::HudToggle::kPassive || t == ui::HudToggle::kHold)
+		{
+			const bool hold = t == ui::HudToggle::kHold;
+			const auto c = app.sim.decoder().chars.find(app.jobsChar);
+			const uint32_t bit = hold ? simlink::kHoldPosition : simlink::kPassive;
+			app.sim.setToggle(hold ? 7 : 6, app.jobsChar && c != app.sim.decoder().chars.end() ? !(c->second.cur.flags & bit) : value);
+		}
 		else if (t == ui::HudToggle::kJobs)	// the original sends the opposite of the shown character's for the whole selection (SIMLINK toggle 4)
 		{
 			const auto j = app.sim.decoder().jobs.find(app.jobsChar);
@@ -10321,7 +10342,8 @@ void update_ui(double dt)
 			m.toggles[(int)ui::HudToggle::kSneak] = f & simlink::kStealth;
 			m.toggles[(int)ui::HudToggle::kBlock] = f & simlink::kBlockMode;
 			m.toggles[(int)ui::HudToggle::kRun] = f & simlink::kRun;
-			m.toggles[(int)ui::HudToggle::kHold] = f & simlink::kHold;
+			m.toggles[(int)ui::HudToggle::kHold] = f & simlink::kHoldPosition;
+			m.toggles[(int)ui::HudToggle::kPassive] = f & simlink::kPassive;
 			const auto jobs = app.sim.decoder().jobs.find(id);
 			m.toggles[(int)ui::HudToggle::kJobs] = jobs == app.sim.decoder().jobs.end() || jobs->second.enabled;
 			uint32_t version = 0;
@@ -10341,6 +10363,7 @@ void update_ui(double dt)
 		st.jobsValid = infoId != 0;	// the status panel's character's (SIMLINK JOBS); no entry: none (the list shows "[No jobs assigned]")
 		st.toggleEnabled[(int)ui::HudToggle::kJobs] = true;
 		st.toggleEnabled[(int)ui::HudToggle::kHold] = true;
+		st.toggleEnabled[(int)ui::HudToggle::kPassive] = true;
 		st.medicEnabled = true;
 		app.jobsChar = infoId;
 		if (const auto j = app.sim.decoder().jobs.find(infoId); j != app.sim.decoder().jobs.end())

@@ -72,6 +72,9 @@ for n in names:
 	for i, (path, label) in enumerate(((refs.get(n), "reference"), (bpng if not bless else None, "baseline"), (f"{out}/{n}.png", "current"))):
 		sheet.paste(tile(path, f"{n}: {label}"), (CELL[0] * i, 0))
 	sheet.save(f"{out}/{n}.sheet.png")
+if not rows:	# no scene rendered (kclient could not read scenes.txt: it is found beside the binary's parent dir): an empty overview image made PIL raise "tile cannot extend outside image"
+	print("scene_compare: no scene was rendered; nothing to compare", file=sys.stderr)
+	sys.exit(1)
 cols = 3
 over = Image.new("RGB", (CELL[0] * cols, CELL[1] * ((len(rows) + cols - 1) // cols)), (0, 0, 0))
 for i, (n, status, cur) in enumerate(rows):

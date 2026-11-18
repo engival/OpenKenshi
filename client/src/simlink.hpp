@@ -24,7 +24,8 @@ namespace simlink
 		kSeated = 32768, kAsleep = 65536,	// on a layout seat / bed (RELAX); derived, unsaved
 		kIndoors = 1u << 19,
 		kAim = 1u << 20,
-		kMounted = 1u << 21, kStrafeLeft = 1u << 22, kStrafeRight = 1u << 23 };	// mounted: manning a turret, its doorKey in the mounted tail. kAim: the aim tail follows (a swinging technique's clip root aim)	// bits 17-18 are the speed mode: in a building's interior AND under a ceiling (Fighter::indoors), so a roof / top deck is clear (SIMLINK, sim 5ac25fbc)
+		kMounted = 1u << 21, kStrafeLeft = 1u << 22, kStrafeRight = 1u << 23,
+		kPassive = 1u << 24, kHoldPosition = 1u << 25 };	// passive / hold position: order 10 which 6 / 7 (k16.6.313); NOT kHold (bit 13, the order-4 stand state).	// mounted: manning a turret, its doorKey in the mounted tail. kAim: the aim tail follows (a swinging technique's clip root aim)	// bits 17-18 are the speed mode: in a building's interior AND under a ceiling (Fighter::indoors), so a roof / top deck is clear (SIMLINK, sim 5ac25fbc)
 	enum Section : uint8_t { kBack, kBack2, kHip, kHead, kShirt, kArmour, kLegs, kBoots, kBackpack, kHand };
 
 	struct Item { uint32_t item = 0, spec = 0, colour = 0; uint8_t section = 0; };

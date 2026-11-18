@@ -1,0 +1,6 @@
+10 set animate 1
+100 select id=@Wanderer@
+300 move -50624 -1135
+420 dump shapes -50621.5 -1148.7 4
+420 dump shapes -50621.5 -1148.7 4 thin
+440 quit
