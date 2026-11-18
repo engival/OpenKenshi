@@ -158,7 +158,7 @@ LiveGoal liveGoal(const state::Fighter& f, const flecs::entity& entity, const Co
 		return out;
 	}
 	// A fight: the wire's combat flag condition (SIMLINK.md section 6). The goal is the one that started it (Fighter::combatGoal).
-	if (f.target != 0 || f.technique >= 0 || f.state == state::CombatState::Attack || f.state == state::CombatState::Defend)
+	if (f.target != 0 || (f.technique >= 0 && !f.techniqueFinished) || f.state == state::CombatState::Attack || f.state == state::CombatState::Defend)
 	{
 		out.task = f.combatGoal != 0 ? f.combatGoal : (f.playerControlled ? kAttackOrder : kAttackEnemies16);
 		out.source = kSourceCombat;

@@ -22,6 +22,7 @@
 #include "kworld/loadorder.hpp"
 #include "test_util.hpp"
 
+#include <cstdlib>
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -81,6 +82,17 @@ bool play(const std::uint64_t seed, const bool rowGone)
 	sim.enqueue(attack);
 	const std::string tag = " (seed " + std::to_string(seed) + ")";
 	const std::string me = "member " + std::to_string(kPlayer);
+	// This fixture pins the graft (187 row, goal 171), not the aid: the guards spawn with a kit (their CHARACTER inventory, k16.6.287), and
+	// the whole squad would heal the slave again after the follow is dropped (58 over the graft). The caravan carries no kit here.
+	sim.world().ecs().each([&](const state::Id& who, state::Inventory& pack)
+	{
+		if (who.value >= kBoss && who.value < kBoss + 8)
+			std::erase_if(pack.items, [&](const state::Inventory::Entry& entry)
+			{
+				const ItemInfo* info = data->item(entry.itemSid);
+				return info != nullptr && info->function == kItemFunctionMedkit;
+			});
+	});
 	for (int i = 0; i < 4000 && sim.combat()->find(kPlayer)->slaveState != 1; ++i)
 		sim.tick();
 	test::require(sim.combat()->find(kPlayer)->slaveState == 1, "the player is cuffed" + tag);
@@ -156,8 +168,32 @@ int main()
 			std::cerr << "ksim_slave_obedience: SKIPPED: no shipped navtiles in " << KENSHI_DATA << "\n";
 			return 77;
 		}
+		if (const char* sweep = std::getenv("KSIM_SEEDS")) // KSIM_SEEDS=1,2,3: each seed run both ways, grafted or not reported, nothing asserted (a seed survey)
+		{
+			for (const char* at = sweep; *at != '\0';)
+			{
+				char* end = nullptr;
+				const std::uint64_t seed = std::strtoull(at, &end, 10);
+				try
+				{
+					const bool shown = play(seed, false);
+					if (shown)
+						play(seed, true);
+					std::cout << "SWEEP seed " << seed << (shown ? " grafts: ok\n" : " not freed in the window\n");
+				} catch (const std::exception& e) {
+					std::cout << "SWEEP seed " << seed << ": " << e.what() << "\n";
+				}
+				at = *end == ',' ? end + 1 : end;
+			}
+			return 0;
+		}
 		int grafted = 0;
-		for (const std::uint64_t seed : {std::uint64_t{1}, std::uint64_t{706960716}, std::uint64_t{1151889715}})
+		// Sliced (k16.6.320; KSIM_SEEDS sweep of 1..9, 706960716, 1151889715, 2026-11-17): the squad's second moves by up to 19 ticks, the fight goes another way, and
+		// the slave of seeds 1, 706960716, 1151889715, 2, 3, 6, 7, 8, 9 is still carried (down) when the caravan's 12,000-tick walk is not over, so they show nothing
+		// here (the note above). 4 and 5 are freed inside the window and graft, with the row and without it.
+		// The furniture ring (k16.7.89) moves the fight: KSIM_SEEDS sweep of 1..12 with it (2026-11-18): only seed 1 is freed inside the window and grafts;
+		// 4 and 5 are still carried (down) when the walk is over.
+		for (const std::uint64_t seed : {std::uint64_t{1}})
 		{
 			grafted += play(seed, false) ? 1 : 0;
 			play(seed, true);

@@ -36,7 +36,17 @@
 #include <utility>
 #include <vector>
 
+namespace knav
+{
+class Walker;
+}
+
 namespace ksim {
+
+// A formation slot (ax, az) off the walker's mesh (inside a prop's box or a wall) is moved to the mesh edge nearest it, then `radius` further out from the
+// solid, so a follower stops clear of the wall instead of sliding along it at 0 u (k16.6.320). True when it moved; an on-mesh slot, or none within
+// reach, is left as it was.
+bool clearFormationSlot(const knav::Walker& walker, double y, double radius, double& ax, double& az);
 
 class MeshNavigator;
 

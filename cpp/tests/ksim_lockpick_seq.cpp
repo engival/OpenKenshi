@@ -1,6 +1,6 @@
 // Lockpick order sequence as the original (kenshi-k16.6.324 / .323; CRIME_STATIC.md "2 Burglary"): the order walks to the lock with no crime and
-// no witness reaction; the crime and the reaction start when picking starts; the reaction does not end the order; a 0% chance never starts
-// picking (no crime, no reaction); a targeting stops the running task and the order restarts from its beginning, no fight alongside (kenshi-k16.6.335, rwh.165).
+// no witness reaction; the crime and the reaction start when picking starts; the reaction does not end the order; a 0% order walks to the lock, never starts
+// picking (no crime, no reaction) and ends refused there (kenshi-k16.6.366); a targeting stops the running task and the order restarts from its beginning, no fight alongside (kenshi-k16.6.335, rwh.165).
 
 #include "ksim/clock.hpp"
 #include "ksim/crime.hpp"
@@ -18,6 +18,7 @@
 #include "test_util.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
 
@@ -207,17 +208,34 @@ void zeroChance(const Data& w, const std::shared_ptr<MeshNavigator>& nav, const 
 	rig.tick(20 * 3);
 	check(pickChance(100.0, kSkill) < kMinPickChance, "4: the setup chance is below the floor (a 0% display)");
 	rig.order(w.holy, 14.0, kSkill, 100.0);
+	const auto distance = [&]() { return std::hypot(rig.f(rig.thief).x - rig.boxX, rig.f(rig.thief).z - rig.boxZ); };
+	const double first = distance();
+	rig.tick(); // the command is applied on the tick
+	check(rig.ordered() || rig.f(rig.thief).walking(), "4: the order is accepted whatever the chance (not refused at once)");
 	bool started = false;
 	bool crime = false;
+	bool walked = false;
 	for (int i = 0; i < 20 * 30; ++i)
 	{
 		rig.tick();
+		walked = walked || rig.f(rig.thief).walking();
 		started = started || rig.picking();
 		crime = crime || rig.crimeOnThief() || rig.witnessed() > 0;
 	}
-	check(!started, "4: a 0% lock never starts picking");
+	check(walked && distance() < first - 5.0, "4: the order walked to the lock (distance " + std::to_string(first) + " -> " + std::to_string(distance()) + ")");
 	check(!crime, "4: no crime and no reaction");
-	check(!rig.ordered(), "4: the order ended (refused) instead of picking");
+	check(rig.lock().lockElapsed == 0.0 && rig.lock().lockAttempts == 0, "4: no lock roll");
+	bool rolled = false;
+	int refused = 0;
+	for (const InteractEvent& e : rig.interacts)
+	{
+		rolled = rolled || e.kind == InteractEvent::Kind::LockRoll;
+		refused += e.kind == InteractEvent::Kind::Done && e.action == 3 && e.result == InteractEvent::kRefused;
+	}
+	check(!rolled, "4: no LockRoll event");
+	check(refused == 1, "4: the order ended once, refused at the lock (event 13 result 1)");
+	check(!rig.ordered() && !rig.picking(), "4: the order ended cleanly: no order, no pick step left");
+	check(!rig.f(rig.thief).walking(), "4: the character idles (no re-plan loop)");
 }
 
 // Attacked mid-order, the original (rwh.165): the character runs one task, so it never fights while the order runs (it is only hit); a targeting or a hit

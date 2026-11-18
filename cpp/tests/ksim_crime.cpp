@@ -197,6 +197,7 @@ struct Rig
 		stock.add(w.item, 1);
 		flecs::entity c = sim->spawnContainer(box, stock);
 		const std::uint64_t id = c.get<state::Id>()->value;
+		f(who).skills.thievery = 100.0; // a sure take (steal chance 127%): these tests are about the crime, ksim_steal_chance rolls
 		sim->enqueue(Command::containerTransfer(state::Id{who}, id, w.item, 1, true, 1));
 		return id;
 	}
@@ -233,6 +234,52 @@ struct Rig
 std::string str(double v)
 {
 	return std::to_string(v);
+}
+
+// k16.6.329: SIMLINK EVENT 51 caught_stealing: once per caught act (the theft / lockpick record's start), the first witness named; a
+// re-witness of the same record sends nothing; an unwitnessed act sends nothing. (The wire filter, player characters only, is the
+// Session's; here the sim's observer.)
+void caughtStealing(const Data& w)
+{
+	using Event = Simulation::CrimeEvent;
+	// A witnessed theft: one event with the thief, the guard and the container, however long the guard keeps watching.
+	{
+		Rig rig(w);
+		std::vector<Event> sent;
+		rig.sim->setCrimeObserver([&](const Event& e) { sent.push_back(e); });
+		const std::uint64_t guard = rig.add(w.holy, 1, 1, 0.0, 0.0, 0.0, false);
+		const std::uint64_t thief = rig.add(w.nameless, 9, 0, 0.0, 60.0, 3.14159265, true);
+		rig.tick(20 * 3);
+		const std::uint64_t box = rig.steal(thief, w.holy);
+		rig.tick(20 * 12);
+		check(sent.size() == 1 && sent[0].kind == Event::Kind::CaughtStealing, "a witnessed theft sends EVENT 51 once (" + std::to_string(sent.size()) + ")");
+		check(sent[0].who == thief && sent[0].other == guard && sent[0].cause == 1 && sent[0].container == box, "51 names the thief, the first witness, cause 1 and the container");
+	}
+	// Unwitnessed: the guard looks away, nothing is sent.
+	{
+		Rig rig(w);
+		std::vector<Event> sent;
+		rig.sim->setCrimeObserver([&](const Event& e) { sent.push_back(e); });
+		rig.add(w.holy, 1, 1, 0.0, 0.0, 3.14159265, false);
+		const std::uint64_t thief = rig.add(w.nameless, 9, 0, 0.0, 60.0, 0.0, true);
+		rig.tick(20 * 3);
+		rig.steal(thief, w.holy);
+		rig.tick(20 * 12);
+		check(sent.empty(), "an unwitnessed theft sends no EVENT 51");
+	}
+	// A lockpick seen: cause 2, the picked container, once although the crime is reported every tick.
+	{
+		Rig rig(w);
+		std::vector<Event> sent;
+		rig.sim->setCrimeObserver([&](const Event& e) { sent.push_back(e); });
+		const std::uint64_t guard = rig.add(w.holy, 1, 1, 0.0, 0.0, 0.0, false);
+		const std::uint64_t thief = rig.add(w.nameless, 9, 0, 0.0, 60.0, 3.14159265, true);
+		rig.tick(20 * 3);
+		const std::uint64_t box = rig.pick(thief, w.holy);
+		rig.tick(20 * 10);
+		check(sent.size() == 1 && sent[0].who == thief && sent[0].other == guard && sent[0].cause == 2 && sent[0].container == box,
+			"a seen lockpick sends EVENT 51 once with cause 2 (" + std::to_string(sent.size()) + ")");
+	}
 }
 
 void theft(const Data& w)
@@ -666,6 +713,7 @@ void joinerAssault(const Data& w)
 	const std::uint64_t joiner = rig.add(w.nameless, 9, 0, 0.0, 8.0, 3.14159265, true);
 	const std::uint64_t bystander = rig.add(w.nameless, 9, 0, 3000.0, 3000.0, 0.0, true);
 	rig.tick(20 * 3);
+	const double relationBefore = rig.sim->factionRelationBetween(w.holy, w.nameless);
 	rig.sim->enqueue(Command::fighterAttack(state::Id{joiner}, state::Id{guard}));
 	const state::CrimeRecord* r = nullptr;
 	for (int i = 0; i < 20 * 20 && (r == nullptr || cr::bountyOf(*r, w.holy) < 500); ++i)
@@ -676,6 +724,10 @@ void joinerAssault(const Data& w)
 	check(r != nullptr && r->crime == cr::kAssault && r->victimChar == guard, "a landed hit on a guard is the attacker's own Assault");
 	check(r != nullptr && cr::bountyOf(*r, w.holy) >= 500, "with a 500 bounty with the guard's faction");
 	check(rig.sim->crimeRecord(guard) == nullptr, "the law character carries no crime");
+	// The charged hit is the guard's own on the joiner (law attacker, non-law defender: resisting law); the DEFENDER's store gets the tag.
+	const std::vector<std::uint64_t>& tagAfter = rig.f(joiner).hostileSquads;
+	check(std::binary_search(tagAfter.begin(), tagAfter.end(), rig.f(guard).squad), "tag 4 (temp enemy): the defender's squad lists the hitter");
+	check(rig.sim->factionRelationBetween(w.holy, w.nameless) == relationBefore, "the faction relation did not move on the law-branch hit");
 	check(rig.sim->crimeRecord(bystander) == nullptr, "a character that landed nothing carries crime 0");
 }
 
@@ -845,6 +897,7 @@ int main()
 		rules();
 		const Data w;
 		theft(w);
+		caughtStealing(w);
 		betrayal(w);
 		lockpick(w);
 		lootBody(w);

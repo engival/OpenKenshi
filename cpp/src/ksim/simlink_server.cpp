@@ -238,10 +238,17 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 		checkGrace();
 		const auto now = Clock::now();
 		const double interval = Simulation::kTickSeconds / static_cast<double>(ctx_.speed);
+		// KSIM_SNAPSHOT_PER_TICK=1 restores one snapshot per tick at any speed (the before / after profile of SIM_SCHEDULING 5O).
+		static const bool perTick = std::getenv("KSIM_SNAPSHOT_PER_TICK") != nullptr;
+		// One snapshot per `perSnapshot` ticks (SIMLINK.md "Cadence", SIM_SCHEDULING 5O): floor(speed), min 1, so the client's view
+		// (delay 2 x speed ticks) always has two snapshots of history. At 1x that is one per tick. The loop sleeps until the whole
+		// batch is due, so the ticks run back to back and one snapshot follows; the batch's events go out in tick order, each
+		// stamped with its own tick (stampEvents).
+		const int perSnapshot = perTick ? 1 : std::max(1, static_cast<int>(ctx_.speed));
 		int timeoutMs = 50;
 		if (!ctx_.pausedNow())
 		{
-			const double wait = std::chrono::duration<double>(due - now).count();
+			const double wait = std::chrono::duration<double>(due - now).count() + (perSnapshot - 1) * interval;
 			timeoutMs = wait <= 0.0 ? 0 : static_cast<int>(std::min(50.0, wait * 1000.0 + 0.999));
 		}
 
@@ -371,6 +378,23 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 			const auto t = Clock::now();
 			if (std::chrono::duration<double>(t - due).count() > kBehindLimit)
 				due = t;
+			const auto sending = [&] { return client.fd >= 0 && client.initialSent && client.session->ready() && !client.closeAfterFlush; };
+			int pending = 0;
+			const auto sendSnapshot = [&]
+			{
+				pending = 0;
+				if (!sending())
+					return;
+				try
+				{
+					std::vector<std::uint8_t> bytes;
+					BinaryWriter writer(bytes);
+					client.session->sendTick(writer, false);
+					queue(bytes);
+				} catch (...) {
+					fault("snapshot");
+				}
+			};
 			int budget = 8;
 			while (!ctx_.pausedNow() && due <= t && budget-- > 0)
 			{
@@ -379,19 +403,13 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 				if (ctx_.scenario.active)
 					ctx_.scenario.sample(sim_, sim_.clockTick()); // task CE: the playtest run's counters; observation only
 				due += std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(interval));
-				if (client.fd >= 0 && client.initialSent && client.session->ready() && !client.closeAfterFlush)
-				{
-					try
-					{
-						std::vector<std::uint8_t> bytes;
-						BinaryWriter writer(bytes);
-						client.session->sendTick(writer, false);
-						queue(bytes);
-					} catch (...) {
-						fault("snapshot");
-					}
-				}
+				if (sending())
+					client.session->stampEvents();
+				if (++pending >= perSnapshot)
+					sendSnapshot();
 			}
+			if (pending > 0)
+				sendSnapshot();
 		} else {
 			due = Clock::now();
 			if (client.fd >= 0 && client.initialSent && client.session->ready() && !client.closeAfterFlush)

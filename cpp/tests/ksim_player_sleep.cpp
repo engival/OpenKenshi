@@ -147,12 +147,13 @@ struct Wire
 				const std::uint64_t id = at<std::uint64_t>(bytes, b + 8);
 				Dyn& d = dyn[id];
 				d.flags = at<std::uint32_t>(bytes, b + 40);
-				if (size == 120)
+				// The pose tail (flag 15 / 16) comes before the aim tail (4 bytes, a swing's clip: another phase of the world puts a fighter mid-swing).
+				if (size == 120 || size == 124)
 					d.pose = Pose{at<float>(bytes, b + 100), at<float>(bytes, b + 104), at<float>(bytes, b + 108), at<float>(bytes, b + 112),
 						text(at<std::uint32_t>(bytes, b + 116))};
 				else
 				{
-					test::require(size == 100, "CHAR_DYNAMIC length " + std::to_string(size));
+					test::require(size == 100 || size == 104, "CHAR_DYNAMIC length " + std::to_string(size));
 					d.pose.reset(); // no flag 15/16: no pose tail
 				}
 			} else if (type == ks::kInteractable) {
@@ -324,8 +325,12 @@ void wireSleep(const kworld::LoadOrder& order, const kdata::GameData& gd, const 
 	test::require(away.has_value(), "no route away from the bed (the wake order)");
 	// The wake order goes to the spot the client's live check measured: inside the room on floor 1, about 10 u from the bed.
 	const auto clientSpot = nav->walker().snap({-51181.0, bed->y, 2600.0}, 8.0);
-	if (clientSpot)
+	// The spot is kept only when it routes from the bed: at (-51181, 2600) the furniture clearance closes it off (kenshi-k16.7.89; UNSURE
+	// whether the original's body passes there), so the wake order then goes to the nearest routable spot.
+	if (clientSpot && nav->routeFrom({bed->x, bed->y, bed->z}, clientSpot->x, clientSpot->z, clientSpot->y, false, sim.pathRadius(*sim.combat()->find(sleeper))).found)
 		away = clientSpot;
+	else if (clientSpot)
+		std::printf("note: the client's spot (%.1f %.1f) has no route from the bed\n", clientSpot->x, clientSpot->z);
 	Wire w(sim, std::make_shared<const kdata::GameData>(gd), dataHash);
 	test::require(w.beds.count(bed->id) == 1, "the bed's kind 5 record did not reach the client");
 	test::require(w.beds[bed->id].version == 1 && w.beds[bed->id].occupant == 0, "the free bed's record is wrong");

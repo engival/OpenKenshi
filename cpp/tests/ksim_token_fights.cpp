@@ -215,7 +215,10 @@ void world()
 		test::require(loaded.stateHash() == g.box->stateHash(), "save and load right after a fight round-trips the state hash");
 		// The pair does not fight again within the game hour.
 		g.box->run(tokenfight::kPairTicks / 2);
-		test::require(g.lines.size() == 1, "the same pair fights at most once a game hour");
+		// Only this pair: a third token wandering into the winner's reach is another pair's fight (the squads walk on their own slices).
+		const std::string pairText = "offscreen fight " + std::to_string(l.idA) + " vs " + std::to_string(l.idB) + " ";
+		const auto again = std::count_if(g.lines.begin(), g.lines.end(), [&](const std::string& line) { return line.rfind(pairText, 0) == 0; });
+		test::require(again == 1, "the same pair fights at most once a game hour");
 	}
 
 	// Medical on: the fallen are KO'd bleeders in their MemberDelta; nobody is dead yet.
@@ -253,7 +256,13 @@ void world()
 		const state::Position at = *g.scene.squad.get<state::Position>();
 		g.box->moveSquad(g.other, at.x + 30.0, at.z);
 		g.box->run(400);
-		test::require(g.lines.empty(), "squads of one faction do not fight");
+		// Between these two: a third token wandering by is another pair (the squads walk on their own slices).
+		const std::string ids[2] = {std::to_string(idOf(g.scene.squad)), std::to_string(idOf(g.other))};
+		const bool pairFought = std::any_of(g.lines.begin(), g.lines.end(), [&](const std::string& line)
+		{
+			return (line.rfind("offscreen fight " + ids[0] + " vs " + ids[1] + " ", 0) == 0) || (line.rfind("offscreen fight " + ids[1] + " vs " + ids[0] + " ", 0) == 0);
+		});
+		test::require(!pairFought, "squads of one faction do not fight");
 	}
 
 	// The same state hash at 1 and 4 workers.

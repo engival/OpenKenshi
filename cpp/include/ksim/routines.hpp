@@ -665,6 +665,11 @@ struct Piece
 	// A bed's use node height over `y` (layout frame, rotated by the piece): the original lays the body on the node itself, a few
 	// units above the floor (kinspect bed_seat_pose.md); the walk still aims at the floor point.
 	double nodeY = 0.0;
+	// A cage's occupant position: the cage's own centre (the layout piece origin). `x`, `z` are the use node beside it, the walkers' spot
+	// (k16.6.370: the prisoner was put at the node and stood outside the bars).
+	bool hasIn = false;
+	double inX = 0.0;
+	double inZ = 0.0;
 };
 
 // Classifies a layout's pieces against the BUILDING records (None are dropped).
@@ -736,6 +741,11 @@ struct SiteEntry
 	double faceZ = 1.0;
 	std::string clip{}; // a real bed's clip ("" otherwise)
 	std::string record{}; // a real bed's furniture BUILDING record ("" for synthetic sites)
+	bool hasIn = false; // a cage: the occupant stands at (inX, inZ), the cage's centre, not at the walk spot (x, z)
+	double inX = 0.0;
+	double inZ = 0.0;
+	double occupantX() const noexcept { return hasIn ? inX : x; }
+	double occupantZ() const noexcept { return hasIn ? inZ : z; }
 };
 
 struct BuildingSites

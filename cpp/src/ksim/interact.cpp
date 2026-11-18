@@ -268,20 +268,18 @@ std::string checkInteract(const flecs::world& ecs, const CombatArena& arena, std
 	}
 	case InteractAction::Lockpick:
 	{
-		// A locked door or container; any hands (the chance is the exe's, door_plan.hpp). A chance that shows as 0% never starts the pick:
-		// the order is refused, so no crime and no witness reaction (the user's GOG shots, kenshi-k16.6.323). UNSURE: what the original's
-		// order does instead (here it ends refused).
-		const state::Fighter* picker = arena.find(actor);
-		const double skill = picker != nullptr ? picker->skills.lockpicking : 0.0;
+		// A locked door or container; any hands (the chance is the exe's, door_plan.hpp). The order is accepted whatever the chance and walks
+		// to the lock; a chance below the floor never starts the pick there (stepDoorSteps: no crime, no roll, the order ends refused,
+		// kenshi-k16.6.366). UNSURE: what the original's order does instead.
 		if (target.kind == InteractKind::Container)
 		{
 			const state::Container* box = flecs::entity(ecs.c_ptr(), target.entity).get<state::Container>();
-			return box != nullptr && box->locked && sufficientLockSkill(box->lockLevel, skill, false) ? std::string() : "not_allowed";
+			return box != nullptr && box->locked ? std::string() : "not_allowed";
 		}
 		if (target.kind != InteractKind::Door)
 			return "bad_target";
 		const state::Door* door = flecs::entity(ecs.c_ptr(), target.entity).get<state::Door>();
-		return door != nullptr && door->state == 2 && sufficientLockSkill(door->lockLevel, skill, false) ? std::string() : "not_allowed";
+		return door != nullptr && door->state == 2 ? std::string() : "not_allowed";
 	}
 	case InteractAction::Carry:
 	{
@@ -1606,6 +1604,8 @@ void Simulation::transferItem(std::uint64_t who, std::uint64_t container, const 
 		pieces = from.takeCarried(item, count);
 	if (pieces.empty())
 		return;
+	if (take && stealRollCaught(who, container, item, storage))
+		return; // a failed roll aborts the take (recordCaughtStealing)
 	// All or nothing: a character taking the pieces uses the quick move (a free matching worn slot via the equip path, then main, then the
 	// worn backpack); it is judged on a copy first so that a refusal leaves the fighter's numbers alone.
 	const bool theft = take && isForeignOwner(world_.ecs(), who, storage.ownerSid);
@@ -1948,9 +1948,15 @@ void Simulation::stepDoorSteps()
 					end(InteractEvent::kDone, true);
 					continue;
 				}
+				if (!sufficientLockSkill(box->lockLevel, fighter.skills.lockpicking, false))
+				{
+					logTask("lock_too_hard member " + std::to_string(id) + " container " + std::to_string(step.door)); // no crime, no roll (k16.6.366)
+					end(InteractEvent::kRefused, true);
+					continue;
+				}
 				// Task_PickLock's base tick records crime 2 every tick before the roll (dt24_picklock section 7.2).
 				if (isForeignOwner(world_.ecs(), id, box->ownerSid))
-					reportCrime(id, crime::kBurglary, box->ownerSid, 0);
+					{ reportCrime(id, crime::kBurglary, box->ownerSid, 0); noteCaughtAct(id, 2, step.door); }
 				LockTimer lock{box->lockElapsed, box->lockInterval, box->lockAttempts};
 				const PickTick tick = tickLock(lock, kTickSeconds, pickChance(box->lockLevel, fighter.skills.lockpicking), box->key, id);
 				box->lockElapsed = lock.elapsed;
@@ -2054,9 +2060,16 @@ void Simulation::stepDoorSteps()
 						running = false;
 					}
 				} else {
+					if (!sufficientLockSkill(door->lockLevel, fighter.skills.lockpicking, false))
+					{
+						logTask("lock_too_hard member " + std::to_string(id) + " door " + std::to_string(step.door)); // no crime, no roll (k16.6.366)
+						end(InteractEvent::kRefused, true);
+						running = false;
+						break;
+					}
 					// Task_PickLock ticks the lock: its timer is the door's, shared with every picker and kept when this one stops.
 					if (isForeignOwner(world_.ecs(), id, door->ownerSid))
-						reportCrime(id, crime::kBurglary, door->ownerSid, 0);
+						{ reportCrime(id, crime::kBurglary, door->ownerSid, 0); noteCaughtAct(id, 2, step.door); }
 					LockTimer lock{door->lockElapsed, door->lockInterval, door->lockAttempts};
 					const PickTick tick = tickLock(lock, kTickSeconds, pickChance(door->lockLevel, fighter.skills.lockpicking), door->key, id);
 					door->lockElapsed = lock.elapsed;
@@ -2159,7 +2172,7 @@ void Simulation::stepDoorSteps()
 					++door->version;
 					// Task_BashDoor::vf2 (140348c10 L61): burglary against the building's faction, every blow.
 					if (isForeignOwner(world_.ecs(), id, door->ownerSid))
-						reportCrime(id, crime::kBurglary, door->ownerSid, 0);
+						{ reportCrime(id, crime::kBurglary, door->ownerSid, 0); noteCaughtAct(id, 2, step.door); }
 					if (door->health <= 0.0)
 					{
 						door->health = 0.0;

@@ -99,6 +99,82 @@ AreaGeometry AreaGatherer::gather(ZoneCell min, ZoneCell max)
 	return area;
 }
 
+namespace {
+
+struct Fnv
+{
+	std::uint64_t hash = 14695981039346656037ull;
+	void bytes(const void* data, std::size_t size)
+	{
+		const auto* p = static_cast<const std::uint8_t*>(data);
+		for (std::size_t i = 0; i < size; ++i)
+		{
+			hash ^= p[i];
+			hash *= 1099511628211ull;
+		}
+	}
+	template <class T> void value(const T& v) { bytes(&v, sizeof v); }
+	template <class T> void list(const std::vector<T>& v)
+	{
+		value(v.size());
+		bytes(v.data(), v.size() * sizeof(T));
+	}
+};
+
+void foldShapes(Fnv& f, const std::vector<WorldShape>& shapes)
+{
+	f.value(shapes.size());
+	for (const WorldShape& shape : shapes)
+	{
+		f.value(shape.use);
+		f.value(shape.door);
+		f.value(shape.closed);
+		f.value(shape.solid);
+		f.value(shape.foliage);
+		f.value(shape.upperPart);
+		f.list(shape.vertices);
+		f.list(shape.indices);
+		f.value(shape.min);
+		f.value(shape.max);
+		f.value(shape.axes);
+		f.value(shape.actor);
+		f.value(shape.half);
+		f.value(shape.keepInside != nullptr);
+		if (shape.keepInside)
+			f.list(*shape.keepInside);
+		f.value(shape.carveTerrain != nullptr);
+		if (shape.carveTerrain)
+			for (const auto& volume : *shape.carveTerrain)
+				f.list(volume);
+	}
+}
+
+} // namespace
+
+std::uint64_t areaDigest(const AreaGeometry& area)
+{
+	Fnv f;
+	f.value(area.buildings.size());
+	for (const AreaBuilding& building : area.buildings)
+	{
+		f.bytes(building.id.data(), building.id.size());
+		const PlacedInstance& p = building.placed;
+		const double pose[] = { p.x, p.y, p.z, p.relativeY, p.qw, p.qx, p.qy, p.qz, static_cast<double>(p.scale) };
+		f.value(pose);
+		const BuildingNav& nav = building.nav;
+		f.value(static_cast<int>(nav.pathMode));
+		f.value(nav.buildThreshold);
+		const bool flags[] = { nav.destroyedNavmesh, nav.ruined, nav.gateway, nav.enforceCeiling, nav.cavernous, nav.shelter, nav.interiorTerrain };
+		f.value(flags);
+		f.list(nav.doors);
+		if (building.shapes)
+			foldShapes(f, *building.shapes);
+	}
+	if (area.foliage)
+		foldShapes(f, *area.foliage);
+	return f.hash;
+}
+
 AreaGeometry gatherArea(std::string_view dataDir, const Heightmap& terrain,
 	ZoneCell min, ZoneCell max)
 {

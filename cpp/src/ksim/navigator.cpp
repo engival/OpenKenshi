@@ -740,22 +740,12 @@ std::shared_ptr<MeshNavigator> MeshNavigator::bake(const std::string& dataDir, k
 		world.setBuilding(building.id, building.shapes, building.nav);
 	world.bakeAll(threads);
 	auto navigator = std::make_shared<MeshNavigator>(knav::NavMesh::fromTiles(world.mesh().config(), world.mesh().tiles()));
-	navigator->useTerrainGround(dataDir);
 	return navigator;
 }
 
-void MeshNavigator::useTerrainGround(const std::string& dataDir)
-{
-	const std::shared_ptr<const kworld::Heightmap> ground = std::make_shared<kworld::Heightmap>(
-		kworld::Heightmap::open(dataDir + "/newland/land/fullmap.tif"));
-	walker_.setGround([ground](double x, double z) { return ground->terrainHeight(x, z); });
-}
-
-std::shared_ptr<MeshNavigator> MeshNavigator::load(const std::string& path, const std::string& dataDir)
+std::shared_ptr<MeshNavigator> MeshNavigator::load(const std::string& path, const std::string& /*dataDir*/)
 {
 	auto navigator = std::make_shared<MeshNavigator>(knav::NavMesh::load(path));
-	if (!dataDir.empty())
-		navigator->useTerrainGround(dataDir);
 	return navigator;
 }
 
@@ -828,7 +818,7 @@ std::vector<knav::TileCoord> meshTileCoords(const knav::NavConfig& config, kworl
 
 // The entry layout's recipe version: bump with any change to the conversion, the bake recipe or its tuning, or an entry's
 // layout. The .knav cache version and the Detour version are checked by NavMesh itself.
-constexpr std::uint32_t kNativeCacheRecipe = 9; // 9: the zone is pruned with its own seeds (zone probes or seeds.def, building origins, door outside points), keeping every set that touches the zone's outer border (kenshi-k16.6.270); 8: a foliage shell wider than 750 u cuts only its own triangle heights, not the whole shell height (kenshi-k16.7.59); 7: a ramp strip of an open walkable building sheet (faces 40-55 degrees joining flat walkable faces at both ends) is walkable, so a wall-walk's 47 degree ramp is (kenshi-k16.7.58); 6: unused (k16.7.59 before its merge); 5: the door mat gives back a stair slope more under the door, the stair joins the doorway (kenshi-k16.6.229); 4: walkable surfaces at their exact collision height, not the voxel top (kenshi-k16.7.36); 3: terrain inside an interior volume is carved, interior terrain 0 (kenshi-k16.7.18); 2: a rock shell cuts per triangle (kenshi-k16.19.4)
+constexpr std::uint32_t kNativeCacheRecipe = 21; // 21: furniture body ring (footprint + clearance + margin nulled, stairs and use-node paths spared) and the slide height fallback (kenshi-k16.7.89); 20: a detail vertex more than the climb off a level polygon's corners takes the nearest corner height, so a slab edge band over a stair well has no skirt down to the stair (Hub bar stair, kenshi-k16.8.41); 12-19: unused (stale ring-branch caches on dev); 11: the zone key folds the gathered geometry digest and the heightmap file stamp (kenshi-k16.7.67); 10: k16.7.50 made bakes deterministic (Recast read unwritten heap bytes in rcBuildContours); caches baked before it are rebuilt, no mesh rule change; 9: the zone is pruned with its own seeds (zone probes or seeds.def, building origins, door outside points), keeping every set that touches the zone's outer border (kenshi-k16.6.270); 8: a foliage shell wider than 750 u cuts only its own triangle heights, not the whole shell height (kenshi-k16.7.59); 7: a ramp strip of an open walkable building sheet (faces 40-55 degrees joining flat walkable faces at both ends) is walkable, so a wall-walk's 47 degree ramp is (kenshi-k16.7.58); 6: unused (k16.7.59 before its merge); 5: the door mat gives back a stair slope more under the door, the stair joins the doorway (kenshi-k16.6.229); 4: walkable surfaces at their exact collision height, not the voxel top (kenshi-k16.7.36); 3: terrain inside an interior volume is carved, interior terrain 0 (kenshi-k16.7.18); 2: a rock shell cuts per triangle (kenshi-k16.19.4)
 
 std::uint64_t cacheMix(std::uint64_t hash, const void* data, std::size_t size)
 {
@@ -876,7 +866,7 @@ bool sameGrid(const knav::NavConfig& a, const knav::NavConfig& b)
 } // namespace
 
 std::shared_ptr<MeshNavigator> MeshNavigator::openWorld(const std::string& dir, const std::vector<kworld::ZoneCell>& initial,
-	const std::string& dataDir)
+	const std::string& /*dataDir*/)
 {
 	std::string first;
 	for (const kworld::ZoneCell zone : initial)
@@ -896,8 +886,6 @@ std::shared_ptr<MeshNavigator> MeshNavigator::openWorld(const std::string& dir, 
 	config.window = {0, 0, config.tilesX - 1, config.tilesZ - 1};
 	auto navigator = std::make_shared<MeshNavigator>(knav::NavMesh::fromTiles(config, {}));
 	navigator->worldDir_ = dir;
-	if (!dataDir.empty())
-		navigator->useTerrainGround(dataDir);
 	navigator->setCoverage(initial);
 	return navigator;
 }
@@ -922,7 +910,6 @@ std::shared_ptr<MeshNavigator> MeshNavigator::openNative(const std::string& data
 		navigator->log_ = [](const std::string& line) { std::cerr << "knav: " << line << '\n'; };
 	navigator->openNativeCache(cache);
 	navigator->openNativeData();
-	navigator->useTerrainGround(dataDir);
 	navigator->setCoverage(initial);
 	navigator->logNativeCache();
 	return navigator;
@@ -968,6 +955,25 @@ std::vector<knav::BakedTile> MeshNavigator::bakeNativeZone(kworld::ZoneCell zone
 	staleStats_.bakeMs += msSince(start);
 	return world.mesh().tiles();
 }
+
+std::uint64_t MeshNavigator::bakedZoneDigest(kworld::ZoneCell zone) const
+{
+	std::uint64_t hash = 14695981039346656037ull;
+	for (const knav::BakedTile& tile : bakeNativeZone(zone))
+	{
+		hash = cacheMix(hash, static_cast<std::uint64_t>(tile.x));
+		hash = cacheMix(hash, static_cast<std::uint64_t>(tile.z));
+		hash = cacheMix(hash, tile.data.data(), tile.data.size());
+		for (const knav::DoorPoly& door : tile.doors)
+		{
+			hash = cacheMix(hash, static_cast<std::uint64_t>(door.poly));
+			hash = cacheMix(hash, static_cast<std::uint64_t>(door.door));
+		}
+	}
+	return hash;
+}
+
+std::uint32_t MeshNavigator::nativeCacheRecipe() { return kNativeCacheRecipe; }
 
 // The Detour tiles of the region (rx, rz) from the shipped navtiles: the conversion `knav_native OUT --region RX RZ` runs on
 // disk, in memory (docs/formats/NAVMESH_CACHE.md "Runtime mesh"; the shipped tiles, the faces cut into 256 u tile polygons).
@@ -1112,6 +1118,15 @@ std::uint64_t MeshNavigator::zoneCacheKey(kworld::ZoneCell zone, const std::vect
 		hash = cacheMix(hash, static_cast<std::uint64_t>(interior.hash.value_or(0)));
 		hash = cacheMix(hash, static_cast<std::uint64_t>(interior.basis));
 	}
+	// What the bake reads beyond the placements' integer positions: the gathered geometry (collision meshes, rotation, scale,
+	// furniture, foliage; the 3 x 3 zones the bake gathers) and the heightmap file (size and mtime).
+	hash = cacheMix(hash, kworld::areaDigest(gatherer_->gather(zone, zone)));
+	std::error_code error;
+	const std::string& heightmap = terrain_->path();
+	const std::uint64_t size = std::filesystem::file_size(heightmap, error);
+	const auto stamp = std::filesystem::last_write_time(heightmap, error).time_since_epoch().count();
+	hash = cacheMix(hash, size);
+	hash = cacheMix(hash, static_cast<std::uint64_t>(stamp));
 	return hash;
 }
 
@@ -1552,15 +1567,32 @@ Route MeshNavigator::routeFrom(const knav::Position& from, double toX, double to
 #if KSIM_PROFILE
 	// The tick profiler's path_queries / path_us (every character route lands here; kenshi-k16.6.234).
 	const std::uint64_t began = nowNs();
+	const std::uint64_t nodes0 = stats_.routeClearanceNodes;
+	const auto failures0 = stats_.routeFailures;
 	Route route = routeFromUntimed(from, toX, toZ, toY, planned, body, straighten, clickGoal);
 	++stats_.routeCalls;
 	stats_.routeFound += route.found ? 1 : 0;
-	stats_.routeNs += nowNs() - began;
+	const std::uint64_t took = nowNs() - began;
+	stats_.routeNs += took;
+	if (took > 5'000'000 && std::getenv("KSIM_SLOWQ"))
+	{
+		// SLOWQ (kenshi-k16.6.319): one line per route query over 5 ms; failure is the knav::PathResult::Failure index (0 = found).
+		int failure = 0;
+		for (std::size_t i = 0; i < failures0.size(); ++i)
+			if (stats_.routeFailures[i] != failures0[i])
+				failure = static_cast<int>(i);
+		std::fprintf(stderr, "SLOWQ ms=%.1f from=%.0f,%.0f to=%.0f,%.0f r=%.2f planned=%d fail=%d nodes=%llu found=%d approach=%d plainFailed=%d\n",
+			static_cast<double>(took) * 1e-6, from.x, from.z, toX, toZ, body.radius, planned ? 1 : 0, failure,
+			static_cast<unsigned long long>(stats_.routeClearanceNodes - nodes0), route.found ? 1 : 0, route.approach ? 1 : 0, route.plainFailed ? 1 : 0);
+	}
 	return route;
 #else
 	return routeFromUntimed(from, toX, toZ, toY, planned, body, straighten, clickGoal);
 #endif
 }
+
+// A walker is stranded when its connected set holds under 1/kStrandedRatio of the goal set's polygons (PATHFINDING_STATIC 1.11).
+static constexpr std::uint32_t kStrandedRatio = 4;
 
 std::uint32_t MeshNavigator::setOf(const knav::PolyLoc& loc) const
 {
@@ -1658,9 +1690,11 @@ Route MeshNavigator::routeFromUntimed(const knav::Position& from, double toX, do
 	{
 		knav::PolyLoc goalLoc;
 		const std::uint32_t goalSet = query_.locate(snapped, {2.0f, 40.0f, 2.0f}, goalLoc) ? setOf(goalLoc) : knav::PolyComponents::kNone;
-		// Only a walker that is stranded: off the mesh, or in a set smaller than the goal's (a goal on an island, a roof, is no reason to move
-		// a walker standing on the mainland).
-		if (goalSet != knav::PolyComponents::kNone && (!startOn || (startSet != goalSet && setSize(startSet) < setSize(goalSet))))
+		// Only a walker that is stranded: off the mesh, or in a set under a quarter of the goal's (a pocket, an island, a deck). A goal on
+		// an island, a roof, is no reason to move a walker standing on the mainland, and a walker in a big set walled off from the goal's
+		// (a chase to an actor behind a wall) is not stranded: it gets NoRoute, so the give-up / retry / leave ladder runs.
+		if (goalSet != knav::PolyComponents::kNone
+			&& (!startOn || (startSet != goalSet && setSize(startSet) * kStrandedRatio < setSize(goalSet))))
 		{
 			const auto inGoalSet = [&](const knav::PolyLoc& loc) { return setOf(loc) == goalSet; };
 			for (const float widen : {1000.0f, 10000.0f})
@@ -1744,8 +1778,14 @@ Route MeshNavigator::routeToStand(const knav::Position& from, double tx, double 
 	constexpr int kAngles = 16;
 	constexpr double kRings[] = {0.5, 0.75, 0.9};
 	constexpr double kPi = 3.14159265358979323846;
-	Route best;
-	double bestLength = 0.0;
+	// The candidates that stand on the mesh within reach with a clear line to the target, in ring-then-angle order.
+	struct Candidate
+	{
+		knav::Point at;
+		double straight; // from `from`: no route is shorter, so it bounds the candidate from below
+		int order;
+	};
+	std::vector<Candidate> candidates;
 	for (const double ring : kRings)
 	{
 		for (int a = 0; a < kAngles; ++a)
@@ -1760,23 +1800,37 @@ Route MeshNavigator::routeToStand(const knav::Position& from, double tx, double 
 				continue;
 			if (!lineClear(snapped[0], snapped[1], snapped[2], tx, ty, tz))
 				continue;
-			Route route = routeFrom(from, snapped[0], snapped[2], snapped[1], planned, body);
-			if (!route.found || route.approach)
-				continue;
-			double length = 0.0;
-			double px = from.x;
-			double pz = from.z;
-			for (const state::GroundPoint& point : route.points)
-			{
-				length += std::hypot(point.x - px, point.z - pz);
-				px = point.x;
-				pz = point.z;
-			}
-			if (!best.found || length < bestLength)
-			{
-				best = std::move(route);
-				bestLength = length;
-			}
+			candidates.push_back({snapped, std::hypot(snapped[0] - from.x, snapped[2] - from.z), static_cast<int>(candidates.size())});
+		}
+	}
+	// Nearest first, and the search stops once the straight line to the next is longer than the best route found (a route is never
+	// shorter than the line): the same winner as routing every candidate (the first of equal lengths in the old order), with the
+	// far side of the ring never searched (kenshi-k16.7.64).
+	std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& l, const Candidate& r) { return l.straight < r.straight; });
+	Route best;
+	double bestLength = 0.0;
+	int bestOrder = 0;
+	for (const Candidate& c : candidates)
+	{
+		if (best.found && c.straight > bestLength)
+			break;
+		Route route = routeFrom(from, c.at[0], c.at[2], c.at[1], planned, body);
+		if (!route.found || route.approach)
+			continue;
+		double length = 0.0;
+		double px = from.x;
+		double pz = from.z;
+		for (const state::GroundPoint& point : route.points)
+		{
+			length += std::hypot(point.x - px, point.z - pz);
+			px = point.x;
+			pz = point.z;
+		}
+		if (!best.found || length < bestLength || (length == bestLength && c.order < bestOrder))
+		{
+			best = std::move(route);
+			bestLength = length;
+			bestOrder = c.order;
 		}
 	}
 	return best;

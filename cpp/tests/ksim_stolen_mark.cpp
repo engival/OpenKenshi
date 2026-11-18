@@ -121,6 +121,7 @@ int main(int argc, char** argv)
 		const std::uint64_t me = r.members[0];
 		const std::uint64_t buddy = r.members[1];
 		r.tick(60);
+		const_cast<state::Fighter&>(r.fighter(me)).skills.thievery = 100.0; // a sure take (steal chance 127%): this test is about the mark, not the roll
 		const state::Fighter& hero = r.fighter(me);
 		const double x = hero.x;
 		const double z = hero.z;

@@ -14,6 +14,7 @@
 #include "ksim/simlink.hpp"
 #include "ksim/simlink_scenario.hpp"
 #include "knav/native.hpp"
+#include "caravan_unhurt.hpp"
 #include "ksim/simulation.hpp"
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"
@@ -86,6 +87,8 @@ void play(const std::uint64_t seed)
 	for (int i = 0; i < 1500; ++i)
 	{
 		sim.tick();
+		for (std::uint64_t id = kBoss; id < kBoss + 8; ++id)
+			keepCaravanUnhurt(sim, id);
 		down = down || sim.combat()->find(kPlayer)->unconscious;
 		if (i < 100 || down)
 			continue;

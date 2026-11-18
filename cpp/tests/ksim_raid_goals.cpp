@@ -292,15 +292,7 @@ void testAssaultGate(Game& game, bool doors = true)
 	const std::uint64_t gateKey = game.gate->key;
 	const double gateX = game.gate->x;
 	const double gateZ = game.gate->z;
-	flecs::entity squad = game.placeSquad(gateX, gateZ);
-	// The ladder applies the highest priority (96451 "hostile occupy town", which has no 270); the assault half is 59293 at priority 1.
-	// Its subclasses' should-start tests are not modelled, so the test applies it as `change AI` would (UNSURE).
-	blackboard::Board* board = game.sim.blackboardOf(squad);
-	test::require(board != nullptr, "the placed squad has no blackboard");
-	blackboard::Package assault;
-	test::require(blackboard::readPackage(*game.gd, "59293-rebirth.mod", 1, assault), "no AI package 59293");
-	blackboard::changeAI(*board, std::move(assault));
-	// The gate is locked (a command: the gates stand open by default), and the crew stands on it. The fixture's gate has no guard:
+	// The gate is locked (a command: the gates stand open by default) before the squad exists. The fixture's gate has no guard:
 	// its gate crew (a promoted town gate squad) would reopen a shut gate and drop the lock - remove it first.
 	{
 		std::vector<std::uint64_t> crewSquads;
@@ -315,6 +307,19 @@ void testAssaultGate(Game& game, bool doors = true)
 	}
 	sim.enqueue(Command::setDoorState(gateKey, 2));
 	sim.run(2);
+	// The door book takes a command's lock at the next second boundary (DoorSystem::sync, tick % 20 == 0). The squad's members are first scored on the tick of
+	// their own slice of the second (k16.6.320), so one placed mid-second can be scored before the boundary, read the gate as open and hold 216 for good:
+	// let the boundary pass first, as the unsliced pass (always on the boundary tick, after the sync) never saw it.
+	while (sim.clockTick() % 20 != 1)
+		sim.run(1);
+	flecs::entity squad = game.placeSquad(gateX, gateZ);
+	// The ladder applies the highest priority (96451 "hostile occupy town", which has no 270); the assault half is 59293 at priority 1.
+	// Its subclasses' should-start tests are not modelled, so the test applies it as `change AI` would (UNSURE).
+	blackboard::Board* board = game.sim.blackboardOf(squad);
+	test::require(board != nullptr, "the placed squad has no blackboard");
+	blackboard::Package assault;
+	test::require(blackboard::readPackage(*game.gd, "59293-rebirth.mod", 1, assault), "no AI package 59293");
+	blackboard::changeAI(*board, std::move(assault));
 	for (const auto& [id, entity] : membersOf(sim, squad))
 	{
 		state::Fighter* f = fighterOf(sim, id);

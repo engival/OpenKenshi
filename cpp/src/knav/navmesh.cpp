@@ -758,6 +758,11 @@ constexpr int kClearanceProbeScale = 4;
 // probe's speed (the soak's mean doubled with it).
 constexpr float kRefineRange = 300.0f;
 constexpr float kRefineRatio = 1.02f;
+// A band start's route longer than this (times the xz distance, plus the slack) is planned again from the start's own polygon.
+constexpr double kBandDetour = 1.3;
+constexpr double kBandSlack = 2.0;
+constexpr double kBandSaving = 0.7; // ... and replaces it only when it walks at most this share of it (a long way round a building is not a detour)
+constexpr float kBandCut = 0.5f; // the own-polygon route may come this much nearer a wall than the body's own spot (or r)
 
 // What one portal is known to let through: every radius up to `passes`, none from `fails` on.
 struct PortalClearance
@@ -824,15 +829,15 @@ bool fits(const dtNavMeshQuery& query, ClearanceMap& cache, dtPolyRef ref, unsig
 // Whether every portal of the corridor `polys` (start to end) lets `radius` through. Two polygons can share more than one
 // link (a tile border split), so a step passes when any link between them fits, as the clearance A* would take it.
 bool corridorFits(const dtNavMeshQuery& query, ClearanceMap& cache, const std::vector<dtPolyRef>& polys, int count,
-	float radius, dtPolyRef endRef)
+	float radius, dtPolyRef endRef, bool exemptFirst)
 {
 	const dtNavMesh& nav = *query.getAttachedNavMesh();
 	for (int k = 0; k + 1 < count; ++k)
 	{
 		const dtPolyRef from = polys[static_cast<std::size_t>(k)];
 		const dtPolyRef to = polys[static_cast<std::size_t>(k + 1)];
-		if (to == endRef)
-			continue; // the last hop into the goal is exempt, as in clearanceCorridor
+		if (to == endRef || (k == 0 && exemptFirst))
+			continue; // the last hop into the goal is exempt, as in clearanceCorridor; so is the first out of a narrow start
 		const dtMeshTile* tile = nullptr;
 		const dtPoly* poly = nullptr;
 		nav.getTileAndPolyByRefUnsafe(from, &tile, &poly);
@@ -877,7 +882,7 @@ Point crossingOn(const float* left, const float* right, const Point& from, const
 // node nearest the end when it is out of reach; empty when nothing was searched.
 void clearanceCorridor(const dtNavMeshQuery& query, ClearanceMap& cache, dtPolyRef startRef, dtPolyRef endRef,
 	const Point& start, const Point& end, const dtQueryFilter& filter, const TravelFilter& travel, int maxNodes,
-	std::vector<dtPolyRef>& polys, bool& outOfNodes, bool onTheWay, int& expanded)
+	std::vector<dtPolyRef>& polys, bool& outOfNodes, bool onTheWay, int& expanded, bool exemptFirst)
 {
 	struct Node
 	{
@@ -933,7 +938,7 @@ void clearanceCorridor(const dtNavMeshQuery& query, ClearanceMap& cache, dtPolyR
 			portalOf(*tile, *poly, link, left, right);
 			// The last hop into the goal's polygon is exempt: a goal against a wall, on a lip or in a narrow doorway is reached by
 			// clamping (the shrunk funnel keeps the corner off the wall), not refused after the whole budget (kenshi-k16.7.62).
-			if (link.ref != endRef && !fits(query, cache, current.ref, i, left, right, travel.radius))
+			if (link.ref != endRef && !(exemptFirst && at == 0) && !fits(query, cache, current.ref, i, left, right, travel.radius))
 				continue;
 			Point mid;
 			if (onTheWay)
@@ -1437,9 +1442,24 @@ bool NavQuery::slide(const Point& from, const Point& to, const Point& halfExtent
 	}
 	if (!moved)
 		return false;
-	float height = out[1];
-	if (!dtStatusFailed(query_->getPolyHeight(visited[static_cast<std::size_t>(visitedCount - 1)], out.data(), &height)))
-		out[1] = height;
+	// The detail surface under the end point: the last polygon, else an earlier visited one, else the polygon's closest point (which
+	// is detail-corrected). A point on a polygon seam can miss every detail triangle by a hair, and moveAlongSurface's own height is
+	// the flat polygon plane, metres off on a steep stair polygon (seed 6 of ksim_fight_levels, Hub bar stair (-51139, 2620.7)).
+	{
+		float height = out[1];
+		bool found = false;
+		for (int i = visitedCount - 1; i >= 0 && !found; --i)
+			found = !dtStatusFailed(query_->getPolyHeight(visited[static_cast<std::size_t>(i)], out.data(), &height));
+		if (!found)
+		{
+			Point closest;
+			bool over = false;
+			found = !dtStatusFailed(query_->closestPointOnPoly(visited[static_cast<std::size_t>(visitedCount - 1)], out.data(), closest.data(), &over));
+			height = closest[1];
+		}
+		if (found)
+			out[1] = height;
+	}
 	blocked = remaining(out) > kHair;
 	// moveAlongSurface can also refuse a hop that ENDS exactly on a polygon vertex: it stops a step short on the
 	// edge (the Hub's ramp top (-50802, 2756), where the walk stopped at (-50806, 2754), k16.8.6). The same hop to
@@ -1565,7 +1585,56 @@ PathResult NavQuery::findPath(const Point& from, const Point& to, const Point& h
 PathResult NavQuery::planPath(const Point& from, const Point& to, const Point& halfExtents,
 	const TravelFilter& travel, Point* snappedStart) const
 {
+	// The refit route first (a start in a wall's band is planned from the nearest ground the body fits). When that route doubles back
+	// (the refit can lie up to 4 r away, across the room), the start's own polygon is planned too, its way out exempt from the clearance
+	// test, and the shorter complete route stays (kenshi-k16.6.357). Only the detoured routes change: a plain refit is kept as it was.
+	bool banded = false;
+	Point snapped{};
+	PathResult refit = planPathFrom(from, to, halfExtents, travel, &snapped, false, &banded);
+	if (snappedStart != nullptr)
+		*snappedStart = snapped;
+	const double direct = std::hypot(to[0] - from[0], to[2] - from[2]);
+	// What the body walks: the route's own length plus the leg from where it stands to the route's first point (the refit's).
+	const auto walked = [&](const PathResult& route)
+	{
+		return route.length + (route.points.empty() ? 0.0 : std::hypot(route.points[0][0] - from[0], route.points[0][2] - from[2]));
+	};
+	if (!banded || !refit.found || walked(refit) <= kBandDetour * direct + kBandSlack)
+		return refit;
+	PathResult own = planPathFrom(from, to, halfExtents, travel, nullptr, true, &banded);
+	if (!own.found || !own.complete || walked(own) >= kBandSaving * walked(refit))
+		return refit;
+	// The exempt first hop may cut a corner: the walk keeps every sample at least as far from the walls as the body's own spot is (or r).
+	const float r = travel.radius;
+	const Point reach{ 1.0f, std::min(halfExtents[1], 4.0f * r), 1.0f };
+	const auto wallAt = [&](const Point& at)
+	{
+		PolyLoc loc;
+		return locate(at, reach, loc, travel) ? wallDistance(loc, r) : 0.0f;
+	};
+	// Never below kStartPush: a start standing on a wall (distance 0) must not license a route along it.
+	const float floorDistance = std::max(std::min(wallAt(snapped), r) - kBandCut, kStartPush);
+	for (std::size_t i = 1; i < own.points.size(); ++i)
+	{
+		const Point& a = own.points[i - 1];
+		const Point& b = own.points[i];
+		const int steps = std::max(1, static_cast<int>(distance(a, b) / kClearanceStep));
+		for (int k = 1; k <= steps; ++k)
+		{
+			Point at;
+			dtVlerp(at.data(), a.data(), b.data(), static_cast<float>(k) / static_cast<float>(steps));
+			if (wallAt(at) < floorDistance)
+				return refit;
+		}
+	}
+	return own;
+}
+
+PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Point& halfExtents,
+	const TravelFilter& travel, Point* snappedStart, bool ownStart, bool* exempted) const
+{
 	PathResult result;
+	bool exemptFirst = false;
 	ClearanceMap& clearance = clearanceFor().known;
 	dtQueryFilter filter;
 	configureFilter(filter, travel);
@@ -1608,7 +1677,12 @@ PathResult NavQuery::planPath(const Point& from, const Point& to, const Point& h
 			&& locateWhere(start, reach, [&](const PolyLoc& loc) { return wallDistance(loc, r) >= r; }, fit, travel))
 		{
 			const dtMeshTile* tile = mesh_.detour().getTileAt(fit.tileX, fit.tileZ, 0);
-			if (tile != nullptr)
+			// First try the start's own polygon, its way out exempt from the clearance test (the character stands there; a refit across
+			// the room sent the route back and forth, kenshi-k16.6.357). A route that does not get out is planned again from the refit.
+			*exempted = true;
+			if (ownStart)
+				exemptFirst = true;
+			else if (tile != nullptr)
 			{
 				start = fit.point;
 				startRef = mesh_.detour().getPolyRefBase(tile) | static_cast<dtPolyRef>(fit.poly);
@@ -1616,7 +1690,9 @@ PathResult NavQuery::planPath(const Point& from, const Point& to, const Point& h
 		}
 	}
 
-	std::vector<dtPolyRef> polys(kMaxPathPolys);
+	Scratch& sc = scratch_;
+	std::vector<dtPolyRef>& polys = sc.polys;
+	polys.assign(kMaxPathPolys, 0); // full size: Detour is handed polys.data() with a capacity of kMaxPathPolys
 	int polyCount = 0;
 	dtStatus searched = DT_SUCCESS;
 	if (travel.radius > 0.0f)
@@ -1647,10 +1723,11 @@ PathResult NavQuery::planPath(const Point& from, const Point& to, const Point& h
 		// long way round open ground (Detour's nodes sit at portal middles, k16.6.16): a short route whose pulled-tight path
 		// is much longer than the straight line gets the clearance search too, and the shorter path stays.
 		const bool probeFits = polys[0] == startRef && polys[static_cast<std::size_t>(polyCount - 1)] == endRef
-			&& corridorFits(*query_, clearance, polys, polyCount, travel.radius, endRef);
+			&& corridorFits(*query_, clearance, polys, polyCount, travel.radius, endRef, exemptFirst);
 		const auto pulledLength = [&](const std::vector<dtPolyRef>& corridor, int count)
 		{
-			std::vector<float> corners(3ull * kMaxPathPolys);
+			std::vector<float>& corners = sc.corners;
+			corners.resize(3ull * kMaxPathPolys);
 			int cornerCount = 0;
 			float length = 0.0f;
 			if (!dtStatusFailed(query_->findStraightPath(start.data(), end.data(), corridor.data(), count, corners.data(), nullptr,
@@ -1661,21 +1738,23 @@ PathResult NavQuery::planPath(const Point& from, const Point& to, const Point& h
 		};
 		const float direct = distance(start, end);
 		const bool shortWay = travel.straighten && direct < kRefineRange;
-		const bool roundabout = probeFits && shortWay && pulledLength(polys, polyCount) > kRefineRatio * direct;
+		const float probeLength = probeFits && shortWay ? pulledLength(polys, polyCount) : 0.0f; // once: used twice below
+		const bool roundabout = probeFits && shortWay && probeLength > kRefineRatio * direct;
 		if (!probeClosed && (!probeFits || roundabout))
 		{
 			bool outOfNodes = false;
-			std::vector<dtPolyRef> clear;
+			std::vector<dtPolyRef>& clear = sc.clear;
+			clear.clear();
 			clearanceCorridor(*query_, clearance, startRef, endRef, start, end, filter, travel,
 				std::min(maxNodes_, std::max(kClearanceNodes, kClearanceProbeScale * probed)), clear, outOfNodes, shortWay,
-				result.clearanceNodes);
+				result.clearanceNodes, exemptFirst);
 			// A copy, never a move: `polys` is also the buffer the probe above hands Detour with a capacity of kMaxPathPolys
 			// (`polys.data()`), and a moved-from vector drops to the corridor's own size. A second search from a shrunk buffer was
 			// a heap overflow (a retry-after-failure variant of the start refit, 2026-11-07: Detour wrote its whole path over the
 			// heap and the abort surfaced in clearanceCorridor's own map; the shipped code searches once per call, so nothing
 			// here was reachable, and the invariant keeps it that way).
 			if (!roundabout || (!outOfNodes && !clear.empty() && clear.back() == endRef
-					&& pulledLength(clear, static_cast<int>(clear.size())) < pulledLength(polys, polyCount)))
+					&& pulledLength(clear, static_cast<int>(clear.size())) < probeLength))
 			{
 				polys.assign(clear.begin(), clear.end());
 				polyCount = static_cast<int>(polys.size());
@@ -1706,8 +1785,10 @@ PathResult NavQuery::planPath(const Point& from, const Point& to, const Point& h
 	if (!result.complete)
 		query_->closestPointOnPoly(polys[static_cast<std::size_t>(polyCount - 1)], end.data(), end.data(), nullptr);
 
-	std::vector<float> straight(3ull * kMaxPathPolys);
-	std::vector<dtPolyRef> cornerRefs(kMaxPathPolys);
+	std::vector<float>& straight = sc.straight;
+	std::vector<dtPolyRef>& cornerRefs = sc.cornerRefs;
+	straight.resize(3ull * kMaxPathPolys);
+	cornerRefs.resize(kMaxPathPolys);
 	int straightCount = 0;
 	if (dtStatusFailed(query_->findStraightPath(start.data(), end.data(), polys.data(), polyCount,
 			straight.data(), nullptr, cornerRefs.data(), &straightCount, kMaxPathPolys)))
@@ -1730,7 +1811,8 @@ PathResult NavQuery::planPath(const Point& from, const Point& to, const Point& h
 
 	// The cost: a second straight path with a point on every edge crossing says which polygon each
 	// stretch lies in.
-	std::vector<dtPolyRef> refs(kMaxPathPolys);
+	std::vector<dtPolyRef>& refs = sc.refs;
+	refs.resize(kMaxPathPolys);
 	int crossings = 0;
 	if (dtStatusFailed(query_->findStraightPath(start.data(), end.data(), polys.data(), polyCount, straight.data(),
 			nullptr, refs.data(), &crossings, kMaxPathPolys, DT_STRAIGHTPATH_ALL_CROSSINGS)))

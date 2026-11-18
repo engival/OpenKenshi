@@ -472,6 +472,29 @@ Session::Session(Simulation& sim, ServerContext& context)
 		o.result = e.flags;
 		observed_.push_back(std::move(o));
 	});
+	sim_.setCrimeObserver([this](const Simulation::CrimeEvent& e)
+	{
+		// EVENT 51 / 52 (approved 2026-11-16): the player's characters only (the thief; the criminal).
+		const state::Fighter* subject = sim_.combat() != nullptr ? sim_.combat()->find(e.kind == Simulation::CrimeEvent::Kind::CaughtStealing ? e.who : e.other) : nullptr;
+		if (subject == nullptr || !subject->playerControlled)
+			return;
+		Observed o;
+		o.who = e.who;
+		o.other = e.other;
+		o.result = e.cause;
+		o.turret = e.container; // 51: the container, character or door
+		if (e.kind == Simulation::CrimeEvent::Kind::CaughtStealing)
+		{
+			o.kind = 51;
+		} else {
+			o.kind = 52;
+			o.part = e.faction;
+			o.pos[0] = f(e.x);
+			o.pos[1] = sim_.navigation() != nullptr && sim_.combat()->find(e.who) != nullptr ? f(sim_.combat()->find(e.who)->y) : 0.0f;
+			o.pos[2] = f(e.z);
+		}
+		observed_.push_back(std::move(o));
+	});
 	sim_.setInteractObserver([this](const InteractEvent& e)
 	{
 		Observed o;
@@ -1135,6 +1158,12 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 		}
 		if (!checkIds())
 			break;
+		if (which == 6 || which == 7) // passive / hold position (approved by the client 2026-11-16, k16.6.313); never replaces the order
+		{
+			for (const std::uint64_t id : ids)
+				commands.push_back(which == 6 ? Command::fighterPassive(state::Id{id}, value != 0) : Command::fighterHoldPosition(state::Id{id}, value != 0));
+			break;
+		}
 		if (which == 4) // jobs: value = the list's `enabled` (SIMLINK.md section 7, JOBS 34)
 		{
 			for (const std::uint64_t id : ids)
@@ -3179,6 +3208,10 @@ void Session::writeDynamic(RecordWriter& out, std::uint64_t tick, const CombatAr
 	flags |= (static_cast<std::uint32_t>(fighter.moveMode) & 3u) << kFlagSpeedModeShift;
 	if (fighter.hold)
 		flags |= kFlagHold;
+	if (fighter.passive)
+		flags |= kFlagPassive;
+	if (fighter.holdPosition)
+		flags |= kFlagHoldPosition;
 	// combat.cpp enemy(): a different team, not dead. Every player character shares the one player faction today (MULTIPLAYER: one
 	// per user later), so the session's player teams are those of all player characters.
 	if (!fighter.playerControlled && !fighter.dead && !playerTeams.empty() && !playerTeams.contains(fighter.team))
@@ -3244,8 +3277,7 @@ void Session::writeDynamic(RecordWriter& out, std::uint64_t tick, const CombatAr
 	out.u64("tick", tick);
 	out.u64("id", m.id);
 	out.f32("x", f(fighter.x));
-	const bool onGround = fighter.carriedBy == 0 && !fighter.asleep && fighter.cageBuilding == 0 && !sim_.seated(m.id);
-	out.f32("y", yValid ? f(onGround ? sim_.groundY(m.id, fighter) : fighter.y) : 0.0f);
+	out.f32("y", yValid ? f(fighter.y) : 0.0f); // the navmesh point (or the pose y): the client places the body (SIMLINK.md CHAR_DYNAMIC)
 	out.f32("z", f(fighter.z));
 	out.f32("yaw", f(fighter.yaw));
 	// The body's actual motion over the step, not the commanded speed (SIMLINK "CHAR_DYNAMIC"): a push, a separation nudge or a
@@ -3528,7 +3560,7 @@ void Session::writeTrade(RecordWriter& out, std::uint64_t tick, const TradeOut& 
 void Session::writeEvent(RecordWriter& out, std::uint64_t tick, const Observed& e)
 {
 	out.begin(kEvent);
-	out.u64("tick", tick);
+	out.u64("tick", e.tick != 0 ? e.tick : tick);
 	out.u16("kind", e.kind);
 	if (e.kind == 1)
 	{
@@ -3546,6 +3578,19 @@ void Session::writeEvent(RecordWriter& out, std::uint64_t tick, const Observed& 
 		out.u8("result", e.result);
 		out.f32("cutAbsorbed", e.absorbed[0]);
 		out.f32("bluntAbsorbed", e.absorbed[1]);
+	} else if (e.kind == 51) {
+		out.u64("thief", e.who);
+		out.u64("witness", e.other);
+		out.u8("cause", e.result);
+		out.u64("container", e.turret);
+	} else if (e.kind == 52) {
+		out.u64("raiser", e.who);
+		out.u64("criminal", e.other);
+		out.u8("crime", e.result);
+		out.strid("faction", e.part.empty() ? 0 : sid(e.part));
+		out.f32("x", e.pos[0]);
+		out.f32("y", e.pos[1]);
+		out.f32("z", e.pos[2]);
 	} else if (e.kind == 50) {
 		out.u64("assassin", e.other);
 		out.u64("victim", e.who);
@@ -3736,6 +3781,13 @@ bool taskRowsDiffer(const std::vector<Simulation::TaskProgressRow>& now, const s
 
 }
 
+void Session::stampEvents()
+{
+	const std::uint64_t tick = sim_.clockTick();
+	for (auto it = observed_.rbegin(); it != observed_.rend() && it->tick == 0; ++it)
+		it->tick = tick;
+}
+
 void Session::sendTick(RecordWriter& out, bool initial)
 {
 	KSIM_PROFILE_SCOPE(sim_.profiler(), Simlink);
@@ -3767,6 +3819,8 @@ void Session::sendTick(RecordWriter& out, bool initial)
 	}
 	newGameOutcomes_.clear();
 	const std::uint64_t tick = sim_.clockTick();
+	// Whether a multiple of `interval` lies in (the last send's tick, this tick]: with one tick per send that is `tick % interval == 0`.
+	const auto crossed = [&](std::uint64_t interval) { return tick / interval != lastSendTick_ / interval; };
 	const CombatArena* arena = sim_.combat();
 
 	// ---- plan: decide what goes out and update what the client knows ----
@@ -3856,7 +3910,7 @@ void Session::sendTick(RecordWriter& out, bool initial)
 	// FACTION_RELATIONS: on connect, then once per sim-second when the set changed or a value moved by 0.5 or more since the last send.
 	std::vector<Simulation::FactionRelationRow> relationsNow;
 	bool sendRelations = initial;
-	if (initial || (relationsKnown_ && tick % Simulation::kFactionRelationsIntervalTicks == 0))
+	if (initial || (relationsKnown_ && crossed(Simulation::kFactionRelationsIntervalTicks)))
 	{
 		relationsNow = sim_.factionRelations();
 		sendRelations = initial || relationsNow.size() != relationsSent_.size();
@@ -4050,7 +4104,14 @@ void Session::sendTick(RecordWriter& out, bool initial)
 			++it;
 		}
 	}
-	// CHAR_DETECT: the highest sneak meter of the hostile observers on each player character in view, on change (and once when
+	std::optional<sensor::Context> sensorCtx; // built once, only when an observer has to be judged (CHAR_DETECT, SEEN_BY, DETECTED_BY)
+	const auto nonAllied = [&](const state::Fighter& observer, const state::Fighter& sneaker)
+	{
+		if (!sensorCtx)
+			sensorCtx = sim_.sensorContext();
+		return !sensor::ally(*sensorCtx, observer, sneaker);
+	};
+	// CHAR_DETECT: the highest sneak meter of the non-allied observers on each player character in view, on change (and once when
 	// it clears). State 1 (noticed) reports meter 1; 2 is the meter filling; the record carries the observer it is from.
 	std::vector<DetectRecord> detects;
 	for (const Entry& e : visible)
@@ -4062,7 +4123,7 @@ void Session::sendTick(RecordWriter& out, bool initial)
 		best.id = e.member->id;
 		for (const CombatArena::Member& o : arena->members())
 		{
-			if (o.fighter.team == target.team || o.fighter.dead)
+			if (o.fighter.dead || !nonAllied(o.fighter, target))
 				continue;
 			const state::SightRecord* r = perception::find(o.fighter, e.member->id);
 			if (r == nullptr || r->state == 0)
@@ -4096,16 +4157,12 @@ void Session::sendTick(RecordWriter& out, bool initial)
 	{
 		it = known_.count(it->first) == 0 ? detectSent_.erase(it) : std::next(it); // left the client's view: it dropped the character
 	}
-	// SEEN_BY: for each sneaking player character in view, the hostile characters in view that know it (the stealth KO's abort test,
-	// stealthko::victimKnows), on change and once empty when the sneak ends or the set empties. Hostile as CHAR_DYNAMIC's kHostile.
+	// SEEN_BY: for each sneaking player character in view, the non-allied characters in view that know it (the stealth KO's abort test,
+	// stealthko::victimKnows), on change and once empty when the sneak ends or the set empties. Non-allied as CHAR_DETECT (kenshi-rquo).
 	std::vector<SeenByRecord> seenBys;
 	{
 		if (initial)
 			seenBySent_.clear();
-		std::set<std::int32_t> playerTeams;
-		for (const Entry& e : visible)
-			if (e.member->fighter.playerControlled)
-				playerTeams.insert(e.member->fighter.team);
 		for (const Entry& e : visible)
 		{
 			const state::Fighter& target = e.member->fighter;
@@ -4118,7 +4175,7 @@ void Session::sendTick(RecordWriter& out, bool initial)
 				for (const Entry& o : visible)
 				{
 					const state::Fighter& f = o.member->fighter;
-					if (!f.playerControlled && !f.dead && !playerTeams.contains(f.team) && stealthko::victimKnows(f, now.id))
+					if (!f.playerControlled && !f.dead && nonAllied(f, target) && stealthko::victimKnows(f, now.id))
 						now.by.push_back(o.member->id);
 				}
 				std::sort(now.by.begin(), now.by.end());
@@ -4143,7 +4200,6 @@ void Session::sendTick(RecordWriter& out, bool initial)
 	{
 		if (initial)
 			detectedBySent_.clear();
-		std::optional<sensor::Context> sensorCtx; // built once, only when a sneaker has a record to judge
 		for (const Entry& e : visible)
 		{
 			const state::Fighter& target = e.member->fighter;
@@ -4193,7 +4249,7 @@ void Session::sendTick(RecordWriter& out, bool initial)
 			if (m.fighter.cageBuilding != 0 && known_.count(m.id) != 0)
 				signature.emplace_back(m.id, m.fighter.cageBuilding, sim_.cageLockOpened(m.fighter.cageBuilding));
 		std::sort(signature.begin(), signature.end());
-		if (initial || !cagesSent_.known || signature != cagesSent_.signature || tick % Simulation::kSquadIntervalTicks == 0)
+		if (initial || !cagesSent_.known || signature != cagesSent_.signature || crossed(Simulation::kSquadIntervalTicks))
 		{
 			for (const auto& [id, cage, opened] : signature)
 			{
@@ -4635,7 +4691,8 @@ void Session::sendTick(RecordWriter& out, bool initial)
 	{
 		return e.kind != 11 && e.kind != 19 && e.kind != 20 && e.kind != 40 && e.kind != 43 && e.kind != 44 && known_.count(e.who) == 0 && known_.count(e.other) == 0; // 40 is the trade window's, sent whether or not the trader is still in view
 	}), events.end());
-	const bool slow = initial || tick % kSlowIntervalTicks == 0;
+	const bool slow = initial || crossed(kSlowIntervalTicks);
+	lastSendTick_ = tick; // the last use of crossed()
 	// A DEBUG_SET_TIME applied since the last send: its jump must show in this send (SIMLINK "DEBUG VIEW").
 	const bool clockDue = slow || ctx_.pauseBits() != clockPausedSent_ || debug_.clockDue();
 	// WEATHER: 1 Hz, and at once when any region picked a new weather.

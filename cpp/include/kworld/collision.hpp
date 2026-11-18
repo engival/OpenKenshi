@@ -118,6 +118,12 @@ struct WorldShape
 	// the terrain inside it, so the interior floor stands alone (kenshi-rwh.90: "building interior includes terrain for generating navmesh", default
 	// off; a sunk house is walkable under the dune). Null: the terrain stays.
 	std::shared_ptr<const std::vector<std::vector<std::array<float, 4>>>> carveTerrain;
+	// The world positions of this shape's building's use nodes (`is node`, `node type` 4: where a user stands at a bed, a counter, a seat). The
+	// bake spares the spans within reach of them from a prop's body clearance (knav bake.cpp), so a furniture piece stays usable. Null: none.
+	std::shared_ptr<const std::vector<std::array<float, 3>>> useNodes;
+	// A separately placed furnishing (barrel, counter, bed, crate, table, rack: a layout item, or a building record with `is interior furniture`), never a building's shell (walls, floors, stairs). Only these get the bake's hard
+	// body clearance (kenshi-k16.7.89).
+	bool furniture = false;
 };
 
 // The BUILDING fields that decide how a placement affects the navmesh.

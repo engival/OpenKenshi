@@ -18,6 +18,7 @@
 #include "kdata/gamedata.hpp"
 #include "kworld/coords.hpp"
 #include "kworld/loadorder.hpp"
+#include "caravan_unhurt.hpp"
 #include "test_util.hpp"
 
 #include <algorithm>
@@ -86,6 +87,9 @@ Run run(const scenario::File& file, const std::shared_ptr<MeshNavigator>& mesh, 
 	sim.run(1);
 	const scenario::Placed placed = scenario::apply(sim, *sim.gameData(), *combat, context, file, 11);
 	test::require(placed.others.size() >= 8, "the two squads are built");
+	// This fixture pins the combat trace, not the aid: spawned fighters carry a first aid kit (k16.6.287) and a medic pick lands inside a stable window.
+	for (const std::uint64_t id : placed.others)
+		stripMedkits(sim, id, id + 1);
 	Run out;
 	if (traceOn) // the debug view's ring behind it, as the server's --debug-view has it
 	{

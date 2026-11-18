@@ -2456,6 +2456,7 @@ int main(int argc, char** argv)
 			test::require(container(full).get<state::Inventory>()->carried(item) == count0 && d.inventoryOf(pid)->carried(item) == before, "putting back did not move the item");
 			// A foreign container: taking is theft (event 14), putting in is not.
 			const_cast<state::Container*>(container(full).get<state::Container>())->ownerSid = "someone-else";
+			d.mutableFighter(pid).skills.thievery = 100.0; // a sure take (steal chance 127%); the roll itself is ksim_steal_chance's
 			d.expectApplied(d.transfer(pid, full, item, 1, true));
 			d.run(2);
 			test::require(d.thefts.size() == 1 && d.thefts[0].who == pid && d.thefts[0].container == full && d.thefts[0].owner == "someone-else",

@@ -138,32 +138,22 @@ public:
 
 	const NavMesh& mesh() const noexcept { return mesh_; }
 
-	// Open ground: `ground(x, z)` is the terrain height (the heightmap the client draws with). A step that ends on mesh
-	// within kGroundSnap of it has the terrain height as y, not the baked detail mesh's (which floats 0..4 u above a
-	// slope, kenshi-k16.7.14); a floor, deck or stair further off keeps the mesh height. Unset: the mesh height always.
-	static constexpr double kGroundSnap = 5.0;
-	void setGround(std::function<double(double, double)> ground) { ground_ = std::move(ground); }
-	// A placed point (a Walker::snap result) on open ground: the same rule a step applies. Within kGroundSnap of the terrain it takes
-	// the terrain's height; a floor, deck or stair further off, or no ground set, keeps `p` (kenshi-k16.6.273).
-	Position settle(Position p) const;
-
 	// Moves by (dx, dz) in the xz plane, sliding along the mesh boundary. y is the mesh surface
-	// height where it ends (or the terrain's on open ground, see setGround; `grounded` false, a character inside a building's
-	// footprint, never takes it: floors keep the mesh height).
-	StepResult step(const Position& from, double dx, double dz, bool grounded = true) const;
+	// height where it ends: the navmesh point is the sim's y everywhere (no terrain snap; the client places the body, k16.8.31).
+	StepResult step(const Position& from, double dx, double dz) const;
 
 	// Direct drive for dt seconds at `speed` units/s along `heading` (radians, 0 = +z, increasing
 	// towards +x, as the sim's yaw). Backward moves against the heading at kBackpedalFactor of the
 	// speed; the facing is the caller's business. `strafe` (-1 left, +1 right of the heading, SIMLINK order 20) adds a sideways
 	// move at kStrafeFactor, the whole normalised by driveLocal; Stop with a strafe is a pure sidestep. `speed` is the gait speed.
-	StepResult drive(const Position& from, Drive mode, double heading, double speed, double dt, bool grounded = true, int strafe = 0) const;
+	StepResult drive(const Position& from, Drive mode, double heading, double speed, double dt, int strafe = 0) const;
 
 	// The same with the gait ramp: `forwardSpeed` (signed, units/s along the facing; negative when backing up) is ramped
 	// towards the gait speed (towards -gait x kBackpedalFactor backward; Stop zeroes it at once) and the step is taken at the new
 	// speed. `forwardSpeed` is then the speed along the move direction (gait x the length of driveLocal), negative with a
 	// backward component. The server and a predicting client both call this.
 	StepResult drive(const Position& from, Drive mode, double heading, double gait, double& forwardSpeed, double dt,
-		double accel = kGaitAcceleration, bool grounded = true, int strafe = 0) const;
+		double accel = kGaitAcceleration, int strafe = 0) const;
 
 	// Follows a route (any indexable sequence of points with .x and .z) for `distance` units of
 	// path from waypoint `next`, which advances past every waypoint reached. Stops early when
@@ -271,6 +261,10 @@ public:
 	// True when `p` is on the mesh (within a unit horizontally).
 	bool onMesh(const Position& p) const;
 
+	// True when `p` is on a walkable polygon in xz, to a hair (kInsideHair): the strict test, where onMesh tolerates a unit. A body centre that fails it is
+	// off the mesh (a barrel or a wall's clearance cut is not walkable) and snap() puts it back.
+	bool inside(const Position& p) const;
+
 	// The mesh surface point nearest `p` within `reach` on each axis, or empty. `distance` (if
 	// given) receives the 3D distance from p to it. `reachY` >= 0 narrows the vertical window
 	// (the nearest point on p's own level); negative = `reach` on every axis.
@@ -283,7 +277,6 @@ private:
 	const NavMesh& mesh_;
 	TravelFilter travel_;
 	NavQuery query_;
-	std::function<double(double, double)> ground_;
 };
 
 } // namespace knav

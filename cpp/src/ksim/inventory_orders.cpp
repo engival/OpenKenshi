@@ -578,6 +578,9 @@ std::string Simulation::runInventoryOrder(const InventoryOrder& o, bool commit)
 			return reason;
 		if (commit)
 		{
+			// The GUI window take rolls the steal chance (FUN_140713d20 -> 140794810); a caught take moves nothing and the order is spent.
+			if (take && stealRollCaught(o.id, o.container, entryItem, target))
+				return {};
 			++inv.version;
 			++other.version;
 			storeInventory(holder, holderId, std::move(inv), std::move(overflow));

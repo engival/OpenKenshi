@@ -47,7 +47,7 @@ bool stolenGood(const state::Inventory::Entry& entry, const std::string& holderS
 
 } // namespace
 
-const alarm::Alarm* Simulation::raiseAlarm(std::uint8_t kind, double x, double z, std::uint64_t raiser)
+const alarm::Alarm* Simulation::raiseAlarm(std::uint8_t kind, double x, double z, std::uint64_t raiser, std::uint64_t criminal)
 {
 	if (combat_ == nullptr)
 		return nullptr;
@@ -55,7 +55,22 @@ const alarm::Alarm* Simulation::raiseAlarm(std::uint8_t kind, double x, double z
 	if (town < 0)
 		return nullptr; // the writer runs on the town's manager: no town, no alarm
 	const state::Fighter* who = combat_->find(raiser);
-	return &alarms_.raise(town, kind, x, z, who != nullptr ? who->building : 0, who != nullptr ? who->faction : 0, raiser);
+	const std::uint64_t before = alarms_.last();
+	const alarm::Alarm& held = alarms_.raise(town, kind, x, z, who != nullptr ? who->building : 0, who != nullptr ? who->faction : 0, raiser);
+	if (crimeObserver_ && alarms_.last() != before) // a new alarm on the board; a re-raise of a live one is silent
+	{
+		CrimeEvent raised;
+		raised.kind = CrimeEvent::Kind::AlarmRaised;
+		raised.who = raiser;
+		raised.other = criminal;
+		raised.cause = kind;
+		if (const state::Allegiance* side = fighterEntity(raiser).get<state::Allegiance>())
+			raised.faction = side->factionSid;
+		raised.x = x;
+		raised.z = z;
+		crimeObserver_(raised);
+	}
+	return &held;
 }
 
 const alarm::Alarm* Simulation::pickAlarm(std::uint64_t id, bool alliesOnly) const

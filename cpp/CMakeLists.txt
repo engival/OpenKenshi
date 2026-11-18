@@ -1724,6 +1724,11 @@ target_link_libraries(knav_seam PRIVATE knav)
 target_compile_definitions(knav_seam PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(knav_seam)
 
+add_executable(knav_threads tests/knav_threads.cpp)
+target_link_libraries(knav_threads PRIVATE knav)
+target_compile_definitions(knav_threads PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(knav_threads)
+
 add_executable(knav_coarse tests/knav_coarse.cpp)
 target_link_libraries(knav_coarse PRIVATE knav)
 target_compile_definitions(knav_coarse PRIVATE KENSHI_DATA="${KENSHI_DATA}")
@@ -1797,6 +1802,11 @@ target_link_libraries(knav_longhouse_door PRIVATE knav)
 target_compile_definitions(knav_longhouse_door PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(knav_longhouse_door)
 add_test(NAME knav_longhouse_door COMMAND knav_longhouse_door)
+add_executable(knav_outpost_floor2_bake tests/knav_outpost_floor2_bake.cpp)
+target_link_libraries(knav_outpost_floor2_bake PRIVATE knav)
+target_compile_definitions(knav_outpost_floor2_bake PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(knav_outpost_floor2_bake)
+add_test(NAME knav_outpost_floor2_bake COMMAND knav_outpost_floor2_bake)
 add_test(NAME knav_tower COMMAND knav_tower)
 add_test(NAME knav_snap COMMAND knav_snap ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
 add_executable(knav_walk tests/knav_walk.cpp)
@@ -1870,6 +1880,14 @@ kdata_warnings(ksim_native_cache)
 add_test(NAME ksim_native_cache COMMAND ksim_native_cache)
 set_tests_properties(ksim_native_cache PROPERTIES SKIP_RETURN_CODE 77)
 
+# The nav cache's canary: a fresh bake of one zone, its digest pinned beside kNativeCacheRecipe (kenshi-k16.7.67).
+add_executable(ksim_nav_cache_canary tests/ksim_nav_cache_canary.cpp)
+target_link_libraries(ksim_nav_cache_canary PRIVATE ksim)
+target_compile_definitions(ksim_nav_cache_canary PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_nav_cache_canary)
+add_test(NAME ksim_nav_cache_canary COMMAND ksim_nav_cache_canary)
+set_tests_properties(ksim_nav_cache_canary PROPERTIES SKIP_RETURN_CODE 77)
+
 add_executable(ksim_nav_islands tests/ksim_nav_islands.cpp)
 target_link_libraries(ksim_nav_islands PRIVATE ksim RecastNavigation::Detour)
 target_compile_definitions(ksim_nav_islands PRIVATE KENSHI_DATA="${KENSHI_DATA}" KSIM_ISLANDS_BASELINE="${CMAKE_CURRENT_SOURCE_DIR}/tests/data/nav_islands_baseline.tsv")
@@ -1909,6 +1927,7 @@ add_test(NAME knav_native_tiles COMMAND knav_native_tiles)
 add_test(NAME knav_dynamic COMMAND knav_dynamic)
 add_test(NAME knav_water COMMAND knav_water)
 add_test(NAME knav_bake_seam COMMAND knav_seam)
+add_test(NAME knav_bake_threads COMMAND knav_threads) # zone 29,16 at 1 / 8 / 16 threads: the same bytes (k16.7.50)
 add_test(NAME knav_bake_flat COMMAND knav_flat)
 # Nine world regions around the Hub (4 x 4 zones each, ~1 minute): the coarse graph is built over them.
 add_test(NAME knav_bake_world_sample
@@ -1939,6 +1958,13 @@ kdata_warnings(ksim_route_soak)
 add_test(NAME ksim_route_soak COMMAND ksim_route_soak ${CMAKE_CURRENT_BINARY_DIR}/world_sample)
 # RUN_SERIAL: its limits are wall-clock route times; under a -j16 suite the hopeless pair passed 250 ms (44 ms alone).
 set_tests_properties(ksim_route_soak PROPERTIES FIXTURES_REQUIRED knav_world_sample SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
+
+add_executable(ksim_route_walk tests/ksim_route_walk.cpp)
+target_link_libraries(ksim_route_walk PRIVATE ksim RecastNavigation::Detour)
+target_compile_definitions(ksim_route_walk PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_route_walk)
+add_test(NAME ksim_route_walk COMMAND ksim_route_walk ${CMAKE_CURRENT_BINARY_DIR}/world_sample)
+set_tests_properties(ksim_route_walk PROPERTIES FIXTURES_REQUIRED knav_world_sample SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
 
 # Town life T3f: the unloaded phase and the soak gate (TOWN_LIFE_SLICE 5.3 LOD / 5.7). No player area, so every town squad runs the
 # unloaded path: the soak stays at 0 goal-less / stuck / off route with no leaked reservation, and the counters see the night half
@@ -2240,6 +2266,11 @@ target_link_libraries(ksim_crime PRIVATE ksim)
 target_compile_definitions(ksim_crime PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(ksim_crime)
 add_test(NAME ksim_crime COMMAND ksim_crime)
+add_executable(ksim_steal_chance tests/ksim_steal_chance.cpp)
+target_link_libraries(ksim_steal_chance PRIVATE ksim)
+target_compile_definitions(ksim_steal_chance PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_steal_chance)
+add_test(NAME ksim_steal_chance COMMAND ksim_steal_chance)
 
 add_executable(ksim_lockpick_seq tests/ksim_lockpick_seq.cpp)
 target_link_libraries(ksim_lockpick_seq PRIVATE ksim RecastNavigation::Detour)
@@ -2571,29 +2602,18 @@ kdata_warnings(ksim_fight_trace)
 add_test(NAME ksim_fight_trace COMMAND ksim_fight_trace ${KSIM_NAVWORLD})
 set_tests_properties(ksim_fight_trace PROPERTIES SKIP_RETURN_CODE 77)
 # Feet on the ground (kenshi-k16.7.14): characters on open ground stand at the terrain heightmap's height.
-add_executable(ksim_feet_ground tests/ksim_feet_ground.cpp)
-target_link_libraries(ksim_feet_ground PRIVATE ksim)
-target_compile_definitions(ksim_feet_ground PRIVATE
-	KENSHI_DATA="${KENSHI_DATA}"
-	KSIM_AI_TABLE="${KSIM_AI_TABLE}"
-	KSIM_SCENARIOS_DIR="${KSIM_SCENARIOS_DIR}"
-)
-kdata_warnings(ksim_feet_ground)
-add_test(NAME ksim_feet_ground COMMAND ksim_feet_ground ${KSIM_NAVWORLD})
-set_tests_properties(ksim_feet_ground PROPERTIES SKIP_RETURN_CODE 77)
-# Feet on the ground, indoors (kenshi-k16.7.14): a character inside the Bar keeps the floor height.
-add_executable(ksim_feet_indoors tests/ksim_feet_indoors.cpp)
-target_link_libraries(ksim_feet_indoors PRIVATE ksim)
-target_compile_definitions(ksim_feet_indoors PRIVATE KENSHI_DATA="${KENSHI_DATA}")
-kdata_warnings(ksim_feet_indoors)
-add_test(NAME ksim_feet_indoors COMMAND ksim_feet_indoors ${KSIM_NAVWORLD})
-set_tests_properties(ksim_feet_indoors PROPERTIES SKIP_RETURN_CODE 77)
-add_executable(ksim_ground_ray tests/ksim_ground_ray.cpp)
-target_link_libraries(ksim_ground_ray PRIVATE ksim)
-target_compile_definitions(ksim_ground_ray PRIVATE KENSHI_DATA="${KENSHI_DATA}")
-kdata_warnings(ksim_ground_ray)
-add_test(NAME ksim_ground_ray COMMAND ksim_ground_ray ${KSIM_NAVWORLD})
-set_tests_properties(ksim_ground_ray PROPERTIES SKIP_RETURN_CODE 77)
+add_executable(ksim_place_ground tests/ksim_place_ground.cpp)
+target_link_libraries(ksim_place_ground PRIVATE ksim)
+target_compile_definitions(ksim_place_ground PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_place_ground)
+add_test(NAME ksim_place_ground COMMAND ksim_place_ground ${KSIM_NAVWORLD})
+set_tests_properties(ksim_place_ground PROPERTIES SKIP_RETURN_CODE 77)
+add_executable(ksim_height_sweep tests/ksim_height_sweep.cpp)
+target_link_libraries(ksim_height_sweep PRIVATE ksim)
+target_compile_definitions(ksim_height_sweep PRIVATE KENSHI_DATA="${KENSHI_DATA}" KSIM_HEIGHT_SWEEP_GAPS="${CMAKE_CURRENT_SOURCE_DIR}/tests/data/height_sweep_known_gaps.tsv")
+kdata_warnings(ksim_height_sweep)
+add_test(NAME ksim_height_sweep COMMAND ksim_height_sweep ${KSIM_NAVWORLD})
+set_tests_properties(ksim_height_sweep PROPERTIES SKIP_RETURN_CODE 77)
 # kenshi-k16.6.31: a fresh New Game's Hub residents walk to their sites (not placed on them).
 add_executable(ksim_bar_spread tests/ksim_bar_spread.cpp)
 target_link_libraries(ksim_bar_spread PRIVATE ksim)
@@ -2758,6 +2778,17 @@ target_compile_definitions(ksim_slavers_capture PRIVATE
 kdata_warnings(ksim_slavers_capture)
 add_test(NAME ksim_slavers_capture COMMAND ksim_slavers_capture)
 set_tests_properties(ksim_slavers_capture PROPERTIES SKIP_RETURN_CODE 77)
+# kenshi-k16.6.288: after the slavers_downed capture no member keeps a fight goal or a weapon in hand.
+add_executable(ksim_slavers_sheathe tests/ksim_slavers_sheathe.cpp)
+target_link_libraries(ksim_slavers_sheathe PRIVATE ksim)
+target_compile_definitions(ksim_slavers_sheathe PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+	KSIM_AI_TABLE="${KSIM_AI_TABLE}"
+	KSIM_SCENARIOS_DIR="${KSIM_SCENARIOS_DIR}"
+)
+kdata_warnings(ksim_slavers_sheathe)
+add_test(NAME ksim_slavers_sheathe COMMAND ksim_slavers_sheathe)
+set_tests_properties(ksim_slavers_sheathe PROPERTIES SKIP_RETURN_CODE 77)
 # kenshi-k16.6.137: the capture's restrain time and the capturer's CHAR_DYNAMIC actions on the scenario path.
 add_executable(ksim_capture_actions tests/ksim_capture_actions.cpp)
 target_link_libraries(ksim_capture_actions PRIVATE ksim)
@@ -3539,6 +3570,13 @@ kdata_warnings(ksim_fight_levels)
 add_test(NAME ksim_fight_levels COMMAND ksim_fight_levels ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
 set_tests_properties(ksim_fight_levels PROPERTIES FIXTURES_REQUIRED knav_cache)
 
+# k16.8.41: surface under every step of the Hub bar stair (zone 20,32).
+add_executable(ksim_hub_stair_seam tests/ksim_hub_stair_seam.cpp)
+target_link_libraries(ksim_hub_stair_seam PRIVATE ksim RecastNavigation::Detour)
+kdata_warnings(ksim_hub_stair_seam)
+add_test(NAME ksim_hub_stair_seam COMMAND ksim_hub_stair_seam ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
+set_tests_properties(ksim_hub_stair_seam PROPERTIES FIXTURES_REQUIRED knav_cache)
+
 # The profile query over SIMLINK (SIMLINK.md PROFILE, order 120, frame 70): runs in both KSIM_PROFILE builds (OFF answers unsupported).
 add_executable(ksim_profile_wire tests/ksim_profile_wire.cpp)
 target_link_libraries(ksim_profile_wire PRIVATE ksim)
@@ -3573,7 +3611,7 @@ add_test(NAME ksim_storm_door COMMAND ksim_storm_door ${KSIM_NAVWORLD})
 set_tests_properties(ksim_storm_door PROPERTIES SKIP_RETURN_CODE 77)
 
 add_executable(ksim_route_wall_start tests/ksim_route_wall_start.cpp)
-target_link_libraries(ksim_route_wall_start PRIVATE ksim)
+target_link_libraries(ksim_route_wall_start PRIVATE ksim RecastNavigation::Detour)
 target_compile_definitions(ksim_route_wall_start PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(ksim_route_wall_start)
 add_test(NAME ksim_route_wall_start COMMAND ksim_route_wall_start ${KSIM_NAVWORLD})
@@ -3600,6 +3638,7 @@ set_tests_properties(ksim_counter_path PROPERTIES FIXTURES_REQUIRED knav_cache)
 # long tests"). Workers run `ctest -LE slow` plus the slow tests their change touches; the sim lead runs the full suite on each ksim head
 # (docs/RUNBOOK.md "Dev box"). A new test that runs 20 s or more is added here. if(TEST): a name missing from this tree is skipped.
 set(KSIM_SLOW_TESTS
+	knav_bake_threads
 	ksim_prop_clip
 	ksim_prop_clip_native
 	ksim_nav_islands
@@ -3646,6 +3685,7 @@ set(KSIM_SLOW_TESTS
 	ksim_construction
 	ksim_corpses
 	ksim_crime
+	ksim_steal_chance
 	ksim_lockpick_seq
 	ksim_delta_store
 	ksim_dialogue_compare
@@ -3794,6 +3834,31 @@ set_tests_properties(ksim_prop_clip PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME ksim_prop_clip_bake COMMAND ksim_prop_clip ${KSIM_NAVWORLD})
 set_tests_properties(ksim_prop_clip_bake PROPERTIES SKIP_RETURN_CODE 77)
 list(APPEND KSIM_BAKE_TESTS ksim_prop_clip_bake)
+
+# kenshi-k16.6.368: fights at the Storm House counter and barrel never put a fighter inside a solid prop (KSIM_PROP_BODY=<u> grows the solids by a body radius: fails today).
+add_executable(ksim_fight_prop tests/ksim_fight_prop.cpp)
+target_link_libraries(ksim_fight_prop PRIVATE ksim RecastNavigation::Detour)
+target_compile_definitions(ksim_fight_prop PRIVATE KENSHI_DATA="${KENSHI_DATA}" KSIM_AI_TABLE="${KSIM_AI_TABLE}")
+kdata_warnings(ksim_fight_prop)
+add_test(NAME ksim_fight_prop COMMAND ksim_fight_prop ${KSIM_NAVWORLD})
+set_tests_properties(ksim_fight_prop PROPERTIES SKIP_RETURN_CODE 77)
+
+# kenshi-k16.7.89 tool, not a test: classify points against the furniture ring (tests/ksim_ring_probe.cpp).
+add_executable(ksim_ring_probe tests/ksim_ring_probe.cpp)
+target_link_libraries(ksim_ring_probe PRIVATE ksim)
+target_compile_definitions(ksim_ring_probe PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_ring_probe)
+
+# kenshi-k16.6.370: the cage_prisoner Prisoner's sim position is inside its cage's collision box (tests/prop_clip.hpp), at the spawn and over 60 game s.
+add_executable(ksim_cage_inside tests/ksim_cage_inside.cpp)
+target_link_libraries(ksim_cage_inside PRIVATE ksim)
+target_compile_definitions(ksim_cage_inside PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+	KSIM_AI_TABLE="${KSIM_AI_TABLE}"
+	KSIM_SCENARIO="${CMAKE_CURRENT_SOURCE_DIR}/../scenarios/cage_prisoner.kscen")
+kdata_warnings(ksim_cage_inside)
+add_test(NAME ksim_cage_inside COMMAND ksim_cage_inside ${KSIM_NAVWORLD})
+set_tests_properties(ksim_cage_inside PROPERTIES SKIP_RETURN_CODE 77)
 
 add_executable(ksim_siv_floors tests/ksim_siv_floors.cpp)
 target_link_libraries(ksim_siv_floors PRIVATE ksim RecastNavigation::Detour)

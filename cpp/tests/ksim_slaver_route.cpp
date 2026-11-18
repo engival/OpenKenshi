@@ -18,6 +18,7 @@
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
+#include "caravan_unhurt.hpp"
 #include "test_util.hpp"
 
 #include <algorithm>
@@ -75,6 +76,8 @@ int main()
 		const std::uint64_t kBoss = firstId + 3;
 		const std::uint64_t kDepot = 4459; // the nearest camp's town id (4772 before kenshi-k16.6.33 changed the Hub's residents)
 		scenario::apply(sim, *context.gameData, *data, context, file, 1);
+		// This fixture pins the walk to the edge, not the aid (the kitted guards go on 58 over the follow, k16.6.287): the caravan carries no kit.
+		stripMedkits(sim, kBoss, kBoss + 8);
 		ServerAiOptions ai;
 		ai.registryPath = KSIM_AI_TABLE;
 		enableServerAi(sim, ai);
@@ -112,6 +115,8 @@ int main()
 		{
 			sim.tick();
 			const state::Fighter* c = sim.combat()->find(kPlayer);
+			for (std::uint64_t id = kBoss; id < kBoss + 8; ++id)
+				keepCaravanUnhurt(sim, id);
 			const state::Fighter* b = sim.combat()->find(kBoss);
 			if (c == nullptr || b == nullptr)
 				break; // demoted on the tick of the hold

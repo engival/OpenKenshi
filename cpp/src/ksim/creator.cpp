@@ -1,5 +1,5 @@
 // Character creation for a new game: the creator's choices from the merged data and the check of a NEW_GAME Spec list
-// (include/ksim/creator.hpp, docs/formats/SIMLINK.md NEW_GAME). The creator itself is the client's (client/src/creator.cpp,
+// (include/ksim/creator.hpp, docs/formats/SIMLINK.md NEW_GAME). The creator itself is the client's (client/src/characters/creator.cpp,
 // characters.cpp); this reads the same data the same way so that the server accepts exactly what that creator can produce.
 
 #include "ksim/creator.hpp"

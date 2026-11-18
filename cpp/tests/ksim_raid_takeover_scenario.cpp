@@ -77,6 +77,7 @@ static bool run(const scenario::File& file, const std::string& world, const char
 	bool assaulted = false;
 	bool occupied = false;
 	bool downed = false;
+	bool brought = false;
 	bool threw = false; // 273 / 274 seen: printed only, by design: nobody is thrown out in the original either (FACTIONS.md 2.1b, kenshi-rwh.69)
 	int occupiedAt = -1;
 	for (int tick = 0; tick < kRunTicks && !(occupied && downed && tick >= occupiedAt * 20 + kStayTicks); ++tick)
@@ -87,6 +88,24 @@ static bool run(const scenario::File& file, const std::string& world, const char
 		if (state::Fighter* f = fighter(human); f != nullptr && !f->dead && occupied)
 			f->unconscious = true; // held down once the stay began: nothing in this test wakes her
 		assaulted = assaulted || applied() == kAssaultSid;
+		if (applied() == kAssaultSid && !brought)
+		{
+			// Two raiders are put in reach of the Wanderer as the assault begins. The assault ends once two members are engaged at a 1 Hz sample, and
+			// the members' own goal 216 sends each to a random building of the town's circle on a dice keyed (seed, member, tick), so whether two are
+			// near her at a sample is a matter of the dice and of the tick of the second the sample falls on (the slices, k16.6.320). This test is
+			// about the package's transition, not the dice.
+			brought = true;
+			for (std::size_t i = 1; i <= 2 && i < placed.others.size(); ++i)
+			{
+				state::Fighter* raider = fighter(placed.others[i]);
+				const state::Fighter* wanderer = fighter(human);
+				test::require(raider != nullptr && wanderer != nullptr, "no raider or Wanderer to bring into reach");
+				raider->x = wanderer->x + 4.0 * static_cast<double>(i);
+				raider->z = wanderer->z;
+				raider->y = wanderer->y;
+				raider->target = human; // engaged now, not when its perception happens to turn to her
+			}
+		}
 		if (applied() == kOccupySid && !occupied)
 		{
 			occupied = true;

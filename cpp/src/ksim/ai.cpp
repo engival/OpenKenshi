@@ -1626,6 +1626,10 @@ void AiSystem::refresh(flecs::world& ecs)
 		squads_.emplace_back(id.value, entity.id());
 	});
 	std::sort(squads_.begin(), squads_.end());
+	for (auto& slice : slices_)
+		slice.clear();
+	for (const auto& row : squads_)
+		slices_[row.first % 20].push_back(row);
 	// The unloaded phases (T3f) follow the squad list: a squad that is gone loses its entry.
 	for (auto life = townLife_.begin(); life != townLife_.end();)
 	{
@@ -1677,13 +1681,34 @@ const Mapping& AiSystem::squadMapping(const flecs::world& ecs, const state::Squa
 
 void AiSystem::squadStep(flecs::world& ecs, RegionEngine& engine, std::uint64_t tick)
 {
-	refresh(ecs);
-	if (doors_ != nullptr)
+	if (tick % 20 == 0 || squads_.empty() || knownSquads_ == static_cast<std::size_t>(-1)) // the count query is the second's, not every tick's (k16.6.232); callers below skip a squad that went
+		refresh(ecs);
+	if (doors_ != nullptr && tick % 20 == 0)
 		doors_->sync(ecs, tick, towns_, config_.navigator.get());
-	for (const auto& [id, raw] : squads_)
+	// A squad never stepped (no GroupAI yet, or one with no goal) takes its first step at once, as it did when every squad was stepped at the
+	// second's tick (k16.6.232): the resident pass reads the state that step makes (inRoutineMode) before the squad's own slice comes up, and no
+	// squad stays goalless (ksim_faction's audit) until it does.
+	std::set<std::uint64_t> fresh;
+	if (tick % 20 == 0)
 	{
+		for (const auto& [id, raw] : squads_)
+		{
+			if (!ecs.is_alive(raw))
+				continue;
+			const state::GroupAI* group = flecs::entity(ecs.c_ptr(), raw).get<state::GroupAI>();
+			if (group == nullptr || group->goal == state::GoalKind::None)
+				fresh.insert(id);
+		}
+	}
+	// The second's first tick walks the whole list (a squad with no goal steps at once, `fresh`); the others only their own slice.
+	for (const auto& [id, raw] : tick % 20 == 0 ? squads_ : slices_[tick % 20])
+	{
+		if (tick % 20 != id % 20 && fresh.count(id) == 0) // the squad's own tick of the second (Simulation::inSlice, k16.6.320)
+			continue;
+		if (!ecs.is_alive(raw))
+			continue;
 		const flecs::entity entity(ecs.c_ptr(), raw);
-		if (entity.has<state::StragglerOf>())
+		if (entity.get<state::SquadInstance>() == nullptr || entity.has<state::StragglerOf>())
 			continue; // a straggler token is walked by Simulation::stepStragglers (k16.6.53)
 		if (entity.get<state::GroupAI>() == nullptr)
 			entity.set<state::GroupAI>(state::GroupAI{});

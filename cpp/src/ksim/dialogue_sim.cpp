@@ -1445,7 +1445,7 @@ void Simulation::stepDialogue(std::uint64_t now, TalkProbe* probe)
 				// The town's alarm manager (1409335e0; dt41_E section 1): kind = T's crime (char+0x148), raised by the speaker at T. UNSURE: whose
 				// position the dialogue path passes (ours: the criminal's) and the UI "Alarm raised" message; the guards' answer is 209 / 210.
 				if (const state::CrimeRecord* raised = crimeRecord(talk.target); raised != nullptr && raised->crime != crime::kNone)
-					raiseAlarm(raised->crime, target->x, target->z, voice);
+					raiseAlarm(raised->crime, target->x, target->z, voice, talk.target);
 				break;
 			}
 			case 32: // DA_ASSIGN_BOUNTY: a flat add when T has no pending crime, else commit it when the speaker assigns bounties

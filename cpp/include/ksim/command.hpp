@@ -128,6 +128,10 @@ enum class CommandType : std::uint8_t
 	// Order 60 actions 15 / 16 / 17 (kenshi-h2v.15.1): subject the actor, object the shackle wearer, value the wire action. A replacing
 	// order (Simulation::orderShackleAction). Checked again when it applies; a refusal drops it.
 	ShackleAction = 31,
+	// value: 0 / 1 the PASSIVE toggle (SIMLINK.md order 10 which 6; k16.6.313). Never replaces the current order.
+	FighterPassive = 32,
+	// value: 0 / 1 the HOLD POSITION toggle (order 10 which 7). Never replaces the current order.
+	FighterHoldPosition = 33,
 };
 
 // A building placement (SIMLINK orders 90 build_check and 91 build_place). Rotation is W first.
@@ -235,6 +239,8 @@ struct Command
 	static Command fighterBlock(state::Id subject, bool on);
 	static Command fighterFollow(state::Id subject, state::Id leader);
 	static Command fighterSneak(state::Id subject, bool on);
+	static Command fighterPassive(state::Id subject, bool on);
+	static Command fighterHoldPosition(state::Id subject, bool on);
 	static Command fighterRun(state::Id subject, bool run);
 	// Toggle which 5: `mode` 0 Walk, 1 Jog, 2 Run, 3 Group; `group` the group key for mode 3 (0 otherwise).
 	static Command fighterSpeedMode(state::Id subject, std::uint8_t mode, std::uint64_t group);

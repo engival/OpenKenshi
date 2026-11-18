@@ -64,6 +64,16 @@ state::Inventory& packOf(Simulation& sim, std::uint64_t id)
 	return *entity.get_mut<state::Inventory>();
 }
 
+// A character spawns with its CHARACTER `inventory` kit (k16.6.287); a case that is about having no kit strips it first.
+void dropKits(Simulation& sim, const std::uint64_t id)
+{
+	std::erase_if(packOf(sim, id).items, [&](const state::Inventory::Entry& entry)
+	{
+		const ItemInfo* info = sim.combat()->data().item(entry.itemSid);
+		return info != nullptr && info->function == kItemFunctionMedkit;
+	});
+}
+
 struct Person
 {
 	std::uint64_t id = 0;
@@ -359,6 +369,8 @@ int main(int argc, char** argv)
 		std::printf("ordinary squad: %s (%zu members)\n", bandTemplate.c_str(), band.size());
 		const std::uint64_t victim = band[1].id;
 		const std::uint64_t mate = band[2].id;
+		for (const Person& p : band)
+			dropKits(sim, p.id);
 
 		// B - no kit: the victim goes down, wakes from the collapse's KO and stays down and conscious.
 		cripple(sim, victim);
@@ -419,6 +431,7 @@ int main(int argc, char** argv)
 		const Placed caravan = placeSquad(game2, "3387-gamedata.base", 3);
 		test::require(caravan.members.size() >= 3, "the caravan has a medic, a patient and a bystander");
 		const std::uint64_t patient = caravan.members[1].id;
+		dropKits(sim2, patient);
 		for (const Person& p : caravan.members)
 		{
 			if (p.id != patient)

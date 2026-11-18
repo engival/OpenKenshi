@@ -108,6 +108,27 @@ int witnessEvent(std::uint8_t crime, bool victimIsWitness) noexcept;
 // Terrorism and Escaping prison. Kidnapping, burglary / slave freeing, trespass, crop theft and uniform theft have their own.
 bool witnessBetrayal(std::uint8_t crime) noexcept;
 
+// ---- the steal chance (FUN_1407944d0, kenshi-rwh.163; docs/reference/CRIME_STATIC.md "Steal chance") ----
+// Everything the original's chance reads and nothing else: no lighting, observers, line of sight, sneak, item value or building type
+// (those stay in the witness pipeline). `thievery` is the RAW stat (Fighter::skills.thievery, stat 10 at CharStats+0xac), no limb or
+// hunger multipliers.
+struct StealInput
+{
+	double thievery = 0.0;
+	bool character = false; // the source is a character's inventory (pickpocket / loot a body); false = a building or container
+	bool disabled = false; // character source only: KO'd, dead, carried or caged
+	bool worn = false; // character source: the item is worn / not for sale (item+0x129)
+	bool itemIsContainer = false; // character source, worn item that is itself a container (item vf+0x2e0): another x0.75
+	double distance = 0.0; // container source: building to the nearest player-squad character
+	bool ownPlatoon = false; // container source: the looter's context is the building's (x0.5 on the distance factor)
+	bool posture3 = false; // container source: the resolved victim's posture is 3 (x2)
+	bool floorMismatch = false; // container source: the victim's floor differs from the building's (x1.5)
+};
+// The chance that a take passes unnoticed: >= 1 always passes. The roll passes when rand()/32768 <= chance (FUN_140794810).
+double stealChance(const StealInput& in) noexcept;
+// The roll itself: true when the take is CAUGHT. `draw` is a uniform [0, 1) from the sim rng (rand() / 32768).
+inline bool stealCaught(double chance, double draw) noexcept { return draw > chance; }
+
 // The faction that holds this faction's bounties (Faction+0x38 `legal system`; the faction itself when its `offers bounties`
 // (+0x40) is set; CRIME_STATIC "legal faction"). Empty for an unknown faction or one with neither.
 std::string legalFaction(const kdata::GameData* data, std::string_view factionSid);

@@ -417,6 +417,8 @@ void circuit(const kworld::LoadOrder& order)
 		const state::TraderTrip trip = *caravan.squad.get<state::TraderTrip>();
 		const std::uint64_t tick = sim.clockTick();
 		const double hours = trader::gameHours(tick);
+		// The caravan's step is on its own tick of the second (id % 20, Simulation::inSlice, k16.6.320): the latest one up to this tick.
+		const double stepHours = trader::gameHours(tick - (tick % 20 + 20 - caravan.squad.get<state::Id>()->value % 20) % 20);
 		const state::Position position = *caravan.squad.get<state::Position>();
 		if (trip.staying && !staying)
 		{
@@ -425,7 +427,7 @@ void circuit(const kworld::LoadOrder& order)
 			visit.stay = trip.stayHours;
 			visit.arriveTick = tick;
 			visit.town = trip.town.id;
-			test::require(std::fabs(trip.arrivedAt - hours) < 1e-9, "the arrival is stamped at the step that found it");
+			test::require(std::fabs(trip.arrivedAt - stepHours) < 1e-9, "the arrival is stamped at the step that found it");
 			test::require(trip.stayHours >= 5.0 && trip.stayHours <= 8.0, "the stay is U(5, 8)");
 			const state::TownState& town = *flecs::entity(ecsOf(sim), trip.town.id).get<state::TownState>();
 			test::require(std::hypot(position.x - town.x, position.z - town.z) <= UtilityGroupLayer::kHomeRadius + 1.0, "it stands in the town");

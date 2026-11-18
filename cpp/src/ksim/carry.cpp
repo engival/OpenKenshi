@@ -202,7 +202,7 @@ void Simulation::dropCarried(std::uint64_t carrierId)
 		{
 			const double reach = combat_->rollDropDistance(*carried, carrier->carrying);
 			const knav::StepResult r = navigation_->walker().step({carrier->x, carrier->y, carrier->z},
-				std::sin(carrier->yaw) * reach, std::cos(carrier->yaw) * reach, carrier->building == 0);
+				std::sin(carrier->yaw) * reach, std::cos(carrier->yaw) * reach);
 			if (r.onMesh && std::fabs(r.at.y - carrier->y) < kDropSpotVertical
 				&& buildingAt(r.at.x, r.at.y, r.at.z) == carrier->building)
 			{
@@ -282,6 +282,13 @@ bool Simulation::cageDoorLocked(std::uint64_t cageBuilding) const
 		locked = locked || routine.cagesLocked != 0;
 	});
 	return promotedWarden ? locked : true;
+}
+
+std::optional<knav::Position> Simulation::placeOnGround(double x, double y, double z, double reach)
+{
+	if (navigation_ == nullptr)
+		return std::nullopt;
+	return navigation_->walker().snap({x, y, z}, reach);
 }
 
 std::uint64_t Simulation::buildingAt(double x, double y, double z)
@@ -585,7 +592,7 @@ void Simulation::stepCarry()
 				carried->clearRoute();
 				carried->forwardSpeed = 0.0;
 				carried->lateralSpeed = 0.0;
-				carried->target = 0;
+				combat_->dropTarget(step.target);
 				// CARRY_KIDNAP_LIVE.md: the exe's Task_Kidnapping alone sets the captive flag the carry inspection reads, so a plain carry
 				// is never a kidnapping there. Ours sets it on the lift of any non-slave (the user's fix, ARCHITECTURE "Guards notice what
 				// you carry"); a slave is judged by its slave state instead.
@@ -1140,7 +1147,7 @@ void Simulation::stepSlaveTrade()
 		{
 			state::Fighter& mate = *combat_->find(members[i].id);
 			if (cuffed.count(mate.target) != 0)
-				mate.target = 0;
+				combat_->dropTarget(members[i].id);
 		}
 
 	for (std::size_t i = 0; i < members.size(); ++i)
@@ -1327,7 +1334,7 @@ void Simulation::stepSlaveTrade()
 					f.lateralSpeed = 0.0;
 					if (!body->unconscious)
 					{
-						body->target = 0;
+						combat_->dropTarget(bodyId); // setTarget: the old target's engaged list loses it (a bare write left the boss 'engaged' by a captive for good)
 						body->clearRoute();
 						body->forwardSpeed = 0.0;
 						body->lateralSpeed = 0.0;
@@ -1362,7 +1369,7 @@ void Simulation::stepSlaveTrade()
 					noteOwnedSlave(id, bodyId);
 					combat_->forgiveHostile(id, bodyId); // a shackled slave is not re-engaged by the squad that chained it,
 					body->orderTarget = 0; // and a woken one has dropped its own attack order
-					body->target = 0;
+					combat_->dropTarget(bodyId);
 					aidGrace_[bodyId] = clockTick() + kSquadIntervalTicks + 1;
 					body->engaged.clear(); // the squad's blows ended with the bar (its members' targets were dropped above): the slave is out of the fight for 58's gate (rwh.111)
 					mirrorFighter(bodyId);

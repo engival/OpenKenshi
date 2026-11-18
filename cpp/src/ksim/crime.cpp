@@ -146,6 +146,33 @@ const state::Bounty* findBounty(const state::CrimeRecord& record, std::string_vi
 	return nullptr;
 }
 
+double stealChance(const StealInput& in) noexcept
+{
+	const double skill = in.thievery * 0.01;
+	if (in.character)
+	{
+		if (in.disabled)
+			return 1.0;
+		double chance = 1.1 * skill;
+		if (in.worn)
+		{
+			chance *= 0.75;
+			if (in.itemIsContainer)
+				chance *= 0.75;
+		}
+		return chance;
+	}
+	double reach = 0.5 + 0.5 * std::min(in.distance / 200.0, 1.0);
+	if (in.ownPlatoon)
+		reach *= 0.5;
+	double chance = 0.3 + (2.25 - 0.3) * (skill * reach);
+	if (in.posture3)
+		chance *= 2.0;
+	if (in.floorMismatch)
+		chance *= 1.5;
+	return chance;
+}
+
 std::string legalFaction(const kdata::GameData* data, std::string_view factionSid)
 {
 	const kdata::Record* record = data != nullptr && !factionSid.empty() ? data->find(factionSid) : nullptr;
@@ -450,6 +477,11 @@ std::uint64_t Simulation::dialogueEventCount(int event) const
 	return found != dialogueCounts_.end() ? found->second : 0;
 }
 
+double Simulation::factionRelationBetween(const std::string& from, const std::string& to)
+{
+	return FactionView(ecsMutable(), gameData_.get()).relation(from, to);
+}
+
 const state::CrimeRecord* Simulation::crimeRecord(std::uint64_t id) const
 {
 	if (combat_ == nullptr || combat_->find(id) == nullptr)
@@ -620,6 +652,7 @@ void Simulation::reportTheft(std::uint64_t who, std::uint64_t container, const s
 	const state::Fighter* body = combat_ != nullptr ? combat_->find(container) : nullptr;
 	const bool victimUp = body != nullptr && !body->dead && !body->unconscious;
 	reportCrime(who, body != nullptr && !victimUp ? crime::kLooting : crime::kTheft, ownerSid, body != nullptr ? container : 0);
+	noteCaughtAct(who, 1, container);
 	if (interactObserver_)
 	{
 		InteractEvent stolen;
@@ -629,6 +662,91 @@ void Simulation::reportTheft(std::uint64_t who, std::uint64_t container, const s
 		stolen.item = ownerSid;
 		interactObserver_(stolen);
 	}
+}
+
+double Simulation::stealChance(std::uint64_t who, std::uint64_t container, const std::string& item) const
+{
+	const state::Fighter* thief = combat_ != nullptr ? combat_->find(who) : nullptr;
+	const Storage storage = findStorage(container);
+	if (thief == nullptr || storage.entity == 0 || !isForeignOwner(world_.ecs(), who, storage.ownerSid))
+		return 1.0;
+	crime::StealInput in;
+	in.thievery = thief->skills.thievery;
+	if (storage.body)
+	{
+		const state::Fighter* victim = combat_->find(container);
+		in.character = true;
+		in.disabled = victim == nullptr || victim->dead || victim->unconscious || victim->carriedBy != 0 || victim->cageBuilding != 0;
+		if (const state::Inventory* held = flecs::entity(world_.ecs().c_ptr(), storage.entity).get<state::Inventory>())
+		{
+			if (held->carried(item) == 0)
+			{
+				for (const state::Inventory::Entry& entry : held->items)
+				{
+					if (entry.slot != state::Inventory::kCarried && entry.itemSid == item)
+					{
+						in.worn = true;
+						in.itemIsContainer = !entry.contents.empty();
+						break;
+					}
+				}
+			}
+		}
+	} else {
+		in.distance = std::hypot(storage.x - thief->x, storage.z - thief->z);
+		// UNSURE (deferred: playtesting): the ownership test behind ownPlatoon and FUN_1405499a0, and the victim's posture / floor: ours has
+		// no posture or floor model, so they stay false.
+	}
+	return crime::stealChance(in);
+}
+
+void Simulation::recordCaughtStealing(std::uint64_t thief, std::uint64_t victim, const std::string& ownerSid)
+{
+	reportCrime(thief, crime::kTheft, ownerSid, victim, crime::kTimerTheftReport);
+	if (victim != 0)
+		fireDialogue(victim, thief, crime::kEvThiefCaughtStealingFromMe);
+}
+
+bool Simulation::stealRollCaught(std::uint64_t who, std::uint64_t container, const std::string& item, const Storage& storage)
+{
+	const state::Fighter* thief = combat_ != nullptr ? combat_->find(who) : nullptr;
+	if (thief == nullptr || !thief->playerControlled || !isForeignOwner(world_.ecs(), who, storage.ownerSid))
+		return false;
+	const double chance = stealChance(who, container, item);
+	if (!crime::stealCaught(chance, rng_[static_cast<std::size_t>(Subsystem::FullDetail)].uniform01()))
+		return false;
+	std::uint64_t victim = storage.body ? container : 0;
+	if (!storage.body)
+	{
+		// The container's owner notices: the nearest living character of the owner faction.
+		double best = 1.0e18;
+		world_.ecs().each([&](const state::Id& id, const state::Allegiance& side)
+		{
+			const state::Fighter* other = side.factionSid == storage.ownerSid ? combat_->find(id.value) : nullptr;
+			if (other == nullptr || other->dead || other->unconscious)
+				return;
+			const double d = std::hypot(other->x - storage.x, other->z - storage.z);
+			if (d < best)
+			{
+				best = d;
+				victim = id.value;
+			}
+		});
+	}
+	recordCaughtStealing(who, victim, storage.ownerSid);
+	return true;
+}
+
+// SIMLINK EVENT 51 bookkeeping: the first sighting of a theft / lockpick record names the act once (the record's life is the act's).
+// The note is made on every tick of the crime (the lock tasks report each tick), so it only starts an entry when none is held and the
+// character carries a pending crime of that kind (setCrime may have refused it).
+void Simulation::noteCaughtAct(std::uint64_t who, std::uint8_t cause, std::uint64_t container)
+{
+	if (!crimeObserver_ || caughtActs_.count(who) != 0)
+		return;
+	const state::CrimeRecord* held = crimeRecord(who);
+	if (held != nullptr && (held->crime == crime::kTheft || held->crime == crime::kLooting || held->crime == crime::kBurglary))
+		caughtActs_[who] = {container, cause, false};
 }
 
 void Simulation::stepCrime(std::uint64_t now)
@@ -660,13 +778,15 @@ void Simulation::stepCrime(std::uint64_t now)
 			// fight is charged on its own first landed hit; one that never hits stays crime 0). No faction-relation write, no in-combat
 			// gate. Law = crime::isLaw (law class, or military in its own town); the exe's own test is not decoded. Timer: the decoded
 			// tail passes 30 s (rwh138); rwh139 read 20.0 s on a live record (UNSURE: it may have been aged or a different writer).
-			// The tag 4 (temp enemy) the same entry writes into the defender's platoon store is the arena's hostility, not modelled here.
+			// The same entry writes tag 4 (temp enemy, 1406744a0) for the attacker into the DEFENDER's platoon store, so the defender's
+			// squad treats the hitter as hostile at once (rwh139: Engival hostile, Hamut who never hit neutral): markHostile below.
 			FactionView hitFactions(ecsMutable(), gameData_.get());
 			const bool attackerLaw = crime::isLaw(crime::effectiveClass(attacker->npcClass, attacker->playerControlled),
 				hitFactions.inOwnTown(attackerSide->factionSid, attacker->x, attacker->z));
 			const bool victimLaw = crime::isLaw(victimClass, hitFactions.inOwnTown(victimSide->factionSid, victim->x, victim->z));
 			if (attackerLaw != victimLaw)
 			{
+				combat_->markHostile(note.victim, note.attacker);
 				const std::uint64_t culprit = victimLaw ? note.attacker : note.victim;
 				const std::string lawSide = victimLaw ? victimSide->factionSid : attackerSide->factionSid;
 				if (reportCrime(culprit, crime::kAssault, lawSide, victimLaw ? note.victim : note.attacker, crime::kTimerAssault))
@@ -732,6 +852,14 @@ void Simulation::stepCrime(std::uint64_t now)
 			entity.remove<state::CrimeRecord>();
 		else
 			entity.set<state::CrimeRecord>(std::move(record));
+	}
+	for (auto act = caughtActs_.begin(); act != caughtActs_.end();) // the record is gone or no longer a theft: the act ended
+	{
+		const state::CrimeRecord* held = crimeRecord(act->first);
+		if (held == nullptr || (held->crime != crime::kTheft && held->crime != crime::kLooting && held->crime != crime::kBurglary))
+			act = caughtActs_.erase(act);
+		else
+			++act;
 	}
 
 	// 2. The trespass sensor (140852350, called from 140859680 for each seen character), the "house locked" case only
@@ -899,6 +1027,17 @@ void Simulation::stepCrime(std::uint64_t now)
 			// The witness reacts: tag ST_CRIMINAL (1406744a0; no perception tags yet), refresh the timer to 20 s, fire the event.
 			crime::refreshTimer(record);
 			changed = true;
+			if (auto act = caughtActs_.find(held.id); act != caughtActs_.end() && !act->second.sent && crimeObserver_)
+			{
+				act->second.sent = true;
+				CrimeEvent caught;
+				caught.kind = CrimeEvent::Kind::CaughtStealing;
+				caught.who = held.id;
+				caught.other = observerId;
+				caught.cause = act->second.cause;
+				caught.container = act->second.container;
+				crimeObserver_(caught);
+			}
 			perception::notice(*combat_->find(observerId), held.id); // 140854d10 force-notices the criminal (the arrow's record)
 			// HOOK: when the observer is the victim (record.victimChar == observerId) it retaliates (1405cb0a0).
 			const int event = crime::witnessEvent(record.crime, record.victimChar == observerId);

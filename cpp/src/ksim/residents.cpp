@@ -586,19 +586,16 @@ bool Simulation::buildMember(flecs::entity member, const state::SquadInstance& i
 	double y = groundHeight(x, z).value_or(0.0);
 	if (navigation_ != nullptr && !body)
 	{
-		const std::optional<knav::Position> spot = navigation_->walker().snap({x, y, z}, 100.0);
-		if (!spot)
+		const std::optional<knav::Position> placed = placeOnGround(x, y, z);
+		if (!placed)
 		{
 			skipped.insert(id);
 			++residentStats_.skippedMembers;
 			return false;
 		}
-		// Open ground takes the terrain's height as a step does; the runtime mesh floats up to 1.14 u above it (kenshi-k16.6.273). A floor
-		// inside a building keeps the mesh height.
-		const knav::Position placed = buildingAt(spot->x, spot->y, spot->z) == 0 ? navigation_->walker().settle(*spot) : *spot;
-		fighter.x = placed.x;
-		fighter.y = placed.y;
-		fighter.z = placed.z;
+		fighter.x = placed->x;
+		fighter.y = placed->y;
+		fighter.z = placed->z;
 	} else {
 		fighter.x = x;
 		fighter.y = y;
@@ -988,6 +985,34 @@ void Simulation::stepStragglers()
 	}
 }
 
+void Simulation::forSquadsInSlice(std::uint64_t now, const std::function<void(flecs::entity, const state::Id&, const state::SquadInstance&)>& visit, bool all)
+{
+	flecs::world& ecs = ecsMutable();
+	if (ai_ == nullptr)
+	{
+		std::vector<std::pair<std::uint64_t, flecs::entity>> due;
+		ecs.each([&](flecs::entity squad, const state::Id& id, const state::SquadInstance&)
+		{
+			if (all || inSlice(now, id.value))
+				due.emplace_back(id.value, squad);
+		});
+		std::sort(due.begin(), due.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+		for (const auto& [id, squad] : due)
+			visit(squad, *squad.get<state::Id>(), *squad.get<state::SquadInstance>());
+		return;
+	}
+	for (const auto& [squadId, raw] : all ? ai_->squadIndex(ecs, now) : ai_->squadSlice(ecs, now))
+	{
+		if (!ecs.is_alive(raw))
+			continue;
+		const flecs::entity squad = ecs.entity(raw);
+		const state::Id* id = squad.get<state::Id>();
+		const state::SquadInstance* instance = squad.get<state::SquadInstance>();
+		if (id != nullptr && instance != nullptr)
+			visit(squad, *id, *instance);
+	}
+}
+
 void Simulation::prepareWorldCarry()
 {
 	ai_->carried().clear();
@@ -1000,7 +1025,10 @@ void Simulation::prepareWorldCarry()
 	flecs::world& ecs = ecsMutable();
 	const std::map<std::uint64_t, std::uint64_t> targetedByPlayer = targetedByPlayers(*combat_);
 	std::vector<std::tuple<std::uint64_t, double, double>> moves;
-	ecs.each([&](flecs::entity squad, const state::Id& id, const state::SquadInstance&)
+	const std::uint64_t now = clockTick();
+	// Only the squads whose second-slice is this tick (id % kSquadIntervalTicks, k16.6.232): each squad is still prepared, stepped and
+	// carried once a second, but not all on one tick.
+	forSquadsInSlice(now, [&](flecs::entity squad, const state::Id& id, const state::SquadInstance&)
 	{
 		if (residentData_->world.count(id.value) == 0 || squad.has<state::GateCrew>() || squad.get<state::GroupAI>() == nullptr)
 			return;

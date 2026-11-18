@@ -147,7 +147,7 @@ empty in gamedata.base). Each point is a u32-length-prefixed name (`hip`, `back`
 (`Bip01 Pelvis`, `Bip01 Spine2`). After it come the bone's bind transform in skeleton (model) space (vec3 position, then a 3x3 rotation stored
 by columns; it matches `male_skeleton.skeleton`), one byte, and the item's bind model transform (3x3 by columns, then vec3). Next is a block of
 `ffffff69` sentinels and zeros, then the length-prefixed editor preview mesh (`katana04F.mesh` at the hip, `katana04R.mesh` on the back) and a vec3
-scale of 1. The meaning of the ints and bytes is unknown. Client reader: `Characters::readAttachPoints` (`client/src/characters.cpp`). The exe
+scale of 1. The meaning of the ints and bytes is unknown. Client reader: `Characters::readAttachPoints` (`client/src/characters/characters.cpp`). The exe
 adds a built-in `hands` point = `Bip01 Prop2` with no offset (FUN_1405373e0).
 
 ## How records reference asset files

@@ -296,13 +296,11 @@ public:
 
 	const knav::NavMesh& mesh() const noexcept { return mesh_; }
 	const knav::Walker& walker() const noexcept { return walker_; }
-	// Open ground walks at the terrain heightmap's height (knav::Walker::setGround) from dataDir's fullmap.tif.
-	void useTerrainGround(const std::string& dataDir);
 
 	// ---- Streaming coverage (docs/formats/NAVMESH_CACHE.md "Streaming coverage") ----
 	// A mesh over a `knav_bake --world DIR` bake that holds only the zones it is told to (setCoverage): the sim follows the
 	// players with it (Simulation::syncNavCoverage). Starts with `initial` loaded. Throws when DIR has no region file for them.
-	// `dataDir` (the game data, optional) gives the walker the terrain heightmap: open ground then walks at the terrain's height (setGround).
+	// `dataDir` is unused by the walker now (no terrain snap: the navmesh point is the y, k16.8.31).
 	static std::shared_ptr<MeshNavigator> openWorld(const std::string& dir, const std::vector<kworld::ZoneCell>& initial,
 		const std::string& dataDir = {});
 	const NativeCacheStats& nativeCacheStats() const noexcept { return cacheStats_; }
@@ -407,6 +405,11 @@ public:
 	bool canCover(kworld::ZoneCell zone) const;
 	// Totals over all setCoverage calls.
 	const CoverageChange& coverageTotals() const noexcept { return totals_; }
+
+	// The nav cache's recipe number, and a digest of one zone's fresh bake (the canary test pins the two together:
+	// tests/ksim_nav_cache_canary.cpp). Needs openNative.
+	static std::uint32_t nativeCacheRecipe();
+	std::uint64_t bakedZoneDigest(kworld::ZoneCell zone) const;
 
 private:
 	// The stale check's inputs, loaded once by openNative (the gatherer loads the game data the audit and the rebake

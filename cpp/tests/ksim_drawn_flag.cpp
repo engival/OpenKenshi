@@ -166,7 +166,8 @@ int main(int argc, char** argv)
 					if (!drawn(id) && sheathedId == 0)
 					{
 						sheathedId = id;
-						test::require(goalOf(id) > 0, "a slaver sheathes only as its next goal is taken (the plan's 7), goal " + std::to_string(goalOf(id)));
+						// The plan's 7 of a goal taken, or the stand-down of a member (the follower or the leader) once the fight is over (k16.6.288).
+						test::require(goalOf(id) > 0 || fought, "a slaver sheathes only as its next goal is taken (the plan's 7) or after its fight, goal " + std::to_string(goalOf(id)));
 						test::require(!hasTarget, "no sheathe with a target");
 					}
 				}
@@ -186,7 +187,8 @@ int main(int argc, char** argv)
 				test::require(sim.sheathedWeaponOf(id) == carried[id], "the sheathed weapon stays equipped on the back, the same record");
 				continue;
 			}
-			test::require(drawn(id) && sim.sheathedWeaponOf(id).empty(), "a slaver with no peaceful goal keeps its weapon drawn (" + std::to_string(id) + ")");
+			// Drawn, or the same record sheathed by the stand-down once the fight was over (k16.6.288: the follow no longer keeps swords out).
+			test::require((drawn(id) && sim.sheathedWeaponOf(id).empty()) || sim.sheathedWeaponOf(id) == carried[id], "a slaver's weapon is drawn or the same record sheathed (" + std::to_string(id) + ")");
 		}
 		sim.drawWeapon(sheathedId);
 		test::require(drawn(sheathedId) && sim.sheathedWeaponOf(sheathedId).empty(), "drawing puts it back in the hand: flag set, nothing sheathed");

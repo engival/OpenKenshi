@@ -784,6 +784,7 @@ struct Client
 	std::vector<std::uint16_t> types; // every frame type so far
 	std::uint64_t lastSnapshotEnd = 0;
 	std::uint64_t snapshots = 0;
+	std::vector<std::uint64_t> snapTicks; // the tick of every snapshot so far
 	std::uint64_t openTick = 0;
 	bool inSnap = false;
 	bool closed = false;
@@ -850,6 +851,7 @@ struct Client
 			test::require(tickOf() == openTick, "SNAPSHOT_END tick differs from BEGIN");
 			lastSnapshotEnd = openTick;
 			++snapshots;
+			snapTicks.push_back(openTick);
 			inSnap = false;
 			break;
 		case simlink::kAppearance:
@@ -1116,6 +1118,65 @@ int main()
 			const std::uint64_t pausedAt = settled(300);
 			test::require(client->dec.clock.paused && lookAt(policyServer, w).paused && settled(500) == pausedAt, "policy: a joining session unpaused an admin pause");
 			std::cout << "pause policy: held before HELLO, runs with a session, stops without one, keeps speed, admin pause survives\n";
+		}
+		// ---- one snapshot per catch-up batch at speed > 1 (SIM_SCHEDULING 5O): floor(speed) ticks per snapshot, events keep their own tick ----
+		if (std::getenv("KSIM_SNAPSHOT_PER_TICK") == nullptr)
+		{
+			World w = makeWorld(order, data, gd, nav);
+			std::promise<int> portPromise;
+			ks::ServerOptions batchOptions;
+			batchOptions.onListening = [&portPromise](int listening) { portPromise.set_value(listening); };
+			ks::SimLinkServer batchServer(*w.sim, w.context, batchOptions);
+			batchServer.listen();
+			const int batchPort = portPromise.get_future().get();
+			std::atomic<bool> batchStop{false};
+			std::thread batchThread([&]() { batchServer.run(batchStop); });
+			const struct BatchJoiner
+			{
+				std::atomic<bool>& stop;
+				std::thread& thread;
+				~BatchJoiner()
+				{
+					stop.store(true);
+					if (thread.joinable())
+						thread.join();
+				}
+			} batchJoiner{batchStop, batchThread};
+			Client c(batchPort);
+			c.send(helloFrame(w.context.dataHash));
+			test::require(c.pump([&]() { return c.snapshots >= 1; }, 5000), "batch: no initial snapshot");
+			// 1x: one snapshot per tick
+			const std::size_t at1 = c.snapTicks.size();
+			test::require(c.pump([&]() { return c.snapTicks.size() >= at1 + 20; }, 15000), "batch: no snapshots at 1x");
+			for (std::size_t i = at1; i < c.snapTicks.size(); ++i)
+				test::require(c.snapTicks[i] == c.snapTicks[i - 1] + 1, "batch: a 1x snapshot did not advance exactly one tick");
+			// 5x: a snapshot covers up to 5 ticks, and at least one covers more than 1
+			c.send(rawOrder(3001, 41, [](auto& v) { put<float>(v, 5.0f); }));
+			test::require(c.pump([&]() { return lookAt(batchServer, w).speed == 5.0f; }, 5000), "batch: speed order");
+			const std::size_t at5 = c.snapTicks.size() + 2; // skip the snapshot in flight when the speed changed
+			const std::size_t evAt = c.events.size();
+			test::require(c.pump([&]() { return c.snapTicks.size() >= at5 + 40; }, 30000), "batch: no snapshots at 5x");
+			std::uint64_t ticks = 0;
+			std::uint64_t widest = 0;
+			for (std::size_t i = at5; i < c.snapTicks.size(); ++i)
+			{
+				const std::uint64_t step = c.snapTicks[i] - c.snapTicks[i - 1];
+				test::require(step >= 1 && step <= 5, "batch: a 5x snapshot covers more than floor(speed) ticks");
+				ticks += step;
+				widest = std::max(widest, step);
+			}
+			test::require(widest > 1 && ticks > c.snapTicks.size() - at5, "batch: at 5x every snapshot still covered one tick");
+			// each event lies in the tick span (previous snapshot, this one]: its own tick, not the snapshot's
+			std::size_t ownTick = 0;
+			for (std::size_t i = evAt; i < c.events.size(); ++i)
+			{
+				const auto next = std::lower_bound(c.snapTicks.begin(), c.snapTicks.end(), c.events[i].tick);
+				test::require(next != c.snapTicks.end(), "batch: an event past the last snapshot");
+				if (*next != c.events[i].tick)
+					++ownTick;
+			}
+			std::cout << "snapshot batch: 1x one per tick; 5x " << (c.snapTicks.size() - at5) << " snapshots over " << ticks << " ticks (widest " << widest
+				<< "), " << (c.events.size() - evAt) << " events, " << ownTick << " with a tick between two snapshots\n";
 		}
 		{
 			World w = makeWorld(order, data, gd, nav);
@@ -1938,6 +1999,7 @@ int main()
 			ksim::state::Fighter& enemy = *arena->find(bw.duel.enemy);
 			test::require(player.playerControlled && player.team != enemy.team, "SEEN_BY: the duel is a player and a hostile");
 			const std::int32_t enemyTeam = enemy.team;
+			enemy.faction = 9999; // not the player's faction (the duel's are equal, which sensor::ally counts as allied)
 			ks::Session session(*bw.sim, bw.context);
 			std::vector<std::uint8_t> bytes;
 			ks::BinaryWriter w(bytes);
@@ -2004,12 +2066,19 @@ int main()
 			test::require(step().empty(), "SEEN_BY: resent with no change");
 			test::require(koAborts(), "SEEN_BY: the KO did not abort on a listed observer");
 			ksim::perception::notice(enemy, bw.duel.player);
-			enemy.team = player.team; // no longer hostile while it knows the sneaker: it leaves the set
+			// A neutral observer (the player's team, no ally relation) is still listed (kenshi-k16.6.331); an allied one is not.
+			enemy.team = player.team;
+			test::require(!ksim::sensor::ally(bw.sim->sensorContext(), enemy, player), "SEEN_BY: the neutral observer is an ally");
+			test::require(step().empty(), "SEEN_BY: a neutral observer left the set");
+			test::require(koAborts(), "SEEN_BY: the KO did not abort on a neutral observer");
+			ksim::perception::notice(enemy, bw.duel.player);
+			enemy.faction = player.faction; // an ally while it knows the sneaker: it leaves the set
 			got = step();
-			test::require(got.size() == 1 && got[0].by == none, "SEEN_BY: a non-hostile observer stayed in the set");
-			enemy.team = enemyTeam; // hostile again while aware: it enters the set on that change
+			test::require(got.size() == 1 && got[0].by == none, "SEEN_BY: an allied observer stayed in the set");
+			enemy.faction = 9999; // non-allied again while aware: it enters the set on that change
+			enemy.team = enemyTeam;
 			got = step();
-			test::require(got.size() == 1 && got[0].by == std::vector<std::uint64_t>{bw.duel.enemy}, "SEEN_BY: an observer turning hostile did not enter the set");
+			test::require(got.size() == 1 && got[0].by == std::vector<std::uint64_t>{bw.duel.enemy}, "SEEN_BY: a non-allied observer did not enter the set");
 			player.sneak = false;
 			got = step();
 			test::require(got.size() == 1 && got[0].id == bw.duel.player && got[0].by == none, "SEEN_BY: no n = 0 when the sneak ended");
@@ -2280,6 +2349,7 @@ int main()
 		}
 
 		World live = makeWorld(order, data, gd, nav);
+		const_cast<ksim::CombatArena*>(live.sim->combat())->find(live.duel.enemy)->faction = 9999; // the duel's factions are equal, which sensor::ally counts as allied: the servant stays a hostile observer
 		live.context.paused = true;
 		live.context.debugView = true; // the debug view is on; the loopback client is its peer (--debug-view on the server)
 		std::promise<int> portPromise;
@@ -2661,10 +2731,18 @@ int main()
 		// The route went out as CHAR_ROUTE with the order's seq, and was cleared on arrival; y is valid.
 		test::require(c.pump([&]()
 		{
+			// Speed 16 batches 8 ticks into one snapshot (SIMLINK "Cadence"): the arrival's clear and the chase route that follows it can
+			// share a snapshot, so the order's route is over when a clear or a record of another route follows its own.
+			bool sawOwn = false;
 			for (const RouteRecord& r : c.extras.routes)
 			{
-				if (r.id == player && r.clientSeq == seqMove && r.points.empty())
+				if (r.id != player)
+					continue;
+				if (r.clientSeq == seqMove && r.points.empty())
 					return true;
+				if (r.clientSeq != seqMove && sawOwn)
+					return true;
+				sawOwn = sawOwn || (r.clientSeq == seqMove && !r.points.empty());
 			}
 			return false;
 		}, 5000), "no CHAR_ROUTE clear after the walk");
@@ -2683,7 +2761,7 @@ int main()
 			test::require(first->points[0][1] > 1.0f, "route waypoints carry the surface y");
 			const auto& end = first->points.back();
 			test::require(std::hypot(end[0] - targetX, end[2] - targetZ) < 45.0, "route ends near the target (within the 40 unit snap)");
-			test::require(last->version > first->version, "the clear bumps routeVersion");
+			test::require(last == first || last->version > first->version, "the clear bumps routeVersion");
 			const simlink::Dynamic& d = c.dec.chars.at(player).cur;
 			test::require((d.flags & simlink::kYValid) != 0 && d.pos[1] > 1.0f, "y is valid and set in CHAR_DYNAMIC");
 		}
@@ -2831,6 +2909,30 @@ int main()
 		c.send(out);
 		test::require(c.pump([&]() { return c.find(9, 1023) != nullptr && speedModeOf() == 2 && (c.dec.chars.at(player).cur.flags & ks::kFlagRun) != 0; }, 5000),
 			"the which-2 run alias is not Run");
+
+		// Passive / hold position (order 10 which 6 / 7, k16.6.313): flags bits 24 / 25, independent of each other and of bit 13; above 1 bad_value.
+		{
+			const auto flagsOf = [&] { return c.dec.chars.at(player).cur.flags; };
+			const auto toggle = [&](std::uint32_t seq, std::uint8_t which, std::uint8_t value)
+			{
+				out = rawOrder(seq, 10, [&](auto& v) { put<std::uint16_t>(v, 1); put<std::uint64_t>(v, player); put<std::uint8_t>(v, which); put<std::uint8_t>(v, value); });
+				c.send(out);
+			};
+			toggle(1030, 6, 2);
+			test::require(c.pump([&]() { return c.find(10, 1030) != nullptr; }, 5000), "passive 2 not answered");
+			test::require(reasonOf(c, *c.find(10, 1030)) == "bad_value", "passive 2 is bad_value");
+			toggle(1031, 6, 1);
+			test::require(c.pump([&]() { return c.find(9, 1031) != nullptr && (flagsOf() & ks::kFlagPassive) != 0; }, 5000), "which 6 passive not applied");
+			test::require((flagsOf() & ks::kFlagHoldPosition) == 0, "passive set the hold position bit");
+			toggle(1032, 7, 1);
+			test::require(c.pump([&]() { return c.find(9, 1032) != nullptr && (flagsOf() & ks::kFlagHoldPosition) != 0; }, 5000), "which 7 hold position not applied");
+			test::require((flagsOf() & ks::kFlagPassive) != 0, "hold position cleared passive");
+			toggle(1033, 6, 0);
+			test::require(c.pump([&]() { return c.find(9, 1033) != nullptr && (flagsOf() & ks::kFlagPassive) == 0; }, 5000), "which 6 passive not cleared");
+			test::require((flagsOf() & ks::kFlagHoldPosition) != 0, "clearing passive cleared hold position");
+			toggle(1034, 7, 0);
+			test::require(c.pump([&]() { return c.find(9, 1034) != nullptr && (flagsOf() & ks::kFlagHoldPosition) == 0; }, 5000), "which 7 hold position not cleared");
+		}
 
 		// attack: the player hits (or is dodged by) the servant; a hit event arrives.
 		out.clear();
@@ -2982,6 +3084,7 @@ int main()
 			simOrders += entry.sim ? 1 : 0;
 		test::require(simOrders >= 6, "order log holds the sim commands");
 		World replay = makeWorld(order, data, gd, nav);
+		const_cast<ksim::CombatArena*>(replay.sim->combat())->find(replay.duel.enemy)->faction = 9999; // as the live world
 		test::require(replay.duel.player == player && replay.duel.enemy == enemy, "same ids in the replay");
 		for (std::uint64_t t = replay.sim->clockTick() + 1; t <= endTick; ++t)
 		{

@@ -73,6 +73,7 @@ struct Rig
 	std::string failure;
 	double slack = kLevelSlack;
 	std::uint64_t corrections = 0; // this step's correct() snaps
+	std::vector<bool> fromUpper; // per fighter: its steps since it was last on the upper floor were all continuous mesh surface
 	double maxRise = kMaxRise; // a stair riser is allowed where the set-up has stairs
 	std::vector<int> lastJumpStep; // per fighter: the step and direction of its last jump in y over 1 u, for the flip-flop check
 	std::vector<int> lastJumpDir;
@@ -113,6 +114,40 @@ struct Rig
 		return id;
 	}
 	state::Fighter& me(std::uint64_t id) { return *arena.find(id); }
+	// This step's separation push on a fighter: CombatArena's depenetration moves a body by up to kDepenetrateCap (10 u) in one
+	// frame, no dt (s77_static.md c), so a step may exceed kMaxStep by exactly that push; a snap or level jump still trips it.
+	double pushed(std::uint64_t id) const
+	{
+		for (const CombatArena::Member& m : arena.members())
+		{
+			if (m.id == id)
+				return std::hypot(m.pushX, m.pushZ);
+		}
+		return 0.0;
+	}
+
+	// A step along one continuous mesh surface is not a jump however steep it is: the mesh height at the step's midpoint lies within 0.5 u of the
+	// midpoint of the two heights (the walker is on a stair or ramp polygon). Seen: Hub bar upper floor, the stair at about (-51140, 2620) (seed 6, step 831)
+	// climbs 1.4 u per u (a 55 degree ramp: y 1644.2 -> 1642.6 over 1.3 u), which the furniture clearance of k16.7.89 now puts a fighter on.
+	bool continuousSurface(const state::Fighter& from, const state::Fighter& to) const
+	{
+		const double midY = 0.5 * (from.y + to.y);
+		const double tolerance = 1.0 + 0.5 * std::fabs(to.y - from.y); // a stair's joints bend the surface under a step; a void under it has none within reach
+		const auto surface = nav->walker().surfaceY(0.5 * (from.x + to.x), midY, 0.5 * (from.z + to.z), tolerance + 0.5);
+		return surface && std::fabs(*surface - midY) <= tolerance;
+	}
+
+	// A fighter off the upper floor's height is still on that level while every step since it left the floor was along one continuous mesh surface
+	// (continuousSurface): walking down a stair that joins the upper floor is movement in a fight, a drop across a gap is not. Seen: Hub bar stair at
+	// (-51139, 2620.5), seed 6, a retreat down the 55 degree stair from the upper floor (y 1647.9) to 1639.5 in continuous steps (k16.7.89).
+	bool stairFromUpper(std::size_t i, const state::Fighter& from, const state::Fighter& to)
+	{
+		fromUpper.resize(ids.size(), true);
+		if (fromUpper[i] && continuousSurface(from, to))
+			return true;
+		fromUpper[i] = false;
+		return false;
+	}
 
 	// One step, then the checks on everybody; the first failure is kept with who, when and how.
 	void step(int n)
@@ -128,13 +163,16 @@ struct Rig
 			yHi = std::max(yHi, f.y);
 			const double moved = std::hypot(f.x - was.x, f.z - was.z);
 			std::string what;
+			fromUpper.resize(ids.size(), true);
+			if (std::fabs(f.y - wall.y) <= slack)
+				fromUpper[i] = true;
 			if (!nav->walker().onMesh({f.x, f.y, f.z}))
 				what = "off the mesh";
-			else if (std::fabs(f.y - wall.y) > slack)
+			else if (std::fabs(f.y - wall.y) > slack && !stairFromUpper(i, was, f))
 				what = "on another level (y " + std::to_string(f.y) + ", the upper floor is " + std::to_string(wall.y) + ")";
-			else if (moved > kMaxStep)
+			else if (moved > kMaxStep + pushed(ids[i]))
 				what = "teleported " + std::to_string(moved) + " u in one step";
-			else if (std::fabs(f.y - was.y) > maxRise)
+			else if (std::fabs(f.y - was.y) > maxRise && !continuousSurface(was, f))
 				what = "jumped " + std::to_string(f.y - was.y) + " in height in one step";
 			if (what.empty() && std::fabs(f.y - was.y) > 1.0)
 			{
@@ -183,7 +221,7 @@ Wall findLedge(const MeshNavigator& nav)
 				const double uz = std::cos(angle);
 				const auto probe = [&](double side, double dir)
 				{
-					return nav.walker().step({x - uz * side, *up, z + ux * side}, dir * ux * 400.0, dir * uz * 400.0, false);
+					return nav.walker().step({x - uz * side, *up, z + ux * side}, dir * ux * 400.0, dir * uz * 400.0);
 				};
 				const knav::StepResult mid = probe(0.0, 1.0);
 				const knav::StepResult left = probe(10.0, 1.0);
@@ -197,7 +235,7 @@ Wall findLedge(const MeshNavigator& nav)
 				const auto below = nav.walker().surfaceY(ex + ux * 6.0, 1580.0, ez + uz * 6.0, 14.0);
 				if (!below || *below > *up - 30.0)
 					continue;
-				const knav::StepResult back = nav.walker().step({ex, mid.at.y, ez}, -ux * 400.0, -uz * 400.0, false);
+				const knav::StepResult back = nav.walker().step({ex, mid.at.y, ez}, -ux * 400.0, -uz * 400.0);
 				if (back.moved > bestRoom)
 				{
 					bestRoom = back.moved;
@@ -234,7 +272,7 @@ std::vector<StairLedge> findStairLedges(const MeshNavigator& nav, std::size_t mo
 			{
 				const double ux = std::sin(k * 0.3926990817);
 				const double uz = std::cos(k * 0.3926990817);
-				const knav::StepResult r = nav.walker().step(*s, ux * 400.0, uz * 400.0, false);
+				const knav::StepResult r = nav.walker().step(*s, ux * 400.0, uz * 400.0);
 				if (!r.blocked || r.moved > 3.0)
 					continue;
 				// 3 u past the edge, not 2: Detour prefers a polygon far below whose footprint is under the point (its distance is the height beyond a

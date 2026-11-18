@@ -435,6 +435,22 @@ public:
 		double slaveGap = 0.0; // GroupContext::slaveGap
 	};
 	std::map<std::uint64_t, Carry>& carried() noexcept { return carried_; }
+	// Every squad as (state::Id value, entity), in Id order: the cached list the squad step walks (k16.6.232: the per-slice passes use it).
+	// The list is re-read when the squad count changed, at the second's first tick (not every tick: the count is a query over every table);
+	// a squad that went in between is skipped by its callers (is_alive), one that came waits for the next second, as its first step did.
+	using SquadList = std::vector<std::pair<std::uint64_t, flecs::entity_t>>;
+	const SquadList& squadIndex(flecs::world& ecs, std::uint64_t tick)
+	{
+		if (tick % 20 == 0 || squads_.empty() || knownSquads_ == static_cast<std::size_t>(-1)) // an invalidate (a load) is read at once
+			refresh(ecs);
+		return squads_;
+	}
+	// The squads whose second-slice is `tick` (id % 20 == tick % 20), in Id order: a tick walks 1/20 of the list, not all of it to skip 19/20.
+	const SquadList& squadSlice(flecs::world& ecs, std::uint64_t tick)
+	{
+		squadIndex(ecs, tick);
+		return slices_[tick % 20];
+	}
 	// The point `lookahead` units past the squad's progress on its route (the carrot the leader walks to); false when it has no route.
 	static bool carrot(const state::GroupAI& ai, double lookahead, double& x, double& z);
 	// Whether the route's end is reached (progress at the end).
@@ -473,6 +489,7 @@ private:
 	std::vector<TownSite> towns_;
 	// (state::Id, entity) of every squad, in Id order.
 	std::vector<std::pair<std::uint64_t, flecs::entity_t>> squads_;
+	std::array<std::vector<std::pair<std::uint64_t, flecs::entity_t>>, 20> slices_; // squads_ by id % 20 (refresh)
 	std::size_t knownSquads_ = SIZE_MAX;
 	std::map<std::uint64_t, Carry> carried_;
 	std::unique_ptr<FactionLayer> faction_;

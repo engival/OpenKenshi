@@ -10,6 +10,8 @@
 #include "nav_source.hpp"
 #include "test_util.hpp"
 
+#include <DetourNavMesh.h>
+
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -98,12 +100,72 @@ int main(int argc, char** argv)
 					if (!move.found)
 						continue;
 					const std::string what = "move " + std::to_string(from.x) + "," + std::to_string(from.z) + " -> " + std::to_string(to.x) + "," + std::to_string(to.z) + ": ";
-					// (The length is not bounded here: a start in the wall's clearance band is refit onto fitting ground, which can still send the
-					// route back and forth inside the room, a separate matter from the trip outside.)
+					// A sideways move costs about its straight length (kenshi-k16.6.357: a start in the wall's clearance band was refit up to
+					// 4 r away and the route went back and forth, 29 u for 10).
+					const double direct = std::hypot(to.x - from.x, to.z - from.z);
+					test::require(legLength(from, move) <= direct * 1.3 + 2.0, what + "the route is " + std::to_string(legLength(from, move)) + " u for a " + std::to_string(direct) + " u move:" + dump(move));
 					for (const auto& point : move.points)
 						test::require(point.z <= -1157.5, what + "a point left the building side (z " + std::to_string(point.z) + "):" + dump(move));
 					++walks;
 				}
+		// The two poses of the bead, inside the Storm House.
+		for (const double fromX : { -50631.7, -50627.8 })
+		{
+			const Spot from{ fromX, -1160.3 };
+			const Spot to{ fromX + (fromX < -50630.0 ? 10.0 : 6.0), -1161.6 };
+			const auto start = nav->walker().snap({ from.x, 1080.0, from.z }, 6.0);
+			const auto end = nav->walker().snap({ to.x, 1080.0, to.z }, 6.0);
+			test::require(start && end, "the bead's poses are on the mesh");
+			const Route move = plan(from, start->y, to, end->y);
+			test::require(move.found, "the bead's pose: a route");
+			const double direct = std::hypot(to.x - from.x, to.z - from.z);
+			test::require(legLength(from, move) <= direct * 1.3 + 2.0, "the bead's pose " + std::to_string(fromX) + ": " + std::to_string(legLength(from, move)) + " u for " + std::to_string(direct) + ":" + dump(move));
+		}
+		// A start exactly on a polygon edge (the midpoint and the ends of every edge shared with a neighbour) must not U-turn the funnel
+		// (kenshi-k16.6.357): the same bound, over the edges inside the grid's area.
+		int edgeStarts = 0;
+		const dtNavMesh& detour = nav->mesh().detour();
+		for (int t = 0; t < detour.getMaxTiles(); ++t)
+		{
+			const dtMeshTile* tile = detour.getTile(t);
+			if (tile == nullptr || tile->header == nullptr)
+				continue;
+			for (int p = 0; p < tile->header->polyCount; ++p)
+			{
+				const dtPoly& poly = tile->polys[p];
+				if (poly.getType() != DT_POLYTYPE_GROUND)
+					continue;
+				for (int e = 0; e < poly.vertCount; ++e)
+				{
+					if (poly.neis[e] == 0)
+						continue;
+					const float* a = &tile->verts[poly.verts[e] * 3];
+					const float* b = &tile->verts[poly.verts[(e + 1) % poly.vertCount] * 3];
+					for (const float along : { 0.0f, 0.5f })
+					{
+						const Spot from{ a[0] + (b[0] - a[0]) * along, a[2] + (b[2] - a[2]) * along };
+						const double fromY = a[1] + (b[1] - a[1]) * along;
+						if (from.x < -50632.0 || from.x > -50604.0 || from.z > -1160.0 || from.z < -1166.0 || std::fabs(fromY - 1080.0) > 3.0)
+							continue;
+						for (const double step : { -10.0, 10.0 })
+						{
+							const Spot to{ from.x + step, from.z - 1.3 };
+							const auto end = nav->walker().snap({ to.x, 1080.0, to.z }, 6.0);
+							if (!end || std::fabs(end->y - 1080.0) > 3.0)
+								continue;
+							const Route move = plan(from, fromY, to, end->y);
+							if (!move.found)
+								continue;
+							const double direct = std::hypot(to.x - from.x, to.z - from.z);
+							test::require(legLength(from, move) <= direct * 1.3 + 2.0, "edge start " + std::to_string(from.x) + "," + std::to_string(from.z) + " -> " + std::to_string(to.x) + "," + std::to_string(to.z) + ": " + std::to_string(legLength(from, move)) + " u for " + std::to_string(direct) + ":" + dump(move));
+							++edgeStarts;
+						}
+					}
+				}
+			}
+		}
+		std::cout << edgeStarts << " edge-start moves\n";
+		test::require(edgeStarts > 0, "no edge starts in the grid");
 		test::require(walks > 40, "the grid found too few walkable moves: " + std::to_string(walks));
 		std::cout << walks << " sideways moves stay inside\n";
 		std::cout << "ksim_route_wall_start: ok\n";

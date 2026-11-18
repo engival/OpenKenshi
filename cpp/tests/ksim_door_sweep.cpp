@@ -324,6 +324,22 @@ int main(int argc, char** argv)
 							firstWhy = why;
 					}
 					fail(tag, firstWhy + " from all " + std::to_string(outsides.size()) + " outside points", to.y);
+					if (std::getenv("SWEEP_VERBOSE") != nullptr)
+					{
+						// Why: the target, the building's other doors (an interior door between?), and the same walk from the entrance's inside point and at smaller radii.
+						std::cout << "  diag " << door.building << " " << tag << " target " << to.x << " " << to.y << " " << to.z << " entrance door " << door.x << " " << door.y << " " << door.z << " inside " << inside->x << " " << inside->y << " " << inside->z << "\n";
+						sim.world().ecs().each([&](const state::Door& other)
+						{
+							if (other.building == door.building && other.key != door.key)
+								std::cout << "    other door " << other.key << " " << other.recordSid << " at " << other.x << " " << other.y << " " << other.z << ", " << std::hypot(other.x - to.x, other.z - to.z) << " u from the target\n";
+						});
+						for (const double r : { radius, 3.0, 2.0, 1.0, 0.5 })
+						{
+							const Route inner = nav->routeFrom(*inside, to.x, to.z, to.y, false, r, true);
+							const Route outer = nav->routeFrom(outsides.front(), to.x, to.z, to.y, false, r, true);
+							std::cout << "    radius " << r << ": from inside " << (inner.found ? "found" : std::string("no route (") + std::string(inner.check) + ")") << ", from outside[0] " << (outer.found ? "found" : std::string("no route (") + std::string(outer.check) + ")") << "\n";
+						}
+					}
 				};
 				leg("floor0", *inside);
 

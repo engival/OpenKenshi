@@ -17,11 +17,16 @@ namespace {
 
 using namespace delta_scene;
 
+// Repinned for kenshi-k16.7.89 (the furniture body ring moves the mesh on purpose; 4397699947472014831 before).
 // Repinned for kenshi-k16.6.253 (the follow slot's direct steer only on a line a body fits, and not left at 0 u along a wall: 6893984046434549243 before; followers' placement moves, the delta store is untouched by it).
 // Repinned for kenshi-k16.6.182 / k16.6.200 (the walk's heading memory, saved from v109): the members' placement after the walk moves; the delta
 // store is untouched by it, and the hash is the same on navworld v12 and v13 (was 2317286899095492733 for kenshi-k16.6.139's formation direct steer,
 // 12384742747856631192 from the base efb91c7e).
-constexpr std::uint64_t kPinned = 3961074968184821634ull; // the members' hash after the round trip
+// Repinned for kenshi-k16.6.320 (the 1 Hz squad passes on id % 20 slices, and a save taking the arena's Fighters: 3961074968184821634 before; the
+// members' placement after the walk moves, the delta store is untouched by it; same hash on ds/stagger-slices alone and on ksim 8097e86).
+// Repinned for kenshi-k16.8.26 (a follower's route re-plans on the slot's 2 u drift and is kept to its end when planned for this slot; merged on the k16.7.89 ring's code,
+// replacing its pin 17417856568400189656; 7989452899866182258 before that merge); followers' placement only, the delta store is untouched by it.
+constexpr std::uint64_t kPinned = 6976828997182875623ull; // the members' hash after the round trip
 
 void mix(std::uint64_t& hash, const std::string& text)
 {

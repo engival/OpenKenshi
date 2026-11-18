@@ -81,7 +81,7 @@ public:
 	// terrain is sampled every kTerrainStep and bisected (kTerrainRefines) to the crossing.
 	Hit trace(const std::array<double, 3>& from, const std::array<double, 3>& to) const;
 	// The same segment against the walkable shapes (floors, stairs, ramps: the BUILDING path mode Walkable) and the terrain only: no
-	// furniture, counters, walls or doors. A character's ground ray (Simulation::groundY).
+	// furniture, counters, walls or doors. What the client rays a body onto (the height sweep's level check).
 	Hit traceGround(const std::array<double, 3>& from, const std::array<double, 3>& to) const;
 
 	// ---- phase 2: perception and ranged fire ----

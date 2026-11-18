@@ -902,6 +902,16 @@ state::Fighter CombatData::makeFighter(const kdata::GameData& gameData,
 		quality.uniform = uniform;
 		f.armour.push_back(buildArmour(armour, quality));
 	}
+	// The CHARACTER's `inventory` list: the kits and tools it spawns carrying (Slaver Caravan Guard: a Standard first aid kit x1, a Splint
+	// Kit x0). v0 is the count; the entries' v1 is 0 there, so no chance is applied (UNSURE: the clothing lists read v1 as a percent).
+	// The pack the guard's goal 58 needs (k16.6.287); `backpack` is not carried (no pack-size model on the spawn path).
+	if (const kdata::RefCategory* packed = f.animal ? nullptr : character->findRefs("inventory"))
+		for (const kdata::RefEntry& entry : packed->entries)
+		{
+			const kdata::Record* item = entry.opaqueEntry || entry.v0 < 1 ? nullptr : gameData.find(entry.targetID);
+			if (item != nullptr && item->type == typeIndex("ITEM"))
+				f.spawnPack.emplace_back(item->stringID, entry.v0);
+		}
 	f.blood = f.minBlood + (f.maxBloodRace - f.minBlood) * s.strength * 0.01;
 	rngState = rng.state();
 	return f;

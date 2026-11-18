@@ -6,6 +6,7 @@
 #include "kworld/collision.hpp"
 #include "kworld/coords.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -51,6 +52,11 @@ struct AreaGeometry
 	// Every shape, buildings in id order then foliage: the order NavWorld rebuilds in.
 	std::vector<WorldShape> flatShapes() const;
 };
+
+// A digest of everything a bake reads from the gathered geometry: per building its id, pose (the rotation included), nav fields
+// and every shape's vertices, indices, use and frame, then the foliage shapes. A mod that swaps a collision mesh, rotates a
+// building or changes a layout's furniture moves it (the nav cache's zone key folds it, kenshi-k16.7.67).
+std::uint64_t areaDigest(const AreaGeometry& area);
 
 // Loads the game data once and gathers any number of zone rectangles from it
 // (a world bake gathers one per region). Not thread-safe.

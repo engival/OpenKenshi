@@ -691,6 +691,92 @@ int main(int argc, char** argv)
 		// (k16.6.200's save under a squadmate push on the walk is retired with the push itself: a player's move walk takes none, k16.6.231,
 		// ksim_group_settle. Fighter::walkHeading / walkFacing stay in the save, equal to the yaw.)
 
+		// ---- a follower whose slot is behind a corner and moving re-plans on the slot's 2 u drift, not 30 u (k16.8.26, rwh.144 s1 "Dedup"): it ends
+		// at its slot (about the leader's distance for its formation offset, as a follower that was never behind a corner) and the steer / route
+		// choice does not flip-flop over 600 ticks ----
+		{
+			Rig rig(data, gd, nav);
+			const std::uint64_t leader = rig.spawn(kHubX, kHubZ);
+			bool found = false;
+			double x = 0.0;
+			double z = 0.0;
+			double best = 1.1;
+			double distance = 0.0;
+			for (int first = 0; first < 64; ++first)
+			{
+				for (const double d : {60.0, 90.0, 120.0, 160.0, 200.0})
+				{
+					double sx = 0.0;
+					double sz = 0.0;
+					if (!rig.spotAt(kHubX, kHubZ, d, sx, sz, first))
+						continue;
+					const Route route = nav->routeFrom({sx, 1535.0, sz}, kHubX, kHubZ);
+					double len = 0.0;
+					for (std::size_t i = 1; i < route.points.size(); ++i)
+						len += std::hypot(route.points[i].x - route.points[i - 1].x, route.points[i].z - route.points[i - 1].z);
+					if (route.found && len > best * d)
+					{
+						best = len / d;
+						found = true;
+						x = sx;
+						z = sz;
+						distance = d;
+					}
+				}
+			}
+			test::require(found, "no spot behind a corner near the Hub");
+			const std::uint64_t follower = rig.spawn(x, z);
+			rig.follow(follower, leader);
+			rig.drive(leader, heading);
+			int switches = 0;
+			bool was = true;
+			for (int t = 0; t < 600; ++t)
+			{
+				rig.run(1);
+				const bool onRoute = rig.at(follower).routeChase;
+				if (t > 0 && onRoute != was)
+					++switches;
+				was = onRoute;
+			}
+			rig.sim.enqueue(Command::fighterDrive(state::Id{leader}, 0, 0.0, 2));
+			rig.run(400);
+			std::cout << "corner follower: " << switches << " steer/route switches, " << rig.dist(follower, leader) << " u from the leader (start " << distance << " u, route x" << best << ")\n";
+			test::require(switches <= 6, "the follower flip-flops between steer and route");
+			test::require(rig.dist(follower, leader) < 90.0,  "the follower stopped short of its slot");
+		}
+
+		// ---- a formation slot off the mesh (inside a solid) comes out clear of it (clearFormationSlot, k16.6.320) ----
+		{
+			Rig rig(data, gd, nav);
+			const knav::Walker& walker = nav->walker();
+			const double radius = data->pathRadius(data->makeFighter(gd, rig.sid, "", rig.rng).raceSid);
+			int tried = 0;
+			for (int k = 0; k < 64 && tried < 3; ++k)
+			{
+				const double a = k * 0.0981748;
+				const knav::StepResult wall = walker.step({kHubX, 1535.0, kHubZ}, std::sin(a) * 300.0, std::cos(a) * 300.0);
+				if (!wall.onMesh || !wall.blocked)
+					continue;
+				double ax = wall.at.x + std::sin(a) * 5.0; // 5 u into the solid beyond the mesh edge the walk stopped at
+				double az = wall.at.z + std::cos(a) * 5.0;
+				if (walker.onMesh({ax, wall.at.y, az}))
+					continue;
+				++tried;
+				test::require(clearFormationSlot(walker, wall.at.y, radius, ax, az), "a slot inside a solid was not moved");
+				test::require(walker.onMesh({ax, wall.at.y, az}), "the moved slot is off the mesh");
+				for (int dir = 0; dir < 8; ++dir)
+				{
+					const double b = dir * kPi / 4.0;
+					const knav::StepResult probe = walker.step({ax, wall.at.y, az}, std::sin(b) * 0.9 * radius, std::cos(b) * 0.9 * radius);
+					test::require(probe.onMesh && !probe.blocked, "the moved slot is within a body radius of the solid");
+				}
+				double bx = wall.at.x - std::sin(a) * 5.0; // a slot on the mesh is left alone
+				double bz = wall.at.z - std::cos(a) * 5.0;
+				test::require(!clearFormationSlot(walker, wall.at.y, radius, bx, bz), "a slot on the mesh was moved");
+			}
+			test::require(tried > 0, "no wall found from the Hub to put a slot behind");
+		}
+
 		std::cout << "ksim_follow ok, hash " << std::hex << a.sim.stateHash() << std::dec << "\n";
 		return 0;
 	} catch (const std::exception& e) {

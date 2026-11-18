@@ -336,6 +336,16 @@ void testArrest(Game& game)
 		entityOf(sim, guard).remove<state::Routine>();
 	}
 	const state::Fighter& g = *sim.combat()->find(guard);
+	// The guard's squad-mates (a slaver squad, its package lifts a downed person: the world selector's 168) are held down for good: which of them
+	// reaches the body before the guard's order does follows the phase of each one's pass (the 1 Hz passes run on id % 20 slices, k16.6.320), and
+	// this test is about the guard's order, as its own Routine is removed above.
+	for (const flecs::entity& mate : members)
+		if (idOf(mate) != guard)
+		{
+			state::Fighter* held = fighterOf(sim, idOf(mate));
+			held->unconscious = true;
+			held->koTimer = 1.0e6;
+		}
 
 	// 1. The cage owner's legal faction holds a bounty: the sentence starts at the put-in (int(amount x 0.02 x prison time) hours).
 	const std::uint64_t first = spawnBody(sim, guard, g.x + 15.0, g.z);
@@ -443,11 +453,18 @@ void testCrimeGoals(Game& game)
 
 	// 1. The alarm manager (1409335e0 / 14092bfe0): a raise names an alarm in the town, a re-raise refreshes it in place WITHOUT resetting
 	// its 8 s lifetime, and it expires 8 s after the first raise.
-	const alarm::Alarm* first = sim.raiseAlarm(crime::kTrespassing, fighterOf(sim, guard)->x + 50.0, fighterOf(sim, guard)->z, guard);
+	// k16.6.329: EVENT 52 alarm_raised once per new alarm, a re-raise of a live one sends nothing.
+	std::vector<Simulation::CrimeEvent> alarmEvents;
+	sim.setCrimeObserver([&](const Simulation::CrimeEvent& e) { alarmEvents.push_back(e); });
+	const alarm::Alarm* first = sim.raiseAlarm(crime::kTrespassing, fighterOf(sim, guard)->x + 50.0, fighterOf(sim, guard)->z, guard, 4242);
+	test::require(alarmEvents.size() == 1 && alarmEvents[0].kind == Simulation::CrimeEvent::Kind::AlarmRaised && alarmEvents[0].who == guard
+		&& alarmEvents[0].other == 4242 && alarmEvents[0].cause == crime::kTrespassing && alarmEvents[0].faction == home.owner.sid,
+		"EVENT 52: a new alarm did not send one event with the raiser, criminal, crime and faction");
 	test::require(first != nullptr && sim.alarmCount() == 1, "raise: no alarm in the guard's town");
 	const std::uint64_t alarmId = first->id;
 	game.tick(80); // 4 s
-	const alarm::Alarm* again = sim.raiseAlarm(crime::kTrespassing, fighterOf(sim, guard)->x + 60.0, fighterOf(sim, guard)->z, guard);
+	const alarm::Alarm* again = sim.raiseAlarm(crime::kTrespassing, fighterOf(sim, guard)->x + 60.0, fighterOf(sim, guard)->z, guard, 4242);
+	test::require(alarmEvents.size() == 1, "EVENT 52: a re-raise of a live alarm sent a second event");
 	test::require(again != nullptr && again->id == alarmId && sim.alarmCount() == 1, "raise: a repeat raise made a second alarm");
 	game.tick(70); // 7.5 s since the first raise
 	test::require(sim.alarmCount() == 1, "expiry: the alarm ended before its 8 s");

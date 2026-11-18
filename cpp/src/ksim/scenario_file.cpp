@@ -681,17 +681,16 @@ Placed apply(Simulation& sim, const kdata::GameData& gd, const CombatData& data,
 		applyChar(gd, data, c, f, carried, unmapped);
 
 		// On the navmesh's nearest walkable ground, from the saved height; open ground takes the terrain's height like a step does
-		// (the runtime mesh floats up to 1.14 u above it, kenshi-k16.6.273).
-		const auto snapped = nav->walker().snap({c.x, c.y, c.z}, 100.0);
-		if (!snapped)
+		// (Simulation::placeOnGround).
+		const auto spot = sim.placeOnGround(c.x, c.y, c.z);
+		if (!spot)
 		{
 			offMesh.push_back(c.name + " (char " + std::to_string(c.id) + ") at (" + std::to_string(c.x) + ", " + std::to_string(c.z) + ")");
 			continue;
 		}
-		const knav::Position spot = nav->walker().settle(*snapped);
-		f.x = spot.x;
-		f.y = spot.y;
-		f.z = spot.z;
+		f.x = spot->x;
+		f.y = spot->y;
+		f.z = spot->z;
 		built.push_back({&c, std::move(f), std::move(carried)});
 	}
 	if (!offMesh.empty())

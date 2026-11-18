@@ -172,7 +172,7 @@ std::size_t Simulation::importPromote(flecs::entity squad, const std::vector<Imp
 		fighter->z = spot.z;
 		if (snap && navigation_ != nullptr)
 		{
-			if (const std::optional<knav::Position> ground = navigation_->walker().snap({spot.x, spot.y, spot.z}, 100.0))
+			if (const std::optional<knav::Position> ground = placeOnGround(spot.x, spot.y, spot.z))
 			{
 				fighter->x = ground->x;
 				fighter->y = ground->y;

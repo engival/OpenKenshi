@@ -643,6 +643,9 @@ struct Fighter
 	FighterRanged& gun() noexcept { return mount.mounted() ? mount.gun : ranged; }
 	const FighterRanged& gun() const noexcept { return mount.mounted() ? mount.gun : ranged; }
 	std::vector<FighterArmour> armour;
+	// The CHARACTER's `inventory` list (item sid, count) a spawn carries: adoptFighter moves it into the new pack and clears it. Not
+	// saved: a loaded fighter's pack is the saved one (k16.6.287).
+	std::vector<std::pair<std::string, std::int32_t>> spawnPack;
 
 	// MedicalSystem.
 	std::vector<FighterPart> parts;

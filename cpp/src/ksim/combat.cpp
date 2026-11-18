@@ -156,6 +156,9 @@ constexpr double kFloorSlope = 0.4;
 // half a second of a running target), but not more often than kChaseMinPlan seconds.
 constexpr double kChaseReplan = 30.0;
 constexpr double kChaseMinPlan = 0.5;
+// A follower's route to its slot is re-planned when the slot moved this far from the plan: the original re-requests a path once the goal
+// moved more than 2 u from the stored one (PATHFINDING_STATIC.md s1 "Dedup", rwh.144, H), still not more often than kChaseMinPlan.
+constexpr double kFollowReplan = 2.0;
 // A walk (move order or chase) blocked mid-way re-routes at most this many times, then is abandoned
 // (move order: cleared; chase: stands for kChaseCooldown seconds, then plans again).
 constexpr std::uint32_t kMaxReroutes = 3;
@@ -176,6 +179,7 @@ constexpr double kFollowHeadingRate = 0.5; // heading += (h - heading) * rate * 
 constexpr double kFollowSlotLead = 1.0; // the slot leads the leader by this many seconds of its speed
 constexpr double kFollowFixCos = -0.8660254037844386; // option squad.follow_heading_fix: snap beyond 150 degrees
 constexpr double kFollowStandoff = 40.0; // Task_FollowLeader's follow distance, for a leader outside the squad
+constexpr double kSlotSnapReach = 64.0; // how far from a formation slot off the mesh the nearest mesh edge is looked for (clearSlot)
 constexpr double kFollowDirectionFloor = 0.1; // the direction factor never goes below this
 // The give-up monitor (s4 step 2): "perceived" is the follower's sensor having seen the leader on its last scan
 // (perception.hpp; slack of a quarter scan interval), and the original's time units are taken as seconds (UNSURE).
@@ -290,6 +294,27 @@ void CombatArena::warmSteer(std::uint64_t id)
 		m->steerSpeed = 1.0e9;
 }
 
+bool clearFormationSlot(const knav::Walker& walker, double y, double radius, double& ax, double& az)
+{
+	if (walker.onMesh({ax, y, az}))
+		return false;
+	const std::optional<knav::Position> edge = walker.snap({ax, y, az}, kSlotSnapReach);
+	const double gap = edge ? std::hypot(edge->x - ax, edge->z - az) : 0.0; // in the plane: a slot above or below the mesh is not beside a wall
+	if (gap < 1.0e-6)
+		return false;
+	const double ox = (edge->x - ax) / gap;
+	const double oz = (edge->z - az) / gap;
+	if (walker.onMesh({edge->x + ox * radius, edge->y, edge->z + oz * radius}))
+	{
+		ax = edge->x + ox * radius;
+		az = edge->z + oz * radius;
+	} else {
+		ax = edge->x;
+		az = edge->z;
+	}
+	return true;
+}
+
 struct CombatArena::Ctx
 {
 	CombatArena& arena;
@@ -307,6 +332,7 @@ struct CombatArena::Ctx
 		bool backOff = false; // moves out when inside `inner`: the state-1 steer (Item 34 (e)) and the state-6 hold (Item 46); the ring of 3 stays at rest inside (d)
 		bool straight = false; // no path chase beyond the ring: steers straight at the target (WaitingStateAI)
 	} steer;
+	std::uint64_t ringRouted = 0; // the fighter whose circle() walked a route round an obstacle this tick: its integrate()'s direct steer must not undo it
 	double clipT0 = 0.0;
 	double clipT1 = 0.0;
 	bool clipAdvanced = false;
@@ -2642,6 +2668,7 @@ struct CombatArena::Ctx
 	void circle(Member& m)
 	{
 		Fighter& f = m.fighter;
+		ringRouted = 0;
 		Member* target = pickTarget(m);
 		if (target == nullptr)
 		{
@@ -2717,6 +2744,7 @@ struct CombatArena::Ctx
 			// circler there stands at velocity 0 for ever (task BI: both fighters 26 apart with a 39 u walk between them).
 			// The mover walks the route round the obstacle instead.
 			chaseStep(f, target->fighter.x, target->fighter.z, std::nullopt, runSpeed(f), true, true);
+			ringRouted = m.id;
 			return;
 		}
 		if (f.state != CombatState::Wait && canEngage && tryAcquire(*target, m.id))
@@ -3025,7 +3053,7 @@ struct CombatArena::Ctx
 			f.z += dz;
 			return;
 		}
-		const knav::StepResult r = n->walker().step({f.x, f.y, f.z}, dx, dz, f.building == 0);
+		const knav::StepResult r = n->walker().step({f.x, f.y, f.z}, dx, dz);
 		if (r.onMesh)
 		{
 			f.x = r.at.x;
@@ -3049,11 +3077,18 @@ struct CombatArena::Ctx
 		{
 			if (side != 0.0 && !sides)
 				break;
-			const knav::StepResult r = n->walker().step({x + sx * side, f.y, z + sz * side}, tx - x, tz - z, f.building == 0);
+			const knav::StepResult r = n->walker().step({x + sx * side, f.y, z + sz * side}, tx - x, tz - z);
 			if (!r.onMesh || r.blocked || std::hypot(tx + sx * side - r.at.x, tz + sz * side - r.at.z) > 0.5)
 				return false;
 		}
 		return true;
+	}
+
+	// A formation slot off the mesh is moved clear of the solid it is in (clearFormationSlot).
+	void clearSlot(const Fighter& f, double& ax, double& az) const
+	{
+		if (nav() != nullptr)
+			clearFormationSlot(nav()->walker(), f.y, arena.data().pathRadius(f.raceSid), ax, az);
 	}
 
 	// A follower on the clearance route of a direct-mode follow keeps the direct steer's facing: the velocity while it is above 0.1 u/s.
@@ -3069,8 +3104,8 @@ struct CombatArena::Ctx
 		const double radius = arena.data().pathRadius(f.raceSid);
 		for (const double side : { 1.0, -1.0 })
 		{
-			const knav::StepResult r = nav()->walker().step({f.x, f.y, f.z}, -uz * radius * side, ux * radius * side, f.building == 0);
-			if (r.onMesh && r.blocked && r.moved < 0.8 * radius)
+			const knav::StepResult r = nav()->walker().step({f.x, f.y, f.z}, -uz * radius * side, ux * radius * side);
+			if (r.onMesh && r.blocked)
 				return true;
 		}
 		return false;
@@ -3230,9 +3265,9 @@ struct CombatArena::Ctx
 			const double uz = toZ / toGo;
 			const double side = m.pushX * uz - m.pushZ * ux < 0.0 ? -0.5 : 0.5;
 			const double step = speed * dt;
-			r = n->walker().step({f.x, f.y, f.z}, (ux + side * uz) * step, (uz - side * ux) * step, f.building == 0);
+			r = n->walker().step({f.x, f.y, f.z}, (ux + side * uz) * step, (uz - side * ux) * step);
 		} else {
-			r = n->walker().step({f.x, f.y, f.z}, v.x * dt, v.z * dt, f.building == 0);
+			r = n->walker().step({f.x, f.y, f.z}, v.x * dt, v.z * dt);
 		}
 		if (r.onMesh)
 			at = passedWaypoints(f, at, r.at.x, r.at.z);
@@ -3314,7 +3349,7 @@ struct CombatArena::Ctx
 			if (ahead > 1.0e-6)
 			{
 				const double probe = std::min(ahead, 10.0);
-				const knav::StepResult open = n->walker().step({f.x, f.y, f.z}, (onward.x - f.x) / ahead * probe, (onward.z - f.z) / ahead * probe, f.building == 0);
+				const knav::StepResult open = n->walker().step({f.x, f.y, f.z}, (onward.x - f.x) / ahead * probe, (onward.z - f.z) / ahead * probe);
 				if (open.onMesh && open.moved >= 0.5 * probe)
 				{
 					++f.routeNext;
@@ -3400,11 +3435,11 @@ struct CombatArena::Ctx
 	// The chase of an attack target farther than the ring, by route (see kChaseDirectBelow). Called from
 	// integrate when `dist` (the straight distance to the target) calls for a route. Follows the
 	// chase route at `speed` (ramped to it, or at it at once), re-planning when the target (tx, tz) has moved
-	// kChaseReplan from the plan, when it has changed floor (the plan's end height against `ty`), when the route
+	// `replanDrift` (kChaseReplan; a follower's slot: kFollowReplan) from the plan, when it has changed floor (the plan's end height against `ty`), when the route
 	// runs out short of it, and after a block (bounded by kMaxReroutes). The follow task's path mode uses it too,
 	// with its slot as the target (`target` false: a leader that cannot be routed to is not dropped).
 	// False: a target chase (`target` true) whose fresh plan finds no route at all — the target is unreachable.
-	bool chaseStep(Fighter& f, double tx, double tz, std::optional<double> ty, double speed, bool ramp, bool target, double accel = kFootworkAcceleration)
+	bool chaseStep(Fighter& f, double tx, double tz, std::optional<double> ty, double speed, bool ramp, bool target, double accel = kFootworkAcceleration, double replanDrift = kChaseReplan)
 	{
 		const MeshNavigator* n = nav();
 		f.lateralSpeed = 0.0;
@@ -3416,7 +3451,7 @@ struct CombatArena::Ctx
 			return true;
 		}
 		const bool stale = !f.routeChase || f.routeNext >= f.route.size()
-			|| std::hypot(tx - f.chaseTx, tz - f.chaseTz) > kChaseReplan
+			|| std::hypot(tx - f.chaseTx, tz - f.chaseTz) > replanDrift
 			|| (ty && !f.route.empty() && std::fabs(f.route.back().y - *ty) > kFloorApart);
 		if (stale && (!f.routeChase || f.chasePlanAge >= kChaseMinPlan))
 		{
@@ -3617,6 +3652,7 @@ struct CombatArena::Ctx
 			az = top.z + hz * leaderSpeed * kFollowSlotLead - hz * ox - hx * oz;
 		}
 
+		clearSlot(f, ax, az);
 		const double dx = ax - f.x;
 		const double dz = az - f.z;
 		const double x2 = dx * dx + dz * dz;
@@ -3638,8 +3674,11 @@ struct CombatArena::Ctx
 		}
 		const double speed = std::min(runSpeed(f), want);
 		if (x2 < 2500.0)
+		{
+			if (!f.followDirect)
+				f.clearRoute(); // the path mode's route ends here: a route in direct mode is one the steer began (below)
 			f.followDirect = true;
-		else if (f.followDirect && x2 >= 10000.0)
+		} else if (f.followDirect && x2 >= 10000.0)
 			f.followDirect = false;
 		if (speed <= 0.0)
 		{
@@ -3652,11 +3691,14 @@ struct CombatArena::Ctx
 		// Direct steering has no clearance (the walker slides along a wall at 0 u: a guard along the Heft Longhouse's cage, kenshi-k16.6.253), so
 		// it is only for a line a body of the route's radius fits; a line open at its centre but not that wide takes the clearance-keeping route to the
 		// slot. A shut centre line keeps the direct steer (its slide closes on a slot behind a wall's corner, where the route's stale end stopped the follower 8 u short).
-		if (nav() != nullptr && (!f.followDirect || (!clearWay(f, f.x, f.z, ax, az) && clearWay(f, f.x, f.z, ax, az, false))))
+		// A route planned for this slot is walked to its end before the steer takes over again: the steer's wall slide is undone into a route, and a route dropped at
+		// once for the next tick's open line was re-planned every other tick (43 switches in 600 ticks, ksim_follow "corner follower").
+		const bool onRoute = f.routeChase && f.routeNext < f.route.size() && std::hypot(ax - f.chaseTx, az - f.chaseTz) <= kFollowReplan; // planned for this slot
+		if (nav() != nullptr && (!f.followDirect || onRoute || (!clearWay(f, f.x, f.z, ax, az) && clearWay(f, f.x, f.z, ax, az, false))))
 		{
 			const double qx = f.x;
 			const double qz = f.z;
-			chaseStep(f, ax, az, std::nullopt, speed, false, false);
+			chaseStep(f, ax, az, std::nullopt, speed, false, false, kFootworkAcceleration, kFollowReplan);
 			if (f.followDirect)
 				faceRouteStep(f, f.x - qx, f.z - qz);
 			f.swingProgress = computeSwingProgress(f);
@@ -3678,7 +3720,7 @@ struct CombatArena::Ctx
 			f.x = px;
 			f.y = fy;
 			f.z = pz;
-			chaseStep(f, ax, az, std::nullopt, speed, false, false);
+			chaseStep(f, ax, az, std::nullopt, speed, false, false, kFootworkAcceleration, kFollowReplan);
 			faceRouteStep(f, f.x - px, f.z - pz);
 			f.swingProgress = computeSwingProgress(f);
 			return;
@@ -3725,7 +3767,7 @@ struct CombatArena::Ctx
 		const double top = crawl ? std::min(gaitSpeed(f), CombatArena::kCrawlSpeed) : gaitSpeed(f);
 		const knav::StepResult r = n->walker().drive({f.x, f.y, f.z},
 			static_cast<knav::Drive>(f.drive), f.driveHeading, top, f.forwardSpeed, dt,
-			gaitOf(f).acceleration, f.building == 0, f.driveStrafe);
+			gaitOf(f).acceleration, f.driveStrafe);
 		if (r.onMesh)
 		{
 			f.x = r.at.x;
@@ -3758,10 +3800,11 @@ struct CombatArena::Ctx
 	{
 		const MeshNavigator* n = nav();
 		Fighter& f = m.fighter;
-		if (n == nullptr || f.dead)
+		// A caged character stands in its cage, a hole in the mesh: the snap would put it back on the walkable edge beside the bars (k16.6.370).
+		if (n == nullptr || f.dead || f.cageBuilding != 0)
 			return;
 		const knav::Position at{f.x, f.y, f.z};
-		if (n->walker().onMesh(at))
+		if (n->walker().inside(at))
 			return;
 		double distance = -1.0;
 		std::optional<knav::Position> snapped = n->walker().snap(at, kCorrectionReach, &distance);
@@ -4274,6 +4317,16 @@ struct CombatArena::Ctx
 		double dx = target->fighter.x - f.x;
 		double dz = target->fighter.z - f.z;
 		double dist = std::hypot(dx, dz);
+		if (ringRouted != 0)
+		{
+			const bool mine = ringRouted == m.id; // a stale flag (this tick's integrate returned early) never stops another fighter's steer
+			// circle() already walked this tick's step of a route to a target inside the ring's reach that the walk does not reach
+			// (kscen_radius: the direct steer below saw dist <= outer, set the speed to 0 and cleared the route every tick, so the
+			// pair crept at 0.4 u/s with a 48 u walk between them).
+			ringRouted = 0;
+			if (mine)
+				return;
+		}
 		const bool apart = floorApart(f, target->fighter);
 		// rwh.108 section 1-2: once the target has run freely for 1.5 s the steer aims at its predicted point (the band, the far flag and the heading
 		// are the point's); before that, and for the routed chase (the pathing states 10 / 11), at the body.
@@ -5486,16 +5539,16 @@ std::uint32_t CombatArena::rollRagdoll(state::Fighter& f, std::uint64_t id, doub
 		|| pushExempt_.count(id) != 0)
 		return seed;
 	const knav::Walker& walker = navigation_->walker();
-	const bool grounded = f.building == 0;
+	const bool grounded = f.building == 0; // a body inside a building has no slope to slide down
 	const auto move = [&](double dx, double dz)
 	{
-		const knav::StepResult r = walker.step({f.x, f.y, f.z}, dx, dz, grounded);
+		const knav::StepResult r = walker.step({f.x, f.y, f.z}, dx, dz);
 		if (!r.onMesh)
 			return;
 		// A step that ends blocked at an edge can land a unit or more off the mesh (the next step's correction would snap a live
 		// fighter, never a dead one): snap it here, and keep the old point when there is none.
 		knav::Position at = r.at;
-		if (!walker.onMesh(at))
+		if (!walker.inside(at))
 		{
 			const auto snapped = walker.snap(at, kRestSnapReach);
 			if (!snapped)
@@ -5519,7 +5572,7 @@ std::uint32_t CombatArena::rollRagdoll(state::Fighter& f, std::uint64_t id, doub
 		const double angle = static_cast<double>(i) * 0.7853981633974483;
 		const double dx = std::sin(angle) * kSlideProbe;
 		const double dz = std::cos(angle) * kSlideProbe;
-		const knav::StepResult r = walker.step({f.x, f.y, f.z}, dx, dz, true);
+		const knav::StepResult r = walker.step({f.x, f.y, f.z}, dx, dz);
 		if (!r.onMesh || r.moved < 0.5 * kSlideProbe)
 			continue;
 		const double slope = (f.y - r.at.y) / r.moved;

@@ -178,6 +178,7 @@ struct WorldRuntime
 	// The town occupancy map (town+0x118, rwh.53 section 3): per TownState entity, the Fighter::faction of every squad whose Package_OccupyTown holds
 	// it. Derived from the boards each pass, never saved; goal 273's "the town is ours" reads it beside the owner (the owner never changes).
 	std::unordered_map<flecs::entity_t, std::vector<std::uint64_t>> occupiers_;
+	bool occupiersBuilt_ = false; // false after a load or at a start: stepWorldTasks builds occupiers_ whole at once, else at each second's tick (k16.6.320)
 	std::unordered_map<std::string, std::uint64_t> raidLeaders_;
 	// Victory AI (raid_phases.cpp watchRaidVictory, FACTIONS.md 2.1b): a force that won its town holds it, GroupAI::until and the order's deadline at
 	// kRaidHold, until the occupation ends or the force is killed. `raidWon_`: the forces that won in this pass (applied at the next); `raidHolds_`:
@@ -294,6 +295,9 @@ public:
 	// = 109.1 s at the exe's 1x day length, clock.hpp).
 	static constexpr std::uint64_t kFullIntervalTicks = 1;
 	static constexpr std::uint64_t kSquadIntervalTicks = 20;
+	// The once-a-second passes spread over the second (OURS, k16.6.232): an id is stepped on the tick whose phase is id % kSquadIntervalTicks, so
+	// each squad / member keeps its 1 s period but a tick carries about 1/20 of the work, not all of it.
+	static constexpr bool inSlice(std::uint64_t now, std::uint64_t id) { return now % kSquadIntervalTicks == id % kSquadIntervalTicks; }
 	static constexpr std::uint64_t kStrategicIntervalTicks = kTicksPerGameHour;
 
 	// Templates only, vanilla load order, no instances.
@@ -395,15 +399,6 @@ public:
 	void disableLineOfSight() noexcept;
 	bool lineOfSightEnabled() const noexcept { return los_ != nullptr; }
 	const LineOfSight* lineOfSight() const noexcept { return los_.get(); }
-	// A standing or walking character's y, the original's ground ray (rwh.130: CharMovement::vf11 -> FUN_14065f160): from the
-	// navmesh point + kGroundRayUp straight down onto the building collision and the terrain, the first hit. The navmesh y
-	// (`fighter.y`) is only the ray's start. Falls back to the navmesh y when no collision is loaded under the character, the
-	// ray hits nothing within kGroundRayLength, or the hit is more than kGroundRayBand from the navmesh y (a roof or a lintel
-	// the ray met first; OURS). Cached per character while its xz and navmesh y stay the same and the trees do not change.
-	static constexpr double kGroundRayUp = 20.0;
-	static constexpr double kGroundRayLength = 60.0; // OURS: the original's ray has no stated end; 40 below the navmesh point
-	static constexpr double kGroundRayBand = 1.5; // OURS
-	double groundY(std::uint64_t id, const state::Fighter& fighter) const;
 	// Builds the trees of the Full regions and frees the rest. enableLineOfSight, a player-areas change and the end of every
 	// tick (after the region engine's own tick, where the areas' Full set moves) call it; a tick that changes nothing keeps
 	// the pair cache.
@@ -421,6 +416,10 @@ public:
 	// for a building with no mask, whose footprint does and which has a door with a way in (state::Door::inX). stepBuildings
 	// applies it each tick to every fighter that moved since its last look.
 	std::uint64_t buildingAt(double x, double y, double z);
+	// The one placement for a character put at a saved/authored spot (residents, scenario, squad import, save import): the navmesh's
+	// nearest walkable ground within `reach`, then, outdoors only, settled to the terrain (Walker::settle, the runtime mesh floats up
+	// to 1.14 u above it); a floor inside a building keeps the mesh height. Nullopt off the mesh or with no navigation (kenshi-k16.6.296).
+	std::optional<knav::Position> placeOnGround(double x, double y, double z, double reach = 100.0);
 	// The floor of `building` at height y (CHAR_DYNAMIC `floor`): 0 on the ground, 1 the first upper floor (BuildingSite::floorAt).
 	// 0 outside a building or for a building whose floors the data does not give.
 	int buildingFloor(std::uint64_t building, double y);
@@ -924,6 +923,24 @@ public:
 	CharStats charStats(std::uint64_t id) const;
 	// Called from inside tick() for every pick-up and finished or failed interaction. Observation only.
 	void setInteractObserver(std::function<void(const InteractEvent&)> observer) { interactObserver_ = std::move(observer); }
+	// A crime the player should hear of (SIMLINK events 51 and 52). Called from inside tick(). Observation only.
+	struct CrimeEvent
+	{
+		enum class Kind : std::uint8_t
+		{
+			CaughtStealing, // `who` (thief) was seen by `other` (the first witness of the record); cause 1 take, 2 lockpick; container id
+			AlarmRaised, // `who` raised an alarm of crime `cause` set off by `other` (the criminal) for `faction`, at x, z
+		};
+		Kind kind = Kind::CaughtStealing;
+		std::uint64_t who = 0;
+		std::uint64_t other = 0;
+		std::uint8_t cause = 0;
+		std::uint64_t container = 0;
+		std::string faction;
+		double x = 0.0;
+		double z = 0.0;
+	};
+	void setCrimeObserver(std::function<void(const CrimeEvent&)> observer) { crimeObserver_ = std::move(observer); }
 	// Called from inside tick() for every combat event (replaces the arena's observer; survives
 	// enableCombat). Observation only: it must not touch the simulation.
 	void setCombatObserver(std::function<void(const CombatEvent&)> observer);
@@ -1348,7 +1365,7 @@ public:
 	// the point stands in, raised by `raiser` (its building and faction are the record's); null when the point is in no town. pickAlarm is the
 	// selection 14092a810 for `id` (the 209 / 210 tick's and ALARMS_IN_THE_VICINITY's): the nearest alarm of its town within 375 u;
 	// `alliesOnly` is 210's filter (UNSURE: the raiser is an ally of `id`).
-	const alarm::Alarm* raiseAlarm(std::uint8_t kind, double x, double z, std::uint64_t raiser);
+	const alarm::Alarm* raiseAlarm(std::uint8_t kind, double x, double z, std::uint64_t raiser, std::uint64_t criminal = 0);
 	const alarm::Alarm* pickAlarm(std::uint64_t id, bool alliesOnly) const;
 	std::size_t alarmCount() const noexcept { return alarms_.size(); }
 	// The crime goals' finders (crime_goals.cpp): 211's prisoner (1408cf3c0), 212's looted prisoner (1408cf6a0), 204's bounty target
@@ -1606,6 +1623,9 @@ private:
 	bool runWeaponPrefix(std::uint64_t id, std::uint16_t goal);
 	// Every tick: a fighter with a target and a bare hand that carries a weapon draws it (the plan's 6 before an attack).
 	void stepRearm();
+	// Members that took a target at least once (stepRearm): only these stand down when the fight is over, so an untouched world squad keeps
+	// its spawn state. Not saved: a loaded run stands a member down only after its next fight (k16.6.288, UNSURE).
+	std::set<std::uint64_t> fought_;
 	// One scorer pass for one promoted member (its squad is `squad`); `placement` puts it at the winner's site instead of walking
 	// (promotion, residents.cpp). Writes the Routine, the reservation and the member's route.
 	void scoreMember(flecs::entity member, flecs::entity squad, bool placement);
@@ -1702,6 +1722,7 @@ public:
 	// A fighter in a fight keeps its weapon in hand (k16.6.181): a target, a technique, a swing / block / stumble in progress or an attacker
 	// engaged on it. The scorer yields to it and 7 UNEQUIP_WEAPON refuses it, so the draw / sheathe cannot flicker between two targets.
 	static bool inFight(const state::Fighter& f);
+	static bool inFightNow(const state::Fighter& f); // inFight minus a finished clip's stale technique
 	std::string drawWeapon(std::uint64_t id);
 	bool weaponInHands(std::uint64_t id) const;
 	// The WEAPON record sid of the sheathed weapon (Inventory::kSheathed), "" = none: CHAR_APPEARANCE shows it on the back while kFlagDrawn is clear.
@@ -1743,6 +1764,9 @@ private:
 	// Built world squads move by their Fighters (TOWN_LIFE_SLICE 5.14 follow). Before the squad AI, once a second: the token takes the leader's
 	// position (the leader is the first living, non-player member), and the AI is told which squads are carried and which hold (a member fights).
 	void prepareWorldCarry();
+	// Calls `visit` for every squad whose second-slice is `now` (inSlice, k16.6.232), in Id order, from the AI's cached squad list (an ecs.each
+	// without one: a sim with no AI). `all`: every squad, not just the slice's.
+	void forSquadsInSlice(std::uint64_t now, const std::function<void(flecs::entity, const state::Id&, const state::SquadInstance&)>& visit, bool all = false);
 	// Rebuilds ResidentData::world from the arena once after a load (residents.cpp).
 	void knowWorldSquads();
 	// After the squad AI, once a second: the leader walks to a carrot ahead of the group's route progress, the other members follow the leader;
@@ -1920,6 +1944,22 @@ private:
 	// Theft by `who` from a foreign container owned by the faction `ownerSid` (crime.cpp): the crime record (CrimeEnum 3 with the
 	// setCrime 3 s timer) and the interact observer's event 14.
 	void reportTheft(std::uint64_t who, std::uint64_t container, const std::string& ownerSid);
+	// The GUI take's roll (FUN_140794810 over the chance below): true when `who` is CAUGHT and the take must be aborted. Only a player
+	// character's take from a foreign container or character rolls; the order paths (loot, ground pick-up) never do. Draws from the
+	// FullDetail stream. A failure goes through recordCaughtStealing.
+	bool stealRollCaught(std::uint64_t who, std::uint64_t container, const std::string& item, const Storage& storage);
+	// THE one place a caught act is recorded (kenshi-k16.6.329 hooks the "Got caught stealing" message, SIMLINK event 51, here): crime 3 with
+	// the 30 s timer against the victim faction, and event 8 EV_THIEF_CAUGHT_STEALING_FROM_ME from `victim` (0 = nobody of the owner is
+	// near: no event). TEMP_ENEMY 4 on the victim is not modelled (no tag store).
+	void recordCaughtStealing(std::uint64_t thief, std::uint64_t victim, const std::string& ownerSid);
+public:
+	// The steal chance of `who` taking `item` out of `container` (a container or a character), 0..2.5: the number a "Stealing chance: N%"
+	// tooltip shows (int(chance * 100)) and the roll uses. 1.0 for a take that needs no roll (own or ownerless container, a disabled body).
+	// Observation only.
+	double stealChance(std::uint64_t who, std::uint64_t container, const std::string& item) const;
+private:
+	// Starts the EVENT 51 bookkeeping for the crime just reported (cause 1 take, 2 lockpick); the first witness sends it (stepCrime).
+	void noteCaughtAct(std::uint64_t who, std::uint8_t cause, std::uint64_t container);
 	// The "planted" event (item provenance): `planter` put `itemSid` into `holder`'s pack. Logged only, Lua is not wired.
 	void firePlanted(std::uint64_t planter, std::uint64_t holder, const std::string& itemSid);
 public:
@@ -1998,6 +2038,8 @@ public:
 	std::uint64_t dialogueEventCount(int event) const;
 	// The character's crime record, null if it holds nothing.
 	const state::CrimeRecord* crimeRecord(std::uint64_t id) const;
+	// Faction `from`'s relation toward `to` by template sid (the live relation components; the record's default without entities). Tests.
+	double factionRelationBetween(const std::string& from, const std::string& to);
 	// The bounty the faction `factionSid` holds on the character, 0 for none.
 	std::int32_t bountyOn(std::uint64_t id, const std::string& factionSid) const;
 	// Records a crime by `who` against `victimFaction` (the exe's setCrime, or reportCrime when timerSeconds > 0), applying the
@@ -2158,21 +2200,22 @@ private:
 	std::shared_ptr<const MeshNavigator> navigation_;
 	std::optional<flecs::query<const state::TownState>> wtTownQuery_;
 	std::optional<flecs::query<const state::Door>> doorQuery_; // the doors the sight rays read (a cached query: syncLineOfSight, k16.13.4)
-	struct GroundMemo
-	{
-		double x = 0.0;
-		double z = 0.0;
-		double navY = 0.0;
-		std::uint64_t trees = 0;
-		double y = 0.0;
-	};
-	mutable std::unordered_map<std::uint64_t, GroundMemo> groundMemo_; // groundY's per-character answer
 	std::unique_ptr<LineOfSight> los_; // the per-region collision hulls (task AZ); null until enabled
 	void maybeEnableLineOfSight(); // enables it once the game data, the region grid and the world's placements are all there
 	void refreshLineOfSightHook(); // the arena's perception::Environment::lineOfSight, or null when LOS is off
 	std::set<int> furnishedZones_; // zone indices whose doors and containers were spawned (furnishNavCoverage); derived
 	std::shared_ptr<const CombatData> combatData_;
 	std::vector<flecs::entity_t> combatEntities_; // parallel to the arena's members
+	// Scope guard of save / saveGame / stateHash: the ECS Fighters are the arena's until it ends (simulation.cpp ArenaMirror).
+	struct ArenaMirror
+	{
+		explicit ArenaMirror(const Simulation& simulation);
+		~ArenaMirror();
+		ArenaMirror(const ArenaMirror&) = delete;
+		ArenaMirror& operator=(const ArenaMirror&) = delete;
+		const Simulation& sim;
+		std::vector<state::Fighter> held;
+	};
 	void refreshJoinGoals(std::uint64_t now);
 	CombatSettings combatSettings_;
 	std::function<void(const CombatEvent&)> combatObserver_;
@@ -2183,6 +2226,14 @@ private:
 	std::uint64_t worldSquadLogTicks_ = 0;
 	std::uint64_t worldSquadLogNext_ = 0;
 	std::function<void(const InteractEvent&)> interactObserver_;
+	std::function<void(const CrimeEvent&)> crimeObserver_;
+	struct CaughtAct
+	{
+		std::uint64_t container = 0;
+		std::uint8_t cause = 0;
+		bool sent = false;
+	};
+	std::map<std::uint64_t, CaughtAct> caughtActs_; // per thief while its theft record lives (wire bookkeeping, not saved)
 	std::function<void(const DismissEvent&)> dismissObserver_;
 	std::function<void(const crime::DialogueEvent&)> dialogueObserver_;
 	std::map<int, std::uint64_t> dialogueCounts_;

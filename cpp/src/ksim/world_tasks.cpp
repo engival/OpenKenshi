@@ -367,6 +367,8 @@ std::string weaponSidOf(const kdata::GameData& data, const state::Inventory* pac
 // 45's threat reach: the original's char+0x2b0 "enemy near" flag is set when a hostile comes within sqrt(1600) = 40 u (dt25
 // section 1.3; s73). The bodyguard goal is offered only while the charge or the guard has one that close.
 constexpr double kBodyguardThreat = 40.0;
+// The leader sheathes only with no enemy within this many u (OURS, UNSURE: the original's planner reads its own threat flags; k16.6.288).
+constexpr double kLeaderStandDownRadius = 200.0;
 // 141 / 171 (dt24_141): the goal's utility is not in the data; the lowest floor makes it the selector's fall-through (UNSURE).
 constexpr double kFollowUtility = 0.001;
 // 42's finder reach: the original's _DAT_14168dae4 = 10000.0f squared = 100 u (dt25 section 2.4).
@@ -621,6 +623,14 @@ bool Simulation::inFight(const state::Fighter& f)
 		|| f.state == state::CombatState::Stumble;
 }
 
+// inFight without the stale clip: a finished technique leaves Fighter::technique set (the pointer stays for the stale block, combat.cpp
+// resolveIncoming), so only a playing one is a swing. The sheathe and the squad-quiet test read this; the town scorer's gate keeps inFight (k16.6.288).
+bool Simulation::inFightNow(const state::Fighter& f)
+{
+	return f.target != 0 || (f.technique >= 0 && !f.techniqueFinished) || !f.engaged.empty() || f.state == state::CombatState::Attack || f.state == state::CombatState::Defend
+		|| f.state == state::CombatState::Stumble;
+}
+
 bool Simulation::sheatheWeapon(std::uint64_t id)
 {
 	state::Fighter* f = combat_ != nullptr ? combat_->find(id) : nullptr;
@@ -631,7 +641,7 @@ bool Simulation::sheatheWeapon(std::uint64_t id)
 	if (weapon.empty())
 		return false;
 	// The weapon stays equipped, on the back (rwh.102 4.1): its slot changes, the pack gets nothing. A fight keeps it in the hand; a swing in progress keeps its clip (as order 67 does).
-	if (inFight(*f))
+	if (inFightNow(*f))
 		return true;
 	state::Inventory pack = *who.get<state::Inventory>();
 	for (state::Inventory::Entry& entry : pack.items)
@@ -695,7 +705,10 @@ void Simulation::stepRearm()
 		if (m.fighter.target != 0 && !m.fighter.dead && !m.fighter.playerControlled && !m.fighter.animal)
 			drawing.push_back(m.id);
 	for (const std::uint64_t id : drawing)
+	{
+		fought_.insert(id);
 		drawWeapon(id);
+	}
 }
 
 void Simulation::stepTorture()
@@ -1260,7 +1273,7 @@ void Simulation::stepWorldTasks()
 			continue;
 		}
 		if (victimFighter != nullptr && std::hypot(actorFighter->x - victimFighter->x, actorFighter->z - victimFighter->z) > lockReach(*victimFighter, false)
-			&& !actorFighter->walking() && now % kSquadIntervalTicks == 0)
+			&& !actorFighter->walking() && inSlice(now, actorId))
 			walkTo(actorId, *victimFighter);
 		if (actorFighter->orderPause > 0) // stopped for this update by a targeting (stepOrderCombat), the shared lock progress stays
 		{
@@ -1344,7 +1357,7 @@ void Simulation::stepWorldTasks()
 		const bool orderTask = r.goal == routines::task::StandUp || r.goal == routines::task::SeekAndTalk || r.goal == routines::task::SendDialogue
 			|| r.goal == routines::task::FollowWhileTalking || r.goal == routines::task::TownStalker || r.goal == routines::task::SleepOnFloorFakeAmbush
 			|| r.goal == routines::task::LootAnimalsJob;
-		if (selectorGoal(r.goal) && !orderTask && !residentPull && now % kSquadIntervalTicks == 0 && !goalWindowOpen(actor, r.goal, f.raceSid))
+		if (selectorGoal(r.goal) && !orderTask && !residentPull && inSlice(now, id) && !goalWindowOpen(actor, r.goal, f.raceSid))
 		{
 			// A floor sleeper whose package window closes (the animals' 22-6 / 23-6 rows) wakes with it; endTask mirrors the wake.
 			if (r.goal == routines::task::SleepOnFloor)
@@ -1486,7 +1499,7 @@ void Simulation::stepWorldTasks()
 				beginInteract(id, r.chainTarget, static_cast<std::uint8_t>(InteractAction::FirstAid), 0, {}, false);
 				continue;
 			}
-			if (now % kSquadIntervalTicks == 0)
+			if (inSlice(now, id))
 				walkTo(id, *patient);
 			continue;
 		}
@@ -1516,7 +1529,7 @@ void Simulation::stepWorldTasks()
 			}
 			if (std::hypot(f.x - body->x, f.z - body->z) > kEatReach)
 			{
-				if (now % kSquadIntervalTicks == 0)
+				if (inSlice(now, id))
 					walkTo(id, *body);
 				continue;
 			}
@@ -1583,7 +1596,7 @@ void Simulation::stepWorldTasks()
 			// runs the blows land - a blow that moves the occupant does not stop them.
 			if (r.chainElapsed <= 0.0 && std::hypot(f.x - body->x, f.z - body->z) > kInteractReach)
 			{
-				if (now % kSquadIntervalTicks == 0)
+				if (inSlice(now, id))
 					walkTo(id, *body);
 				continue;
 			}
@@ -1644,7 +1657,7 @@ void Simulation::stepWorldTasks()
 					mirrorFighter(id);
 					continue;
 				}
-				if (now % kSquadIntervalTicks == 0)
+				if (inSlice(now, id))
 					walkTo(id, *body);
 				continue;
 			}
@@ -1684,7 +1697,7 @@ void Simulation::stepWorldTasks()
 				endTask();
 				continue;
 			}
-			if (now % kSquadIntervalTicks == 0 && !f.walking())
+			if (inSlice(now, id) && !f.walking())
 				walkToPoint(id, town.x, town.z);
 			continue;
 		}
@@ -1702,7 +1715,7 @@ void Simulation::stepWorldTasks()
 			}
 			if (std::hypot(f.x - victim->x, f.z - victim->z) > kInteractReach)
 			{
-				if (now % kSquadIntervalTicks == 0)
+				if (inSlice(now, id))
 					walkToPoint(id, victim->x, victim->z);
 				continue;
 			}
@@ -1736,7 +1749,7 @@ void Simulation::stepWorldTasks()
 				endTask();
 				continue;
 			}
-			if (now % kSquadIntervalTicks == 0 && !f.walking())
+			if (inSlice(now, id) && !f.walking())
 				walkToPoint(id, board->smellX, board->smellZ);
 			continue;
 		}
@@ -1785,7 +1798,7 @@ void Simulation::stepWorldTasks()
 				endTask();
 				continue;
 			}
-			if (now % kSquadIntervalTicks == 0 && !f.walking())
+			if (inSlice(now, id) && !f.walking())
 				walkToPoint(id, town.x, town.z);
 			continue;
 		}
@@ -1822,7 +1835,7 @@ void Simulation::stepWorldTasks()
 				endTask();
 				continue;
 			}
-			if (now % kSquadIntervalTicks == 0 && !f.walking() && !walkToPoint(id, target.x, target.z))
+			if (inSlice(now, id) && !f.walking() && !walkToPoint(id, target.x, target.z))
 				endTask();
 			continue;
 		}
@@ -1865,7 +1878,7 @@ void Simulation::stepWorldTasks()
 						beginInteract(id, r.chainTarget, static_cast<std::uint8_t>(InteractAction::PickUp), 0, {}, true);
 						continue;
 					}
-					if (now % kSquadIntervalTicks == 0)
+					if (inSlice(now, id))
 						walkToPoint(id, item->useX, item->useZ);
 					continue;
 				}
@@ -1891,7 +1904,7 @@ void Simulation::stepWorldTasks()
 					mirrorFighter(id);
 					continue;
 				}
-				if (now % kSquadIntervalTicks == 0)
+				if (inSlice(now, id))
 					walkTo(id, *body);
 				continue;
 			}
@@ -1923,7 +1936,7 @@ void Simulation::stepWorldTasks()
 				mirrorFighter(id);
 				continue;
 			}
-			if (now % kSquadIntervalTicks == 0)
+			if (inSlice(now, id))
 				walkTo(id, *body);
 			continue;
 		}
@@ -1949,7 +1962,7 @@ void Simulation::stepWorldTasks()
 					r.chainElapsed = 0.0;
 					actor.set<state::Routine>(std::move(r));
 					mirrorFighter(id);
-				} else if (now % kSquadIntervalTicks == 0) {
+				} else if (inSlice(now, id)) {
 					walkTo(id, *body);
 				}
 				continue;
@@ -2018,7 +2031,7 @@ void Simulation::stepWorldTasks()
 			const bool near = std::hypot(f.x - target->x, f.z - target->z) <= standOff;
 			if (!near)
 			{
-				if (now % kSquadIntervalTicks == 0)
+				if (inSlice(now, id))
 					walkTo(id, *target);
 				continue;
 			}
@@ -2063,7 +2076,7 @@ void Simulation::stepWorldTasks()
 				{
 					worldTaskBlocks_[{id, r.chainTarget}] = now + kBlockTicks;
 					endTask();
-				} else if (now % kSquadIntervalTicks == 0) {
+				} else if (inSlice(now, id)) {
 					walkTo(id, *slave);
 				}
 				continue;
@@ -2095,7 +2108,7 @@ void Simulation::stepWorldTasks()
 			}
 			if (std::hypot(f.x - keeper->x, f.z - keeper->z) > kInteractReach)
 			{
-				if (now % kSquadIntervalTicks == 0)
+				if (inSlice(now, id))
 					walkTo(id, *keeper);
 				continue;
 			}
@@ -2144,7 +2157,7 @@ void Simulation::stepWorldTasks()
 				mirrorFighter(id);
 				continue;
 			}
-			if (now % kSquadIntervalTicks == 0)
+			if (inSlice(now, id))
 				walkTo(id, *body);
 			continue;
 		}
@@ -2174,7 +2187,7 @@ void Simulation::stepWorldTasks()
 				endTask();
 				continue;
 			}
-			if (now % kSquadIntervalTicks == 0)
+			if (inSlice(now, id))
 				walkTo(id, *body);
 			continue;
 		}
@@ -2217,7 +2230,7 @@ void Simulation::stepWorldTasks()
 			}
 			if (std::hypot(dx, dz) > kGateReach)
 			{
-				if (now % kSquadIntervalTicks == 0)
+				if (inSlice(now, id))
 					walkToPoint(id, reachX, reachZ);
 				mirrorFighter(id);
 				continue;
@@ -2306,7 +2319,7 @@ void Simulation::stepWorldTasks()
 				? functionalityReach(*gameData_, cage->record, routines::kFunctionCage, !f.walking()) : kBodyReach;
 			if (!f.walking() && std::hypot(f.x - cage->x, f.z - cage->z) > reach)
 			{
-				if (now % kSquadIntervalTicks == 0)
+				if (inSlice(now, id))
 					walkToPoint(id, cage->x, cage->z);
 				else
 					mirrorFighter(id);
@@ -2314,10 +2327,10 @@ void Simulation::stepWorldTasks()
 			}
 			if (f.walking())
 				continue;
-			f.x = cage->x;
+			f.x = cage->occupantX();
 			if (cage->hasY)
 				f.y = cage->y;
-			f.z = cage->z;
+			f.z = cage->occupantZ();
 			f.velX = 0.0;
 			f.velZ = 0.0;
 			f.building = cage->site.object;
@@ -2369,7 +2382,7 @@ void Simulation::stepWorldTasks()
 					mirrorFighter(id);
 					continue;
 				}
-				if (now % kSquadIntervalTicks == 0)
+				if (inSlice(now, id))
 					walkTo(id, *body);
 				continue;
 			}
@@ -2449,7 +2462,7 @@ void Simulation::stepWorldTasks()
 			{
 				worldTaskBlocks_[{id, r.chainTarget}] = now + kBlockTicks;
 				endTask();
-			} else if (now % kSquadIntervalTicks == 0) {
+			} else if (inSlice(now, id)) {
 				walkTo(id, *body);
 			}
 			continue;
@@ -2477,7 +2490,7 @@ void Simulation::stepWorldTasks()
 				} else if (static_cast<double>(ticksSince(now, r.since)) * kTickSeconds > kGiveUpSeconds) {
 					worldTaskBlocks_[{id, r.chainTarget}] = now + kBlockTicks;
 					endTask();
-				} else if (now % kSquadIntervalTicks == 0) {
+				} else if (inSlice(now, id)) {
 					walkTo(id, *body);
 				}
 				continue;
@@ -2578,7 +2591,7 @@ void Simulation::stepWorldTasks()
 				{
 					worldTaskBlocks_[{id, r.chainTarget}] = now + kBlockTicks;
 					endTask();
-				} else if (now % kSquadIntervalTicks == 0) {
+				} else if (inSlice(now, id)) {
 					walkToPoint(id, box.x, box.z);
 				} else {
 					mirrorFighter(id);
@@ -2621,7 +2634,7 @@ void Simulation::stepWorldTasks()
 				{
 					worldTaskBlocks_[{id, r.chainTarget}] = now + kBlockTicks;
 					endTask();
-				} else if (now % kSquadIntervalTicks == 0) {
+				} else if (inSlice(now, id)) {
 					walkToPoint(id, container->useX, container->useZ);
 				} else {
 					mirrorFighter(id);
@@ -2710,7 +2723,7 @@ void Simulation::stepWorldTasks()
 				{
 					worldTaskBlocks_[{id, r.chainTarget}] = now + kBlockTicks;
 					endTask();
-				} else if (now % kSquadIntervalTicks == 0) {
+				} else if (inSlice(now, id)) {
 					walkToPoint(id, useX, useZ);
 				} else {
 					mirrorFighter(id);
@@ -2874,7 +2887,7 @@ void Simulation::stepWorldTasks()
 				{
 					worldTaskBlocks_[{id, r.chainTarget}] = now + kBlockTicks;
 					endTask();
-				} else if (now % kSquadIntervalTicks == 0) {
+				} else if (inSlice(now, id)) {
 					walkToPoint(id, box->useX, box->useZ);
 				} else {
 					mirrorFighter(id);
@@ -2945,7 +2958,7 @@ void Simulation::stepWorldTasks()
 				endTask();
 				continue;
 			}
-			if (now % kSquadIntervalTicks == 0)
+			if (inSlice(now, id))
 			{
 				double bestD = 1.0e30;
 				std::array<double, 2> at{f.x, f.z};
@@ -2975,7 +2988,7 @@ void Simulation::stepWorldTasks()
 			}
 			if (std::hypot(f.x - entry->x, f.z - entry->z) > kBodyReach)
 			{
-				if (now % kSquadIntervalTicks == 0)
+				if (inSlice(now, id))
 					walkToPoint(id, entry->x, entry->z);
 				continue;
 			}
@@ -3025,7 +3038,7 @@ void Simulation::stepWorldTasks()
 					r.holdUntil = now + static_cast<std::uint64_t>((hold.base + dice.uniform01() * hold.span) * static_cast<double>(kTicksPerGameHour));
 					actor.set<state::Routine>(std::move(r));
 					mirrorFighter(id);
-				} else if (now % kSquadIntervalTicks == 0) {
+				} else if (inSlice(now, id)) {
 					walkToPoint(id, door[0], door[1]);
 				}
 				continue;
@@ -3103,7 +3116,7 @@ void Simulation::stepWorldTasks()
 				std::ostringstream line;
 				line << "loot 177 member " << id << " gave up on body " << r.chainTarget << ": no arrival in " << kGiveUpSeconds << " s";
 				logTask(line.str());
-			} else if (now % kSquadIntervalTicks == 0) {
+			} else if (inSlice(now, id)) {
 				reached = walkTo(id, *body) && std::hypot(f.x - body->x, f.z - body->z) <= kOffMeshLootReach;
 			}
 			if (!reached)
@@ -3267,10 +3280,10 @@ void Simulation::stepWorldTasks()
 	}
 
 	KSIM_PROFILE_SUB(WtFightGoals);
-	if (now % kSquadIntervalTicks != 0)
-		return;
+	// From here the second's work is per squad slice (forSquadsInSlice below, k16.6.232); the passes over everyone stay at the second.
+	const bool secondTick = now % kSquadIntervalTicks == 0;
 	// A player's slave scores only through the graft: once the row is gone, the state leaves 1 or it sneaks, the goal it holds ends too.
-	for (std::size_t i = 0; i < members.size(); ++i)
+	for (std::size_t i = 0; secondTick && i < members.size(); ++i)
 	{
 		const state::Fighter& f = members[i].fighter;
 		flecs::entity slave = ecs.entity(combatEntities_[i]);
@@ -3380,10 +3393,38 @@ void Simulation::stepWorldTasks()
 	// goalsel::select (strict tiers, the running goal's 1.25 bonus and hold, crowd decay), and the winner is committed as the
 	// member's Routine - its direct task's executor (167 / 177 / 183 / 260 / 168 / 173 in this file, 112 in carry.cpp). Nothing
 	// scoring leaves the member on the squad's follow (IDLE, dt14 section 8) and it re-scores next second.
-	refreshRaidLeaders();
-	applyRaidVictory(now);
-	occupiers_.clear(); // refilled by the squads' boards below
-	world_.each([&](flecs::entity squad, const state::Id& id, const state::SquadInstance& instance)
+	if (secondTick)
+	{
+		refreshRaidLeaders();
+		applyRaidVictory(now);
+	}
+	// The occupancy map is shared derived state: built once a second, whole, here (and once after a load or a start) before any slice reads
+	// it, never piece by piece by the squads' own slices (k16.6.320). Package_OccupyTown's start / tick hooks (140288fe0, 140290690, rwh.53
+	// section 3): the package holds the town the platoon stood in when it started, and the platoon's faction goes into that town's occupancy
+	// map. The town's owner is not touched (4.3). It reads each board as its squad's last slice left it.
+	if (secondTick || !occupiersBuilt_)
+	{
+		occupiersBuilt_ = true;
+		occupiers_.clear();
+		world_.each([&](flecs::entity squad, const state::Id& id, const state::SquadInstance&)
+		{
+			blackboard::Board* board = residentData_->world.count(id.value) != 0 ? blackboardOf(squad) : nullptr;
+			if (board == nullptr)
+				return;
+			const blackboard::Package* occupying = board->current.empty() ? nullptr : blackboard::find(*board, board->current);
+			if (occupying == nullptr || occupying->signalFunc != blackboard::kOccupyTown)
+			{
+				board->occupyTown = 0;
+				return;
+			}
+			const state::Fighter* lead = combat_->find(leaderOf(*combat_, squadMembers(world_, squad)));
+			if (lead != nullptr && board->occupyTown == 0)
+				board->occupyTown = townEntityAt(lead->x, lead->z);
+			if (lead != nullptr && board->occupyTown != 0)
+				occupiers_[board->occupyTown].push_back(lead->faction);
+		});
+	}
+	const auto stepSquad = [&](flecs::entity squad, const state::Id& id, const state::SquadInstance& instance)
 	{
 		if (residentData_->world.count(id.value) == 0)
 			return; // a built squad, a wandering trader included (task BP: it is built at Full detail like the others)
@@ -3410,19 +3451,6 @@ void Simulation::stepWorldTasks()
 			situations_[squad.id()] = SituationMemo{situation, now};
 			if (ai_ != nullptr && ai_->config().victoryAi)
 				watchRaidVictory(squad, id.value, situation, list, now);
-			// Package_OccupyTown's start / tick hooks (140288fe0, 140290690, rwh.53 section 3): the package holds the town the platoon stood in
-			// when it started, and the platoon's faction goes into that town's occupancy map. The town's owner is not touched (4.3).
-			const blackboard::Package* occupying = board->current.empty() ? nullptr : blackboard::find(*board, board->current);
-			if (occupying != nullptr && occupying->signalFunc == blackboard::kOccupyTown)
-			{
-				const state::Fighter* lead = combat_->find(leaderOf(*combat_, list));
-				if (lead != nullptr && board->occupyTown == 0)
-					board->occupyTown = townEntityAt(lead->x, lead->z);
-				if (lead != nullptr && board->occupyTown != 0)
-					occupiers_[board->occupyTown].push_back(lead->faction);
-			} else {
-				board->occupyTown = 0;
-			}
 			// The slaver shipping class' start hook (140287520, rwh.8): the town finder runs once per activation and the found town is the
 			// package's target; a stopped package forgets it. Nothing found writes nothing (the package then has no target to walk to).
 			const blackboard::Package* running = board->current.empty() ? nullptr : blackboard::find(*board, board->current);
@@ -3538,11 +3566,34 @@ void Simulation::stepWorldTasks()
 		if (board == nullptr) // no AI layer (a bare rig), or born since the last ensureBlackboards pass
 			return;
 		std::vector<std::uint64_t> graftPassed; // grafted slaves that went through the selector this pass (a Routine they hold after it is the graft's)
+		// Only a member that has had a target (fought_) stands down: sheathing every armed member would shift every untouched
+		// world squad (the pinned hashes, ksim_kscen_radius's bandit) for no bug.
+		// Nobody in the squad fights: a member on the peaceful follow (141 / 171, no Routine, so no planner step) and the follow leader (which
+		// the selector skips) put the weapon away, as the planner's 7 UNEQUIP_WEAPON does in front of every other peaceful goal (GATES_CARRY_STATIC;
+		// whether Task_FollowLeader's row itself needs hasWeaponEquipped = 0 is UNSURE). k16.6.288: a Routine-less caravan kept its swords out after the capture.
+		const bool squadQuiet = std::none_of(list.begin(), list.end(), [this](const auto& entry)
+		{
+			const state::Fighter* other = combat_->find(entry.first);
+			return other != nullptr && !other->dead && inFightNow(*other);
+		});
 		for (const auto& [memberId, member] : selectList)
 		{
 			const state::Fighter* self = combat_->find(memberId);
-			if (self == nullptr || memberId == followLeader)
+			if (self == nullptr)
 				continue;
+			if (memberId == followLeader)
+			{
+				// The leader has no pick to say nothing is left to fight, so it also needs no enemy near (the followers' 141 pick says it).
+				if (squadQuiet && fought_.count(memberId) != 0 && weaponInHands(memberId)
+					&& std::none_of(combat_->members().begin(), combat_->members().end(), [&](const CombatArena::Member& other)
+					{
+						return other.id != memberId && !other.fighter.dead && !other.fighter.unconscious && !other.fighter.down
+							&& std::hypot(other.fighter.x - self->x, other.fighter.z - self->z) < kLeaderStandDownRadius
+							&& (sensor::enemy(ctx, *self, other.fighter) || sensor::enemy(ctx, other.fighter, *self));
+					}))
+					sheatheWeapon(memberId);
+				continue;
+			}
 			const bool graft = grafted.count(memberId) != 0;
 			if (graft && medicked.count(memberId) != 0)
 				continue;
@@ -4558,6 +4609,8 @@ void Simulation::stepWorldTasks()
 				// 141 / 171: the follow IS the member's state (Task_FollowLeader has no arrival and ends only by the give-up monitor,
 				// which clears followTarget), so no Routine is kept: it re-scores every second, as the IDLE follow always did. The
 				// command is refused without a navmesh, as stepWorldSquads' is.
+				if (squadQuiet && fought_.count(memberId) != 0)
+					sheatheWeapon(memberId);
 				if (f.followTarget != res.fighter && navigation_ != nullptr)
 				{
 					apply(Command::fighterFollow(state::Id{memberId}, state::Id{res.fighter}));
@@ -4659,7 +4712,8 @@ void Simulation::stepWorldTasks()
 		for (const std::uint64_t slaveId : graftPassed)
 			if (fighterEntity(slaveId).has<state::Routine>())
 				graftRoutines_.insert(slaveId);
-	});
+	};
+	forSquadsInSlice(now, stepSquad);
 }
 
 blackboard::Board* Simulation::blackboardOf(flecs::entity squad)

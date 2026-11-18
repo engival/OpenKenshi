@@ -310,6 +310,15 @@ Simulation::LockStep Simulation::stepLockTask(std::uint64_t id, std::uint16_t ta
 	if (f->walking())
 		f->clearRoute();
 
+	// At the lock a chance below the floor never starts the pick (kenshi-k16.6.366): no crime, no roll; the order ends refused (event 13
+	// result 1) and the log carries the key lock_too_hard (the wire's message layout waits on the client lead).
+	if ((task == routines::task::PickLock || task == routines::task::PickLockOnShackles)
+		&& !sufficientLockSkill(level, f->skills.lockpicking, !shackles && f->cageBuilding != 0))
+	{
+		logLine("lock_too_hard");
+		return LockStep::Refused;
+	}
+
 	// The crime, every tick (dt24_picklock section 7.2): freeing someone else's slave is crime 7 against the captor, picking a building lock
 	// someone else owns crime 2. reportCrime applies setCrime's refusals (a caged picker, its own faction, a faction not real).
 	if (others)
@@ -317,7 +326,7 @@ Simulation::LockStep Simulation::stepLockTask(std::uint64_t id, std::uint16_t ta
 		if (shackles || !target->captorSid.empty())
 			reportCrime(id, crime::kSlaveFreeing, target->captorSid, victim);
 		else if (const BuildingSite* site = world_.buildingSite(building); site != nullptr && !site->ownerFaction.empty())
-			reportCrime(id, crime::kBurglary, site->ownerFaction, 0);
+			{ reportCrime(id, crime::kBurglary, site->ownerFaction, 0); noteCaughtAct(id, 2, building); }
 	}
 
 	bool opened = false;

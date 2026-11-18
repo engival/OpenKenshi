@@ -48,7 +48,7 @@ int main(int argc, char** argv)
 		const auto onMesh = [&](std::uint64_t who)
 		{
 			const state::Fighter& f = r.fighter(who);
-			return nav->walker().step({f.x, f.y, f.z}, 0.0, 0.0, f.building == 0).onMesh;
+			return nav->walker().step({f.x, f.y, f.z}, 0.0, 0.0).onMesh;
 		};
 		const auto place = [&](std::uint64_t who, double x, double z, double y = 1077.5)
 		{

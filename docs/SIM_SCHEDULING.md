@@ -78,8 +78,9 @@ is cheap and runs every frame where someone can see it. Our `senseAll` already f
 At speed > 1 the run loop encodes a snapshot after every catch-up tick: at 5x, 100 snapshots a second, 2.8 ms each.
 **One snapshot per catch-up batch** (one per wall-clock pass of the run loop) carrying the batch's events removes about
 2.2 ms per tick at 5x, changes no sim result and needs no thread. It is a wire-cadence change (SIMLINK): the client lead
-approves the layout first (events spanning several ticks, interpolation over a bigger step). Proposed in its item, not
-coded before that approval.
+approves the layout first (events spanning several ticks, interpolation over a bigger step). **Done (kenshi-k16.6.304):** client
+lead's variant: at most floor(speed) ticks per snapshot (the view runs 2 x speed ticks behind), events each stamped with their
+own tick; wire in formats/SIMLINK.md "Cadence" under SNAPSHOT_BEGIN / SNAPSHOT_END.
 
 ### A. One think slot (sensor + re-evaluation + scorer)
 
@@ -129,7 +130,48 @@ slows the thinks, never the tick).
 ### D. The 1 Hz passes
 
 `squadStep`, world squads, carry prep and the world-task selector run one slice per tick (squad id % 20), each squad
-keeping its 1 s period: kenshi-k16.6.320 (split from k16.6.232, 2026-11-16). Not replaced by A (squads are not arena members).
+keeping its 1 s period (kenshi-k16.6.320, from k16.6.232). Not replaced by A (squads are not arena members). The rule
+that makes a load equal a continuous run:
+
+- **A slice only decides.** Per-squad work reads shared state and writes the squad's own (its board, its members); it
+  never builds state that other squads' slices read.
+- **Shared derived state is built once a second, whole, before any slice reads it** (and once after a load or a start):
+  the occupancy map `occupiers_` is rebuilt from every board at the second's tick by `stepWorldTasks`, not by the squads'
+  slices (`occupiersBuilt_`). It reads each board as its squad's last slice left it, so a newly started occupation shows
+  up at most one second later than when one pass did both.
+- **A save holds the arena's truth.** The ECS `Fighter` is mirrored by `stepCombat`, mid-tick; the writers after it
+  (`stepWorldTasks`: the follow orders; the routines) change the arena only. A save or a hash taken between ticks used to
+  hold the Fighter without them and a load lost them. That hole is not new, but with one pass per second it needed a save
+  at tick % 20 == 0 to show; with slices every tick has a writer. `save` / `saveGame` / `stateHash` now encode the arena's
+  Fighters (`Simulation::ArenaMirror`: copied in, old values put back; the next tick reads what it read before, and
+  nothing is paid per tick). It is its own commit on `ds/stagger-mirror` (from master) so it can land alone.
+
+What a slice does NOT make equal (kenshi-k16.6.320 rework 1, measured with a same-binary switch that put every slice
+back on tick % 20 == 0): a squad's second moves by up to 19 ticks, and everything that follows keys on the tick, so a
+fight-dependent scenario goes down another branch. Named for the two tests that still fail sliced and pass unsliced:
+
+- `ksim_raid_takeover_scenario` (Heft variant): the assault package (59293, PassingByTownAssault) finishes, and the
+  board switches to the occupy package (96451), only when at least two members have a target at a once-a-second sample
+  (`Situation::engagedMembers`, sticky once seen). The members all take RUN_AROUND_TOWN_LOOKING_FOR_PEOPLE (216) at
+  their first score, whose search point is a die keyed by (seed, member, tick). A tick earlier or later sends them to
+  other points: sliced, the five members ran 300-1,700 u away from the leader while it fought the downed player's
+  defender for 15 s, so one member was engaged at every sample and the package stayed on 59293 (status Staying) to the
+  end of the run; unsliced, a member passed within 128 u of the fight and two were engaged at the 76,720th tick. No
+  state is read from another squad's slice; the leader, the route (`along` 120-135 of 146 u) and the board are the same
+  until the fight. The scenario depends on the members' random walk meeting the fight, in any scheduling.
+- `ksim_raid_goals` 270 ("no member took ASSAULT_FORTIFICATIONS_PREFER_GATES"): NOT chaos (a scripted fixture: squad placed on the gate, package applied by `changeAI`, gate locked by command). A scratch print in the 270 pick showed the squad's selector ran ONCE (tick 26810, eight members, `fortifications` 112, `shut` 0: `doors->bashFor(faction, gate)` found no refusing gate) and never again in the 4,000 ticks. Two things to check, not yet done: why `bashFor` sees the gate open at that tick (the door system's `sync` runs at the second's tick only, the lock command was enqueued 2 ticks before the squad's slice), and why the squad's selector does not run again (its slice tick, or a held Routine). Verify: print `bashFor` and the squad's `stepSquad` ticks with slices on / off.
+
+Two more, fixed in the tests (kenshi-k16.6.374), same cause, a fight-dependent branch moved by the phase shift:
+
+- `ksim_token_fights`: the "same pair fights at most once" and "one faction does not fight" checks counted every `offscreen fight` line; sliced, a third
+  hostile token (10332 vs 11539) wanders into the winner's reach in the window and fights as another pair. The pair clock and `stepTokenFights` (still at
+  tick % 20 == 0) are unchanged; the checks now count the pair's own lines.
+- `ksim_slave_obedience`: the walk of the slavers' caravan (about 12,000 ticks) outlasts the 8,000-tick window when the captive is still down at the cuff,
+  and sliced that is seeds 1, 706960716, 1151889715 and most of 2..9. Seeds 4 and 5 are freed in the window and graft with and without the row; the test
+  now runs those (`KSIM_SEEDS=1,2,3` surveys others).
+
+So these two pass or fail by where the dice land after a phase shift, not by a stale read; the sim lead decides whether
+the test is made robust (a scripted member in reach, or the assault package's engaged rule sampled every tick) or pinned.
 
 ### E. Route queries
 

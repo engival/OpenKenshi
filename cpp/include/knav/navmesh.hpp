@@ -46,6 +46,15 @@ struct TileRect
 	bool operator==(const TileRect&) const = default;
 };
 
+// A prop the bake gives a hard body clearance (kenshi-k16.7.89): a closed Obstacle or Projected solid that is not a rock shell
+// or a leaning hull. propClearanceHull: its footprint grown by `radius` (an octagon round the corners), xyz triples, y 0, counter-clockwise;
+// empty for a degenerate shape.
+// The clearance a body keeps from furniture. UNSURE: the original's own fixtures put bodies 1-2 u from these boxes, so this is
+// a placeholder, not the agent radius; the original's capsule radius is asked in oracle item kenshi-rwh.183 (then a follow-up changes it).
+constexpr float kFurnitureBodyClearance = 1.0f;
+bool propClearanceShape(const kworld::WorldShape& shape);
+void propClearanceHull(const kworld::WorldShape& shape, float radius, std::vector<float>& out);
+
 // Agent and grid choices. Height, climb and slope are the original's Havok generation settings
 // (HAVOK_NAV.md), radius is the humans' path radius; cell sizes and the tile size are our choices.
 struct NavConfig
@@ -439,6 +448,8 @@ private:
 
 	// findPath without the door pass (a leg of a door route plans with this); `snappedStart` gets the start on the mesh before the clearance refit and push.
 	PathResult planPath(const Point& from, const Point& to, const Point& halfExtents, const TravelFilter& travel, Point* snappedStart) const;
+	PathResult planPathFrom(const Point& from, const Point& to, const Point& halfExtents, const TravelFilter& travel, Point* snappedStart,
+		bool ownStart, bool* exempted) const;
 	void throughDoorMiddle(PathResult& result, const Point& from, const Point& to, const Point& halfExtents, const TravelFilter& travel,
 		const Point& snappedStart) const;
 
@@ -448,6 +459,14 @@ private:
 	dtNavMeshQuery* query_;
 	int maxNodes_;
 	std::unique_ptr<ClearanceCache> clearance_;
+	// planPath's working buffers, kept between calls (a NavQuery is single-threaded: query_ is too). Each was a fresh
+	// kMaxPathPolys-sized allocation per route (kenshi-k16.7.64).
+	struct Scratch
+	{
+		std::vector<std::uint32_t> polys, clear, cornerRefs, refs;
+		std::vector<float> corners, straight;
+	};
+	mutable Scratch scratch_;
 };
 
 } // namespace knav

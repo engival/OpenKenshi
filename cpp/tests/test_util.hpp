@@ -41,7 +41,7 @@ inline std::vector<std::byte> readFile(const std::string& path)
 	return bytes;
 }
 
-// A whole server frame (u32 len, u16 type, payload) as the client decoder (client/src/simlink.cpp, which rejects trailing bytes) still
+// A whole server frame (u32 len, u16 type, payload) as the client decoder (client/src/net/simlink.cpp, which rejects trailing bytes) still
 // reads it: without the 2026-11-02 tails (CHAR_DYNAMIC actionFlags u8; the kind 4 INTERACTABLE progress f32, rate f32, progressTick u64)
 // the 2026-11-13 INTERACTABLE kind 3 tail (building u64, piece u16) and the 2026-11-04 INTERACTABLE ownership tail (14 bytes) and CHAR_DYNAMIC pose tail (20 bytes, flag 15 or 16).
 // Delete this when the client decoder learns them.

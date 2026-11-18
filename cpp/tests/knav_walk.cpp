@@ -61,7 +61,7 @@ int main(int argc, char** argv)
 			const double fx = std::sin(heading), fz = std::cos(heading); // the facing
 			const auto move = [&](Drive mode, int strafe)
 			{
-				const knav::StepResult r = walker.drive(*start, mode, heading, speed, dt, true, strafe);
+				const knav::StepResult r = walker.drive(*start, mode, heading, speed, dt, strafe);
 				return Pt{ r.at.x - start->x, r.at.z - start->z };
 			};
 			const double full = speed * dt;
@@ -84,9 +84,9 @@ int main(int argc, char** argv)
 			// The ramped overload: the speed along the move direction ramps to gait x |local|; a stop with no strafe zeroes it.
 			double fs = 0.0;
 			for (int i = 0; i < 200; ++i)
-				walker.drive(*start, Drive::Stop, heading, speed, fs, dt, 60.0, true, 1);
+				walker.drive(*start, Drive::Stop, heading, speed, fs, dt, 60.0, 1);
 			test::require(std::fabs(fs - knav::kStrafeFactor * speed) < 1e-6, "the strafe ramp did not reach kStrafeFactor x gait");
-			walker.drive(*start, Drive::Stop, heading, speed, fs, dt, 60.0, true, 0);
+			walker.drive(*start, Drive::Stop, heading, speed, fs, dt, 60.0, 0);
 			test::require(fs == 0.0, "a stop with no strafe left a speed");
 		}
 

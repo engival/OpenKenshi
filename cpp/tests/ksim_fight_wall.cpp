@@ -149,7 +149,7 @@ Wall findWall(const MeshNavigator& nav)
 		const double uz = std::cos(angle);
 		const auto probe = [&](double side)
 		{
-			const knav::StepResult r = nav.walker().step({spot->x - uz * side, spot->y, spot->z + ux * side}, ux * 400.0, uz * 400.0, false);
+			const knav::StepResult r = nav.walker().step({spot->x - uz * side, spot->y, spot->z + ux * side}, ux * 400.0, uz * 400.0);
 			return r;
 		};
 		const knav::StepResult mid = probe(0.0);

@@ -450,6 +450,7 @@ void addFurnitureCage(ResidentData& data, const World& world, flecs::world& ecs,
 	const double dx = at[0] - building->cx;
 	const double dz = at[2] - building->cz;
 	spec.pieces.push_back({routines::SiteKind::Cage, spec.yawCos * dx - spec.yawSin * dz, spec.yawSin * dx + spec.yawCos * dz, at[1]});
+	spec.pieces.back().hasIn = true; // the occupant stands at the placement's centre (spec frame 0, 0), not at the use node
 	spec.hasHeight = true;
 	spec.originY = 0.0;
 	data.sites.add(spec);
@@ -518,6 +519,9 @@ void addLayoutFurniture(ResidentData& data, const World& world, flecs::world& ec
 				}
 			}
 			pieces.push_back({kind, x, z, piece.y});
+			pieces.back().hasIn = true;
+			pieces.back().inX = piece.x;
+			pieces.back().inZ = piece.z;
 		} else if (isChairPiece(gameData, *record)) {
 			chairs.push_back({piece.x, piece.z, piece.y, routines::rotate({piece.qw, piece.qx, piece.qy, piece.qz}, {0.0, 0.0, 1.0}),
 				chairFlags(gameData, *record), routines::functionClip(gameData, *record, routines::kClipSittingChair)});
@@ -554,6 +558,15 @@ void addLayoutFurniture(ResidentData& data, const World& world, flecs::world& ec
 			const double nodeY = kind == routines::SiteKind::Bed ? world3(bestHand, piece.x, piece.nodeY, piece.z)[1] : 0.0;
 			spec.pieces.push_back({kind, spec.yawCos * dx - spec.yawSin * dz, spec.yawSin * dx + spec.yawCos * dz, at[1],
 				spec.yawCos * fx - spec.yawSin * fz, spec.yawSin * fx + spec.yawCos * fz, piece.clip, piece.record, nodeY});
+			if (piece.hasIn)
+			{
+				const std::array<double, 3> centre = world3(bestHand, piece.inX, piece.y, piece.inZ);
+				const double cdx = centre[0] - building->cx;
+				const double cdz = centre[2] - building->cz;
+				spec.pieces.back().hasIn = true;
+				spec.pieces.back().inX = spec.yawCos * cdx - spec.yawSin * cdz;
+				spec.pieces.back().inZ = spec.yawSin * cdx + spec.yawCos * cdz;
+			}
 			if (kind == routines::SiteKind::Table)
 				tables.push_back({at[0], at[2]});
 		}
@@ -2458,8 +2471,10 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 			r.searchBuilding = best->searchBuilding;
 			r.searchPoint = best->searchPoint;
 		}
-		// A patrol that has arrived picks a new point; a goal that stands at its spot stays.
-		needsWalk = (goal == routines::task::Patrol || goal == routines::task::PatrolTown || best->spot) && !f.walking();
+		// A patrol that has arrived picks a new point; a goal that stands at its spot stays. A guard at its node is walked back to it when
+		// a fight (the hunt, a chase, a push) left it off: the held goal has no other step that returns it (ksim_after_fight).
+		const bool atNode = goal == routines::task::StaticGuardBuilding || goal == routines::task::StaticGuardBuildingIndoors;
+		needsWalk = (goal == routines::task::Patrol || goal == routines::task::PatrolTown || best->spot || atNode) && !f.walking();
 	}
 
 	// ---- sleeping, doors (T3c) ----

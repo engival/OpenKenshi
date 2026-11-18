@@ -117,6 +117,21 @@ int main(int argc, char** argv)
 			sim.run(1);
 			const scenario::Placed placed = scenario::apply(sim, *gameData, *combatData, context, peeler, 3);
 			const std::uint64_t occupant = placed.idOf.at(2);
+			// The peeler pins the machine's limb order, not the aid: characters spawn with their CHARACTER `inventory` kit (k16.6.287), and a
+			// friendly town medic (member 910 in the Heft shop, promoted after the start) would treat the severed prisoner and delay the last
+			// limbs past the machine's order. This fixture's world carries no kit: the loop strips what has spawned since, every 10 ticks.
+			const auto noKits = [&]()
+			{
+				sim.world().ecs().each([&](state::Inventory& pack)
+				{
+					std::erase_if(pack.items, [&](const state::Inventory::Entry& entry)
+					{
+						const ItemInfo* info = combatData->item(entry.itemSid);
+						return info != nullptr && info->function == kItemFunctionMedkit;
+					});
+				});
+			};
+			noKits();
 			const state::Fighter* f = sim.combat()->find(occupant);
 			test::require(f != nullptr && f->cageBuilding != 0, "the prisoner is in the cage");
 			test::require(f->armour.size() >= 2, "the prisoner wears its armour (" + std::to_string(f->armour.size()) + " pieces)");
@@ -132,6 +147,8 @@ int main(int argc, char** argv)
 			for (int tick = 1; tick <= kPeelerTicks && releasedAt == 0; ++tick)
 			{
 				sim.tick();
+				if (tick % 10 == 0)
+					noKits();
 				f = sim.combat()->find(occupant);
 				test::require(f != nullptr, "the occupant stays in the arena until released");
 				if (armourGoneAt == 0 && f->armour.empty())

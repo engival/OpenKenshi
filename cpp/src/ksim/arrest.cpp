@@ -125,9 +125,9 @@ void Simulation::imprison(std::uint64_t carrierId, std::uint64_t bodyId, const r
 	dropCarried(carrierId);
 	if (state::Fighter* put = combat_->find(bodyId))
 	{
-		put->x = cage.x;
+		put->x = cage.occupantX();
 		put->y = carrierY;
-		put->z = cage.z;
+		put->z = cage.occupantZ();
 		put->yaw = carrierYaw;
 		put->velX = 0.0;
 		put->velZ = 0.0;

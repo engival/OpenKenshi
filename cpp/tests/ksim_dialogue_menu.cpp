@@ -1,6 +1,6 @@
 // The reply menu at the server / wire level (docs/DIALOGUE.md 13.2 the pause, 13.3 the grace, 13.4 the resend; 13.8 rows 1-3), on the
 // real data: an in-process ksim server (a thread running SimLinkServer on a loopback port) and a test client built on the client session's
-// own decoder (client/src/simlink.cpp, compiled in unchanged). The sim-level lifecycle is `ksim_dialogue_events` "reply menus"; this pins
+// own decoder (client/src/net/simlink.cpp, compiled in unchanged). The sim-level lifecycle is `ksim_dialogue_events` "reply menus"; this pins
 // what only the server can show:
 //
 //  1. Freeze: an open menu sets CLOCK's dialogue bit and stops the tick; a reply lifts it and applies on the next tick. The pause is

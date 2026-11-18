@@ -1042,6 +1042,36 @@ std::optional<BuildingNav> CollisionLibrary::addBuilding(const PlacedInstance& p
 				placedShapes[i].door = key;
 		}
 	}
+	// Furniture, as against a building's shell: a layout piece, or a BUILDING record flagged `is interior furniture` (barrel, counter, bed,
+	// crate, table, rack: the flag is on the record, so a piece placed on its own in a zone has it too). A house, wall or gateway has not.
+	if (furniture || building->boolOr("is interior furniture", false))
+		for (WorldShape& shape : placedShapes)
+			shape.furniture = shape.use != NavUse::Door;
+	// Use nodes in the world (the same placement as the parts: scaled, rotated by the quaternion, moved to the placement).
+	{
+		constexpr std::int32_t kNodeUse = 4; // ksim routines::kNodeUse
+		std::vector<std::array<float, 3>> nodes;
+		const double w = placed.qw, qx = placed.qx, qy = placed.qy, qz = placed.qz;
+		for (const kdata::Instance& instance : building->instances)
+		{
+			const kdata::Record* node = instance.targetStringID.empty() ? nullptr : gameData_.find(instance.targetStringID);
+			if (node == nullptr || !node->boolOr("is node", false) || node->intOr("node type", 1) != kNodeUse || instance.transform.size() < 12)
+				continue;
+			float local[3];
+			std::memcpy(local, instance.transform.data(), sizeof local);
+			const double vx = local[0] * placed.scale, vy = local[1] * placed.scale, vz = local[2] * placed.scale;
+			const double tx = 2 * (qy * vz - qz * vy), ty = 2 * (qz * vx - qx * vz), tz = 2 * (qx * vy - qy * vx);
+			nodes.push_back({ static_cast<float>(placed.x + vx + w * tx + (qy * tz - qz * ty)),
+				static_cast<float>(placed.y + vy + w * ty + (qz * tx - qx * tz)),
+				static_cast<float>(placed.z + vz + w * tz + (qx * ty - qy * tx)) });
+		}
+		if (!nodes.empty())
+		{
+			const auto shared = std::make_shared<const std::vector<std::array<float, 3>>>(std::move(nodes));
+			for (WorldShape& shape : placedShapes)
+				shape.useNodes = shared;
+		}
+	}
 	if (withCollision != 0)
 		++coverage.placementsWithCollision;
 	else if (renderOnly != 0)

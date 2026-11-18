@@ -150,6 +150,10 @@ enum Flag : std::uint32_t
 	// Approved by the client 2026-11-14 (kenshi-k16.8.15; additive, no protocol bump).
 	kFlagStrafeLeft = 1u << 22,
 	kFlagStrafeRight = 1u << 23,
+	// The per-character PASSIVE (24) and HOLD POSITION (25) toggles (Fighter::passive / holdPosition), set by order 10 which 6 / 7.
+	// Not bit 13 (kFlagHold, the order-4 stand-and-stay state). Approved by the client 2026-11-16 (k16.6.312; additive, no protocol bump).
+	kFlagPassive = 1u << 24,
+	kFlagHoldPosition = 1u << 25,
 };
 
 // Limits on what a client may send (SIMLINK.md section 11).
@@ -455,6 +459,9 @@ public:
 	void sendTick(RecordWriter& out, bool initial);
 	// Paused: the debug view's queued answers only, no snapshot and no tick (the loop calls it instead of sendTick).
 	void sendDebugOnly(RecordWriter& out);
+	// Tags the events observed since the last call with the current sim tick. The run loop calls it after every sim tick of a catch-up
+	// batch, so one snapshot can carry the batch's events each with its own tick (SIMLINK.md snapshots, SIM_SCHEDULING 5O).
+	void stampEvents();
 	bool ready() const noexcept { return ready_; }
 	const StringTable& strings() const noexcept { return strings_; }
 	// A protocol error seen by the transport (a bad frame length): writes ERROR.
@@ -519,6 +526,7 @@ private:
 	// A combat event as the arena reported it, kept until the tick's records are written.
 	struct Observed
 	{
+		std::uint64_t tick = 0; // the sim tick it happened in (stampEvents); 0 = the tick of the snapshot that carries it
 		std::uint16_t kind = 0; // wire event kind: 1 hit, 3 KO, 5 death
 		std::uint64_t who = 0;
 		std::uint64_t other = 0;
@@ -791,6 +799,7 @@ private:
 	bool relationsKnown_ = false;
 	std::vector<Simulation::TaskProgressRow> taskSent_; // TASK_PROGRESS: the list the client last heard
 	std::uint64_t taskSentTick_ = 0;
+	std::uint64_t lastSendTick_ = 0; // the tick of the last sendTick: interval-aligned sends fire when a batch crossed a boundary
 	bool taskKnown_ = false;
 	std::uint8_t progressLevel_ = 1; // order 98: 0 none, 1 the original's bars of the player's characters, 2 every task of the player's, 3 plus everyone in view
 	bool taskForce_ = false; // the level changed: the next tick sends the list whatever the change test says

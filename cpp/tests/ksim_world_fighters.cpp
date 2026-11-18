@@ -185,7 +185,8 @@ std::vector<Person> peopleOf(Simulation& sim, const std::vector<flecs::entity>& 
 	{
 		const state::Fighter* f = sim.combat()->find(idOf(member));
 		test::require(f != nullptr, "a promoted member is in the arena");
-		people.push_back({f->raceSid, f->name, f->weapon.sid});
+		// The equipped weapon, drawn or on the back: a member that fought stands down after it (k16.6.288) and is rebuilt sheathed (its Fighter then holds FISTS).
+		people.push_back({f->raceSid, f->name, sim.sheathedWeaponOf(idOf(member)).empty() ? f->weapon.sid : sim.sheathedWeaponOf(idOf(member))});
 	}
 	return people;
 }

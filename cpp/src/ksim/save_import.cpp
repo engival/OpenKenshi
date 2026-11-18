@@ -767,7 +767,7 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 			f.z = m.c.z;
 			if (options.snapFull && sim.navigation() != nullptr)
 			{
-				if (const auto ground = sim.navigation()->walker().snap({m.c.x, m.c.y, m.c.z}, 100.0))
+				if (const auto ground = sim.placeOnGround(m.c.x, m.c.y, m.c.z))
 				{
 					f.x = ground->x;
 					f.y = ground->y;

@@ -881,6 +881,9 @@ void SiteIndex::add(const BuildingSpec& spec)
 			site.faceZ = -spec.yawSin * piece->faceX + spec.yawCos * piece->faceZ;
 			site.clip = piece->clip;
 			site.record = piece->record;
+			site.hasIn = piece->hasIn;
+			site.inX = spec.cx + spec.yawCos * piece->inX + spec.yawSin * piece->inZ;
+			site.inZ = spec.cz - spec.yawSin * piece->inX + spec.yawCos * piece->inZ;
 			site.hasNodeY = kind == SiteKind::Bed && spec.hasHeight;
 			site.nodeY = spec.originY + piece->nodeY;
 		}

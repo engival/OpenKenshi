@@ -18,6 +18,7 @@
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
+#include "caravan_unhurt.hpp"
 #include "test_util.hpp"
 
 #include <algorithm>
@@ -89,8 +90,13 @@ struct Run
 		Command attack = Command::fighterAttack(state::Id{player}, state::Id{boss});
 		attack.tick = sim.clockTick() + 100;
 		sim.enqueue(attack);
+		// The fixture pins the escape, not the aid: the caravan stays unhurt until the cuff (guards spawn with a kit, k16.6.287).
 		for (int i = 0; i < 2400 && fighter(player).slaveState != 1; ++i)
+		{
+			for (std::uint64_t id = boss; id < boss + 8; ++id)
+				keepCaravanUnhurt(sim, id);
 			sim.tick();
+		}
 		test::require(fighter(player).slaveState == 1, "the player is cuffed");
 	}
 

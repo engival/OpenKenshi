@@ -553,13 +553,16 @@ void putInBed(const char* bake)
 		for (std::size_t i = from; i < game.taskLog.size(); ++i)
 			std::cout << "  log " << game.taskLog[i] << "\n";
 	};
-	for (int i = 0; i < 600; ++i)
-		sim.run(1);
+	// No settling wait before the watch (it was 600 ticks of run, then dump): the carrier is decided in its squad's own slice of the second
+	// (Simulation::inSlice, k16.6.320), not at the second's tick, so 106 can be planned and the put-in done inside those ticks, and the check
+	// below would see the finished routine (goal 106 left with no chain, the person already in the bed). The watch starts at once.
 	dump();
 	runUntil(sim, [&]
 	{
 		const state::Routine* r = carrier.get<state::Routine>();
-		if (r != nullptr && r->goal == routines::task::FindBedAndPutIn)
+		// A 106 routine with no chain is the one the carrier held before it was handed the person (not yet re-scored with the body): not
+		// the plan under test. The person is put in the bed only through a 106 that chains it, so a missing chain still fails below.
+		if (r != nullptr && r->goal == routines::task::FindBedAndPutIn && r->chainTarget != 0)
 		{
 			planned = true;
 			test::require(r->chainTarget == bodyId, "106 carries the downed person as its chain target");

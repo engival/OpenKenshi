@@ -32,7 +32,7 @@ Walker::Walker(const NavMesh& mesh, TravelFilter travel)
 {
 }
 
-StepResult Walker::step(const Position& from, double dx, double dz, bool grounded) const
+StepResult Walker::step(const Position& from, double dx, double dz) const
 {
 	StepResult result;
 	result.at = from;
@@ -63,12 +63,6 @@ StepResult Walker::step(const Position& from, double dx, double dz, bool grounde
 			result.blocked = true;
 			break;
 		}
-	}
-	if (ground_ && grounded)
-	{
-		const double terrain = ground_(result.at.x, result.at.z);
-		if (std::fabs(result.at.y - terrain) <= kGroundSnap)
-			result.at.y = terrain;
 	}
 	return result;
 }
@@ -159,20 +153,20 @@ DriveLocal driveLocal(Drive mode, int strafe) noexcept
 	return v;
 }
 
-StepResult Walker::drive(const Position& from, Drive mode, double heading, double gait, double& forwardSpeed, double dt, double accel, bool grounded, int strafe) const
+StepResult Walker::drive(const Position& from, Drive mode, double heading, double gait, double& forwardSpeed, double dt, double accel, int strafe) const
 {
 	const DriveLocal local = driveLocal(mode, strafe);
 	const double length = std::hypot(local.forward, local.side);
 	if (length <= 0.0)
 	{
 		forwardSpeed = 0.0; // a stop is dead (the server's direct drive does the same); only a start ramps
-		return drive(from, Drive::Stop, heading, 0.0, dt, grounded);
+		return drive(from, Drive::Stop, heading, 0.0, dt);
 	}
 	forwardSpeed = rampSpeed(forwardSpeed, local.forward < 0.0 ? -gait * length : gait * length, dt, accel);
-	return drive(from, mode, heading, std::fabs(forwardSpeed) / length, dt, grounded, strafe);
+	return drive(from, mode, heading, std::fabs(forwardSpeed) / length, dt, strafe);
 }
 
-StepResult Walker::drive(const Position& from, Drive mode, double heading, double speed, double dt, bool grounded, int strafe) const
+StepResult Walker::drive(const Position& from, Drive mode, double heading, double speed, double dt, int strafe) const
 {
 	const DriveLocal local = driveLocal(mode, strafe);
 	if (local.forward == 0.0 && local.side == 0.0)
@@ -187,12 +181,20 @@ StepResult Walker::drive(const Position& from, Drive mode, double heading, doubl
 	// Heading 0 = +z, increasing towards +x: forward = (sin, cos), right = (cos, -sin).
 	const double dx = (sn * local.forward + cs * local.side) * speed * dt;
 	const double dz = (cs * local.forward - sn * local.side) * speed * dt;
-	return step(from, dx, dz, grounded);
+	return step(from, dx, dz);
 }
 
 bool Walker::onMesh(const Position& p) const
 {
 	return query_.onMesh(toPoint(p), kStand);
+}
+
+bool Walker::inside(const Position& p) const
+{
+	constexpr float kInsideHair = 0.02f;
+	Point out;
+	return query_.nearestPoint(toPoint(p), { kInsideHair, 12.0f, kInsideHair }, out)
+		&& std::hypot(out[0] - p.x, out[2] - p.z) <= kInsideHair;
 }
 
 std::optional<Position> Walker::snap(const Position& p, double reach, double* distance, double reachY) const
@@ -206,17 +208,6 @@ std::optional<Position> Walker::snap(const Position& p, double reach, double* di
 		*distance = std::sqrt((out[0] - p.x) * (out[0] - p.x) + (out[1] - p.y) * (out[1] - p.y)
 			+ (out[2] - p.z) * (out[2] - p.z));
 	return Position{ out[0], out[1], out[2] };
-}
-
-Position Walker::settle(Position p) const
-{
-	if (ground_)
-	{
-		const double terrain = ground_(p.x, p.z);
-		if (std::fabs(p.y - terrain) <= kGroundSnap)
-			p.y = terrain;
-	}
-	return p;
 }
 
 std::optional<double> Walker::surfaceY(double x, double y, double z, double reach) const

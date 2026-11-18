@@ -235,6 +235,24 @@ Command Command::fighterFollow(state::Id subject, state::Id leader)
 	return command;
 }
 
+Command Command::fighterPassive(state::Id subject, bool on)
+{
+	Command command;
+	command.type = CommandType::FighterPassive;
+	command.subject = subject.value;
+	command.value = on ? 1 : 0;
+	return command;
+}
+
+Command Command::fighterHoldPosition(state::Id subject, bool on)
+{
+	Command command;
+	command.type = CommandType::FighterHoldPosition;
+	command.subject = subject.value;
+	command.value = on ? 1 : 0;
+	return command;
+}
+
 Command Command::fighterSneak(state::Id subject, bool on)
 {
 	Command command;
@@ -1127,9 +1145,38 @@ void Simulation::applyGameOptions()
 		combatSettings_.medicalClock);
 }
 
+// The ECS Fighter is written by stepCombat's mirror, mid-tick; the writers after it (stepWorldTasks, the routines, the jobs) change the arena
+// Fighter only, and the next tick's mirror carries it over. A save or a hash taken between two ticks would hold the Fighter as it was before
+// those writers, and a load would lose what they did (the squad's follow orders, k16.6.320). Until the encode is done the ECS copy is the
+// arena's; the old copy is put back after, so taking a save or a hash never changes what the next tick reads (and costs nothing per tick).
+Simulation::ArenaMirror::ArenaMirror(const Simulation& simulation) : sim(simulation)
+{
+	if (sim.combat_ == nullptr)
+		return;
+	flecs::world& ecs = const_cast<flecs::world&>(sim.world_.ecs());
+	const auto& members = sim.combat_->members();
+	held.reserve(members.size());
+	for (std::size_t i = 0; i < members.size(); ++i)
+	{
+		state::Fighter* copy = ecs.entity(sim.combatEntities_[i]).get_mut<state::Fighter>(); // no OnSet: nothing observes this
+		held.push_back(std::move(*copy));
+		*copy = members[i].fighter;
+	}
+}
+
+Simulation::ArenaMirror::~ArenaMirror()
+{
+	if (sim.combat_ == nullptr)
+		return;
+	flecs::world& ecs = const_cast<flecs::world&>(sim.world_.ecs());
+	for (std::size_t i = 0; i < held.size(); ++i)
+		*ecs.entity(sim.combatEntities_[i]).get_mut<state::Fighter>() = std::move(held[i]);
+}
+
 void Simulation::save(std::ostream& out) const
 {
 	KSIM_PROFILE_SCOPE(profiler_, Save);
+	const ArenaMirror mirror(*this);
 	syncBoardStates();
 	const struct Drop { const Simulation& sim; ~Drop() { sim.dropBoardStates(); } } drop{*this};
 	writeSave(out, world_.ecs(), world_.loadOrder(), pending_);
@@ -1138,6 +1185,7 @@ void Simulation::save(std::ostream& out) const
 void Simulation::saveGame(const std::string& path) const
 {
 	KSIM_PROFILE_SCOPE(profiler_, Save);
+	const ArenaMirror mirror(*this);
 	syncBoardStates();
 	const struct Drop { const Simulation& sim; ~Drop() { sim.dropBoardStates(); } } drop{*this};
 	writeSaveFile(path, world_.ecs(), world_.loadOrder(), pending_);
@@ -1201,18 +1249,19 @@ void Simulation::tick()
 		ensureBlackboards(); // the respawns and the strategic step may have built squads
 		if (now % kSquadIntervalTicks == 0)
 		{
-			prepareWorldCarry();
-			KSIM_PROFILE_SUB(CarryPrep);
 			attachBarTables();
 			attachSlaveDepots();
 			KSIM_PROFILE_SUB(BarDepots);
-			ai_->squadStep(ecs, *regions_, now);
-			KSIM_PROFILE_SUB(SquadStep);
-			logDeliveryFailures();
-			KSIM_PROFILE_SUB(DeliveryLog);
-			stepWorldSquads();
-			KSIM_PROFILE_SUB(WorldSquads);
 		}
+		// Every tick: each does the squads of this tick's slice (inSlice), so the second's work is spread over its 20 ticks.
+		prepareWorldCarry();
+		KSIM_PROFILE_SUB(CarryPrep);
+		ai_->squadStep(ecs, *regions_, now);
+		KSIM_PROFILE_SUB(SquadStep);
+		logDeliveryFailures();
+		KSIM_PROFILE_SUB(DeliveryLog);
+		stepWorldSquads();
+		KSIM_PROFILE_SUB(WorldSquads);
 	}
 	KSIM_PROFILE_MARK(AiSquad);
 	stepStragglers();
@@ -1466,22 +1515,6 @@ void Simulation::disableLineOfSight() noexcept
 		combat_->environmentMutable().lineOfSight = nullptr; // a null std::function's assignment does not throw
 }
 
-double Simulation::groundY(std::uint64_t id, const state::Fighter& fighter) const
-{
-	if (los_ == nullptr || !los_->loaded(los_->regionOf(fighter.x, fighter.z)))
-		return fighter.y;
-	const std::uint64_t trees = los_->regionsBuilt() * 1000003u + los_->loadedRegions();
-	GroundMemo& memo = groundMemo_[id];
-	if (memo.trees == trees && memo.x == fighter.x && memo.z == fighter.z && memo.navY == fighter.y)
-		return memo.y;
-	const double top = fighter.y + kGroundRayUp;
-	const LineOfSight::Hit hit = los_->traceGround({fighter.x, top, fighter.z}, {fighter.x, top - kGroundRayLength, fighter.z});
-	memo = {fighter.x, fighter.z, fighter.y, trees, fighter.y};
-	if (hit.blocked && std::fabs(hit.x[1] - fighter.y) <= kGroundRayBand)
-		memo.y = hit.x[1];
-	return memo.y;
-}
-
 void Simulation::syncLineOfSight()
 {
 	if (los_ == nullptr || regions_ == nullptr)
@@ -1524,11 +1557,14 @@ void Simulation::adoptFighter(flecs::entity entity, state::Fighter fighter)
 			if (!piece.sid.empty())
 				inventory.add(piece.sid, 1, static_cast<std::uint8_t>(state::Inventory::kArmourBase + piece.slot), piece.quality);
 		}
+		for (const auto& [sid, count] : fighter.spawnPack)
+			inventory.add(sid, count);
 		inventory.version = 1;
 		if (gameData_ != nullptr)
 			grid::settle(inventory, grid::Rules(*gameData_), id);
 		entity.set<state::Inventory>(std::move(inventory));
 	}
+	fighter.spawnPack.clear();
 	if (fighter.building == 0 && fighter.carriedBy == 0)
 	{
 		setLocation(fighter, buildingAt(fighter.x, fighter.y, fighter.z), fighter.y);
@@ -2257,6 +2293,8 @@ void Simulation::apply(const Command& command)
 	case CommandType::FighterDrive:
 	case CommandType::FighterFollow:
 	case CommandType::FighterSneak:
+	case CommandType::FighterPassive:
+	case CommandType::FighterHoldPosition:
 	case CommandType::FighterInteract:
 	case CommandType::FighterDrop:
 	case CommandType::FighterRun:
@@ -2312,13 +2350,14 @@ void Simulation::apply(const Command& command)
 			mirrorFighter(command.subject);
 		}
 		// Any order but sneak and block ends a running interact order and empties the queue (the interact order sets its own below).
+		const bool toggle = command.type == CommandType::FighterPassive || command.type == CommandType::FighterHoldPosition;
 		if (command.type != CommandType::FighterSneak && command.type != CommandType::FighterBlock
-			&& command.type != CommandType::FighterDrop && command.type != CommandType::FighterRun)
+			&& command.type != CommandType::FighterDrop && command.type != CommandType::FighterRun && !toggle)
 			cancelOrders(command.subject);
 		// Any order but sneak and block replaces the follow task (SQUAD_FOLLOW.md s9: following needs an order).
 		if (command.type != CommandType::FighterSneak && command.type != CommandType::FighterBlock
 			&& command.type != CommandType::FighterFollow && command.type != CommandType::FighterDrop
-			&& command.type != CommandType::FighterRun)
+			&& command.type != CommandType::FighterRun && !toggle)
 			combat_->endFollow(*f);
 		if (command.type == CommandType::FighterMoveTo)
 		{
@@ -2426,6 +2465,10 @@ void Simulation::apply(const Command& command)
 			const std::uint8_t mode = static_cast<std::uint8_t>(std::clamp(command.value, 0, 3));
 			f->moveMode = mode;
 			f->speedGroup = mode == 3 ? command.object : 0; // another mode leaves the group
+		} else if (command.type == CommandType::FighterPassive) {
+			f->passive = command.value != 0;
+		} else if (command.type == CommandType::FighterHoldPosition) {
+			f->holdPosition = command.value != 0;
 		} else if (command.type == CommandType::FighterSneak) {
 			f->sneak = command.value != 0;
 		} else {
@@ -2494,6 +2537,7 @@ std::uint64_t Simulation::rngState(Subsystem subsystem) const
 
 std::uint64_t Simulation::stateHash() const
 {
+	const ArenaMirror mirror(*this);
 	return ksim::stateHash(world_.ecs());
 }
 
