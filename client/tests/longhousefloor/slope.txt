@@ -1,0 +1,9 @@
+# open-ground walk (kenshi-kyat.2): ik_calm, the Wanderer walks down the slope east of the Storm House (x -50540..-50480, z -1211); KYLOG=1 prints YLOG rows.
+# Run: KSCEN=scenarios/ik_calm.kscen KYLOG=1 client/tests/longhousefloor/run.sh slope OUT
+10 set animate 1
+110 camera char Wanderer
+300 screenshot OUTDIR/start.png
+310 move -50540 -1211
+700 move -50480 -1211
+1200 screenshot OUTDIR/end.png
+1300 quit

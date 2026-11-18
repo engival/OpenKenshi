@@ -1,0 +1,13 @@
+# multi_cut (kenshi-k16.2.332.1; parent kenshi-k16.2.332). Two player squads, one character each, one in each of the two Storm Houses of Heft
+# (both two-storey): the original cuts BOTH buildings at the selected floor, whichever squad is selected (user 2026-11-17, GOG shot
+# multi_building_cut: "Player characters are in TWO buildings (they're not even in the same squad). With floor selected at 0, both buildings
+# are cut open"). client/tools/multi_cut_check.sh is the headless check. Nobody else is placed: radius=0 clears nothing, the Heft crowd is the
+# default world's; only the player is ever ordered (SCENARIO_IMPORT.md "Rule").
+KSCEN 2
+scenario title=Two%20squads%2C%20two%20houses setup=The%20Wanderer%20and%20a%20second%20squad%27s%20Drifter%20each%20stand%20inside%20a%20different%20Storm%20House%20in%20Heft. look_for=Floor%20selector%20at%200%3A%20are%20both%20houses%20cut%20open%20whichever%20squad%20is%20selected%3F bead=kenshi-k16.2.332.1 metrics=bodies_down
+source save=playtest game=1.0.68 radius=0 centre=68330,-70757 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=68240 y=1387 z=-70797 yaw=0 leader=1 player=1
+squad id=2 name=Drifter faction=204-gamedata.base player=1 money=0
+char id=2 squad=2 name=Drifter template=1533662-rebirth.mod faction=204-gamedata.base x=68445 y=1383 z=-70717 yaw=0 leader=1 player=1

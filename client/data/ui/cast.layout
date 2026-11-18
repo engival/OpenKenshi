@@ -1,0 +1,7 @@
+# The spectator's cast list (ui::CastWindow in client/src/ui/cast.cpp). The code fills the "list" slot (a table of the characters) and
+# the count line, and says what the filter does. Format: README.md here.
+
+col gap=6 pad=10
+	edit id=filter size=30 tip="Keep the characters whose name or faction holds this (any case)"
+	slot id=list size=fill
+	label id=count size=24 colour=Main alpha=0.7 text_valign=center tip="Click: inspect. Double click or Enter: follow"

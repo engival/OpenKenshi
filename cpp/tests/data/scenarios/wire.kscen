@@ -1,0 +1,10 @@
+# The scenario wire's fixture (task CE; ksim_simlink): one player and one hostile bandit on the Hub spot its navmesh covers. Hand-written,
+# not game-derived. The header is what SCENARIO_LIST reads; the characters are what SCENARIO_LOAD places.
+KSCEN 2
+scenario title=Wire%20scenario setup=One%20player%20and%20one%20hostile%20bandit%20on%20the%20Hub%20spot%20the%20test%27s%20navmesh%20covers. look_for=Nothing%20in%20particular%3A%20the%20wire%20test%20runs%20it%20and%20reads%20the%20metrics. bead=kenshi-test.1 metrics=targeted_player,fight_s,player_downed_s
+source save=wire game=synthetic radius=0 centre=-50978.8,2932.48 leader=Tester
+clock day=1 hour=12 minute=0
+squad id=1 name=Tester_1 faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Tester template=1533662-rebirth.mod race=17-gamedata.quack faction=204-gamedata.base x=-50978.8 y=1533.47 z=2932.48 yaw=0 leader=1 player=1 chase=1 ranged=1 stealth=1
+squad id=2 name=Bandits_1 faction=200-gamedata.base template=1302-gamedata.base package=5201-gamedata.base player=0 hostile=1
+char id=2 squad=2 name=Dust%20bandit template=510-gamedata.base faction=200-gamedata.base x=-50958.8 y=1533.44 z=2932.48 yaw=3.14159 leader=1 chase=1 ranged=1

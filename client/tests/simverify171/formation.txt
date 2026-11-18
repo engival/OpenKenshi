@@ -1,0 +1,47 @@
+# k16.6.139: four squad members (the scenario's Wanderer, Beep, Green and Fourth; the runner fills their ids from a probe, charids.sh) walk to a point 250 u east in formation. Per-frame gait log of all players (sim yaw vs drawn yaw, position).
+10 set animate 1
+60 dump chars
+100 select id=@Wanderer@
+101 select id=@Beep@ add
+102 select id=@Green@ add
+103 select id=@Fourth@ add
+110 follow char id=@Wanderer@
+120 set dist 500
+130 log gait players
+140 screenshot OUTDIR/f0140_start.png
+150 move -50370 -1086
+300 screenshot OUTDIR/f0300.png
+450 screenshot OUTDIR/f0450.png
+600 screenshot OUTDIR/f0600.png
+750 screenshot OUTDIR/f0750.png
+900 screenshot OUTDIR/f0900.png
+1050 screenshot OUTDIR/f1050.png
+1200 screenshot OUTDIR/f1200.png
+1350 screenshot OUTDIR/f1350.png
+160 dump motion all
+220 dump motion all
+280 dump motion all
+340 dump motion all
+400 dump motion all
+460 dump motion all
+520 dump motion all
+580 dump motion all
+640 dump motion all
+700 dump motion all
+760 dump motion all
+820 dump motion all
+880 dump motion all
+940 dump motion all
+1000 dump motion all
+1060 dump motion all
+1120 dump motion all
+1180 dump motion all
+1240 dump motion all
+1300 dump motion all
+1360 dump motion all
+1420 dump motion all
+1480 dump motion all
+1500 screenshot OUTDIR/f1500_arrived.png
+1510 dump chars
+1520 log gait off
+1530 quit

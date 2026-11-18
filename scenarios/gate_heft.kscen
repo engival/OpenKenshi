@@ -1,0 +1,12 @@
+# gate_heft (kenshi-k16.2.241.2): one player character 45 u outside Heft's Defensive Gate IV (placement 15-Newwworld-INGAME,
+# 67157.30,-72071.85, door "Defensive Gate level 4 Door" 2937-Walls2.mod, at 67122.9,-72113.6 = 45 u along the outside normal
+# + 30 u aside, so it does not stand in front of the leaves), so the gate's door interactable is in the session's detail bounds.
+# Nothing else placed: the world's own residents and gate crew are the default Heft ones. The player's squad is in the United Cities
+# faction (Heft's owner), so it may Unlock the gate after closing it (a locked gate reopens with Unlock, then Open). Quiet: no fight.
+# Verify ask for kenshi-k16.2.241 (gate leaves draw and move), from the worker's fixture in findings/kenshi-k16.2.241.2/.
+KSCEN 2
+scenario title=Heft%20gate%20leaves setup=The%20Wanderer%20stands%20outside%20Heft%27s%20big%20wall%20gate%2C%20the%20Defensive%20Gate%20IV%2C%20and%20its%20door%20leaf%20is%20in%20view. look_for=Do%20the%20gate%27s%20door%20leaves%20draw%20closed%20in%20the%20frame%20and%20slide%20open%2Fshut%20when%20the%20door%20changes%20state%3F bead=kenshi-k16.2.241 metrics=player_downed_s
+source save=playtest game=1.0.68 radius=0 centre=67122.9,-72113.6 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=defaultEmpireFactionSID player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=defaultEmpireFactionSID x=67122.9 y=1244.2 z=-72113.6 yaw=0.690 leader=1 player=1 chase=1 ranged=1

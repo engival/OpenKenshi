@@ -1,0 +1,28 @@
+Retired 2026-11-01 from src/ksim/combat.cpp (kRecoilTime / kRecoilPath / recoilPath, Ctx::integrate). A fitted displacement curve
+(0.2 u at 0.1 s ... 12.6 u at 1.1 s, median over the servant's 154 staggers of r1-r20) applied from the stagger start, never restarted
+by the combo's second hit. Replaced by the hit-reaction clips' own root motion (`mid blow` for a heavy first hit, cut at 1.2 s;
+`mid blow light` for every reaction after it, restarted by a heavy hit during a reaction): kinspect item 26 (b).
+
+constexpr double kRecoilTime[] = {0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.1};
+constexpr double kRecoilPath[] = {0.0, 0.2, 1.3, 4.3, 7.7, 10.7, 12.6};
+double recoilPath(double t)
+{
+	constexpr int n = 7;
+	if (t <= 0.0)
+		return 0.0;
+	for (int i = 1; i < n; ++i)
+	{
+		if (t <= kRecoilTime[i])
+			return kRecoilPath[i - 1] + (kRecoilPath[i] - kRecoilPath[i - 1]) * (t - kRecoilTime[i - 1]) / (kRecoilTime[i] - kRecoilTime[i - 1]);
+	}
+	return kRecoilPath[n - 1];
+}
+
+	if (f.state == CombatState::Stumble && f.stateTime < kStumbleTime)
+	{
+		const double push = recoilPath(f.stateTime) - recoilPath(f.stateTime - dt);
+		shift(f, f.recoilX * push, f.recoilZ * push);
+		f.forwardSpeed = 0.0;
+		f.lateralSpeed = 0.0;
+		return;
+	}

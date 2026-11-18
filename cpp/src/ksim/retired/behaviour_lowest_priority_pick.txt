@@ -1,0 +1,39 @@
+Retired 2026-11-09 (task ds/board-pick): BehaviourRegistry's per-template default package, from behaviours.cpp.
+It picked the LOWEST-priority AI package (ties by name, then stringID) and patched two cases by hand: a wandering package anywhere in
+the list made a trade circuit (the rebirth Caravan lists wandering at 1, "hang out in a bar" at 0), and a bar hangout anywhere beat a
+go-home default (the Hub's "Mercenary guild"). The G1 board (blackboard.cpp, dt19) picks the HIGHEST priority, ties in data order, so
+both patches are the board's own answer and no kinspect finding keeps them (dt24_39 and item54 name the packages, not a rule).
+
+		// (priority, name, stringID) of the lowest-priority package.
+		std::tuple<std::int32_t, std::string, std::string> best{0, {}, {}};
+		bool any = false;
+		prefab.each<tmpl::AiPackageLink>([&](flecs::entity package)
+		{
+			const std::tuple<std::int32_t, std::string, std::string> key{
+				prefab.get<tmpl::AiPackageLink>(package)->priority, nameOf(package),
+				package.get<tmpl::Source>()->stringID};
+			if (!any || key < best)
+				best = key;
+			any = true;
+		});
+		Mapping chosen = any ? packages_.at(std::get<2>(best)) : none_;
+		// A wandering package anywhere in the list makes a trade circuit (TOWN_LIFE_SLICE T2): the rebirth Caravan lists "Wandering from town
+		// to town" at priority 1 and "hang out in a bar" at 0, and the live caravan ran the wandering one (kinspect item 54); the bar is the
+		// stop of the circuit, not a second life.
+		prefab.each<tmpl::AiPackageLink>([&](flecs::entity package)
+		{
+			const Mapping& candidate = packages_.at(package.get<tmpl::Source>()->stringID);
+			if (candidate.behaviour == Behaviour::TradeCircuit && chosen.behaviour != Behaviour::TradeCircuit)
+				chosen = candidate;
+		});
+		// UNSURE (ours, by the caravan's rule): a bar hangout anywhere in the list beats a go-home default. The Hub's bar squad "Mercenary guild"
+		// lists "hang out in a bar" at 1 over "Go home everybody" at 0 (3 templates do); on the go-home it stood idle on the town point.
+		if (chosen.behaviour == Behaviour::GoHome)
+		{
+			prefab.each<tmpl::AiPackageLink>([&](flecs::entity package)
+			{
+				const Mapping& candidate = packages_.at(package.get<tmpl::Source>()->stringID);
+				if (candidate.behaviour == Behaviour::BarHangout)
+					chosen = candidate;
+			});
+		}

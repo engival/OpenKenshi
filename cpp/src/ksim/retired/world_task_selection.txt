@@ -1,0 +1,184 @@
+Retired 2026-11-07 (task BW, ROADMAP item 0 C): the hand-written world-task selection of stepWorldTasks.
+
+Replaced by: the native goal selector (cpp/include/ksim/goalsel.hpp, cpp/src/ksim/goalsel.cpp) and the G3 resolvers
+(cpp/src/ksim/world_resolvers.hpp), run in Simulation::stepWorldTasks over a world squad's package goal rows (kinspect dt14, dt15,
+dt16). A goal is now a candidate of the member's role list with its own tier, weight and hour window; the resolvers 167, 177, 183,
+260, 168, 112 and 173 replace the two hard-coded scans. The first aid effect (58 / 25) stayed.
+
+Among what changed: the squad's goals were "any package the template links carries 167 / 177", not the role list's rows; the pick
+was the nearest body to the leader (one leader chose for the whole squad); and the 5-member capture cap was an observation of the
+live caravan, not a rule. The direct-task executors below (167's chain in carry.cpp, 177's food take) stayed; the selection did not.
+
+The packages-carries test and the leader pick (the helpers before stepWorldTasks):
+
+// The leader of a built world squad (residents.cpp's rule): its first member in Id order that is alive, conscious, not the player's and
+// on no Routine of its own.
+std::uint64_t leaderOf(const CombatArena& combat, const std::vector<std::pair<std::uint64_t, flecs::entity>>& members)
+{
+	for (const auto& [id, member] : members)
+	{
+		const state::Fighter* f = combat.find(id);
+		if (f != nullptr && !f->dead && !f->unconscious && !f->playerControlled && !member.has<state::Routine>())
+			return id;
+	}
+	return 0;
+}
+
+// Whether any AI package the template links carries `task`. The live caravan's chosen package is the wandering one, but its deliver
+// package (192) is a second link; the trigger is "the package goal", so any link counts. The town scorer reads only the registry's
+// chosen package (some squad templates map to a package family the registry resolves elsewhere).
+bool templateCarries(const World& world, const routines::PackageTable& packages, const std::string& templateSid, std::uint16_t task)
+{
+	const auto prefab = world.prefabs().find(templateSid);
+	if (prefab == world.prefabs().end() || !prefab->second.has<tmpl::SquadTemplate>())
+		return false;
+	bool carries = false;
+	prefab->second.each<tmpl::AiPackageLink>([&](flecs::entity package)
+	{
+		const tmpl::Source* source = package.get<tmpl::Source>();
+		const routines::CompiledPackage* compiled = source != nullptr ? packages.find(source->stringID) : nullptr;
+		carries = carries || (compiled != nullptr && routines::carriesGoal(*compiled, task));
+	});
+	return carries;
+}
+
+The selection, as it stood at the end of the ecs.each squad pass:
+
+		const bool capture = templateCarries(world_, residentData_->packages, instance.templateSid, routines::task::CaptureSlaves);
+		const bool loot = templateCarries(world_, residentData_->packages, instance.templateSid, routines::task::LootTheDead);
+		if (!capture && !loot)
+			return;
+		const auto list = squadMembers(squad);
+		const std::uint64_t leader = leaderOf(*combat_, list);
+		if (leader == 0)
+			return;
+		// The fight first: a squad still swinging at someone captures and loots once it is over (the live attack had ended before the
+		// squad turned on its prize).
+		if (squadInFight(*combat_, list))
+			return;
+		std::set<std::uint64_t> own;
+		std::size_t capturing = 0;
+		for (const auto& [memberId, member] : list)
+		{
+			own.insert(memberId);
+			const state::Routine* r = member.get<state::Routine>();
+			capturing += r != nullptr && r->goal == routines::task::CaptureSlaves ? 1 : 0;
+		}
+		const state::Fighter& leaderFighter = *combat_->find(leader);
+
+		// ---- first aid (58 / 25, the effect only: no goal of its own is modelled) ----
+		for (const auto& [carrierId, carrier] : list)
+		{
+			const state::Fighter* carrierF = combat_->find(carrierId);
+			if (carrierF == nullptr || carrierF->carrying == 0)
+				continue;
+			const state::Fighter* patient = combat_->find(carrierF->carrying);
+			if (patient == nullptr || patient->slaveState != 1)
+				continue;
+			std::uint64_t medic = 0;
+			double best = kFirstAidReach;
+			for (const auto& [medicId, medicEntity] : list)
+			{
+				const state::Fighter* f = combat_->find(medicId);
+				if (medicId == carrierId || f == nullptr || f->dead || f->unconscious || f->down)
+					continue;
+				const double d = std::hypot(f->x - carrierF->x, f->z - carrierF->z);
+				if (d > best)
+					continue;
+				const state::Inventory* pack = medicEntity.get<state::Inventory>();
+				if (pack == nullptr || !carriesFunction(combat_->data(), *pack, kItemFunctionMedkit))
+					continue;
+				best = d;
+				medic = medicId;
+			}
+			if (medic != 0)
+				treat(medic, carrierF->carrying);
+		}
+
+		if (capture && capturing < kCaptureMembers)
+		{
+			// The nearest capture candidate to the squad, by the one resolver the town scorer shares with this path
+			// (capture_target.hpp: dt5's terms, dt8's conscious crawler, the sensor list's ally bit - tasks BR, BU). The squad's own
+			// members are never the catch.
+			const std::uint64_t body = capture::nearest(leader, leaderFighter, sensorContext(), kBodySight,
+				[&](std::uint64_t candidate) { return combat_->find(candidate); },
+				[&](std::uint64_t candidate) { return own.count(candidate) != 0; });
+			if (body != 0)
+			{
+				for (const auto& [memberId, member] : list)
+				{
+					if (memberId == leader || capturing >= kCaptureMembers)
+						continue;
+					if (!freeMember(*combat_, memberId, member) || worldTaskBlocks_.count({memberId, body}) != 0)
+						continue;
+					state::Fighter& f = *combat_->find(memberId);
+					CombatArena::endFollow(f);
+					state::Routine r;
+					r.goal = routines::task::CaptureSlaves;
+					r.since = now;
+					r.nextScore = now;
+					r.chainTarget = body;
+					r.chainElapsed = -1.0;
+					member.set<state::Routine>(std::move(r));
+					walkTo(memberId, *combat_->find(body));
+					// Task BR2: the chain's first line, in the server's log (the client cannot see a capture start).
+					{
+						const state::Fighter* victim = combat_->find(body);
+						std::ostringstream line;
+						line << "capture start 167 member " << memberId << " body " << body << " at (" << std::lround(victim->x) << ", "
+							<< std::lround(victim->z) << ") body down " << (victim->down ? 1 : 0) << " unconscious "
+							<< (victim->unconscious ? 1 : 0);
+						logTask(line.str());
+					}
+					++capturing;
+				}
+			}
+		}
+
+		if (!loot)
+			return;
+		for (const auto& [memberId, member] : list)
+		{
+			const state::Routine* r = member.get<state::Routine>();
+			if (r != nullptr && r->goal == routines::task::LootTheDead)
+				return; // one member loots; the next body waits for it to finish
+		}
+		// The nearest (free member, down body with food) pair: the winners' one looter.
+		std::uint64_t looter = 0;
+		std::uint64_t target = 0;
+		double nearest = kBodySight;
+		for (const auto& [memberId, member] : list)
+		{
+			if (memberId == leader || !freeMember(*combat_, memberId, member))
+				continue;
+			const state::Fighter& f = *combat_->find(memberId);
+			for (const CombatArena::Member& candidate : members)
+			{
+				const state::Fighter& b = candidate.fighter;
+				if ((!b.dead && !b.unconscious && !b.down) || b.carriedBy != 0 || b.cageBuilding != 0 || own.count(candidate.id) != 0
+					|| worldTaskBlocks_.count({memberId, candidate.id}) != 0)
+					continue;
+				const double d = std::hypot(b.x - f.x, b.z - f.z);
+				if (d >= nearest)
+					continue;
+				const flecs::entity bodyEntity = fighterEntity(candidate.id);
+				const state::Inventory* pack = bodyEntity.get<state::Inventory>();
+				if (pack == nullptr || !carriesFunction(combat_->data(), *pack, kItemFunctionFood))
+					continue;
+				nearest = d;
+				looter = memberId;
+				target = candidate.id;
+			}
+		}
+		if (looter == 0)
+			return;
+		state::Fighter& f = *combat_->find(looter);
+		CombatArena::endFollow(f);
+		state::Routine r;
+		r.goal = routines::task::LootTheDead;
+		r.since = now;
+		r.nextScore = now;
+		r.chainTarget = target;
+		r.chainElapsed = -1.0;
+		fighterEntity(looter).set<state::Routine>(std::move(r));
+		walkTo(looter, *combat_->find(target));

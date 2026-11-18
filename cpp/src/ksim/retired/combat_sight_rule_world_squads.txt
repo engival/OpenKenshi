@@ -1,0 +1,20 @@
+Retired 2026-11-02 (BQ13 / BQ14 join rules, cpp/src/ksim/join_rules.cpp): the sight rule for package-driven characters.
+
+Replaced by: CombatArena::Ctx::joinAllows (combat.cpp) + joins::allows (join_rules.cpp). A character with an AI package now picks a fight only through
+the attack goals of its role list (16 / 15 / 143 / 34) or because it is targeted. A plain fighter (no package: duels, tests) still uses this rule.
+
+The rule, as it stood in CombatArena::Ctx::pickTarget (the loop after the "keep the target for a second" test):
+
+	for (Member& other : arena.members_)
+	{
+		if (other.id == m.id || !usable(other.fighter) || !enemy(f, other.fighter) || !perception::aware(f, other.id))
+			continue;
+		...nearest wins...
+	}
+
+i.e. every non-player character of another team that was aware of an enemy engaged the nearest one (Hub scan range 1500 u). Residents were all team 0,
+so every patron within about 1500 u of a bar fight joined (bar_crowd: Mercenaries 9-10 of 10 runs, original 1; Pacifier / Logan / Molly 8-10 of 10,
+original 0). Documented in docs/reference/BAR_FIGHT_LOOP.md "bar_crowd: join rules".
+
+Also retired with it: the setTarget flip (K5 markHostile) only for victims of the attacker's own team. It now also flips a package-driven victim of
+another team (a bar guard targeted by a bandit lists the bandit's squad, and a bandit targeted by a guard lists the guard's).

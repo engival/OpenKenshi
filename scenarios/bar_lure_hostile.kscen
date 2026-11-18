@@ -1,0 +1,22 @@
+# bar_lure_hostile (task CE; docs/reference/PLAYTEST.md 1). The ksim_aggro_drop setup as a file: the player outside the Hub's Bar blackmarket,
+# a Blood Raider patrol on the open ground past the door. They are always hostile, so the fight starts on sight: run in through the door and
+# up (or kite in and out) and see whether the patrol follows you in, whether the crew joins, and whether the aggro comes off.
+# Only the player is ever ordered (the scenario places the world; SCENARIO_IMPORT.md "Rule").
+KSCEN 2
+scenario title=Blood%20on%20the%20Bar%20steps setup=The%20same%20Bar%20and%20the%20same%20player%2C%20with%20a%20Blood%20Raider%20patrol%20of%20eleven%20instead%20of%20Dust%20Bandits%20(they%20do%20not%20know%20you%20and%20their%20faction%20is%20always%20hostile). look_for=They%20come%20at%20you%20on%20sight%3A%20run%20into%20the%20Bar%20and%20up%20the%20stairs%2C%20then%20rejoin.%20Do%20they%20follow%20through%20the%20door%3F%20Does%20the%20crew%20join%3F%20Does%20the%20aggro%20come%20off%20when%20you%20break%20contact%3F%20Do%20they%20stand%20inside%20you%3F bead=kenshi-h2v.3 metrics=targeted_player,crew_join_s,bodies_down,fight_s,player_downed_s
+source save=playtest game=1.0.68 radius=0 centre=-50592,-1211 leader=Wanderer
+clock day=1 hour=14 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-50619 y=1089.49 z=-1086 yaw=0 leader=1 player=1 chase=1 ranged=1 stealth=1
+squad id=2 name=Blood%20raider%20patrol faction=16860-gamedata.base template=16865-gamedata.base package=16846-gamedata.base player=0
+char id=2 squad=2 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50619 y=1103.41 z=-942 yaw=3.14159 leader=1 chase=1 ranged=1
+char id=3 squad=2 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50631 y=1100.35 z=-936 yaw=3.14159 chase=1 ranged=1
+char id=4 squad=2 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50625 y=1102.25 z=-936 yaw=3.14159 chase=1 ranged=1
+char id=5 squad=2 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50619 y=1104.14 z=-936 yaw=3.14159 chase=1 ranged=1
+char id=6 squad=2 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50613 y=1105.94 z=-936 yaw=3.14159 chase=1 ranged=1
+char id=7 squad=2 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50607 y=1107.63 z=-936 yaw=3.14159 chase=1 ranged=1
+char id=8 squad=2 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50631 y=1101.10 z=-930 yaw=3.14159 chase=1 ranged=1
+char id=9 squad=2 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50625 y=1103.10 z=-930 yaw=3.14159 chase=1 ranged=1
+char id=10 squad=2 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50619 y=1105.09 z=-930 yaw=3.14159 chase=1 ranged=1
+char id=11 squad=2 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50613 y=1107.00 z=-930 yaw=3.14159 chase=1 ranged=1
+char id=12 squad=2 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50607 y=1108.83 z=-930 yaw=3.14159 chase=1 ranged=1

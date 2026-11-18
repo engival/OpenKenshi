@@ -1,0 +1,11 @@
+Retired 2026-11-02 (wilderness weight-rule slice): the placer also read the BIOMES (legacy, biomemap.png) `homeless spawns` lists, as
+`legacy` candidates beside BIOME_GROUP's, to choose the area for a position-less squad. The exe never reads that field on a BIOMES
+record (kinspect s71_static.md section 1, ccf1940): only BIOME_GROUP carries homeless spawns. Placement now uses BIOME_GROUP lists,
+then FACTION `biomes`, then the faction's other spawn areas.
+
+Removed pieces of Placer (cpp/src/ksim/placement.cpp):
+
+	Candidate::legacy; Placer::biomes_ (kworld::BiomeMap::load(.../biomemap.png)); biomeType_ = itemTypeByName("BIOMES");
+	constructor: for (type : {groupType_, biomeType_}) for (record : byType(type)) collect(*record, type == biomeType_);
+	collect(record, legacy): map = legacy ? biomes_ : areas_; amount = legacy ? 1.0 (BIOMES has no declared amount) : record.floatOr("homeless spawn amount", 1.0);
+	mapOf(candidate) = candidate.legacy ? biomes_ : areas_; PlacementReport::byLegacyBiome.

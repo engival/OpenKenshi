@@ -1,0 +1,9 @@
+Retired 2026-11-09 (task ds/town-port): routine_scorer.cpp scoreMember's package lookup.
+
+	const routines::CompiledPackage* package = nullptr;
+	if (ai_ != nullptr)
+		package = data.packages.find(ai_->registry().squad(instance->templateSid).package);
+
+Replaced by the squad's blackboard::Board (ensureBlackboard + tick; board.current). The registry picks the LOWEST-priority
+template package (plus the caravan / bar overrides); the exe's applied package is the highest-priority one (dt19). The two agree for
+every town resident template (pkgdump 2026-11-09: 75 of 839 templates differ, all roaming / raid / caravan squads).

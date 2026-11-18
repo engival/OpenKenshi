@@ -1,0 +1,59 @@
+#pragma once
+
+// The original's road network (roads_static.md; ROADS_EXE.md C7-C26): type-53 ROAD records of each mod's
+// data/newland/leveldata/<mod>/leveldata.level. A road joins two junction ids by a polyline of markers (absolute world xyz);
+// junctions have no stored position (the end marker of an incident road). Static, loaded once.
+//
+// route() is the exe's long-range shortcut (14045a8b0 nearest segment, 14045da60 split + A* over junctions, 140470580): the
+// entry point is the nearest road segment to the mover biased toward the goal, the exit the same from the goal, the A* cost is
+// road length with a straight-line heuristic, and the road is taken only when (legs + roadLength x factor)^2 <= straight^2.
+
+#include <cstdint>
+#include <string_view>
+#include <vector>
+
+namespace kworld {
+
+class RoadNetwork
+{
+public:
+	struct Marker
+	{
+		double x = 0.0;
+		double y = 0.0;
+		double z = 0.0;
+	};
+	struct Road
+	{
+		std::int32_t start = 0; // junction ids
+		std::int32_t end = 0;
+		double length = 0.0;
+		std::vector<Marker> markers; // in hex-index order
+	};
+
+	// The exe's scan radius (xz) for an entry or exit segment.
+	static constexpr double kScanRadius = 20000.0;
+	// Moves over this are tried on the roads first (xz, straight line).
+	static constexpr double kLongMove = 1000.0;
+	// The "road preference" factor of every vanilla faction is 1 - 0.4; the stuck fallback's call uses 0.2.
+	static constexpr double kDefaultFactor = 0.6;
+	static constexpr double kStuckFactor = 0.2;
+
+	RoadNetwork() = default;
+	// Throws kworld::Error when dataDir has no newland/leveldata. A later layer's road replaces an earlier one with the same string id.
+	static RoadNetwork load(std::string_view dataDir);
+	// A network from roads built by hand (tests); roads with under 2 markers or no length are dropped as the loader does.
+	static RoadNetwork fromRoads(std::vector<Road> roads);
+
+	const std::vector<Road>& roads() const noexcept { return roads_; }
+
+	// The marker waypoints, in walking order, of the road shortcut from (fromX, fromZ) to (toX, toZ): the entry point on the nearest
+	// segment, the markers along the A* path, the exit point. Empty when no road is near, the roads do not connect the two ends, or the
+	// use test fails. `factor` is 1 - the faction's road preference (clamped 0.2..0.9 for the entry bias, as the exe).
+	std::vector<Marker> route(double fromX, double fromZ, double toX, double toZ, double factor = kDefaultFactor) const;
+
+private:
+	std::vector<Road> roads_;
+};
+
+} // namespace kworld

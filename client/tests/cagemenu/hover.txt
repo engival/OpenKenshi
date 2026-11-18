@@ -1,0 +1,17 @@
+# cagemenu (kenshi-k16.2.105.1): cage_alone.kscen, the Wanderer selected, the camera on the caged Prisoner (ids are looked up by run.sh: a name between two at-signs is that character's id). Hover: the red padlock with the
+# pick chance; a held right-click: the cage's menu and the character's side by side. Run: client/tests/cagemenu/run.sh hover OUT
+10 set animate 1
+100 select id=@Wanderer@
+110 camera char Prisoner
+200 mouse char=@Prisoner@ -5
+260 screenshot OUTDIR/hover.png
+270 dump chars
+300 mouse down right
+400 screenshot OUTDIR/menus.png
+# release on PICK LOCK (the cage's row, 705,332 at 720p): the Wanderer walks to the cage and picks it
+410 mouse pos 705 332
+420 mouse up right
+700 screenshot OUTDIR/picking.png
+1100 screenshot OUTDIR/later.png
+1110 dump chars
+1200 quit

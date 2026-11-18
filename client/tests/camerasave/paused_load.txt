@@ -1,0 +1,17 @@
+# camerasave paused (kenshi-k16.2.134.1): quicksave, move the camera, pause the sim, then quickload while still paused. A paused sim sends no
+# snapshots, so the load's camera sidecar applies at once (the clock's pause bit) instead of waiting for the first one. Run: run.sh paused OUT.
+# The first shot comes after the save: a shot's own log line has no newline, and the save's line would be glued to it.
+120 key F5 down
+122 key F5 up
+160 screenshot OUTDIR/save_time.png
+200 key W down
+380 key W up
+400 key SPACE down
+402 key SPACE up
+440 screenshot OUTDIR/moved.png
+470 key CTRL down
+472 key F9 down
+474 key F9 up
+476 key CTRL up
+640 screenshot OUTDIR/restored.png
+670 quit

@@ -1,0 +1,24 @@
+# The trails panel's body (ui::TrailsPanel in client/src/ui/trailspanel.cpp). The code fills "rows" (an All row, then one row
+# per character: swatch, id, name, points, pops) and the status line, and says what the ids do. Format: README.md here.
+
+col gap=8 pad=10
+	row size=28 gap=8
+		check "On" id=on size=auto tip="Record and draw every fighter's foot and centre trails"
+		spacer size=fill
+		button "CLEAR" id=clear size=auto tip="Forget every point recorded so far"
+	row size=28 gap=8
+		label "Window" size=auto colour=Main alpha=0.7
+		edit id=seconds size=64 tip="Show the last this many seconds, at most the cap; 0 = the cap"
+		label "s" size=auto colour=Main alpha=0.7
+		spacer size=fill
+		button "LAST 30 S" id=whole size=auto
+	row size=20 gap=8 pad=0
+		spacer size=22
+		label "Id" size=56 colour=Main alpha=0.6
+		label "Name" size=fill colour=Main alpha=0.6
+		label "Points" size=56 colour=Main alpha=0.6 text_align=end
+		label "Pops" size=44 colour=Main alpha=0.6 text_align=end
+		spacer size=20
+	panel look=inset size=fill
+		scroll id=rows x=4 y=4 w=4 h=4
+	label id=status size=auto colour=Main alpha=0.8 wrap=on

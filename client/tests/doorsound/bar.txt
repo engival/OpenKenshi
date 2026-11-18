@@ -1,0 +1,10 @@
+100 set animate 1
+150 camera char Wanderer
+300 dump doors
+310 move -50544 -1231
+800 interact id=41048 2
+1000 dump doors
+1200 interact id=41048 1
+1500 dump doors
+1800 move -50619 -1086
+3000 quit

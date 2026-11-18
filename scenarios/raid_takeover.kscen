@@ -1,0 +1,19 @@
+# raid_takeover (kenshi-h2v.22.2; docs/reference/FACTIONS.md 2.1b, SCENARIO_IMPORT.md `town` / `raid` / `war`). food_raid's Old Village, made the player's, with a Crab
+# Raiders force 400 u out and no campaign (the 'Crab Raider standard raid' pushes a loot phase and has no victory AI, so it never reaches the stay): the squad runs its
+# template's 'passing town assault then occupy' and 'hostile occupy town'. One player character; the crabs are at war with her faction. Old Village has no walls, so the
+# occupiers' throw-out (273 / 274, bodies inside the walls only) has nothing to throw her out of: she is downed and left lying. The town's owner never changes.
+KSCEN 2
+scenario title=The%20raid%20takeover setup=Heft%20is%20your%20town%20and%20the%20Wanderer%20is%20alone%20in%20it%3B%20a%20Crab%20Raiders%20force%20of%20six%2C%20already%20on%20the%20march%2C%20is%20400%20u%20away%20and%20will%20assault%20it%20and%20stay. look_for=Wait%20for%20the%20crabs%20to%20arrive%20%28about%20a%20minute%29%20and%20let%20them%20win.%20Do%20they%20stay%20in%20the%20town%2C%20throw%20you%20out%20of%20the%20gates%20or%20cage%20you%2C%20man%20the%20turrets%20and%20use%20the%20beds%3F%20Does%20it%20end%20when%20you%20kill%20them%20all%3F%20Does%20the%20town%20stay%20yours%3F bead=kenshi-h2v.22 metrics=fight_s,bodies_down,targeted_player
+source save=playtest game=1.0.68 radius=1200 centre=76098,-85826 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=76071 y=1001 z=-85797 yaw=0 leader=1 player=1 chase=1 ranged=1
+squad id=3 name=Crab%20raiders faction=62806-rebirth.mod template=62828-rebirth.mod package= player=0 hostile=1 war=1
+char id=3 squad=3 name=Crab%20raider%201 template=62826-rebirth.mod faction=62806-rebirth.mod x=76356 y=1020 z=-85517 yaw=3.14159 leader=1 chase=1
+char id=4 squad=3 name=Crab%20raider%202 template=62826-rebirth.mod faction=62806-rebirth.mod x=76366 y=1020 z=-85509 yaw=3.14159 chase=1
+char id=5 squad=3 name=Crab%20raider%203 template=62826-rebirth.mod faction=62806-rebirth.mod x=76366 y=1020 z=-85525 yaw=3.14159 chase=1
+char id=6 squad=3 name=Crab%20raider%204 template=62826-rebirth.mod faction=62806-rebirth.mod x=76376 y=1020 z=-85517 yaw=3.14159 chase=1
+char id=7 squad=3 name=Crab%20raider%205 template=62826-rebirth.mod faction=62806-rebirth.mod x=76376 y=1020 z=-85501 yaw=3.14159 chase=1
+char id=8 squad=3 name=Crab%20raider%206 template=62826-rebirth.mod faction=62806-rebirth.mod x=76376 y=1020 z=-85533 yaw=3.14159 chase=1
+town name=Old%20Village owner=player
+raid faction=62806-rebirth.mod town=Old%20Village squads=3 stay=60 retreat=5

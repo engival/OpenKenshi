@@ -1,0 +1,69 @@
+# interiorlight (kenshi-jj3.2.2): the Wanderer's brightness along the doorway, seen from its west side (the camera 35 u west of it, looking east), switch 0 vs 1: x -51262 (outside), -51243 (the doorway), -51225, -51205 (inside), -51160 (mid room).
+# roof cut-away opens the room), render.interior_light 1 (the original's flat ambient, the effect off) vs 0 (the baked sky transfer, the effect full), at the fixed exposure run.sh passes. debug.light_probes is on until the
+# bake is done (it starts it; the picture reads nothing of it). 720p title: LOAD GAME (433,282); row 0 (465,311), LOAD (751,443). Frame numbers are 60 fps.
+300 screenshot OUTDIR/title.png
+330 mouse pos 433 282
+332 mouse down left
+334 mouse up left
+420 screenshot OUTDIR/load_panel.png
+440 mouse pos 465 311
+442 mouse down left
+444 mouse up left
+470 mouse pos 751 443
+472 mouse down left
+474 mouse up left
+1200 set debug.light_probes 1
+1100 camera char Wanderer
+2500 set debug.light_probes 0
+2505 set render.interior_light 0
+2600 move -51262 2670
+3100 set pos -51297,2670
+3102 set alt 42
+3104 set yaw 90
+3106 set pitch -3
+3110 set render.interior_light 1
+3230 screenshot OUTDIR/x51262_off.png
+3310 set render.interior_light 0
+3430 screenshot OUTDIR/x51262_on.png
+3500 dump chars
+3510 move -51243 2670
+4010 set pos -51278,2670
+4012 set alt 42
+4014 set yaw 90
+4016 set pitch -3
+4020 set render.interior_light 1
+4140 screenshot OUTDIR/x51243_off.png
+4220 set render.interior_light 0
+4340 screenshot OUTDIR/x51243_on.png
+4410 dump chars
+4420 move -51225 2670
+4920 set pos -51260,2670
+4922 set alt 42
+4924 set yaw 90
+4926 set pitch -3
+4930 set render.interior_light 1
+5050 screenshot OUTDIR/x51225_off.png
+5130 set render.interior_light 0
+5250 screenshot OUTDIR/x51225_on.png
+5320 dump chars
+5330 move -51205 2670
+5830 set pos -51240,2670
+5832 set alt 42
+5834 set yaw 90
+5836 set pitch -3
+5840 set render.interior_light 1
+5960 screenshot OUTDIR/x51205_off.png
+6040 set render.interior_light 0
+6160 screenshot OUTDIR/x51205_on.png
+6230 dump chars
+6240 move -51160 2670
+6740 set pos -51195,2670
+6742 set alt 42
+6744 set yaw 90
+6746 set pitch -3
+6750 set render.interior_light 1
+6870 screenshot OUTDIR/x51160_off.png
+6950 set render.interior_light 0
+7070 screenshot OUTDIR/x51160_on.png
+7140 dump chars
+7150 quit

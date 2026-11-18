@@ -1,0 +1,9 @@
+# journey_sell (kenshi-k16.20.1; docs/reference/PLAYTEST.md 1). The Wanderer beside the Hub's barman with one Copper (the ore of the mine journey) in the pack. The step is the
+# trade: talk to the barman (the trade window opens), sell the Copper. Only the player is ordered.
+KSCEN 2
+scenario title=Sell%20the%20ore%20at%20the%20Hub setup=The%20Wanderer%20stands%20about%2055%20u%20from%20the%20Hub%27s%20barman%20with%20one%20Copper%20in%20the%20pack%20and%20no%20money. look_for=Right-click%20the%20barman%3A%20the%20Wanderer%20should%20walk%20up%20and%20the%20trade%20window%20open%20%28dialogue%20is%20skipped%20in%20this%20slice%29.%20Is%20the%20Copper%20listed%20in%20your%20grid%20with%20a%20price%2C%20and%20does%20right-clicking%20it%20sell%20it%3A%20the%20Copper%20leaves%20the%20pack%20and%20the%20cats%20go%20up%20by%20the%20price%20shown%20%28about%20130%20to%20190%20depending%20on%20the%20seed%20and%20the%20town%2C%20MQ6%29%2C%20the%20barman%27s%20wallet%20going%20down%20by%20the%20same%3F%20Escape%20closes%20the%20window.%20The%20original%3A%20item59_mine_sell.md%20MQ5%20and%20MQ6%2C%20item59%2Fitem60_trade.md%2C%20ui_captures%2Ftrade_window.md%20and%20client_trade_sold.png.%20player_downed_s%20should%20stay%20unreported. bead=kenshi-k16.20 metrics=player_downed_s
+source save=playtest game=1.0.68 radius=0 centre=-51187.1,2627.08 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-51187.1 y=1582.49 z=2627.08 yaw=0 leader=1 player=1
+item char=1 sid=42158-gamedata.base section=main qty=1

@@ -1,0 +1,7 @@
+# Orders fed to `ksim_server --dump-snapshot` for the sample files (tools/ksim_server.cpp).
+# TICK counts from the scenario start; PLAYER and ENEMY are the duel's two ids.
+2 speed 1
+3 pause 0
+10 move PLAYER -50990 2945
+60 attack PLAYER ENEMY
+5 move PLAYER -20000 2900

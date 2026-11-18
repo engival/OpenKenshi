@@ -1,0 +1,6 @@
+packed_codebooks_aoTuV_603.bin from https://github.com/hcs64/ww2ogg
+commit 14ed9b0dd62e815a38702b5f03c57006cbe2501b (2024-10-12)
+sha256 00a93eab267d281401b1efd54e888a2e183299b9e6c446c48d09f701a89d9d27
+License: COPYING (BSD-3-Clause, Xiph.org Foundation + Adam Gashlin). Data only; the reader is ours (src/audio/wwvorbis.cpp).
+The codebooks are the aoTuV beta 6.03 static Vorbis books that Wwise 2011.2+ setup packets reference by 10-bit index.
+Layout: codebook data, then a little-endian u32 offset table; the last u32 of the file is the table's offset.

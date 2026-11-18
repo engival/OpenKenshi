@@ -1,0 +1,5 @@
+# scenarios/cage_prisoner after load + 2 ticks, seed 3 (ksim_cage_wire; rewrite: KSIM_WRITE_FIXTURE=1 ksim_cage_wire <navworld>).
+# Whole frames: u32 length, u16 type, body (SIMLINK.md section 2). cages = CAGES (64), menu = MENU_ENTRIES (61) for the Wanderer on the cage
+# (order 99: no tool, strength 10 -> bit 16 + pickChance). The strid is this session's string table index.
+cages 2b00000040004c2a010000000000010033a8000000000000f043cc5b31fa06361c000000012e000000f0410000f041
+menu 260000003d004e2a0100000000000100000032a8000000000000f043cc5b31fa063600000100df01183f

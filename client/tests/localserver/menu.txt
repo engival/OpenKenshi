@@ -1,0 +1,22 @@
+# kenshi (full) menu-button quit (kenshi-379.12): New Game, in the game: Escape -> EXIT GAME -> YES (back to the title, a fresh server), then the title's EXIT button; no scripted quit.
+# No quit command at all: run.sh gives it a time limit, so a hang fails.
+300 mouse pos 433 202
+302 mouse down left
+304 mouse up left
+400 mouse pos 640 378
+402 mouse down left
+404 mouse up left
+700 mouse pos 290 664
+702 mouse down left
+704 mouse up left
+1200 key ESCAPE down
+1210 key ESCAPE up
+1300 mouse pos 640 387
+1302 mouse down left
+1304 mouse up left
+1400 mouse pos 622 385
+1402 mouse down left
+1404 mouse up left
+1800 mouse pos 433 602
+1802 mouse down left
+1804 mouse up left

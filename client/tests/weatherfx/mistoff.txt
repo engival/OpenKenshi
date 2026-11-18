@@ -1,0 +1,5 @@
+# weatherfx mistoff (kenshi-k16.2.11.3): the mist frame with --no-particles -- the A/B half: the global volume's cloud is what the
+# difference against mist.png shows (a broad soft white haze the eye reads as fog, a few display levels per pixel).
+30 set particles 0.01666
+500 screenshot OUTDIR/mist_noparticles.png
+560 quit

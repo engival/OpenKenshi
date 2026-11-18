@@ -1,0 +1,13 @@
+# loadpose downed_save (kenshi-k16.2.164, acceptance 2): a save made while the player is down still loads lying. Same world and attack as downed.txt; the player is down by ~4000;
+# F5 at 4100 quicksaves the DOWN player, then run_downed.sh adds Ctrl+F9 at KEYFRAME (use 4300: the player is still down) and the after_* shots. Run: SCRIPT=downed_save.txt run_downed.sh OUT 4300.
+# Check: after_4.. show the player lying at once (no stand-then-fall, no get-up) until the sim's flags clear; the log's dump chars flags carry the KO bit (8).
+100 set animate 1
+150 camera char Wanderer
+410 attack id=@Slaver boss@
+3900 dump chars
+4000 dump chars
+4000 screenshot OUTDIR/down.png
+4100 key F5 down
+4102 key F5 up
+4150 screenshot OUTDIR/saved_down.png
+4200 dump chars

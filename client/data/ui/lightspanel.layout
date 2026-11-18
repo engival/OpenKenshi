@@ -1,0 +1,11 @@
+# The light debugger's body (ui::LightsPanel in client/src/ui/dev/lightspanel.cpp). The code fills "rows" (a header per group, then one row per
+# term: its tick and SOLO) and the "count" line, and says what the ids do. Format: README.md here.
+
+col gap=8 pad=10
+	row size=28 gap=8
+		button "ALL ON" id=all size=auto tip="Every light term and every lamp on again"
+		spacer size=fill
+		label id=count size=auto colour=Main alpha=0.75
+	panel look=inset size=fill
+		scroll id=rows x=4 y=4 w=4 h=4
+	label "Tick: the term on or off. SOLO: only that term, and what it needs to show." size=auto colour=Main alpha=0.6 wrap=on

@@ -1,0 +1,8 @@
+# menu_query (kenshi-k16.2.121): pause the game (he walks otherwise), then hold RMB on the Hub barman (mouse char=4679: aims by id).
+# The right-click menu sends order 99 menu_query, MENU_ENTRIES (61) answers bit 0 = 1 (a dialogue root passes), and the menu offers Talk.
+95 key SPACE down
+96 key SPACE up
+120 mouse char=4679
+121 mouse down right
+400 screenshot OUTDIR/menu_barman.png
+440 quit

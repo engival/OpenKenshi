@@ -1,0 +1,125 @@
+# boxselect (kenshi-k16.2.230.1; the original's rules, kenshi-k16.2.230.3). 1280x720, the free camera on Charlie (150). The points below are the
+# characters' position points, i.e. their feet (the wire position; the box's test, kenshi-rwh.134), not the click box's middle ~130 px higher. On
+# the free camera they are Alpha 413,438 Bravo 518,436 Charlie 640,360 Delta 770,364 Echo 898,296 DeadOne 1040,255 KOOne 212,570 (the terrain
+# puts each one at its own height); behind Charlie (follow) Alpha 853,629 Bravo 743,573 Charlie 640,544 Delta 535,502 Echo 417,481. The two NPC
+# Bystanders are never selected. check.awk reads the `box select frame=` lines and says whether each release did what the original does.
+100 set animate 1
+150 camera char Charlie
+170 mouse char=@Echo@
+172 mouse down left
+173 mouse up left
+175 dump players
+176 dump chars
+# a plain box over Alpha, Bravo and Charlie's feet: replaces the selection with those three, the focus the last caught (Charlie); the NPC
+# Bystander1 between them and the dead DeadOne to the east stay out
+200 mouse pos 330 300
+202 mouse down left
+204 mouse pos 420 380
+206 mouse pos 560 470
+208 mouse pos 700 560
+230 screenshot OUTDIR/box_mid.png
+240 mouse up left
+250 screenshot OUTDIR/box_after.png
+# Shift + a box over Delta alone: adds the fourth, the focus follows it
+300 key SHIFT down
+302 mouse pos 715 300
+304 mouse down left
+306 mouse pos 760 400
+308 mouse pos 800 560
+320 mouse up left
+322 key SHIFT up
+# a box over empty ground keeps the selection and the focus
+350 mouse pos 100 200
+352 mouse down left
+354 mouse pos 160 300
+356 mouse pos 230 400
+360 mouse up left
+# the threshold: a 4x6 drag on open ground is the ordinary click (no box); a 5x5 drag is a box that catches nothing
+400 mouse pos 150 250
+402 mouse down left
+404 mouse pos 154 256
+410 mouse up left
+420 mouse pos 150 300
+422 mouse down left
+424 mouse pos 155 305
+430 mouse up left
+# a dead player character is left out (the box covers its point); a KO'd one is boxed
+500 mouse pos 1000 210
+502 mouse down left
+504 mouse pos 1085 300
+510 mouse up left
+# (the press itself must be on open ground: a press that picks nothing, or on a panel, is not a box)
+550 mouse pos 140 430
+552 mouse down left
+554 mouse pos 270 630
+560 mouse up left
+# a right press mid-drag is ignored: no order, the box keeps going, the hover cursor holds still
+600 mouse pos 720 260
+602 mouse down left
+604 mouse pos 760 340
+606 mouse down right
+608 mouse pos 800 380
+610 mouse pos 950 560
+612 mouse up right
+614 mouse up left
+# paused: the box works (a different rect from the first, so the check tells the two releases apart)
+700 key SPACE down
+702 key SPACE up
+730 dump clock
+740 mouse pos 325 305
+742 mouse down left
+744 mouse pos 500 400
+746 mouse pos 705 555
+750 mouse up left
+760 dump clock
+770 key SPACE down
+772 key SPACE up
+775 dump clock
+790 screenshot OUTDIR/camera_before_v.png
+# following (V direct drive): the camera goes behind the selection (Charlie); the box works there too (the row's feet on screen y ~544)
+795 select id=@Charlie@
+800 key V down
+802 key V up
+860 screenshot OUTDIR/camera_after_v.png
+880 mouse pos 400 455
+882 mouse down left
+884 mouse pos 600 550
+886 mouse pos 880 650
+890 screenshot OUTDIR/follow_box.png
+900 mouse up left
+910 screenshot OUTDIR/follow_after.png
+# the reach: the same box over FarOne, from a level camera 8000 u away (out of the original's 7500) and then 7000 u (in)
+950 key V down
+952 key V up
+960 set pos -50000,-1000
+962 set alt 30
+964 set yaw 0
+966 set pitch -2
+1000 screenshot OUTDIR/far_8000.png
+# FarOne's point is at about (640, 335) here: the box is tall enough for the ground's height either side (only FarOne is in front of this camera).
+# The press is near the bottom, where the ground is in the pick's reach (8000 u ahead is not).
+1010 mouse pos 500 540
+1012 mouse down left
+1014 mouse pos 700 250
+1020 mouse up left
+1050 set pos -50000,-2000
+1052 set alt 30
+1060 mouse pos 505 545
+1062 mouse down left
+1064 mouse pos 705 255
+1070 mouse up left
+# an item dragged out to the world still drops (the item's own press/release is the UI's: no box starts)
+1200 select id=@Alpha@
+1210 key I down
+1212 key I up
+1230 dump windows
+1240 screenshot OUTDIR/inv.png
+1250 mouse gear grid main 0 0
+1258 mouse down left
+1259 mouse up left
+1260 mouse pos 200 440
+1265 mouse down left
+1266 mouse up left
+1280 dump windows
+1290 screenshot OUTDIR/dropped.png
+1300 quit

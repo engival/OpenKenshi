@@ -1,0 +1,44 @@
+# interiorlight (kenshi-jj3.2.1): the user's save (a Wanderer standing in the Storm House of the Hub bar, daytime) loaded from the title, the camera on the Wanderer (the
+# roof cut-away opens the room), render.interior_light 1 (the original's flat ambient, the effect off) vs 0 (the baked sky transfer, the effect full), at the fixed exposure run.sh passes. debug.light_probes is on until the
+# bake is done (it starts it; the picture reads nothing of it). 720p title: LOAD GAME (433,282); row 0 (465,311), LOAD (751,443). Frame numbers are 60 fps.
+300 screenshot OUTDIR/title.png
+330 mouse pos 433 282
+332 mouse down left
+334 mouse up left
+420 screenshot OUTDIR/load_panel.png
+440 mouse pos 465 311
+442 mouse down left
+444 mouse up left
+470 mouse pos 751 443
+472 mouse down left
+474 mouse up left
+1200 set debug.light_probes 1
+1100 camera char Wanderer
+2500 set debug.light_probes 0
+2510 set render.interior_light 1
+2520 screenshot OUTDIR/off_a.png
+2530 set render.interior_light 0
+2660 screenshot OUTDIR/on_a.png
+2670 set yaw 90
+2680 set render.interior_light 1
+2700 screenshot OUTDIR/off_b.png
+2710 set render.interior_light 0
+2840 screenshot OUTDIR/on_b.png
+2850 set yaw 180
+2860 set render.interior_light 1
+2880 screenshot OUTDIR/off_c.png
+2890 set render.interior_light 0
+3020 screenshot OUTDIR/on_c.png
+2650 set yaw 0
+2655 set alt 200
+2660 set pitch -50
+2670 set render.interior_light 1
+2700 screenshot OUTDIR/off_d.png
+2710 set render.interior_light 0
+2840 screenshot OUTDIR/on_d.png
+2850 set yaw 180
+2860 set render.interior_light 1
+2890 screenshot OUTDIR/off_e.png
+2900 set render.interior_light 0
+3030 screenshot OUTDIR/on_e.png
+3060 quit

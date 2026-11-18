@@ -1,0 +1,17 @@
+# bar_lure_stealth_arrows (kenshi-h2v.27.2 check): bar_lure's ground with the Wanderer sneaking in front of three Hub citizens (neutral, the town's
+# faction), who notice him. One arrow.mesh per DETECTED_BY entry floats on the line to each: yellow while a citizen is noticing (record state 2), red
+# once it is noticed (state 1); sneaking off clears them. Two citizens face him head-on (yaw 2.98 and 3.315), the third sees him at the edge of its
+# cone (yaw 1.74, about 63 degrees off its forward): its notice meter fills slower, so a moment of one yellow and two red arrows exists. The
+# stealth skill is pinned at 95 (stats=stealth:95) so the fill takes seconds, long enough to catch and to outlast the client's load. They are not
+# hostile, the town is not at war with the player (the user's "flooded with red arrows but they're not enemies" case).
+# Only the player is ever ordered (SCENARIO_IMPORT.md "Rule").
+KSCEN 2
+scenario title=Stealth%20arrows%20at%20the%20Hub setup=The%20Wanderer%20stands%20sneaking%20in%20front%20of%20three%20Hub%20citizens%20%28neutral%2C%20not%20hostile%29%2C%20two%20facing%20him%20and%20one%20seeing%20him%20from%20the%20edge%20of%20its%20view. look_for=Stay%20sneaking%3A%20an%20arrow%20appears%20for%20each%20citizen%20who%20spots%20you%2C%20yellow%20while%20they%20are%20noticing%20and%20red%20once%20noticed%2C%20at%20about%20their%20thigh%20height%20and%20pointing%20at%20them.%20Do%20the%20colours%20and%20placement%20match%20the%20original%3F%20Stop%20sneaking%3A%20do%20the%20arrows%20clear%3F bead=kenshi-h2v.27 metrics=targeted_player
+source save=playtest game=1.0.68 radius=0 centre=-50619,-1086 leader=Wanderer
+clock day=1 hour=14 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-50619 y=1089.49 z=-1086 yaw=0 leader=1 player=1 chase=1 ranged=1 stealth=1 stats=stealth:95
+squad id=2 name=Hub%20citizens faction=42022-rebirth.mod template=465-gamedata.base player=0
+char id=2 squad=2 name=Citizen template=465-gamedata.base faction=42022-rebirth.mod x=-50624 y=1092 z=-1056 yaw=2.98
+char id=3 squad=2 name=Citizen template=465-gamedata.base faction=42022-rebirth.mod x=-50612 y=1093 z=-1046 yaw=3.315
+char id=4 squad=2 name=Citizen template=465-gamedata.base faction=42022-rebirth.mod x=-50633 y=1094 z=-1040 yaw=1.74

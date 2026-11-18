@@ -1,0 +1,28 @@
+Retired by task ds/order-tasks: door_plan.cpp's hand-coded planDoorAccess(const DoorFacts&). The same choice is now made by the GOAP planner over the
+registry rows (72 / 74 OPEN_DOOR, 76 PICK_LOCK, 78 / 80 UNLOCK_DOOR, 81 / 287 BASH_DOOR, 123 BASH_GATE, a local 6 EQUIP_WEAPON): door_goap.cpp's
+decideDoor, which keeps the facts (DoorFacts) and the measured utilities but lets the plan with the best weakest link pick the action.
+
+DoorDecision planDoorAccess(const DoorFacts& facts) noexcept
+{
+	if (facts.mine)
+		return {DoorPlan::Unlock, 1.0, false};
+	// A door nobody owns has no faction to score: its kind counts as none (0).
+	const bool bashable = !facts.allied && (facts.hostile || (facts.hasOwner && kindBashesDoors(facts.ownerKind)));
+	DoorDecision best;
+	if (bashable)
+	{
+		if (facts.weaponInHand || facts.weaponCarried)
+			best = {DoorPlan::Bash, kBashUtility, !facts.weaponInHand};
+		if (facts.gate && facts.mates < kGateCrewCap && !facts.underAttack)
+		{
+			const double utility = kBashUtility / static_cast<double>(facts.mates + 1);
+			if (utility > best.utility)
+				best = {DoorPlan::Bash, utility, false};
+		}
+	}
+	// PICK_LOCK needs empty hands: a carried weapon does not count against it, a wielded one does.
+	if (!facts.weaponInHand && facts.lockLevel - facts.lockpicking < kPickMaxDifficulty && kPickUtility > best.utility)
+		best = {DoorPlan::Pick, kPickUtility, false};
+	return best;
+}
+

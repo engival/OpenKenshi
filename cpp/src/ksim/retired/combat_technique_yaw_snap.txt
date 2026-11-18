@@ -1,0 +1,12 @@
+Retired 2026-11-02 (combat facing, task AC): startTechnique snapped the body yaw onto the opponent.
+
+	void startTechnique(Member& m, std::int32_t index, double speed, double faceX, double faceZ)
+	{
+		...
+		f.yaw = std::atan2(faceX - f.x, faceZ - f.z);
+	}
+
+Replaced by two facings: `Fighter::aimYaw` holds the technique's aim (the look hand, mover+0x250) and is set here —
+the swing's impact box and root motion read it; `Fighter::yaw` is the body and turns onto the opponent at
+knav::kTurnRateCombat in integrate() (original: 4 rad/s in the combat-ready stance, kinspect s70_static.md section 3) —
+perception and the block behind tests read it (ENGAGEMENT.md 9.4).

@@ -1,0 +1,24 @@
+# Item menu, verb badge, all-of-a-type (kenshi-k16.20.13.3): the Wanderer (@Wanderer@) trades with the Barman 4679 (stock 4678), pack of 6 Raw Iron, own box @box@.
+# Run: PORT=47835 KSCEN=sellbox client/tests/sellburst/run.sh menu OUT. Pixels are 720p; frames are ~60 Hz (a hold is 0.2 s: 30 frames to be sure).
+300 interact id=4679 6
+700 reply 0
+800 dump windows
+# badge over our item (two windows: character + stock -> sell)
+900 mouse gear @Wanderer@ grid main 0 0
+960 dump windows
+970 screenshot OUTDIR/badge_sell.png
+# badge over a stock item (buy)
+1000 mouse gear 4678 grid container 0 0
+1060 dump windows
+1070 screenshot OUTDIR/badge_buy.png
+# a long right click on our iron: the menu with bindings
+1100 mouse gear @Wanderer@ grid main 0 0
+1110 mouse down right
+1160 dump windows
+1170 screenshot OUTDIR/menu_trade.png
+# release on "Sell all Raw Iron" (row 2: 0 title, 1 Sell, 2 Sell all)
+1180 mouse itemmenu 2
+1190 mouse up right
+1500 dump trade
+1510 screenshot OUTDIR/sold_all.png
+2000 quit

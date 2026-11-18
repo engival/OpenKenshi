@@ -1,0 +1,9 @@
+# sunshafts_bar (kenshi-jj3.8.2): the sun-shaft / dust-mote look. The player alone at the Hub's Storm House (the Hub bar), radius=400 clears
+# every default-world squad near it (nobody to fight), the clock at 08:50: the sun enters by the south doorway 07:30-10:30. Run with
+# --set render.sun_shafts=1 --set render.dust_motes=1 (per-run, not the user's kclient.cfg). Same place as ik_calm.
+KSCEN 2
+scenario title=Sun%20shafts%20in%20the%20Hub%20bar setup=The%20player%20alone%20at%20the%20Hub%27s%20Storm%20House%20at%2008%3A50%2C%20no%20hostiles%20within%20400%20u. look_for=Inside%20the%20bar%2C%20look%20at%20the%20sunlit%20air%20by%20the%20south%20doorway%3A%20beams%20and%20dust%20specks.%20Toggle%20set%20render.sun_shafts%200%2F1%2F2%20and%20set%20render.dust_motes%200%2F1%2F3. bead=kenshi-jj3.8.2 metrics=targeted_player
+source save=playtest game=1.0.68 radius=400 centre=-50592,-1211 leader=Wanderer
+clock day=2 hour=8 minute=50
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-50592 y=1065 z=-1211 yaw=0 leader=1 player=1 chase=1 ranged=1

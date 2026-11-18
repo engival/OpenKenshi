@@ -1,0 +1,36 @@
+# kenshi-k16.2.304.2: one container window at a time, whatever path opens the second. A = the bar's shop counter, B = a small barrel, walker = Wanderer;
+# run.sh resolves the ids by name in a probe run first (__WALKER__, __A__, __B__: ids move with the build's world data). Storm House bar, scenarios/order_sounds.
+# Each step ends with `dump windows`: pass = the character line + one box line only (the newest), and a `container: <old> closed (replaced by <new>)` line
+# while the old window had a user. The open paths: a walk-to open order (`open id=` is the menu's Loot row and a plain RMB, the second-order case),
+# Alt+RMB (a real click), the script's `open id= view` and a real LMB click (sim_click's "show container"), and two orders back to back.
+200 select id=__WALKER__
+260 move -50536 -1200
+1500 open id=__A__
+1800 dump windows
+1810 screenshot OUTDIR/p1_A.png
+1900 open id=__B__
+2200 dump windows
+2210 screenshot OUTDIR/p2_menu_B_after_A.png
+2300 mouse force __A__
+2310 key ALT down
+2320 mouse down right
+2324 mouse up right
+2330 key ALT up
+2600 dump windows
+2610 screenshot OUTDIR/p3_altrmb_A_after_B.png
+2700 open id=__B__ view
+2800 dump windows
+2810 screenshot OUTDIR/p4_scriptview_B_after_A.png
+2900 mouse force __A__
+2910 mouse down left
+2914 mouse up left
+3000 dump windows
+3010 screenshot OUTDIR/p5_lmbclick_A_after_view_B.png
+3100 open id=__B__
+3400 dump windows
+3410 screenshot OUTDIR/p6_order_B_after_view_A.png
+3600 open id=__A__
+3602 open id=__B__
+4000 dump windows
+4010 screenshot OUTDIR/p7_two_orders.png
+4100 quit

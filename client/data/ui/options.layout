@@ -1,0 +1,17 @@
+# The options window's body (ui::Options in client/src/ui/options.cpp). The window around it, its size and what the
+# ids do are the code's; the rows are built per tab into "rows". Format: README.md here.
+
+col gap=12
+	row size=40 gap=10
+		edit "Find a setting  (Ctrl+F)" id=find size=fill tip="Finds the settings of every tab whose name, key or help has the text. Enter: the next, Shift+Enter: the previous, Escape clears it"
+		button "PREVIOUS" id=find_prev size=auto tip="The previous match (Shift+Enter)"
+		button "NEXT" id=find_next size=auto tip="The next match (Enter)"
+		label id=find_count size=120 text_align=center text_valign=center colour=Main alpha=0.8
+	row size=fill gap=16
+		tabs id=tabs side=left size=190
+		col size=fill gap=8
+			scroll id=rows size=fill
+			label id=help size=56 wrap=on text_valign=start colour=Main alpha=0.8
+			row size=40 gap=10 justify=end
+				button "DEFAULT" id=default size=auto tip="Reset this tab's options to their defaults"
+				button "CLOSE" id=close size=auto

@@ -1,0 +1,53 @@
+Retired 2026-11-01 (gate crews, DOORS.md section 8) from src/ksim/doors.cpp DoorSystem::update / build and state.hpp (state::Posture,
+state::TownDoors, the saved component; DoorTuning::alertHoldHours; DoorStats::alertsRaised / townHoursAlert).
+
+The first door slice (2026-10-31) had the town's gates CLOSE on an "Alert": the owner faction's intent was Defend, or a hostile
+raid of another faction was under way to the town; the posture was held 6 game-hours after the cause ended, and an `always locks`
+gate was then locked for neutral and hostile strangers. It was a PROVISIONAL design (DOORS.md section 4, question 1: "the owner's
+Alert closes the gates"), written before item 20.
+
+Contradicted by the measurement (GATES_CARRY_LIVE.md a, DOORS.md section 8): nothing in the original closes a gate. The only
+gate task, MAN_THE_GATE (180), has no alert / enemy / time / relation / crime check and never closes; only shopkeeper packages
+ever plan close / lock; live, the UC gates stayed open and unlocked through a 3300-frame fight at the gate. A gate that does get
+shut (the player's toggle, a scripted SetDoorState) is reopened by its crew: UNLOCK (3.33 s, if the crew's faction owns the
+door) then OPEN. Gate state is now: Open by default, explicit overrides (SetDoorState), broken by raiders; the crew reopens.
+
+The retired code:
+
+	// DoorSystem::update, per gate town:
+	const flecs::entity_t owner = state->owner.id;
+	bool cause = false;
+	if (owner != 0)
+	{
+		const state::FactionAI* ai = flecs::entity(ecs.c_ptr(), owner).get<state::FactionAI>();
+		cause = ai != nullptr && ai->intent == state::Intent::Defend;
+		for (const auto& [target, raider] : targeted)
+			cause = cause || (target == gateTown.entity && raider != owner);
+	}
+	state::TownDoors doors;  // posture Open / Alert, since, holdUntil, alerts: saved on the TownState entity
+	if (cause)
+	{
+		if (doors.posture == state::Posture::Open)
+		{
+			doors.posture = state::Posture::Alert;
+			doors.since = tick;
+			++doors.alerts;
+			++stats_.alertsRaised;
+		}
+		doors.holdUntil = tick + hold;
+	} else if (doors.posture == state::Posture::Alert && tick >= doors.holdUntil) {
+		doors.posture = state::Posture::Open;
+		doors.since = tick;
+	}
+
+	// DoorSystem::build, per gate:
+	if (doors != nullptr && doors->posture == state::Posture::Alert)
+	{
+		doorState = knav::DoorState::Closed;
+		// A closed gate that does not lock is opened by any traveller on the way (measured); only an `always locks`
+		// gate is locked, and locked is locked for strangers.
+		if (gate.alwaysLocks)
+			denied |= doorClassBit(DoorClass::Hostile) | doorClassBit(DoorClass::Neutral);
+	}
+
+The `targeted` list (started hostile raids by target town) is kept, for the raid-hours statistics only.

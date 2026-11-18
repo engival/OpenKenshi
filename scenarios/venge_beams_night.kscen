@@ -1,0 +1,13 @@
+KSCEN 2
+# venge_beams_night (kenshi-h2v.14.3; docs/reference/VENGE_BEAMS_STATIC.md). The day scenario's three characters at 23:30 with no weather line: the world's own weather runs and the
+# beams' 5 to 23 window is shut. Nobody is ordered.
+scenario title=Venge%20sky%20beams%20at%20night setup=23%3A30%20in%20Venge%20with%20no%20weather%20pinned%2C%20so%20the%20world%20picks%20its%20own%3A%20the%20sky%20beams'%20window%20%285%20to%2023%29%20is%20shut.%20The%20same%20three%20characters%20stand%20as%20in%20the%20day%20scenario%20%28the%20Wanderer%20in%20the%20open%2C%20the%20Sheltered%20one%20in%20the%20ruin%2C%20the%20Dustcoat%20one%20beside%20the%20Wanderer%29. look_for=No%20beams%20anywhere%20over%20Venge%2C%20and%20nobody%20burns.%20Wait%20to%2005%3A00%3A%20the%20beams%20come%20back%20%28the%20weather%20picks%20again%20at%20the%20window's%20start%2C%20so%20they%20may%20take%20a%20while%29. bead=kenshi-h2v.14 metrics=player_downed_s
+source save=playtest game=1.0.68 radius=0 centre=24759.1,10185.5 leader=Wanderer
+clock day=1 hour=23 minute=30
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=24930 y=143 z=10150 yaw=0 leader=1 player=1 chase=1 ranged=1
+item char=1 sid=1168-gamedata.base section=body qty=1
+char id=2 squad=1 name=Sheltered template=1533662-rebirth.mod faction=204-gamedata.base x=24759.1 y=149.8 z=10185.5 yaw=0 player=1 chase=1 ranged=1
+item char=2 sid=1168-gamedata.base section=body qty=1
+char id=3 squad=1 name=Dustcoat template=1533662-rebirth.mod faction=204-gamedata.base x=24930 y=143 z=10220 yaw=0 player=1 chase=1 ranged=1
+item char=3 sid=3061-gamedata.base section=body qty=1

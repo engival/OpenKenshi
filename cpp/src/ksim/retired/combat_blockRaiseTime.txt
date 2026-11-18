@@ -1,0 +1,23 @@
+Retired 2026-10-31 from src/ksim/combat_rules.cpp and include/ksim/combat.hpp (CombatRules::blockRaiseTime).
+Replaced by the exe's rule (docs/reference/combat/BLOCK_TIMING_LIVE.md): a block holds iff the direction matches and
+the technique's clip progress is > 0.5 (CombatClass::resolveIncomingHit 140665fa0), i.e. raise time = 0.5 x clip
+length / (defender clip speed x anim speed mult). The per-technique constants below were fits to 453 resolves.
+Kept for reference only; not built.
+
+// Raise times of the block techniques: the least time from the pick to the impact for the block to hold
+// (KATANA_DUEL_STATS_LIVE.md, 453 resolves, exact). `block left upper` is bracketed (hits up to 0.41 s, blocks
+// from 0.43 s); `blk right` (blocks from 0.31 s, no hit with a matching direction seen) and `blk front hi`
+// (from 0.36 s, none seen) are lower bounds only: UNSURE. Techniques with no sample (`blk thrust`, the
+// unarmed and animal blocks) take 0.36, UNSURE.
+double CombatRules::blockRaiseTime(const Technique& t) noexcept
+{
+	if (t.name == "block left upper")
+		return 0.42;
+	if (t.name == "blk right")
+		return 0.31;
+	return 0.36;
+}
+
+// In CombatArena::Ctx::resolveIncoming:
+//	const double sincePick = def.clipSpeed > 0.0 ? def.clipTime / def.clipSpeed : 0.0;
+//	const bool raised = def.state == CombatState::Stumble || sincePick >= CombatRules::blockRaiseTime(*t);

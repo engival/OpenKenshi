@@ -1,0 +1,26 @@
+portrait: select @Wanderer@ (select)
+hints: Wanderer (portrait): 3 actions
+  Click  select  "Select Wanderer"
+  Shift+Click  select_add  "Add Wanderer to the selection"  disabled: already selected
+  Double click  centre  "Select Wanderer and centre the camera on it"
+hints: Lockpicker (portrait): 3 actions
+  Click  select  "Select Lockpicker"
+  Shift+Click  select_add  "Add Lockpicker to the selection"
+  Double click  centre  "Select Lockpicker and centre the camera on it"
+portrait: add @Lockpicker@ (select_add)
+hints: Lockpicker (portrait): 3 actions
+  Click  select  "Select Lockpicker"
+  Shift+Click  select_add  "Add Lockpicker to the selection"  disabled: already selected
+  Double click  centre  "Select Lockpicker and centre the camera on it"
+portrait: select @Wanderer@ (select)
+hints: Lockpicker (portrait): 3 actions
+  Click  select  "Select Lockpicker (the camera follows Lockpicker)"
+  Shift+Click  select_add  "Add Lockpicker to the selection (the camera follows Wanderer, first in squad order)"
+  Double click  centre  "Select Lockpicker and centre the camera on it"
+portrait: add @Lockpicker@ (select_add)
+portrait: centre @Sawyer@ (centre)
+hints: Lockpicker (portrait): 3 actions
+  Click  select  "Select Lockpicker (direct drive stays on Sawyer)"
+  Shift+Click  select_add  "Add Lockpicker to the selection"
+  Double click  centre  "Select Lockpicker and centre the camera on it (ends direct drive)"
+portrait: select @Lockpicker@ (select)

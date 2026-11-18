@@ -1,0 +1,11 @@
+100 set animate 1
+150 camera char Charlie
+170 screenshot OUTDIR/probe.png
+180 mouse char=@Alpha@
+185 mouse char=@Bravo@
+190 mouse char=@Charlie@
+195 mouse char=@Delta@
+200 mouse char=@Echo@
+205 mouse char=@Bystander1@
+210 mouse char=@Bystander2@
+230 quit

@@ -1,0 +1,3 @@
+Retired 2026-11-05: options.hpp / options.cpp (ui::Options, the fixed 720-unit window: a TabView row of fitted button tabs centred over
+fixed-width rows; at 13 tabs the row spilled past both window edges). Replaced by ui::Options on Flex + Tabs (side list, resizable window)
+in ui/options.*, same public API. Out of the build (not in client/CMakeLists.txt). Kept for reference only.

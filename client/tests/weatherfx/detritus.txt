@@ -1,0 +1,7 @@
+# weatherfx detritus (kenshi-k16.2.11.3): weather "Desert-dust-Light Detritus01" -- the type 10 GlobalPoint group: v0 = 1 target per
+# band around the pivot (Local-swirl-devil, M = 50 from its maximum view distance).
+30 set particles 0.01666
+30 dump weather
+400 dump weather
+410 screenshot OUTDIR/detritus.png
+460 quit

@@ -1,0 +1,203 @@
+// Retired by kenshi-k16.2.205.8: the per-character, per-part character draw (one 4 KB vertex-block upload per character per pass, one draw per part).
+// Not compiled. The shader side (char_vs with the bones[180] uniform block, the per-draw fs params blocks) is in git history before that commit.
+// The vertex block (~4 KB: the 60-bone palette, blood, bone_part) is per character, not per part, and uniforms survive sg_apply_bindings and
+// sg_draw within a pipeline (sokol clears its applied flags only in sg_apply_pipeline): upload it once per character per pipeline, on its first
+// part. vsLast_ is cleared wherever a pass applies a pipeline (kenshi-k16.2.205.2)
+void Characters::applyVs(const Char& c, const float mvp[16], const double cam[3])
+{
+	if (vsLast_ == &c) { return; }
+	vsLast_ = &c;
+	char_vs_params_t vs = {};
+	memcpy(vs.mvp, mvp, sizeof vs.mvp);
+	for (int k = 0; k < 3; k++) { vs.origin[k] = (float)(c.pos[k] - cam[k]); }
+	memcpy(vs.bones, c.palette.data(), sizeof vs.bones);
+	memcpy(vs.blood_amt, c.blood, sizeof vs.blood_amt);
+	memcpy(vs.blood_scale, c.body->bloodScale, sizeof c.body->bloodScale);
+	vs.blood_scale[2] = (float)c.hidden;
+	memcpy(vs.bone_part, c.body->bonePart.data(), std::min(sizeof vs.bone_part, c.body->bonePart.size() * sizeof(float)));
+	sg_apply_uniforms(UB_char_vs_params, SG_RANGE(vs));
+}
+
+// the blocks every draw of a pipeline shares (lighting, AO, light volumes, shadow): applied once after the pipeline, not per draw
+static void applyPassUniforms(const sg_range& lightRange, const sg_range& shadowRange)
+{
+	sg_apply_uniforms(UB_light_params, lightRange);
+	sg_apply_uniforms(UB_ao_params, SG_RANGE(ao_binding().params));
+	sg_apply_uniforms(UB_light_volumes, SG_RANGE(lightvol::binding().params));
+	sg_apply_uniforms(UB_shadow_params, shadowRange);
+}
+
+void Characters::renderShadow(const ShadowCascade& sc, const double cam[3])
+{
+	if (chars_.empty()) { return; }
+	drawstats::pipeline(shadowPip_);
+	vsLast_ = nullptr;
+	auto draw = [&](const Char& c, const GpuMesh& m, sg_view tex, const float ch[4], float minimum)
+	{
+		sg_bindings bind = {};
+		bindMesh(bind, m);
+		bind.views[VIEW_clip_tex] = tex;
+		bind.samplers[SMP_clip_smp] = wrap_;
+		drawstats::bindings(&bind);
+		applyVs(c, sc.lvp, cam);
+		clip_params_t cp = {};
+		memcpy(cp.clip_ch, ch, sizeof cp.clip_ch);
+		cp.clip_min[0] = minimum;
+		memcpy(cp.bias, sc.bias, sizeof cp.bias);
+		sg_apply_uniforms(UB_clip_params, SG_RANGE(cp));
+		drawstats::draw(0, m.indexCount, 1);
+	};
+	const float none[4] = {};
+	constexpr float kReach = 40.0f;	// units: a body is ~20 tall, with a long weapon or a mount about 40
+	for (const Char& c : chars_)
+	{
+		if (culled && culled(c.pos)) { continue; }
+		// a character wholly outside this cascade's tile box casts nothing into it: the sides of the box (camera-relative, inside positive), with
+		// kReach of slack for the body's height and what it holds. Every character went into every cascade before: 4.4 ms of CPU submit with 231 in range at Heft
+		// (kenshi-k16.2.205.1)
+		bool outside = false;
+		for (int k = 0; k < 4 && !outside; k++)
+		{
+			const float* pl = sc.planes[k];
+			outside = pl[0] * (float)(c.pos[0] - cam[0]) + pl[1] * (float)(c.pos[1] - cam[1]) + pl[2] * (float)(c.pos[2] - cam[2]) + pl[3] < -kReach;
+		}
+		if (outside) { continue; }
+		draw(c, *c.mesh, white_, none, 0.0f);
+		for (const GpuMesh* m : c.stumps) { draw(c, *m, white_, none, 0.0f); }
+		for (const Part& p : c.parts) { draw(c, *p.mesh, p.kind == kArmour ? p.nrm : p.tex, p.clipCh, p.clipMin); }
+	}
+}
+void Characters::drawPart(const Char& c, const Part& p, PartKind kind, const float mvp[16], const double cam[3], const sg_range& lightRange,
+	const sg_range& shadowRange)
+{
+	sg_bindings bind = {};
+	bindMesh(bind, *p.mesh);
+	bindLighting(bind);
+	bind.samplers[SMP_wrap_smp] = wrap_;
+	if (kind == kArmour)
+	{
+		bind.views[VIEW_armour_tex] = p.tex;
+		bind.views[VIEW_armour_nrm] = p.nrm;
+		bind.views[VIEW_armour_cmap] = p.cmap;
+		drawstats::bindings(&bind);
+		applyVs(c, mvp, cam);
+		armour_fs_params_t fs = {};
+		// COLOR_DATA colours (display-referred): raw; the shader's .a switch stays 0 (fs is zeroed)
+		for (int k = 0; k < 3; k++) { fs.cam[k] = (float)cam[k]; fs.color1[k] = p.col1[k]; fs.color2[k] = p.col2[k]; }
+		fs.gloss[0] = p.spec;
+		sg_apply_uniforms(UB_armour_fs_params, SG_RANGE(fs));
+	}
+	else
+	{
+		bind.views[VIEW_hair_map] = p.tex;
+		drawstats::bindings(&bind);
+		applyVs(c, mvp, cam);
+		hair_fs_params_t fs = {};
+		// the hair ATTACHMENT's COLOR_DATA colour (display-referred): raw; color.w is the alpha threshold (set below)
+		for (int k = 0; k < 3; k++) { fs.cam[k] = (float)cam[k]; fs.color[k] = p.colour[k]; }
+		fs.color[3] = p.clipMin;
+		memcpy(fs.diffuse_ch, p.diffuseCh, sizeof fs.diffuse_ch);
+		memcpy(fs.alpha_ch, p.clipCh, sizeof fs.alpha_ch);
+		fs.spec[0] = p.spec;
+		fs.spec[1] = p.mipBias;
+		sg_apply_uniforms(UB_hair_fs_params, SG_RANGE(fs));
+	}
+	drawstats::draw(0, p.mesh->indexCount, 1);
+}
+
+void Characters::draw(const std::vector<Char>& list, const float mvp[16], const double cam[3], const LightParams& light, const ShadowParams& shadows)
+{
+	if (list.empty()) { return; }
+	const sg_range lightRange = { &light, sizeof light }, shadowRange = { &shadows, sizeof shadows };
+	drawstats::pipeline(pip_);
+	vsLast_ = nullptr;
+	applyPassUniforms(lightRange, shadowRange);
+	for (const Char& c : list)
+	{
+		if (&list == &chars_ && culled && culled(c.pos)) { continue; }	// not the portrait copy
+		const Body& b = *c.body;
+		const auto& head = b.heads[(size_t)std::clamp(c.spec.head, 0, (int)b.heads.size() - 1)];
+		sg_bindings bind = {};
+		bindMesh(bind, *c.mesh);
+		bindLighting(bind);
+		bind.views[VIEW_body_tex] = b.tex;
+		bind.views[VIEW_body_nrm] = c.bodyNrm;
+		bind.views[VIEW_body_blend] = c.blendNrm;
+		bind.views[VIEW_body_mask] = b.mask;
+		bind.views[VIEW_head_tex] = head[0];
+		bind.views[VIEW_head_nrm] = head[1];
+		bind.views[VIEW_head_mask] = head[2];
+		bind.views[VIEW_vest_tex] = c.vestTex;
+		bind.views[VIEW_vest_nrm] = c.vestNrm;
+		bind.views[VIEW_vest_cmap] = c.vestCmap;
+		bind.views[VIEW_hair_tex] = c.hairTex;
+		bind.views[VIEW_beard_tex] = c.beardTex;
+		bind.views[VIEW_blood_tex] = blood_;
+		bind.samplers[SMP_border_smp] = border_;
+		bind.samplers[SMP_blood_smp] = wrap_;
+		drawstats::bindings(&bind);
+		applyVs(c, mvp, cam);
+		char_fs_params_t fs = {};
+		for (int k = 0; k < 3; k++) { fs.skintone[k] = c.skintone[k]; fs.cam[k] = (float)cam[k]; }
+		fs.skintone[3] = c.muscleBlend;
+		// The authored colour uniforms (COLOR_DATA, AppearanceHuman blood) are display-referred tints on the albedo and go raw, as the game uses
+		// them; the fourth component is coverage / a switch, not colour. hair_mult / hair_alpha / beard_alpha are one-hot channel masks.
+		for (int k = 0; k < 3; k++)
+		{
+			fs.hair_col[k] = c.hairCol[k];
+			fs.vest_col[k] = c.vestCol[k];
+			fs.blood_col[k] = b.bloodCol[k];
+		}
+		fs.hair_col[3] = c.hairCol[3];
+		fs.vest_col[3] = c.vestCol[3];
+		fs.blood_col[3] = b.bloodCol[3];
+		memcpy(fs.hair_mult, c.hairMult, sizeof fs.hair_mult);
+		memcpy(fs.hair_alpha, c.hairAlpha, sizeof fs.hair_alpha);
+		memcpy(fs.beard_alpha, c.beardAlpha, sizeof fs.beard_alpha);
+		sg_apply_uniforms(UB_char_fs_params, SG_RANGE(fs));
+		drawstats::draw(0, b.mesh.indexCount, 1);
+		for (const GpuMesh* m : c.stumps)
+		{
+			bindMesh(bind, *m);
+			drawstats::bindings(&bind);
+			drawstats::draw(0, m->indexCount, 1);
+		}
+	}
+	for (PartKind kind : { kArmour, kHair })
+	{
+		drawstats::pipeline(kind == kArmour ? armourPip_ : hairPip_);
+		vsLast_ = nullptr;
+		applyPassUniforms(lightRange, shadowRange);
+		for (const Char& c : list)
+		{
+			if (&list == &chars_ && culled && culled(c.pos)) { continue; }
+			for (const Part& p : c.parts)
+			{
+				if (p.kind != kind || p.mounted) { continue; }	// mounted = the weapons and items on attachment points (renderItems)
+				drawPart(c, p, kind, mvp, cam, lightRange, shadowRange);
+			}
+		}
+	}
+}
+
+// The items and weapons hung on a character's attachment points (kenshi-k16.2.101.1): the same armour pipeline and bindings as the worn
+// pieces above, drawn in their own GPU section so a fight's weapon cost is visible beside the bodies.
+void Characters::renderItems(const float mvp[16], const double cam[3], const LightParams& light)
+{
+	if (chars_.empty()) { return; }
+	const sg_range lightRange = { &light, sizeof light };
+	const ShadowParams sp = shadow->params();
+	const sg_range shadowRange = { &sp, sizeof sp };
+	drawstats::pipeline(armourPip_);
+	vsLast_ = nullptr;
+	applyPassUniforms(lightRange, shadowRange);
+	for (const Char& c : chars_)
+	{
+		if (culled && culled(c.pos)) { continue; }
+		for (const Part& p : c.parts)
+		{
+			if (!p.mounted) { continue; }
+			drawPart(c, p, kArmour, mvp, cam, lightRange, shadowRange);
+		}
+	}
+}

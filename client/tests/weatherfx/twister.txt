@@ -1,0 +1,9 @@
+# weatherfx twister (kenshi-k16.2.11.3): the Dust Storm Approach twister and its cloud storm pinned ahead of the pivot (dev aid, --debug
+# only): debug weff SCRIPT DX DZ puts that particle system on the terrain at the pivot + (DX, DZ). The offsets follow the view (yaw -20:
+# x -0.34, z 0.94 per unit) so both sit in the frame for the dust acceptance shot. The weather's own type 3 instances spawn on a
+# 155..180 s timer anywhere in the biome group, so the offline viewer would never show them.
+30 debug weff Twister-Chuff_Desert01 -85 235
+30 debug weff DesertCloudStorm -300 830
+30 set particles 0.01666
+400 screenshot OUTDIR/twister.png
+460 quit

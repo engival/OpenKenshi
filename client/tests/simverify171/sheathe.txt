@@ -1,0 +1,156 @@
+# k16.6.132 / 165: cage_prisoner; the Wanderer attacks the Slaver boss; guard 4 (the first Slaver guard the scenario spawns) and guard 5 (the
+# second) are followed. The ids come from the runner's id probe (charids.sh: @Name@, @Name#N@ the Nth of that name).
+# Wire log (dump wire: tick, flags, drawn bit, appearance version, items by section) every 30 frames, every 5 around the sheathe; the follow camera on guard 4, then guard 5.
+# The sim's timing differs between runs (guard 4's sheathe fell at frame 470 and at 515), so the shots are dense over the window.
+10 set animate 1
+100 select id=@Wanderer@
+# the follow waits for the guards: a non-player character reaches the client's decoder in the world's first dynamic chunks, not at frame 0 (a
+# loaded run had it after frame 110 and the follow aborted the script, k16.2.308); the camera is set before the first shot of guard 4
+120 set dist 90
+350 follow char id=@Slaver guard#1@
+150 dump chars
+160 attack id=@Slaver boss@
+200 dump wire Slaver guard
+230 dump wire Slaver guard
+260 dump wire Slaver guard
+290 dump wire Slaver guard
+320 dump wire Slaver guard
+350 dump wire Slaver guard
+380 dump wire Slaver guard
+410 dump wire Slaver guard
+430 dump wire Slaver guard
+435 dump wire Slaver guard
+440 dump wire Slaver guard
+445 dump wire Slaver guard
+450 dump wire Slaver guard
+455 dump wire Slaver guard
+460 dump wire Slaver guard
+465 dump wire Slaver guard
+470 dump wire Slaver guard
+475 dump wire Slaver guard
+480 dump wire Slaver guard
+485 dump wire Slaver guard
+490 dump wire Slaver guard
+495 dump wire Slaver guard
+500 dump wire Slaver guard
+505 dump wire Slaver guard
+510 dump wire Slaver guard
+515 dump wire Slaver guard
+520 dump wire Slaver guard
+525 dump wire Slaver guard
+530 dump wire Slaver guard
+535 dump wire Slaver guard
+540 dump wire Slaver guard
+545 dump wire Slaver guard
+550 dump wire Slaver guard
+555 dump wire Slaver guard
+560 dump wire Slaver guard
+565 dump wire Slaver guard
+570 dump wire Slaver guard
+575 dump wire Slaver guard
+580 dump wire Slaver guard
+585 dump wire Slaver guard
+590 dump wire Slaver guard
+595 dump wire Slaver guard
+620 dump wire Slaver guard
+650 dump wire Slaver guard
+680 dump wire Slaver guard
+690 dump wire Slaver guard
+700 dump wire Slaver guard
+710 dump wire Slaver guard
+720 dump wire Slaver guard
+730 dump wire Slaver guard
+740 dump wire Slaver guard
+750 dump wire Slaver guard
+760 dump wire Slaver guard
+770 dump wire Slaver guard
+780 dump wire Slaver guard
+790 dump wire Slaver guard
+800 dump wire Slaver guard
+810 dump wire Slaver guard
+820 dump wire Slaver guard
+830 dump wire Slaver guard
+840 dump wire Slaver guard
+850 dump wire Slaver guard
+860 dump wire Slaver guard
+870 dump wire Slaver guard
+880 dump wire Slaver guard
+890 dump wire Slaver guard
+900 dump wire Slaver guard
+910 dump wire Slaver guard
+920 dump wire Slaver guard
+930 dump wire Slaver guard
+940 dump wire Slaver guard
+950 dump wire Slaver guard
+960 dump wire Slaver guard
+970 dump wire Slaver guard
+980 dump wire Slaver guard
+990 dump wire Slaver guard
+1000 dump wire Slaver guard
+1010 dump wire Slaver guard
+1020 dump wire Slaver guard
+1030 dump wire Slaver guard
+1040 dump wire Slaver guard
+1050 dump wire Slaver guard
+1060 dump wire Slaver guard
+1070 dump wire Slaver guard
+1080 dump wire Slaver guard
+1090 dump wire Slaver guard
+1100 dump wire Slaver guard
+1130 dump wire Slaver guard
+1160 dump wire Slaver guard
+1190 dump wire Slaver guard
+1220 dump wire Slaver guard
+1250 dump wire Slaver guard
+1280 dump wire Slaver guard
+1310 dump wire Slaver guard
+1340 dump wire Slaver guard
+1370 dump wire Slaver guard
+400 screenshot OUTDIR/guard4_f0400.png
+410 screenshot OUTDIR/guard4_f0410.png
+420 screenshot OUTDIR/guard4_f0420.png
+430 screenshot OUTDIR/guard4_f0430.png
+440 screenshot OUTDIR/guard4_f0440.png
+450 screenshot OUTDIR/guard4_f0450.png
+460 screenshot OUTDIR/guard4_f0460.png
+470 screenshot OUTDIR/guard4_f0470.png
+480 screenshot OUTDIR/guard4_f0480.png
+490 screenshot OUTDIR/guard4_f0490.png
+500 screenshot OUTDIR/guard4_f0500.png
+510 screenshot OUTDIR/guard4_f0510.png
+520 screenshot OUTDIR/guard4_f0520.png
+530 screenshot OUTDIR/guard4_f0530.png
+540 screenshot OUTDIR/guard4_f0540.png
+550 screenshot OUTDIR/guard4_f0550.png
+560 screenshot OUTDIR/guard4_f0560.png
+570 screenshot OUTDIR/guard4_f0570.png
+580 screenshot OUTDIR/guard4_f0580.png
+590 screenshot OUTDIR/guard4_f0590.png
+600 screenshot OUTDIR/guard4_f0600.png
+610 screenshot OUTDIR/guard4_f0610.png
+640 follow char id=@Slaver guard#2@
+650 set dist 90
+700 screenshot OUTDIR/guard5_f0700.png
+720 screenshot OUTDIR/guard5_f0720.png
+740 screenshot OUTDIR/guard5_f0740.png
+760 screenshot OUTDIR/guard5_f0760.png
+780 screenshot OUTDIR/guard5_f0780.png
+800 screenshot OUTDIR/guard5_f0800.png
+820 screenshot OUTDIR/guard5_f0820.png
+840 screenshot OUTDIR/guard5_f0840.png
+860 screenshot OUTDIR/guard5_f0860.png
+880 screenshot OUTDIR/guard5_f0880.png
+900 screenshot OUTDIR/guard5_f0900.png
+920 screenshot OUTDIR/guard5_f0920.png
+940 screenshot OUTDIR/guard5_f0940.png
+960 screenshot OUTDIR/guard5_f0960.png
+980 screenshot OUTDIR/guard5_f0980.png
+1000 screenshot OUTDIR/guard5_f1000.png
+1020 screenshot OUTDIR/guard5_f1020.png
+1040 screenshot OUTDIR/guard5_f1040.png
+1060 screenshot OUTDIR/guard5_f1060.png
+1080 screenshot OUTDIR/guard5_f1080.png
+1100 screenshot OUTDIR/guard5_f1100.png
+1120 screenshot OUTDIR/guard5_f1120.png
+1400 dump chars
+1410 quit

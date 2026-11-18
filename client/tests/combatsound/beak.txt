@@ -1,0 +1,7 @@
+# beak_open_ground: the Wanderer attacks a Beak Thing. The attack waits for the world join, as the other modes do (fight, female, shot,
+# goat attack at 200): an attack at frame 60 went out before the client had the player squad, so the Wanderer only took hits and no voice
+# played (0 `combat sound` lines in 3000 frames, k16.2.308).
+100 set animate 1
+150 camera char Wanderer
+200 attack id=@Beak Thing@
+3000 quit

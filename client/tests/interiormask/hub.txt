@@ -1,0 +1,9 @@
+# interiormask (kenshi-h2v.11.4.2): scenarios/bar_lure (KSCEN=scenarios/bar_lure.kscen), the Hub's Bar blackmarket where no terrain pokes into the interior: the same view with render.interior_mask off and on must look the same.
+100 camera char Wanderer
+200 set alt 30
+210 set pitch -35
+400 set render.interior_mask 0
+420 screenshot OUTDIR/off.png
+430 set render.interior_mask 1
+450 screenshot OUTDIR/on.png
+460 quit

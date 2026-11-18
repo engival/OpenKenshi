@@ -1,0 +1,16 @@
+# camerasave restart (kenshi-k16.2.134.1): a second client, its own local server; the title's LOAD GAME panel -> the save made by the first run
+# (run.sh live OUT first: the same OUT/xdg holds the server's saves and the client's camera sidecars). The camera comes back after the restart.
+# 720p: LOAD GAME (433,282); the panel's list asks for the saves when it opens (wait for the local server first); row 0 (465,311), LOAD (751,443).
+300 screenshot OUTDIR/title.png
+330 mouse pos 433 282
+332 mouse down left
+334 mouse up left
+420 screenshot OUTDIR/load_panel.png
+440 mouse pos 465 311
+442 mouse down left
+444 mouse up left
+470 mouse pos 751 443
+472 mouse down left
+474 mouse up left
+720 screenshot OUTDIR/restored.png
+750 quit

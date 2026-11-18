@@ -1,0 +1,55 @@
+Retired 2026-11-02 (interior membership, INTERIORS.md "Building membership") from src/ksim/carry.cpp Simulation::stepBuildings. Fighter::building
+was set only by crossing a door slab on its inX / inZ side (and cleared by crossing back). A way in that does not cross the slab
+(the Storm House east ramp, a teleport, a load, a spawn, a drop) left it 0, and a wrongly signed inX (Storm House Door A: the
+probe-by-walkability rule gave the outward normal) inverted it. Replaced by a test of where the character is (the building's
+`interior mask` hull, Simulation::buildingAt), run for every fighter each tick. Constants kBuildingDoorReach = 20, kSideBand = 0.5.
+
+void Simulation::stepBuildings()
+{
+	if (combat_ == nullptr || combat_->empty())
+		return;
+	std::vector<const state::Door*> gates;
+	world_.ecs().each([&](const state::Door& door)
+	{
+		if (door.building != 0 && (door.inX != 0.0 || door.inZ != 0.0))
+			gates.push_back(&door);
+	});
+	if (gates.empty())
+		return;
+	for (const CombatArena::Member& member : combat_->members())
+	{
+		const state::Fighter& f = member.fighter;
+		if (f.dead || f.carriedBy != 0)
+			continue;
+		const state::Door* nearest = nullptr;
+		double nearestDistance = kBuildingDoorReach;
+		for (const state::Door* door : gates)
+		{
+			const double dx = f.x - door->x;
+			const double dz = f.z - door->z;
+			if (std::fabs(f.y - door->y) > kInteractReachY || std::fabs(dx) > 60.0 || std::fabs(dz) > 60.0)
+				continue;
+			const double along = std::max(std::fabs(dx * door->axisX + dz * door->axisZ) - door->halfLong, 0.0);
+			const double across = std::max(std::fabs(-dx * door->axisZ + dz * door->axisX) - door->halfDeep, 0.0);
+			const double distance = std::hypot(along, across);
+			if (distance < nearestDistance)
+			{
+				nearestDistance = distance;
+				nearest = door;
+			}
+		}
+		if (nearest == nullptr)
+			continue;
+		const double side = (f.x - nearest->x) * nearest->inX + (f.z - nearest->z) * nearest->inZ;
+		std::uint64_t building = f.building;
+		if (side > kSideBand)
+			building = nearest->building; // came in
+		else if (side < -kSideBand && f.building == nearest->building)
+			building = 0; // went out through its own door
+		if (building != f.building)
+		{
+			combat_->find(member.id)->building = building;
+			mirrorFighter(member.id);
+		}
+	}
+}

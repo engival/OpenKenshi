@@ -1,0 +1,35 @@
+Retired 2026-10-31 (faction kinds for the door planner, DOORS.md section 6) from src/ksim/interact.cpp Simulation::stepDoorSteps.
+At a locked door a non-owner bashed if its faction was hostile to the owner (relation <= -30, a factionless actor counted as
+hostile), whatever it held, and waited otherwise. Replaced by planDoorAccess (door_plan.hpp): bash needs a weapon in hand, a door
+that is not allied and (for a non-hostile owner) a law / military / slave / slaver / bandit faction kind; empty hands may pick the
+lock; otherwise wait.
+
+	const auto hostileToOwner = [&](std::uint64_t actorId, const state::Door& door)
+	{
+		if (door.ownerSid.empty() || gameData_ == nullptr)
+			return false;
+		std::string actorSid;
+		ecs.each([&](const state::Id& id, const state::Allegiance& allegiance)
+		{
+			if (id.value == actorId)
+				actorSid = allegiance.factionSid;
+		});
+		if (actorSid.empty())
+			return true;
+		flecs::entity owner;
+		flecs::entity other;
+		ecs.each([&](flecs::entity entity, const state::FactionState& faction)
+		{
+			if (faction.templateSid == door.ownerSid)
+				owner = entity;
+			if (faction.templateSid == actorSid)
+				other = entity;
+		});
+		return owner.is_valid() && other.is_valid() && factionRelation(*gameData_, owner, other) <= -30.0;
+	};
+	...
+			else if (hostileToOwner(id, *door)) {
+				step.phase = 2;
+			} else {
+				step.phase = 4;
+			}

@@ -1,0 +1,20 @@
+Rapid click-sell burst (kenshi-k16.20.11). sellburst.kscen = journey_sell with 30 Raw Iron (10 fit the pack, 2x2 each).
+Run (from anywhere): PORT=47871 client/tests/sellburst/run.sh burst10hz OUT
+(a script name without .txt; OUT is created; logs OUT/server.log and OUT/client.log)
+Barman id 4679 (2026-11-12; ids move with the data: `dump chars` first). Trade: interact 6, then `reply 0` ("Let's trade.").
+The pack's 10 stacks at 720p: x 685/735, y 266/298/330/363/397. Variants: burst10hz (step 6 frames), burst20hz (3), slow1hz (60),
+burst_5x (simspeed 5), burst_paused_resume, latency (a shot every frame after one click). Count: grep 'sim reply' client.log.
+Right-click menu (kenshi-k16.2.121, order 99 menu_query -> MENU_ENTRIES 61): menu_query holds RMB on the Barman (pause first:
+he walks) and the menu has Talk only when bit 0 is set (entries 1); menu_query_none does the same on the Mercenary 4709 (entries 0,
+no Talk). `mouse char=ID [UP]` puts the cursor on a character's body centre this frame (a scripted aim that works on a walking NPC).
+With the server frozen (SIGSTOP) no answer comes: out/menu_query_timeout + run_timeout.sh show the 0.5 s timeout path and
+menu_query_stale + run_stale.sh the superseded query (both answers arrive later and are dropped as stale). Logs: grep menu_entries.
+Several item windows (kenshi-k16.20.13.2): KSCEN=sellbox PORT=47835 client/tests/sellburst/run.sh windows OUT. sellbox.kscen = 6 Raw Iron in the pack
+plus an own box (3 Raw Iron; the scripts name it @box@: run.sh resolves it) 6 u away; the script trades with the Barman (stock 4678), opens the box (three windows: dump windows), drags the
+box's iron onto the trader's grid (a sale: take, then put by record; money -84), marks the box then the trader to steer the quick right click, and ends with
+a move order that closes the box (log "container: ... closed (ordered)"). Ids and pixels (720p) move with the data.
+
+Item menu, badges, all-of-a-type, auto-split (kenshi-k16.20.13.3): `KSCEN=sellbox PORT=47835 run.sh menu OUT` (badge sell / buy, the hold menu with bindings, "Sell all Raw Iron"
+= 6 single-unit order 68s in one group), `menu3` (transfer badge, three windows with none marked: the menu with both destinations; the mark: transfer), and
+`KSCEN=splitstack PORT=47836 run.sh autosplit OUT` (wears the bag, stacks 6 Bread in it, lifts the stack with Shift and drops it in main: 6 singles; the log shows
+"units do not fit the cell; placed one by one"). `dump windows` prints the badge, the menu rows and each grid's items with their cells; `mouse itemmenu N` moves onto a menu row.

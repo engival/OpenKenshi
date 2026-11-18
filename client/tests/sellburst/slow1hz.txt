@@ -1,0 +1,35 @@
+300 interact id=4679 6
+700 reply 0
+1000 screenshot OUTDIR/before.png
+1100 mouse pos 685 266
+1101 mouse down right
+1102 mouse up right
+1160 mouse pos 735 266
+1161 mouse down right
+1162 mouse up right
+1220 mouse pos 685 298
+1221 mouse down right
+1222 mouse up right
+1280 mouse pos 735 298
+1281 mouse down right
+1282 mouse up right
+1340 mouse pos 685 330
+1341 mouse down right
+1342 mouse up right
+1400 mouse pos 735 330
+1401 mouse down right
+1402 mouse up right
+1460 mouse pos 685 363
+1461 mouse down right
+1462 mouse up right
+1520 mouse pos 735 363
+1521 mouse down right
+1522 mouse up right
+1580 mouse pos 685 397
+1581 mouse down right
+1582 mouse up right
+1640 mouse pos 735 397
+1641 mouse down right
+1642 mouse up right
+2000 screenshot OUTDIR/after.png
+2010 quit

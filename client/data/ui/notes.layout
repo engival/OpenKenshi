@@ -1,0 +1,16 @@
+# The playtest notes window's body (ui::NotesWindow in client/src/ui/notes.cpp). The code fills "notes" (the numbered notes and
+# their triage) and the "entry" slot (the note box), and says what the buttons do. Format: README.md here.
+
+col gap=8 pad=10
+	row size=30 gap=4
+		button "GOOD" id=good size=90 tip="The run played right"
+		button "OFF" id=off size=90 tip="It worked, but something felt wrong"
+		button "BROKEN" id=broken size=90 tip="Something failed"
+		spacer size=fill
+		button "MARK" id=mark size=100 tip="Stamp the game time, the character and its place before the note"
+	panel look=inset size=fill
+		scroll id=notes x=8 y=6 w=8 h=6
+	label id=warning size=auto wrap=on colour=TipBad
+	row size=32 gap=6
+		slot id=entry size=fill
+		button "ADD" id=add size=80 tip="Add the note (Enter)"

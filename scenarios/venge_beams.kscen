@@ -1,0 +1,14 @@
+KSCEN 2
+# venge_beams (kenshi-h2v.14.3; docs/reference/VENGE_BEAMS_STATIC.md). The beams roam Venge's whole biome group, so the three characters stand within 100 u of the
+# 3793-TwoStorey ruin (its interior hull is the indoors trigger) and one beam's 200 u zone reaches all of them. Only the player is ever ordered: nobody is.
+scenario title=Venge%20sky%20beams%20by%20day setup=Midday%20in%20Venge%2C%20the%20weather%20pinned%20to%20the%20sky%20beams.%20The%20Wanderer%20stands%20in%20the%20open%20170%20u%20east%20of%20a%20two-storey%20ruin%2C%20the%20Sheltered%20one%20stands%20inside%20the%20ruin%20and%20the%20Dustcoat%20one%20stands%20beside%20the%20Wanderer%20wearing%20a%20Dustcoat%20%28burn%20protection%200.8%20against%20the%20beams%29.%20Cloth%20Shirts%20on%20the%20other%20two%2C%20nobody%20armed.%20Nobody%20is%20ordered%3A%20watch%2C%20move%20them%2C%20pause. look_for=Are%20the%20beams%20on%20the%20ground%20%28a%20column%20of%20light%20that%20wanders%20for%2010%20to%2030%20s%2C%20then%20a%20new%20one%20starts%20where%20it%20ended%3B%20about%2040%20at%20once%20over%20Venge%29%3F%20Does%20the%20Wanderer%20in%20the%20open%20burn%20when%20a%20beam%20passes%20within%20about%20200%20u%20%28full%20burn%20at%20the%20core%2C%20none%20past%20283%20u%3B%20a%20part%20takes%20about%207.5%20wear%20a%20second%20at%20the%20core%2C%20so%20about%2013%20s%20to%20down%20it%29%3F%20Does%20the%20Sheltered%20one%20inside%20the%20ruin%20stay%20unhurt%20even%20with%20a%20beam%20right%20on%20it%3F%20Does%20the%20Dustcoat%20one%20burn%20clearly%20less%20than%20the%20Wanderer%20%28a%20fifth%20as%20fast%29%3F%20The%20pin%20holds%20the%20beams%20past%2023%3A00%20%28a%20pinned%20weather%20is%20never%20clipped%29%3B%20the%20night%20scenario%20shows%20the%20window%20shut.%20A%20beam's%20burn%20shows%20as%20part%20wear%2C%20not%20bleeding. bead=kenshi-h2v.14 metrics=player_downed_s
+source save=playtest game=1.0.68 radius=0 centre=24759.1,10185.5 leader=Wanderer
+clock day=1 hour=12 minute=0
+weather group=55678-rebirth.mod weather=57717-rebirth.mod
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=24930 y=143 z=10150 yaw=0 leader=1 player=1 chase=1 ranged=1
+item char=1 sid=1168-gamedata.base section=body qty=1
+char id=2 squad=1 name=Sheltered template=1533662-rebirth.mod faction=204-gamedata.base x=24759.1 y=149.8 z=10185.5 yaw=0 player=1 chase=1 ranged=1
+item char=2 sid=1168-gamedata.base section=body qty=1
+char id=3 squad=1 name=Dustcoat template=1533662-rebirth.mod faction=204-gamedata.base x=24930 y=143 z=10220 yaw=0 player=1 chase=1 ranged=1
+item char=3 sid=3061-gamedata.base section=body qty=1

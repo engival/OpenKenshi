@@ -1,0 +1,149 @@
+Retired 2026-11-01 (grid inventory slice): the equip order by record, one entry per record. Replaced by Simulation::runInventoryOrder
+kind 67 (inventory_orders.cpp), which works on entries (a stack or an instance, by index or by the first match of a record), refuses with no_room
+when the swapped piece has no cell, and also wears a backpack. checkEquip / equipItem remain as wrappers over it.
+
+namespace
+{
+
+// Why an item instance cannot be built into equipped numbers (CombatData::buildWeapon / buildArmour would throw), "" when it can:
+// an instance nobody gave a quality, or one naming a manufacturer or model the data does not have. A command must be refused for it,
+// never crash the server.
+std::string equipBlocker(const kdata::GameData& gameData, const kdata::Record& record, const state::ItemQuality& quality)
+{
+	if (!quality.set())
+		return "no quality";
+	if (record.type != kworld::itemTypeByName("WEAPON"))
+		return {};
+	if (!quality.maker.empty() && gameData.find(quality.maker) == nullptr)
+		return "unknown manufacturer " + quality.maker;
+	if (!quality.model.empty() && gameData.find(quality.model) == nullptr)
+		return "unknown model " + quality.model;
+	return {};
+}
+
+} // namespace
+
+std::string Simulation::checkEquip(std::uint64_t who, const std::string& item, bool equip) const
+{
+	const state::Fighter* f = combat_ != nullptr ? combat_->find(who) : nullptr;
+	if (f == nullptr || gameData_ == nullptr)
+		return "bad_target";
+	if (f->dead || f->unconscious)
+		return "not_allowed";
+	// Mid-swing, mid-defence or staggering: the clip and technique belong to the old weapon (UNSURE: the original equips in
+	// its own time; ours refuses until the fighter is free).
+	if (f->state == state::CombatState::Attack || f->state == state::CombatState::Defend || f->state == state::CombatState::Stumble)
+		return "not_allowed";
+	const kdata::Record* record = gameData_->find(item);
+	if (record == nullptr || (record->type != kworld::itemTypeByName("WEAPON") && record->type != kworld::itemTypeByName("ARMOUR")))
+		return "bad_target";
+	const flecs::entity entity = fighterEntity(who);
+	const state::Inventory* held = entity.get<state::Inventory>();
+	if (held == nullptr)
+		return "not_allowed";
+	for (const state::Inventory::Entry& entry : held->items)
+	{
+		if (entry.itemSid != item)
+			continue;
+		if (equip ? entry.slot == state::Inventory::kCarried : entry.slot != state::Inventory::kCarried)
+		{
+			// Equipping rebuilds the numbers from the instance's quality: one that cannot be built is refused (and named in the log).
+			const std::string blocker = equip ? equipBlocker(*gameData_, *record, entry.quality) : std::string();
+			if (!blocker.empty())
+			{
+				std::cerr << "equip refused: " << record->name << " (" << item << "): " << blocker << "\n";
+				return "not_allowed";
+			}
+			return {};
+		}
+	}
+	return "not_allowed";
+}
+
+void Simulation::equipItem(std::uint64_t who, const std::string& item, bool equip)
+{
+	state::Fighter* f = combat_->find(who);
+	flecs::entity entity = fighterEntity(who);
+	state::Inventory inventory = *entity.get<state::Inventory>();
+	const kdata::Record* record = gameData_->find(item);
+	const bool weapon = record->type == kworld::itemTypeByName("WEAPON");
+	// Other callers than the checked order (a door bash arming itself) come here too: an instance that cannot be built is left as it is.
+	if (equip)
+	{
+		for (const state::Inventory::Entry& entry : inventory.items)
+		{
+			if (entry.slot != state::Inventory::kCarried || entry.itemSid != item)
+				continue;
+			const std::string blocker = equipBlocker(*gameData_, *record, entry.quality);
+			if (!blocker.empty())
+			{
+				std::cerr << "equip skipped: " << record->name << " (" << item << "): " << blocker << "\n";
+				return;
+			}
+			break;
+		}
+	}
+	// Takes one unit out of an entry (the first in the slot with that record) and gives back its instance quality.
+	const auto remove = [&](std::uint8_t slot, const std::string& sid)
+	{
+		state::ItemQuality quality;
+		for (auto it = inventory.items.begin(); it != inventory.items.end(); ++it)
+		{
+			if (it->slot != slot || it->itemSid != sid)
+				continue;
+			quality = it->quality;
+			if (--it->count == 0)
+				inventory.items.erase(it);
+			break;
+		}
+		return quality;
+	};
+	// A piece that leaves its slot goes back to the pack, as one carried unit, keeping its instance quality.
+	const auto stow = [&](std::uint8_t slot, const std::string& sid)
+	{
+		inventory.add(sid, 1, state::Inventory::kCarried, remove(slot, sid));
+	};
+	// The equipped numbers are rebuilt from the instance (CombatData::buildWeapon / buildArmour): an instance nobody gave a
+	// quality is a bug in whoever made it, and fails here rather than getting a made-up level.
+	if (weapon)
+	{
+		if (equip)
+		{
+			const state::ItemQuality quality = remove(state::Inventory::kCarried, item);
+			if (f->weapon.weaponType != 5 && !f->weapon.sid.empty())
+				stow(state::Inventory::kWeapon, f->weapon.sid);
+			f->weapon = combat_->data().buildWeapon(*gameData_, *record, quality);
+			inventory.items.push_back({item, 1, state::Inventory::kWeapon, quality});
+		} else {
+			stow(state::Inventory::kWeapon, item);
+			f->weapon = combat_->data().unarmed;
+		}
+	} else {
+		const std::int32_t slot = record->intOr("slot", 7);
+		const std::uint8_t inventorySlot = static_cast<std::uint8_t>(state::Inventory::kArmourBase + slot);
+		if (equip)
+		{
+			const state::ItemQuality quality = remove(state::Inventory::kCarried, item);
+			state::FighterArmour piece = combat_->data().buildArmour(*record, quality);
+			for (auto it = f->armour.begin(); it != f->armour.end(); ++it)
+			{
+				if (it->slot == slot)
+				{
+					stow(inventorySlot, it->sid);
+					f->armour.erase(it);
+					break;
+				}
+			}
+			const auto at = std::find_if(f->armour.begin(), f->armour.end(), [&](const state::FighterArmour& other) { return other.slot > piece.slot; });
+			f->armour.insert(at, std::move(piece));
+			inventory.items.push_back({item, 1, inventorySlot, quality});
+		} else {
+			stow(inventorySlot, item);
+			f->armour.erase(std::remove_if(f->armour.begin(), f->armour.end(), [&](const state::FighterArmour& piece) { return piece.sid == item; }),
+				f->armour.end());
+		}
+	}
+	++inventory.version;
+	entity.set<state::Inventory>(std::move(inventory));
+}
+

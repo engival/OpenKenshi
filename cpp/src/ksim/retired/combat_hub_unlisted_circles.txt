@@ -1,0 +1,10 @@
+Retired 2026-11-02 (crowd spacing; ENGAGEMENT.md 4.4 "if it fails ... WaitingStateAI::isApplicable -> pending 6"): a hub that could not get into the
+target's engaged list (cap 5) kept pending Circle, so every bandit past the fifth circled (75 % of the crowd's time in state 5; the original: 57 % in 6, 16 % in 5).
+Circle's slot-acquire exit was also taken in the Wait state.
+
+		if (!addEngaged(*target, m.id) || f.blockMode)
+		{
+			if (!incoming(m).empty())
+				f.pending = CombatState::Defend;
+			return;
+		}

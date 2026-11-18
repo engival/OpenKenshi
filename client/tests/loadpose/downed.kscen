@@ -1,0 +1,12 @@
+# loadpose (kenshi-k16.2.144): slavers_downed with the caravan 80 u away: the player stands for the first seconds (quicksave), then the Boss and three guards put the player down (quickload: the same id, standing again).
+KSCEN 2
+source save=playtest game=1.0.68 radius=0 centre=-50978.8,2932.48 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-50978.8 y=1533.47 z=2932.48 yaw=0 leader=1 player=1 chase=1 ranged=1
+squad id=2 name=Slaver%20caravan faction=1084-gamedata.base template=3387-gamedata.base package=3389-gamedata.base player=0
+char id=2 squad=2 name=Slaver%20boss template=95766-rebirth.mod faction=1084-gamedata.base x=-50985.0 y=1532.67 z=2870.0 yaw=0 leader=1 chase=1 ranged=1
+char id=3 squad=2 name=Slaver%20guard template=95765-rebirth.mod faction=1084-gamedata.base x=-50972.0 y=1532.69 z=2870.0 yaw=0 chase=1 ranged=1
+char id=4 squad=2 name=Slaver%20guard template=95765-rebirth.mod faction=1084-gamedata.base x=-50985.0 y=1534.04 z=2855.0 yaw=0 chase=1 ranged=1
+char id=5 squad=2 name=Slaver%20guard template=95765-rebirth.mod faction=1084-gamedata.base x=-50972.0 y=1533.93 z=2855.0 yaw=0 chase=1 ranged=1
+

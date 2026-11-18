@@ -1,0 +1,8 @@
+# Document caps and append-only logs; see docs/DOCS_POLICY.md. Checked by tools/doc_guard.py at commit.
+cap        CLAUDE.md          8192
+cap        docs/STATE.md      8192
+headings   docs/STATE.md      "## In flight" "## Waiting on" "## Next" "## Decisions pending"
+cap        docs/ROADMAP.md    16384
+cap        docs/WORK_DISCIPLINE.md 8192
+appendonly docs/history/DONE_*.md 200
+appendonly docs/INTENT.md

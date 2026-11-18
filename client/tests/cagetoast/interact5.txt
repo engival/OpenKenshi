@@ -1,0 +1,13 @@
+# kenshi-k16.2.300.5.1: five interact orders from the selected Wanderer on a door of the cage_alone.kscen world (thing 41259: 2 close, 1 open) that give "done", then idle ~40 s
+# of frames: an order's result is no toast, and one order gives one reply. First aid on the healthy Prisoner (10) is the bug's action: REJECTED not_allowed, toasts only under --debug.
+# Run: run.sh OUT (counts "sim reply: interact" and "toast:" lines).
+10 set animate 1
+100 select id=@Wanderer@
+200 interact id=41259 2
+500 interact id=41259 1
+800 interact id=41259 2
+1100 interact id=41259 1
+1400 interact id=41259 2
+1500 dump events
+3600 dump events
+3700 quit

@@ -1,0 +1,33 @@
+Retired 2026-11-07 (task town-circle): goal 34 ATTACK_TROUBLE_MAKERS' distance fallback of 500 u (joins::kJoinSight) and the
+walled-region arm of its `sameTown` test.
+
+What it was (task BZ, from the client's live lure, BAR_FIGHT_LOOP.md BQ14): the exe's Town object was not modelled, so a
+candidate counted as "in my town" when it stood in the same town circle (perception::Environment::towns, then built from the
+TOWN record's `size radius`), the same gate-bounded walled region, the same building, or within 500 u of me.
+
+Why retired: the 500 u area was an artefact of the wrong circle radius. `size radius` is the nest size (GAMEDATA_SCHEMA), not
+the Town radius: 350 for the Hub and 100 for the Rebel Base, which puts each town's own bar outside its circle (the Hub's Bar
+is 356 u from the Hub's centre; the Rebel Base's Bar is 187 u from the Rebel Base's centre) and made the live join look like
+a plain distance. With the exe's Town radius (buildings::townRadius: the base by TOWN `type` x `town radius mult`; kinspect
+Q2/Q3 in BUILDINGS_SLICE - TOWN 2500, POI 437.5, ...) both bars fall inside their own town, and the walled region is a gate
+circle that no longer adds anything a town circle does not already cover.
+
+Replaced by: `CombatArena::pickTarget`'s `sameTown` (cpp/src/ksim/combat.cpp) = the same town circle via
+`Environment::townOf`, or the same building (the admission 14099b820's place test). `hasTown` is now `myTown >= 0` alone, the
+exe's `myTown == 0 -> return 0`. See dt24_34 in ~/kinspect_bu (step 0 and step 2), FEATURES "The town crew joins a fight it
+sees" and reference/combat/ENGAGEMENT.md s13; test `ksim_town_circle`.
+
+The removed code (as it stood after task CF batch 2):
+
+	const int myWalled = arena.environment_.walledRegion(f.x, f.z);
+	const bool hasTown = haveHome || myWalled >= 0 || f.building != 0;
+	const auto sameTown = [this, &f, myTown, myWalled](const Fighter& other)
+	{
+		if (myTown >= 0 && arena.environment_.townOf(other.x, other.z) == myTown)
+			return true;
+		if (myWalled >= 0 && arena.environment_.walledRegion(other.x, other.z) == myWalled)
+			return true;
+		if (f.building != 0 && other.building == f.building)
+			return true;
+		return centre(f, other) <= joins::kJoinSight;
+	};

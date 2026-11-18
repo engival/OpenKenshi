@@ -1,0 +1,19 @@
+# Test-selection map of tools/test_queue.lua (docs/RUNBOOK.md "Dev box: test queue"): path prefix <TAB> what runs beyond the quick suite.
+# The first line whose prefix starts the changed path wins; a job's set is the union over its changed files. A path no line matches runs full.
+#   none       nothing (a job whose files are all `none` is not even built)
+#   full       the whole suite
+#   @test      the ctest test named like the file: cpp/tests/<t>.cpp -> ^t$
+#   @grep      the tests whose cpp/tests/*.cpp mention the file's basename (scenarios, test data)
+#   <regex>    a ctest -R regex
+# Every job runs the quick suite (-LE slow) first and fails fast; the set below adds the selected slow tests (or all of them for full).
+docs/	none
+client/	none
+tools/	none
+CLAUDE.md	none
+CONTRIBUTING.md	none
+CREDITS.md	none
+scenarios/	@grep
+cpp/tests/data/	@grep
+cpp/tests/fixtures/	@grep
+cpp/tests/	@test
+cpp/	full

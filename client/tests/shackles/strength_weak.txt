@@ -1,0 +1,12 @@
+# Locked shackles (kenshi-h2v.15.2.1), strength_weak: select Spare, inventory, hold-right on the worn shackles (boots grid), release on row 3.
+# Run: PORT=47837 client/tests/shackles/run.sh strength_weak OUT
+250 select id=@Spare@
+300 key I down
+305 key I up
+500 mouse gear grid boots 0 0
+600 mouse down right
+660 screenshot OUTDIR/menu.png
+680 mouse itemmenu 3
+690 mouse up right
+900 screenshot OUTDIR/refused.png
+1000 quit

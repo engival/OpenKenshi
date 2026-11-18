@@ -1,0 +1,38 @@
+# camerasave (kenshi-k16.2.134.1): quicksave at the start camera, then move / rotate / tilt / zoom the camera away, then quickload. The camera
+# sidecar written at the save must come back on the load's first snapshot. Run it with run.sh live OUT (a OpenKenshi-server with a save dir under OUT/xdg).
+# The shot comes after the save: a shot's own log line has no newline, and the save's line would be glued to it.
+# kenshi-k16.2.236.5: the saved floor view is respected. The start's centring snapped the level to the lead's (outdoors: 0); R x3 raises it to 3 before the
+# save, F x3 drops it to 0 before the quickload, and the load must put 3 back (dump floor: "level N"; the sidecar's floor_level=).
+108 key R down
+109 key R up
+111 key R down
+112 key R up
+114 key R down
+115 key R up
+118 dump floor
+120 key F5 down
+122 key F5 up
+160 screenshot OUTDIR/save_time.png
+200 key W down
+380 key W up
+390 key E down
+450 key E up
+460 key END down
+500 key END up
+510 key PERIOD down
+540 key PERIOD up
+570 screenshot OUTDIR/moved.png
+580 key F down
+581 key F up
+583 key F down
+584 key F up
+586 key F down
+587 key F up
+590 dump floor
+600 key CTRL down
+602 key F9 down
+604 key F9 up
+606 key CTRL up
+720 dump floor
+740 screenshot OUTDIR/restored.png
+770 quit

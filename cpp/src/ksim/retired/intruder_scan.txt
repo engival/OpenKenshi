@@ -1,0 +1,49 @@
+Retired 2026-11-07 (task CH, dt24_223 section 2) from src/ksim/carry.cpp Simulation::stepIntruders and from
+src/ksim/routine_scorer.cpp's PICKUP_INTRUDERS case. The pick was a hand-written nearest scan over the arena's members:
+a KO'd, uncarried, non-ally body in the resident's building, filtered by a door-ownership test (the building's door
+ownerSid had to be the resident's faction) and, in the scorer, by `alliedTo`. The exe's resolver 14099c110 reads the
+member's SENSOR LIST instead (include 0x400e, exclude 0x201), tests the body's interior against MY HOME building
+(ownerships+0x38), and takes the first hit - there is no distance test beyond the sensor range, no door test, and no
+squad claim. Replaced by worldres::pickupIntruders223 (cpp/src/ksim/world_resolvers.hpp), used by both call sites; the
+223 plan (67 Running -> 68 LIFT_PERSON) now drives the take-out (the old state::TakeOut.phase 0 / 1 pair became the
+plan's steps).
+
+The retired executor scan (carry.cpp, the "new take-outs" pass):
+
+	std::map<std::uint64_t, std::string> owners; // building -> the faction of its doors
+	ecs.each([&](const state::Door& door)
+	{
+		if (door.building != 0 && !door.ownerSid.empty())
+			owners.emplace(door.building, door.ownerSid);
+	});
+	...
+	const state::Allegiance* faction = actor.get<state::Allegiance>();
+	const auto owner = owners.find(resident.building);
+	if (faction == nullptr || owner == owners.end() || owner->second != faction->factionSid)
+		continue;
+	// The nearest KO'd non-member, non-ally in this building.
+	std::size_t victim = members.size();
+	double best = kIntruderSight;
+	for (std::size_t j = 0; j < members.size(); ++j)
+	{
+		const state::Fighter& other = members[j].fighter;
+		if (j == i || other.building != resident.building || !other.unconscious || other.dead || other.carriedBy != 0
+			|| taken.count(members[j].id) != 0)
+			continue;
+		const state::Allegiance* otherFaction = ecs.entity(combatEntities_[j]).get<state::Allegiance>();
+		if (otherFaction != nullptr && otherFaction->factionSid == faction->factionSid)
+			continue;
+		if (alliedTo(members[i].id, members[j].id))
+			continue;
+		const double d = std::hypot(other.x - resident.x, other.z - resident.z);
+		if (d < best)
+		{
+			best = d;
+			victim = j;
+		}
+	}
+
+and the scorer's copy (routine_scorer.cpp), which also required `realHome` and a home door owned by the member's
+faction. The executor keeps two hand-written pieces the exe does not have, both marked OURS: the `taken` set (one
+resident per body; the exe's resolver has no claim, so two would walk to the same one and the second lift would refuse)
+and the door/drop-point search (224's per-class outside point, vf+0x30, is not decoded).

@@ -1,0 +1,41 @@
+# carryanimal (kenshi-k16.2.168): goat_fight; the squad downs the goat, then the Wanderer lifts it (interact 8) and walks, turns, walks.
+# The ids come from the runner's probe (charids.sh: @Name@); the six squadmates attack the goat in turn.
+100 set animate 1
+150 camera char Wanderer
+200 attack id=@Goat@
+210 select id=@Green@
+220 attack id=@Goat@
+230 select id=@Beep@
+240 attack id=@Goat@
+250 select id=@Ruka@
+260 attack id=@Goat@
+270 select id=@Kang@
+280 attack id=@Goat@
+290 select id=@Seta@
+300 attack id=@Goat@
+310 select id=@Wanderer@
+900 dump chars
+1000 select id=@Wanderer@
+1000 interact id=@Goat@ 8
+1400 camera char Wanderer
+1412 camera char Wanderer
+1420 screenshot OUTDIR/stand_1420.png
+1437 camera char Wanderer
+1445 screenshot OUTDIR/stand_1445.png
+1500 dump chars
+1500 dump ragdolls
+1600 move -49900 -1000
+1800 camera char Wanderer
+1892 camera char Wanderer
+1900 screenshot OUTDIR/walk_1900.png
+2400 move -49900 -900
+2600 camera char Wanderer
+2792 camera char Wanderer
+2800 screenshot OUTDIR/turn_2800.png
+3200 move -50000 -900
+3500 camera char Wanderer
+3592 camera char Wanderer
+3600 screenshot OUTDIR/back_3600.png
+3700 dump chars
+3700 dump ragdolls
+4000 quit

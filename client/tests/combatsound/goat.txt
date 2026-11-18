@@ -1,0 +1,15 @@
+100 set animate 1
+150 camera char Wanderer
+200 attack id=@Goat@
+210 select id=@Green@
+220 attack id=@Goat@
+230 select id=@Beep@
+240 attack id=@Goat@
+250 select id=@Ruka@
+260 attack id=@Goat@
+270 select id=@Kang@
+280 attack id=@Goat@
+290 select id=@Seta@
+300 attack id=@Goat@
+310 select id=@Wanderer@
+4000 quit

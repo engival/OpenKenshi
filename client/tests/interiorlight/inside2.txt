@@ -1,0 +1,207 @@
+# interiorlight acceptance (kenshi-jj3.2.2): the same save as inside.txt, the camera free at eye height INSIDE the Storm House (set pos / alt 42 / pitch -3: no roof cut, no orbit),
+# render.interior_light 1 vs 0 at the fixed exposure run.sh passes (1 = the original lighting, the effect off; 0 = the effect full), each view shot with the switch off then on (OUTDIR/<view>_off.png, _on.png) and `dump gpu` 6x per state (the cost).
+# The Wanderer is walked to the back of the room (-51120,2650) and to the doorway (-51243,2670, the door is in the west wall, the INDOORS flag turns off past x -51250).
+# Views: door_back = the door wall seen from the back with the Wanderer at the back; door_wall / far_wall = looking at the door wall and at the far (east) wall from mid room;
+# doorway = the Wanderer standing in the doorway; leak_* = close views along the wall/floor/ceiling edges (point 4).
+# roof cut-away opens the room), render.interior_light 1 (the original's flat ambient, the effect off) vs 0 (the baked sky transfer, the effect full), at the fixed exposure run.sh passes. debug.light_probes is on until the
+# bake is done (it starts it; the picture reads nothing of it). 720p title: LOAD GAME (433,282); row 0 (465,311), LOAD (751,443). Frame numbers are 60 fps.
+300 screenshot OUTDIR/title.png
+330 mouse pos 433 282
+332 mouse down left
+334 mouse up left
+420 screenshot OUTDIR/load_panel.png
+440 mouse pos 465 311
+442 mouse down left
+444 mouse up left
+470 mouse pos 751 443
+472 mouse down left
+474 mouse up left
+1200 set debug.light_probes 1
+1100 camera char Wanderer
+2500 set debug.light_probes 0
+2505 set render.interior_light 0
+2600 move -51120 2650
+3300 set pos -51200,2655
+3302 set alt 42
+3304 set yaw 90
+3306 set pitch -3
+3310 set render.interior_light 1
+3430 screenshot OUTDIR/back_char_door_off.png
+3435 dump gpu
+3443 dump gpu
+3451 dump gpu
+3459 dump gpu
+3467 dump gpu
+3475 dump gpu
+3510 set render.interior_light 0
+3630 screenshot OUTDIR/back_char_door_on.png
+3635 dump gpu
+3643 dump gpu
+3651 dump gpu
+3659 dump gpu
+3667 dump gpu
+3675 dump gpu
+3710 set pos -51160,2670
+3712 set alt 42
+3714 set yaw 270
+3716 set pitch -3
+3720 set render.interior_light 1
+3840 screenshot OUTDIR/door_wall_off.png
+3845 dump gpu
+3853 dump gpu
+3861 dump gpu
+3869 dump gpu
+3877 dump gpu
+3885 dump gpu
+3920 set render.interior_light 0
+4040 screenshot OUTDIR/door_wall_on.png
+4045 dump gpu
+4053 dump gpu
+4061 dump gpu
+4069 dump gpu
+4077 dump gpu
+4085 dump gpu
+4120 set pos -51243,2670
+4122 set alt 42
+4124 set yaw 90
+4126 set pitch -3
+4130 set render.interior_light 1
+4250 screenshot OUTDIR/far_wall_off.png
+4255 dump gpu
+4263 dump gpu
+4271 dump gpu
+4279 dump gpu
+4287 dump gpu
+4295 dump gpu
+4330 set render.interior_light 0
+4450 screenshot OUTDIR/far_wall_on.png
+4455 dump gpu
+4463 dump gpu
+4471 dump gpu
+4479 dump gpu
+4487 dump gpu
+4495 dump gpu
+4530 move -51243 2670
+5230 set pos -51180,2670
+5232 set alt 42
+5234 set yaw 270
+5236 set pitch -3
+5240 set render.interior_light 1
+5360 screenshot OUTDIR/doorway_char_off.png
+5365 dump gpu
+5373 dump gpu
+5381 dump gpu
+5389 dump gpu
+5397 dump gpu
+5405 dump gpu
+5440 set render.interior_light 0
+5560 screenshot OUTDIR/doorway_char_on.png
+5565 dump gpu
+5573 dump gpu
+5581 dump gpu
+5589 dump gpu
+5597 dump gpu
+5605 dump gpu
+5640 set pos -51215,2685
+5642 set alt 42
+5644 set yaw 270
+5646 set pitch -8
+5650 set render.interior_light 1
+5770 screenshot OUTDIR/leak_jamb_off.png
+5775 dump gpu
+5783 dump gpu
+5791 dump gpu
+5799 dump gpu
+5807 dump gpu
+5815 dump gpu
+5850 set render.interior_light 0
+5970 screenshot OUTDIR/leak_jamb_on.png
+5975 dump gpu
+5983 dump gpu
+5991 dump gpu
+5999 dump gpu
+6007 dump gpu
+6015 dump gpu
+6050 set pos -51140,2670
+6052 set alt 42
+6054 set yaw 90
+6056 set pitch -28
+6060 set render.interior_light 1
+6180 screenshot OUTDIR/leak_east_floor_off.png
+6185 dump gpu
+6193 dump gpu
+6201 dump gpu
+6209 dump gpu
+6217 dump gpu
+6225 dump gpu
+6260 set render.interior_light 0
+6380 screenshot OUTDIR/leak_east_floor_on.png
+6385 dump gpu
+6393 dump gpu
+6401 dump gpu
+6409 dump gpu
+6417 dump gpu
+6425 dump gpu
+6460 set pos -51180,2650
+6462 set alt 42
+6464 set yaw 0
+6466 set pitch 25
+6470 set render.interior_light 1
+6590 screenshot OUTDIR/leak_ceiling_off.png
+6595 dump gpu
+6603 dump gpu
+6611 dump gpu
+6619 dump gpu
+6627 dump gpu
+6635 dump gpu
+6670 set render.interior_light 0
+6790 screenshot OUTDIR/leak_ceiling_on.png
+6795 dump gpu
+6803 dump gpu
+6811 dump gpu
+6819 dump gpu
+6827 dump gpu
+6835 dump gpu
+# the character seen from its lit side (the camera west of it, looking east), in the doorway and then at the back: the comparison of point 2
+6880 set pos -51275,2670
+6882 set alt 42
+6884 set yaw 90
+6886 set pitch -3
+6890 set render.interior_light 1
+7010 screenshot OUTDIR/char_doorway_front_off.png
+7015 dump gpu
+7023 dump gpu
+7031 dump gpu
+7039 dump gpu
+7047 dump gpu
+7055 dump gpu
+7090 set render.interior_light 0
+7210 screenshot OUTDIR/char_doorway_front_on.png
+7215 dump gpu
+7223 dump gpu
+7231 dump gpu
+7239 dump gpu
+7247 dump gpu
+7255 dump gpu
+7290 move -51120 2650
+7990 set pos -51152,2650
+7992 set alt 42
+7994 set yaw 90
+7996 set pitch -3
+8000 set render.interior_light 1
+8120 screenshot OUTDIR/char_back_front_off.png
+8125 dump gpu
+8133 dump gpu
+8141 dump gpu
+8149 dump gpu
+8157 dump gpu
+8165 dump gpu
+8200 set render.interior_light 0
+8320 screenshot OUTDIR/char_back_front_on.png
+8325 dump gpu
+8333 dump gpu
+8341 dump gpu
+8349 dump gpu
+8357 dump gpu
+8365 dump gpu
+8400 quit

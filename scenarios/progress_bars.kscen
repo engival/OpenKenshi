@@ -1,0 +1,21 @@
+# progress_bars (kenshi-h2v.16.3; docs/reference/SCENARIO_IMPORT.md `building`, `task=`, `shackled=`). The player's squad and a caged NPC all work at once beside the Heft
+# slave shop's cage, to show every TASK_PROGRESS kind the sim sends at each order 98 level. The `building` records place the Ore Mine, the site and the automatic drill
+# (the world has no iron near a cage); the `task=` keys start each player task at load. Only the player is ever ordered: the NPC works from its own AI.
+KSCEN 2
+scenario title=Progress%20bars%20over%20working%20characters setup=At%20the%20Heft%20slave%20shop%20the%20Wanderer%20stands%20by%20while%20the%20squad%20works%20at%20once%3A%20the%20Lockpicker%20picks%20the%20cage%20it%20is%20locked%20in%2C%20the%20Sawyer%20cuts%20the%20Shackled%20one%27s%20shackles%20with%20a%20hacksaw%2C%20the%20Miner%20works%20a%20new%20Ore%20Mine%2C%20the%20Builder%20builds%20a%20mine%20site%2C%20an%20Ore%20Drill%20III%20%28Automated%29%20runs%20and%20a%20caged%20NPC%20with%20lockpicking%20may%20work%20its%20own%20lock.%20Everything%20is%20within%20about%2070%20u. look_for=Level%200%20%28the%20option%20off%29%3A%20no%20bars%20at%20all.%20Level%201%20%28the%20original%27s%20set%29%3A%20a%20bar%20over%20the%20Lockpicker%20in%20the%20cage%20%28kind%201%2C%20the%20chance%20to%20pick%20as%20its%20value%29%20and%20over%20the%20Sawyer%20cutting%20the%20Shackled%20one%27s%20shackles%20%28kind%207%2C%20the%20hardness%20left%20falling%20to%200%29%3B%20nothing%20over%20the%20Miner%20or%20the%20Builder%2C%20and%20none%20over%20the%20NPC.%20Level%202%20%28every%20player%20row%29%3A%20also%20the%20Miner%20at%20the%20Ore%20Mine%20%28kind%2010%2C%20produce%3A%20rises%20as%20iron%20is%20mined%2C%20it%20has%20no%20bar%20in%20the%20original%29%20and%20the%20Builder%20at%20the%20construction%20site%20%28kind%2011%2C%20build%29%3B%20the%20automatic%20Ore%20Drill%20III%20has%20a%20row%20that%20STAYS%20AT%200%20%28no%20power%20model%2C%20so%20no%20progress%29.%20Level%203%20%28plus%20NPCs%29%3A%20also%20a%20row%20over%20the%20caged%20NPC%20if%20it%20works%20on%20its%20own%20lock%20%28its%20AI%20picks%20it%3B%20if%20no%20bar%20shows%2C%20that%20is%20the%20AI%20not%20trying%2C%20not%20the%20option%29%3B%20NPC%20rows%20update%20at%20most%20once%20a%20second.%20Not%20built%2C%20so%20expect%20nothing%3A%20crafting%20at%20a%20bench%20%28kind%2015%20and%20the%20bench%27s%20kind%2010%20rows%2C%20h2v.17.1%29%20and%20kind%206. bead=kenshi-h2v.16 metrics=player_downed_s
+source save=playtest game=1.0.68 radius=0 centre=68331.3,-71228.1 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+squad id=5 name=Shackled faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=68331 y=1174.3 z=-71190 yaw=0 leader=1 player=1 chase=1 ranged=1
+char id=2 squad=1 name=Lockpicker template=1533662-rebirth.mod faction=204-gamedata.base x=68331.3 y=1174.3 z=-71228.1 yaw=0 player=1 cage=near bounty=500 task=pick_cage chase=1 ranged=1
+char id=3 squad=1 name=Sawyer template=1533662-rebirth.mod faction=204-gamedata.base x=68345 y=1174.3 z=-71176 yaw=0 player=1 task=cut_shackles target=4 chase=1 ranged=1
+item char=3 sid=581-gamedata.base section=main qty=1
+char id=4 squad=5 name=Shackled template=1533662-rebirth.mod faction=204-gamedata.base x=68347 y=1174.3 z=-71176 yaw=0 player=1 shackled=1 leader=1 chase=1 ranged=1
+char id=5 squad=1 name=Miner template=1533662-rebirth.mod faction=204-gamedata.base x=68360 y=1174.3 z=-71212 yaw=0 player=1 task=operate target=1 chase=1 ranged=1
+char id=6 squad=1 name=Builder template=1533662-rebirth.mod faction=204-gamedata.base x=68321 y=1174.3 z=-71168 yaw=0 player=1 task=build target=3 chase=1 ranged=1
+building id=1 sid=2056-gamedata.base x=68366 z=-71215 yaw=0 built=1
+building id=2 sid=2098-gamedata.base x=68300 z=-71232 yaw=0 built=1
+building id=3 sid=4092-TwoStorey.mod x=68322 z=-71160 yaw=0 built=0
+squad id=4 name=Captive faction=1084-gamedata.base template=3387-gamedata.base package=3389-gamedata.base player=0
+char id=7 squad=4 name=Captive template=1533662-rebirth.mod faction=1084-gamedata.base x=68331.3 y=1174.3 z=-71228.1 yaw=0 cage=near bounty=500 chase=1 stats=lockpicking:60

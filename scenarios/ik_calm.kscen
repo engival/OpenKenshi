@@ -1,0 +1,12 @@
+# ik_calm (kenshi-k16.17.7.24.2): a calm place for the foot-IK verify (anim.foot_lock=1 anim.foot_terrain=1). The player alone at the Hub's
+# Storm House, radius=400 clears every default-world squad within 400 u of the centre (SCENARIO_IMPORT.md: the loader removes them, and the area
+# stays clear), and the file places no other squad: nobody to attack him. Walk and stop on the Storm House floor (the bent-knee place), then on
+# the slope outside: the ground falls ~0.3 per u toward +x from the house; the sim's heights (worker run, kenshi-k16.17.7.24.2): the house floor
+# 1079, (-50496,-1215) 1037, (-50471,-1210) 1028. Slope test spots: x=-50540..-50480, z=-1211.
+# Only the player is ever ordered (the scenario places the world; SCENARIO_IMPORT.md "Rule").
+KSCEN 2
+scenario title=Calm%20at%20the%20Storm%20House setup=The%20player%20alone%20at%20the%20Hub%27s%20Storm%20House%2C%20no%20hostiles%20within%20400%20u. look_for=Walk%20and%20stop%20on%20the%20Storm%20House%20floor%2C%20then%20on%20the%20slope%20outside%20(east%2C%20x%20-50540%20to%20-50480)%3A%20do%20the%20knees%20and%20feet%20sit%20on%20the%20ground%20with%20the%20IK%20on%3F bead=kenshi-k16.17.7.24.2 metrics=targeted_player,player_downed_s
+source save=playtest game=1.0.68 radius=400 centre=-50592,-1211 leader=Wanderer
+clock day=1 hour=14 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-50592 y=1065 z=-1211 yaw=0 leader=1 player=1 chase=1 ranged=1

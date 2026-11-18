@@ -1,0 +1,12 @@
+# dismember_fight (kenshi-h2v.13.3). The quick case: a plain fight where one hit takes an arm off. The Dust bandit's two arms start at flesh -118 (the Dust bandit's sever line is -125), so the first hit
+# that lands on an arm severs it (Dismemberment 1 "Rare" severs on a hit). The player attacks; nothing else is ordered.
+KSCEN 2
+scenario title=An%20arm%20off setup=The%20Wanderer%20faces%20one%20Dust%20bandit%20on%20the%20open%20ground%20past%20the%20Hub%20Bar%3B%20the%20bandit%20arms%20are%20nearly%20torn%20off%20already. look_for=Attack%20the%20Dust%20bandit.%20Its%20arms%20are%20already%20torn%20to%20the%20edge%20of%20coming%20off%20(a%20scenario%20limb%20override%2C%20not%20a%20normal%20fresh%20body)%3A%20within%20a%20few%20hits%20one%20should%20come%20off.%20Does%20the%20arm%20leave%20the%20body%20as%20one%20limb%20item%20on%20the%20ground%20where%20it%20fell%2C%20and%20does%20the%20bandit%20lose%20the%20use%20of%20that%20arm%3F%20Keep%20attacking%20until%20a%20limb%20is%20off%3B%20the%20fight%20is%20quick. bead=kenshi-h2v.13 metrics=fight_s,bodies_down
+source save=playtest game=1.0.68 radius=0 centre=-50619,-1086 leader=Wanderer
+clock day=1 hour=14 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-50619 y=1089.49 z=-1086 yaw=0 leader=1 player=1 chase=1
+squad id=2 name=Dust%20bandit faction=200-gamedata.base template=1302-gamedata.base package=5201-gamedata.base player=0 hostile=1
+char id=2 squad=2 name=Dust%20bandit template=510-gamedata.base faction=200-gamedata.base x=-50619 y=1089.49 z=-1076 yaw=3.14159 leader=1 chase=1
+limb char=2 sid=28-gamedata.quack flesh=-118 hit=80.0 hitmult=1.0 wear=0.0 bandage=0.0 stun=0.0 rig=0.0
+limb char=2 sid=29-gamedata.quack flesh=-118 hit=80.0 hitmult=1.0 wear=0.0 bandage=0.0 stun=0.0 rig=0.0

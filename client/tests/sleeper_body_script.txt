@@ -1,0 +1,37 @@
+# sleeper_body (kenshi-k16.2.223: the pick on a lying / asleep body tests the drawn skeleton, head-pelvis-feet). A one-off hand-run script: it has
+# no run.sh and no scenario of its own, and it was run against the playtest world with the camera on a bed (the bed's object id in that world).
+# The select is a player character, named @Wanderer@ here: charids_fill (client/tests/charids.sh, k16.2.308) resolves it from the run's own `dump chars`; the bed's id
+# (a thing, not a character) is that world's and a re-run needs it from its own `dump things`. The shot lands in the run's working directory.
+150 select id=@Wanderer@
+200 camera thing id=5115562244835719332
+201 key R down
+202 key R up
+203 key R down
+204 key R up
+205 key R down
+206 key R up
+207 mouse pos 640 360
+208 dump pick
+209 mouse down right
+210 mouse up right
+1500 camera thing id=5115562244835719332
+1501 key R down
+1502 key R up
+1503 key R down
+1504 key R up
+1505 key R down
+1506 key R up
+1520 mouse pos 400 290
+1521 dump pick
+1522 mouse pos 430 330
+1523 dump pick
+1524 mouse pos 470 380
+1525 dump pick
+1526 mouse pos 520 410
+1527 dump pick
+1528 mouse pos 420 270
+1529 dump pick
+1530 mouse pos 700 400
+1531 dump pick
+1532 screenshot sleeper.png
+1600 quit

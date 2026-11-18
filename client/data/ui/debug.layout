@@ -1,0 +1,32 @@
+# The debug window's body (ui::DebugPanel in client/src/ui/debugpanel.cpp; F8). The code fills "toggles", "scenes",
+# "commands", "weathers" and "keys", hides "scenesBox" while a sim is connected and "reply" while it is empty, and gives the
+# time buttons ("dawn", "noon", "dusk", "midnight", "plus1h") their presets; the slot "clock" holds the 24 h dial (ui::ClockDial). Format: README.md here.
+
+row gap=16 pad=12
+	col size=240 gap=4
+		label "TOGGLES" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
+		col id=toggles size=auto gap=2
+		col id=scenesBox size=auto gap=4
+			label "SCENES" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
+			col id=scenes size=auto gap=2
+	col size=270 gap=4
+		label "COMMANDS" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
+		col id=commands size=auto gap=2
+		label id=reply wrap=on size=auto
+		label "TIME" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
+		row size=92 gap=6
+			col size=fill gap=4
+				row size=28 gap=4
+					button "Dawn" id=dawn size=fill font=Kenshi_StandardFont_Medium
+					button "Noon" id=noon size=fill font=Kenshi_StandardFont_Medium
+				row size=28 gap=4
+					button "Dusk" id=dusk size=fill font=Kenshi_StandardFont_Medium
+					button "Midnight" id=midnight size=fill font=Kenshi_StandardFont_Medium
+				row size=28 gap=4
+					button "+1 h" id=plus1h size=fill font=Kenshi_StandardFont_Medium
+			slot id=clock size=92
+		label "WEATHER" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
+		panel look=inset size=fill
+			scroll id=weathers x=4 y=4 w=4 h=4
+	panel look=inset size=fill
+		scroll id=keys x=10 y=8 w=10 h=8

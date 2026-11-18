@@ -1,0 +1,20 @@
+# lightning (kenshi-k16.2.177.1) -- the type 7 bolt against the original's live capture
+
+The original's bolt, live (kenshi-rwh.120, `desktop-findings/weather_lightning_live.md`): a 1 s EFFECT handler whose
+psys stops at the TTL but lives on until its 1.2 s particles are gone (~1.6 s spawn-to-gone, the column visible
+~1.2 s after its first particle 0.5 s in), and two extra techniques at the foot: the additive `Flames` billboards
+(a white fireball from frame 0) and the `SPARKS` spray. This test reproduces the bolt headless and measures it.
+
+    client/tests/lightning/run.sh MODE OUT      # MODE = wide | mid | close | all
+    client/tests/lightning/measure.py OUT/mid   # the flash timeline: foot (fireball+sparks) and column
+    client/tests/lightning/compose.py ORIG OUT/mid stripe.png --first N   # ours beside the capture, phase by phase
+
+Modes are one screenshot a frame at a fixed 1/60 s game step, from before the handler to well past the flash:
+`wide` the k16.2.11.1 follow framing (column in the distance), `mid` the capture's own framing (camera 900 u from the
+base + 500 pivot, pitch -8) for the montage comparison, `close` a free camera 250 u south of the base (the fireball
+and the sparks). The bolt is deterministic: the squad scenario at the Hub makes spawnBolt relocate the first bolt to
+world (-52235.4, 1328.3, 3138.3), terrain + 10, around frame 62; the client log's framestats line counts every
+system's live particles (`world Lightning_Bolt x1.00 N`).
+
+ORIG is the capture's frame dir (`kenshi-rwh.120`, `seq/fNNN.jpg`); pass `--first` the first bolt-particle frame
+measure.py prints for your mode.

@@ -1,0 +1,13 @@
+# splitstack (kenshi-k16.20.13.3): the Wanderer carries a Traders Backpack Medium (stack cap x6 once worn) and 6 Bread in main; the script wears the bag and stacks the bread in it. Fixture only.
+KSCEN 2
+source save=playtest game=1.0.68 radius=0 centre=-51187.1,2627.08 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-51187.1 y=1582.49 z=2627.08 yaw=0 leader=1 player=1
+item char=1 sid=1498-gamedata.base section=main qty=1
+item char=1 sid=1946-gamedata.base section=main qty=1
+item char=1 sid=1946-gamedata.base section=main qty=1
+item char=1 sid=1946-gamedata.base section=main qty=1
+item char=1 sid=1946-gamedata.base section=main qty=1
+item char=1 sid=1946-gamedata.base section=main qty=1
+item char=1 sid=1946-gamedata.base section=main qty=1

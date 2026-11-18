@@ -1,0 +1,7 @@
+# weatherfx dust (kenshi-k16.2.11.3): The Desert, weather "Dust Storm Approach" -- the type 4 Sand-Stream at the pivot, and the
+# weather's world instances (the type 3 cloud storm and twisters) as they spawn: the first delay is 155 s for the cloud storm.
+30 set particles 0.01666
+30 dump weather
+1800 dump weather
+1810 screenshot OUTDIR/dust30.png
+1900 quit

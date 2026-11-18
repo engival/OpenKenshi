@@ -1,0 +1,33 @@
+Retired 2026-10-31 from src/ksim/combat.cpp (CombatArena::Ctx::walkOrder). Replaced by route
+following on the navmesh (knav::Walker::follow). Pathfinding is the server's alone and there is
+no straight-line fallback (docs/formats/SIMLINK.md section 12). Kept for reference only; not built.
+
+	// PROVISIONAL: the walk of a move order. Straight line at the run speed with the footwork
+	// ramp, turning at a half turn per second like the combat footwork; ends within 3 units.
+	// Not original behaviour (no navmesh, no walk/run choice, no avoidance).
+	void walkOrder(Member& m)
+	{
+		Fighter& f = m.fighter;
+		if (f.state != CombatState::Hub)
+			setState(m, CombatState::Hub, true);
+		const double dx = f.moveX - f.x;
+		const double dz = f.moveZ - f.z;
+		const double dist = std::hypot(dx, dz);
+		f.lateralSpeed = 0.0;
+		if (dist <= 3.0)
+		{
+			f.hasMove = false;
+			f.forwardSpeed = 0.0;
+			f.swingProgress = computeSwingProgress(f);
+			return;
+		}
+		const double want = std::atan2(dx, dz);
+		const double turn = std::clamp(wrapAngle(want - f.yaw), -kPi * dt, kPi * dt);
+		f.yaw = wrapAngle(f.yaw + turn);
+		const double desired = std::min(runSpeed(f), dist / dt);
+		f.forwardSpeed += std::clamp(desired - f.forwardSpeed, -kTuneRamp * dt, kTuneRamp * dt);
+		const double step = std::min(f.forwardSpeed * dt, dist);
+		f.x += dx / dist * step;
+		f.z += dz / dist * step;
+		f.swingProgress = computeSwingProgress(f);
+	}

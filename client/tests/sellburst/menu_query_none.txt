@@ -1,0 +1,8 @@
+# menu_query_none (kenshi-k16.2.121): pause, then hold RMB on a standing NPC with no dialogue root (the Hub's Mercenary 4709):
+# MENU_ENTRIES (61) answers entries 0 and the menu has no Talk row.
+95 key SPACE down
+96 key SPACE up
+120 mouse char=4709
+121 mouse down right
+400 screenshot OUTDIR/menu_mercenary.png
+440 quit

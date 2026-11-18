@@ -1,0 +1,13 @@
+# weatherfx lightning (kenshi-k16.2.11.3): weather "Heavy_Rain deadlands" -- the type 7 bolts on their 1..25 s timer with a 1 s life.
+# With no player character in the viewer they keep the random-cell point (the oracle's empty-party fallback) and land far away, so the
+# dumps are the evidence (the timer counts down, then a live bolt on the frame it fires). The first spawn is ~17 s in, so the samples
+# crowd that window at 0.25 s; an extra one at the end shows the timer already re-rolled.
+60 dump weather
+540 dump weather
+1020 dump weather
+1050 dump weather
+1080 dump weather
+1110 dump weather
+1140 dump weather
+1200 dump weather
+1260 quit

@@ -1,0 +1,56 @@
+# Several item windows at once (kenshi-k16.20.13.2): the Wanderer (@Wanderer@) trades with the Barman 4679, then opens the box @box@ (own, 3 Raw Iron):
+# three windows. A drag box -> trader sells, the target mark sends the quick right click to the box / the trader, a move order closes the box.
+# Run: PORT=47835 KSCEN=sellbox client/tests/sellburst/run.sh windows OUT. Ids move with the data (dump things / dump chars first); pixels are 720p.
+300 interact id=4679 6
+700 reply 0
+900 open id=@box@
+1100 dump windows
+1120 screenshot OUTDIR/three.png
+# move the box window down off the trader's grid (drag by its caption)
+1130 mouse pos 1000 68
+1131 mouse down left
+1134 mouse pos 1000 330
+1137 mouse up left
+1150 dump windows
+1160 screenshot OUTDIR/box_moved.png
+# box -> trader: lift the first Raw Iron, put it on a free stock cell (a sale: take into the pack, then sell)
+1200 mouse gear @box@ grid container 0 0
+1210 mouse down left
+1211 mouse up left
+1215 screenshot OUTDIR/lifted.png
+1220 mouse gear 4678 grid container 8 11
+1230 mouse down left
+1231 mouse up left
+1240 screenshot OUTDIR/dropped.png
+1500 dump trade
+1510 dump windows
+1520 screenshot OUTDIR/sold.png
+# the mark: the box, then a right click on the pack's first stack goes into the box
+1600 mouse gear @box@ mark
+1601 mouse down left
+1602 mouse up left
+1610 dump windows
+1650 mouse gear @Wanderer@ grid main 0 0
+1660 mouse down right
+1661 mouse up right
+1900 dump windows
+1910 screenshot OUTDIR/marked_box.png
+# unmarked box, the trader marked: the same right click sells
+1920 mouse gear @box@ mark
+1921 mouse down left
+1922 mouse up left
+1930 mouse gear 4678 mark
+1931 mouse down left
+1932 mouse up left
+1940 dump windows
+1950 mouse gear @Wanderer@ grid main 5 1
+1960 mouse down right
+1961 mouse up right
+2300 dump trade
+2310 dump windows
+2320 screenshot OUTDIR/marked_trader.png
+# a move order of the user closes the box (not the trade)
+2400 move -51150 2640
+2600 dump windows
+2610 screenshot OUTDIR/ordered.png
+2700 quit

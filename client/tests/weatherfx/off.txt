@@ -1,0 +1,4 @@
+# weatherfx off (kenshi-k16.2.11.3): the ash scene with --no-particles: no weather particle of any class is drawn.
+30 set particles 0.01666
+260 screenshot OUTDIR/ash_noparticles.png
+320 quit

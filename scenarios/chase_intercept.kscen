@@ -1,0 +1,13 @@
+# chase_intercept (kenshi-3i5.1; docs/reference/PLAYTEST.md 1). The player flees by hand on open desert from two melee chasers of different speed
+# (rwh.108, ENGAGEMENT 16: the chaser aims at the target's predicted point once it has run freely for 1.5 s). Athletics sets the run speeds apart:
+# the player 25, the fast Berserker 100, the slow one 10. Only the player is ever ordered (SCENARIO_IMPORT.md "Rule"); the chasers aggro on sight.
+KSCEN 2
+scenario title=Flee%20from%20a%20fast%20and%20a%20slow%20chaser setup=The%20player%20on%20open%2C%20flat%20desert%3B%20two%20hostile%20Berserkers%20a%20few%20dozen%20units%20behind%2C%20one%20that%20runs%20faster%20than%20you%20and%20one%20slower. look_for=Run%20in%20a%20straight%20line%20away%20from%20them.%20The%20fast%20one%20should%20overtake%20and%20run%20into%20your%20path%20ahead%20of%20you%2C%20then%20swing%20as%20you%20pass%3B%20the%20slow%20one%20should%20trail%20and%20head%20for%20where%20you%20are%20going%2C%20not%20at%20your%20back.%20Change%20direction%20and%20the%20chasers%20re-aim%20at%20the%20body%20for%20a%20moment. bead=kenshi-3i5 metrics=targeted_player,player_downed_s,fight_s
+source save=playtest game=1.0.68 radius=0 centre=-50750,-1000 leader=Wanderer
+clock day=1 hour=12 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-50750 y=1100 z=-1000 yaw=-1.5708 leader=1 player=1 chase=1 stats=athletics:12
+squad id=2 name=Fast%20chaser faction=42257-rebirth.mod template=42258-rebirth.mod package=3949-gamedata.base player=0 hostile=1
+char id=2 squad=2 name=Fast%20Berserker template=42259-rebirth.mod faction=42257-rebirth.mod x=-50705 y=1100 z=-1015 yaw=-1.5708 leader=1 chase=1 stats=athletics:100
+squad id=3 name=Slow%20chaser faction=42257-rebirth.mod template=42258-rebirth.mod package=3949-gamedata.base player=0 hostile=1
+char id=3 squad=3 name=Slow%20Berserker template=42259-rebirth.mod faction=42257-rebirth.mod x=-50690 y=1100 z=-985 yaw=-1.5708 leader=1 chase=1 stats=athletics:1

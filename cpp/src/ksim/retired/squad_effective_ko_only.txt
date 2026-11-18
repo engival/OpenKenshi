@@ -1,0 +1,14 @@
+Retired 2026-11-02 (BQ15 liveness follow-ups, kinspect s79_static.md section 2, bq15_corpse_cleanup.md b and c): squadVitals took
+"effective" as "not dead and not unconscious", and the size as the live member count:
+
+	const bool dead = fighter != nullptr && fighter->dead;
+	const bool down = dead || (fighter != nullptr && fighter->unconscious);
+	...
+	++vitals.members;
+	vitals.effective += down ? 0 : 1;
+	...
+	vitals.intact = static_cast<float>(vitals.effective)
+		>= static_cast<float>(vitals.members) * (vitals.leaderDown ? kIntactFractionLeaderDown : kIntactFraction);
+
+Now: a member is effective when it is not dead and (not down, or its injury severity is strictly below 0.2); down = dead, carried,
+ragdoll or KO'd. The size is the template's nominal size (platoon+0xa4) when the squad's template is known, else the live count.

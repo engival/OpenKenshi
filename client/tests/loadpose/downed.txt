@@ -1,0 +1,27 @@
+# loadpose downed (kenshi-k16.2.144, .164): slavers_downed: the caravan (80 u away, downed.kscen) puts the player down once the player attacks the Boss (script op `attack id=NAME`,
+# the boss is @Slaver boss@, its id filled from a probe run (charids.sh), as carrysound/slavers.txt: a right click on the Boss is not an attack); then run_downed.sh adds the quickload (Ctrl+F9) of the F5 quicksave taken before the fight (the player
+# standing, the same id). The player was lying in the old world and stands in the loaded one: no get-up. Frames: the player is down by ~4000 (dump chars).
+100 set animate 1
+150 camera char Wanderer
+330 camera char Wanderer
+340 key F5 down
+342 key F5 up
+400 screenshot OUTDIR/start.png
+410 attack id=@Slaver boss@
+800 dump chars
+1100 dump chars
+1400 dump chars
+1700 dump chars
+2000 dump chars
+2300 dump chars
+2600 dump chars
+2900 dump chars
+3200 dump chars
+3500 dump chars
+3800 dump chars
+4100 dump chars
+1100 screenshot OUTDIR/fight_1100.png
+2000 screenshot OUTDIR/fight_2000.png
+3000 screenshot OUTDIR/fight_3000.png
+3800 screenshot OUTDIR/fight_3800.png
+4100 screenshot OUTDIR/fight_4100.png

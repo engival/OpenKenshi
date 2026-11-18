@@ -1,0 +1,75 @@
+# pausetoggle (kenshi-k16.2.180.1; the player verdict kenshi-k16.2.192): pause toggled every 0.5 s standing, then twice mid-walk
+# (`move X Z` world-target orders south and west of the Hub, the same order a click sends), then standing again. The Wanderer is
+# followed (the follow camera, so the player fills the view and the nearby NPCs stream too).
+# `log pos all` prints every drawn character's sim and drawn position and the drawn's frame move each frame (client.log), so a rock shows
+# as a large `step` on the toggle frames. The first 100 frames are the world load (the script clock counts rendered frames, and the
+# load's frames are long).
+100 set animate 1
+110 log pos all
+150 dump chars
+150 follow char Wanderer
+170 screenshot OUTDIR/stand_start.png
+200 key SPACE down
+204 key SPACE up
+230 key SPACE down
+234 key SPACE up
+260 key SPACE down
+264 key SPACE up
+290 key SPACE down
+294 key SPACE up
+320 key SPACE down
+324 key SPACE up
+350 key SPACE down
+354 key SPACE up
+380 key SPACE down
+384 key SPACE up
+410 key SPACE down
+414 key SPACE up
+440 key SPACE down
+444 key SPACE up
+470 key SPACE down
+474 key SPACE up
+520 move -50619 -1300
+540 key SPACE down
+544 key SPACE up
+570 key SPACE down
+574 key SPACE up
+600 key SPACE down
+604 key SPACE up
+630 key SPACE down
+634 key SPACE up
+660 key SPACE down
+664 key SPACE up
+690 key SPACE down
+694 key SPACE up
+720 key SPACE down
+724 key SPACE up
+750 key SPACE down
+754 key SPACE up
+780 key SPACE down
+784 key SPACE up
+810 key SPACE down
+814 key SPACE up
+840 move -50400 -1300
+860 key SPACE down
+864 key SPACE up
+890 key SPACE down
+894 key SPACE up
+920 key SPACE down
+924 key SPACE up
+950 key SPACE down
+954 key SPACE up
+980 key SPACE down
+984 key SPACE up
+1010 key SPACE down
+1014 key SPACE up
+1040 key SPACE down
+1044 key SPACE up
+1070 key SPACE down
+1074 key SPACE up
+1100 key SPACE down
+1104 key SPACE up
+1130 key SPACE down
+1134 key SPACE up
+1160 screenshot OUTDIR/walk_end.png
+1200 quit

@@ -1,0 +1,9 @@
+Retired 2026-11-02 (talk approach, docs/FEATURES.md "Talk / trade approach stops on the near side of a counter"): the interact order's
+route was always the path to the target's own position:
+
+	navigation_->routeFrom({fighter.x, fighter.y, fighter.z}, target.x, target.z, target.y);       // Simulation::stepOrderQueues
+	nav->routeFrom({fighter.x, fighter.y, fighter.z}, thing.x, thing.z, thing.y);                    // simlink.cpp order 60
+
+For a Talk to a character that is the original's bug: a barman behind a counter is walked to round the back. Replaced by
+routeToInteract (interact.cpp) -> MeshNavigator::routeToStand; routeFrom to the target is now the fallback and the route of
+every other action.

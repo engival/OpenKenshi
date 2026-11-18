@@ -1,0 +1,39 @@
+# lampbeams (kenshi-jj3.28.1): the Wanderer in the Hub bar (bar_lure), roof cut; a night and a day shot from the floor, looking up at the lamp. render.lamp_beams / render.sun_shafts come from run.sh (--set).
+# The lamps' visibility bake (render.lamp_occlusion, which the beams switch on) finishes well after the load, so the shots wait until frame 1270.
+# The in-game time follows the sim clock again ~12 frames after `set time`, so each shot is 5 frames after its set.
+100 set animate 1
+100 set timescale 0
+150 camera char Wanderer
+310 move -50544 -1231
+850 camera char Wanderer
+852 key F down
+854 key F up
+856 key F down
+858 key F up
+1262 set pos -50544,-1150
+1263 set yaw 0
+1264 set pitch 5
+1265 set alt 35
+# The clock is unreliable (the sim clock overwrites `set time` a few frames later): 5 attempts per time, run.sh keeps the first whose sidecar says the right hour.
+1275 set time 1
+1277 screenshot OUTDIR/night0.png
+1281 set time 1
+1283 screenshot OUTDIR/night1.png
+1287 set time 1
+1289 screenshot OUTDIR/night2.png
+1293 set time 1
+1295 screenshot OUTDIR/night3.png
+1299 set time 1
+1301 screenshot OUTDIR/night4.png
+1305 set time 12
+1307 screenshot OUTDIR/day0.png
+1311 set time 12
+1313 screenshot OUTDIR/day1.png
+1317 set time 12
+1319 screenshot OUTDIR/day2.png
+1323 set time 12
+1325 screenshot OUTDIR/day3.png
+1329 set time 12
+1331 screenshot OUTDIR/day4.png
+1335 dump gpu
+1425 quit

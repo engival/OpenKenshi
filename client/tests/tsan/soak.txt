@@ -1,0 +1,142 @@
+# client/tests/tsan/soak.txt: the threaded soak (kenshi-k16.2.205.12.56): TSAN_LIVE_SCRIPT=client/tests/tsan/soak.txt client/tests/tsan/run.sh --only live.
+# live.txt's live bar_lure session for 2 minutes of frames (7200 at the fixed 1/60 s): the squad's HUD portrait (PortraitTable::get on logic,
+# Portraits::update on render, the mailbox between them), `set portraits 1` (the atlas strip), the selection, orders, sim speeds, render stalls
+# and logic stalls between them, the camera turning so the portraits' world light and the light volumes change. SHOTDIR is replaced by run.sh.
+5 set simspeed 2
+10 set pos -50619,-1060
+12 set alt 60
+14 set yaw 180
+16 set pitch -20
+20 set portraits 1
+30 screenshot SHOTDIR/soak_00_start.png
+40 key W down
+160 key W up
+180 mouse pos 640 420
+181 mouse down left
+182 mouse up left
+200 mouse pos 640 300
+201 mouse down right
+202 mouse up right
+240 set yaw 205
+260 renderstall 250
+340 set simspeed 2
+480 set yaw 230
+500 renderstall 250
+580 set simspeed 5
+720 set yaw 255
+740 renderstall 250
+780 stall 150
+820 set simspeed 1
+960 set yaw 280
+980 renderstall 250
+1060 set simspeed 2
+1100 mouse pos 640 420
+1101 mouse down left
+1102 mouse up left
+1200 set yaw 305
+1220 renderstall 250
+1300 set simspeed 5
+1440 set yaw 330
+1460 renderstall 250
+1500 stall 150
+1540 set simspeed 1
+1620 screenshot SHOTDIR/soak_06.png
+1680 set yaw 355
+1700 renderstall 250
+1780 set simspeed 2
+1920 set yaw 20
+1940 renderstall 250
+2020 set simspeed 5
+2060 mouse pos 640 420
+2061 mouse down left
+2062 mouse up left
+2160 set yaw 45
+2180 renderstall 250
+2220 stall 150
+2260 set simspeed 1
+2400 set yaw 70
+2420 renderstall 250
+2500 set simspeed 2
+2640 set yaw 95
+2660 renderstall 250
+2740 set simspeed 5
+2880 set yaw 120
+2900 renderstall 250
+2940 stall 150
+2980 set simspeed 1
+3020 mouse pos 640 420
+3021 mouse down left
+3022 mouse up left
+3060 screenshot SHOTDIR/soak_12.png
+3120 set yaw 145
+3140 renderstall 250
+3220 set simspeed 2
+3360 set yaw 170
+3380 renderstall 250
+3460 set simspeed 5
+3600 set yaw 195
+3620 renderstall 250
+3660 stall 150
+3700 set simspeed 1
+3840 set yaw 220
+3860 renderstall 250
+3940 set simspeed 2
+3980 mouse pos 640 420
+3981 mouse down left
+3982 mouse up left
+4080 set yaw 245
+4100 renderstall 250
+4180 set simspeed 5
+4320 set yaw 270
+4340 renderstall 250
+4380 stall 150
+4420 set simspeed 1
+4500 screenshot SHOTDIR/soak_18.png
+4560 set yaw 295
+4580 renderstall 250
+4660 set simspeed 2
+4800 set yaw 320
+4820 renderstall 250
+4900 set simspeed 5
+4940 mouse pos 640 420
+4941 mouse down left
+4942 mouse up left
+5040 set yaw 345
+5060 renderstall 250
+5100 stall 150
+5140 set simspeed 1
+5280 set yaw 10
+5300 renderstall 250
+5380 set simspeed 2
+5520 set yaw 35
+5540 renderstall 250
+5620 set simspeed 5
+5760 set yaw 60
+5780 renderstall 250
+5820 stall 150
+5860 set simspeed 1
+5900 mouse pos 640 420
+5901 mouse down left
+5902 mouse up left
+5940 screenshot SHOTDIR/soak_24.png
+6000 set yaw 85
+6020 renderstall 250
+6100 set simspeed 2
+6240 set yaw 110
+6260 renderstall 250
+6340 set simspeed 5
+6480 set yaw 135
+6500 renderstall 250
+6540 stall 150
+6580 set simspeed 1
+6720 set yaw 160
+6740 renderstall 250
+6820 set simspeed 2
+6860 mouse pos 640 420
+6861 mouse down left
+6862 mouse up left
+6960 set yaw 185
+6980 renderstall 250
+7060 set simspeed 5
+7210 screenshot SHOTDIR/soak_99_end.png
+7230 quit

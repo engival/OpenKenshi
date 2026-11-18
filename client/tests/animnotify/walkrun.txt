@@ -1,0 +1,10 @@
+100 set animate 1
+150 camera char Wanderer
+160 key X down
+165 key X up
+170 move -50619 -1000
+460 mouse pos 612 604
+465 mouse down left
+470 mouse up left
+480 move -50619 -1086
+800 quit

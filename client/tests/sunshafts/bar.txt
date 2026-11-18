@@ -1,0 +1,28 @@
+# sunshafts (kenshi-jj3.7.1): the Wanderer in the Hub bar (bar_lure), roof cut; shots at several sun heights with the camera re-aimed at him. render.sun_shafts comes from run.sh (--set).
+100 set animate 1
+100 set timescale 0
+150 camera char Wanderer
+310 move -50544 -1231
+850 camera char Wanderer
+852 key F down
+854 key F up
+856 key F down
+858 key F up
+870 set time 8
+880 screenshot OUTDIR/t08.png
+890 set time 10
+900 screenshot OUTDIR/t10.png
+910 set time 12
+920 screenshot OUTDIR/t12.png
+930 set time 15
+940 screenshot OUTDIR/t15.png
+950 set time 17.5
+960 screenshot OUTDIR/t1730.png
+970 set time 1
+980 screenshot OUTDIR/t01.png
+990 set time 12
+1000 dump gpu
+1010 dump gpu
+1020 dump gpu
+1030 dump gpu
+1100 quit

@@ -1,0 +1,39 @@
+# kenshi-k16.2.304.1: ALT-open the counter, then the barrel's open N frames later, for N = 1, 3, 10, 40; each round ends with a move that closes the windows.
+200 select id=41188
+260 move -50536 -1200
+1500 mouse force 41063
+1600 key ALT down
+1610 mouse down right
+1614 mouse up right
+1620 key ALT up
+1700 dump windows
+1701 open id=41070
+1900 dump windows
+1950 move -50536 -1200
+2100 dump windows
+2200 key ALT down
+2210 mouse down right
+2214 mouse up right
+2220 key ALT up
+2300 dump windows
+2303 open id=41070
+2500 dump windows
+2550 move -50536 -1200
+2700 dump windows
+2800 key ALT down
+2810 mouse down right
+2814 mouse up right
+2820 key ALT up
+2900 dump windows
+2910 open id=41070
+3100 dump windows
+3150 move -50536 -1200
+3300 dump windows
+3400 key ALT down
+3410 mouse down right
+3414 mouse up right
+3420 key ALT up
+3500 dump windows
+3540 open id=41070
+3700 dump windows
+3800 quit

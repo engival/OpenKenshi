@@ -1,0 +1,13 @@
+# cage_alone (kenshi-k16.2.105.1): scenarios/cage_prisoner without the slavers. The Slaver boss spawns on the prisoner's own spot, so a cursor on the cage picked the boss.
+# Original header: cage_prisoner (kenshi-k16.6.36; docs/reference/SCENARIO_IMPORT.md "cage="). A prisoner of the player's squad sits in the Heft slave shop's cage (the char's
+# `cage=near` key: the nearest free cage within 80 u, put in through Simulation::imprison) with a Slaver boss and three guards 40 u from it and the Wanderer
+# between them. The Hub has no cage building; this is the nearest the world has to a walk-up one that the navmesh bake covers.
+# Only the player is ever ordered: the slavers are not hostile to the Wanderer, so the playtester starts the fight by attacking the Slaver boss
+# (ksim_cage_scenario does the same).
+KSCEN 2
+scenario title=The%20caged%20prisoner setup=The%20Wanderer%20stands%2038%20u%20from%20the%20Heft%20slave%20shop%27s%20cage%2C%20a%20prisoner%20of%20your%20squad%20is%20locked%20in%20it%2C%20and%20a%20Slaver%20boss%20with%20three%20crossbow%20guards%20stands%20by. look_for=Attack%20the%20Slaver%20boss%20with%20the%20Wanderer%20%28the%20slavers%20are%20not%20hostile%20until%20you%20do%29.%20Do%20the%20slavers%20fight%20back%20but%20never%20shoot%2C%20hit%20or%20knock%20out%20the%20caged%20prisoner%3F%20Does%20the%20inspect%20panel%20read%20Locked%20for%20it%3F bead=kenshi-h2v.11 metrics=fight_s,bodies_down,targeted_player
+source save=playtest game=1.0.68 radius=60 centre=68331.3,-71228.1 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=68331 y=1174.3 z=-71190 yaw=0 leader=1 player=1 chase=1 ranged=1
+char id=2 squad=1 name=Prisoner template=1533662-rebirth.mod faction=204-gamedata.base x=68331.3 y=1174.3 z=-71228.1 yaw=0 player=1 cage=near bounty=500

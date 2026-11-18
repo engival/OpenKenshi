@@ -1,0 +1,86 @@
+Retired 2026-11-02 (BQ16, kinspect bq16_spacing_followups.md and s80_static.md): the 7.07 / 8 footprint scale and the BQ9 pair rule of the depenetration.
+R is now the footprints' sum unscaled (8 for two humans), every active character pushes itself (not only two fighters that both have a target), the pushes run in
+Id order one after the other at the head of CombatArena::step (before the velocity step), and the resting distance below R comes from the swing's root motion.
+The scale was fitted to 1v1_flashbox (R = 8 gave KO 84.9 s, her landed 3.1; 7.07 gave 75.0 s, 5.5; original 64.8 s, 4.0), UNSURE, with no mechanism behind it.
+
+// UNSURE (kinspect s77 c: "the live 6.6-7.7 floor is still unexplained"): the data's human footprint is 4 (rebirth.mod over gamedata.base's 2.6), so R = 8,
+// but the live pairs rest at 6.6-7.7 (mean 7.07, the old floor) and the 1v1 fixture only matches the original at that distance (R = 8 gives KO 84.9 s and
+// her landed 3.1 against 74.7 and 5.2 at 7.07; original 64.8 and 4.0). The footprints in R are scaled by 7.07 / 8 until the cause is known (an owner
+// scale `vf+0x390` below 1 is the candidate). The push rule itself is the exe's.
+constexpr double kDepenetrateScale = 7.07 / 8.0;
+
+	// Controller depenetration (s77_static.md c, BQ12 c): a pair of standing, conscious, uncarried characters that both have a target is pushed apart, once
+	// per step and with no dt. Each gives way along the line to the ONE neighbour with the largest push (not the sum): m = (R - |d|) x (0.5 + (r_n - r_s) / R),
+	// R = r_s + r_n (race footprints from the data x kDepenetrateScale), clamped to [0, 10]; two equal humans each give way 0.5 of the overlap. A KO'd body is
+	// neither pushed nor pushes. UNSURE: s77 says the exe pushes in every controller state, bystanders included (the velocity path of the other states); with
+	// idle bystanders pushed as well ksim_bar_fight step 7 failed (the pick-off victim fell to the residents before the player reached it), so the pair rule
+	// of BQ9 stays. Pushes are computed from the positions at the start of the pass and applied together through the walker, so the result does not depend on
+	// the order. Retired: the 7.07 floor (retired/combat_body_floor.txt; the live 6.6-7.7 is still unexplained, kinspect s77 c).
+	void separate()
+	{
+		struct Push
+		{
+			double ux = 0.0;
+			double uz = 0.0;
+			double mag = 0.0;
+		};
+		std::vector<Member*> live;
+		double widest = 0.0;
+		for (Member& m : arena.members_)
+		{
+			if (usable(m.fighter) && !m.fighter.down)
+			{
+				live.push_back(&m);
+				widest = std::max(widest, footprintOf(m.fighter));
+			}
+		}
+		std::sort(live.begin(), live.end(), [](const Member* a, const Member* b)
+		{
+			return a->fighter.x != b->fighter.x ? a->fighter.x < b->fighter.x : a->id < b->id;
+		});
+		std::vector<Push> best(live.size());
+		for (std::size_t i = 0; i < live.size(); ++i)
+		{
+			for (std::size_t j = i + 1; j < live.size(); ++j)
+			{
+				const Fighter& a = live[i]->fighter;
+				const Fighter& b = live[j]->fighter;
+				if (b.x - a.x >= 2.0 * widest)
+					break;
+				if (a.target == 0 || b.target == 0)
+					continue; // both in combat (kept from BQ9; s77 says the exe pushes in every controller state, the velocity path of the other states is not modelled)
+				const double ra = footprintOf(a) * kDepenetrateScale;
+				const double rb = footprintOf(b) * kDepenetrateScale;
+				const double R = ra + rb;
+				const double dx = b.x - a.x;
+				const double dz = b.z - a.z;
+				const double dy = b.y - a.y;
+				const double d = std::sqrt(dx * dx + dz * dz + dy * dy);
+				if (d >= R || std::fabs(dy) > kAvoidVertical)
+					continue;
+				// The push runs on the plane (the walker); exactly stacked: along +x for the pair (sorted by x, id), so the result is deterministic.
+				const double flat = std::hypot(dx, dz);
+				const double hx = flat > 1.0e-6 ? dx / flat : 1.0;
+				const double hz = flat > 1.0e-6 ? dz / flat : 0.0;
+				if (a.target != 0)
+				{
+					const double mag = std::clamp((R - d) * (0.5 + (rb - ra) / R), 0.0, kDepenetrateCap);
+					if (mag > best[i].mag)
+						best[i] = {-hx, -hz, mag};
+				}
+				if (b.target != 0)
+				{
+					const double mag = std::clamp((R - d) * (0.5 + (ra - rb) / R), 0.0, kDepenetrateCap);
+					if (mag > best[j].mag)
+						best[j] = {hx, hz, mag};
+				}
+			}
+		}
+		for (std::size_t i = 0; i < live.size(); ++i)
+		{
+			if (best[i].mag >= 0.01)
+				shift(live[i]->fighter, best[i].ux * best[i].mag, best[i].uz * best[i].mag);
+		}
+	}
+};
+

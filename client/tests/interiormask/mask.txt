@@ -1,0 +1,14 @@
+# interiormask (kenshi-h2v.11.4.2): scenarios/cage_prisoner, the camera above the slavers' Longhouse (68328 1179 -71194), looking W as in the playtest shot
+# (kenshi-h2v.11.2 kclient-20261112-161416: 68647 232 -71195, pitch -30). Shots with render.interior_mask on and off. Run:
+# client/tests/interiormask/run.sh mask OUT
+10 set animate 0
+110 camera char Wanderer
+200 set pos 68647,-71195
+210 set alt 232
+220 set yaw -90
+230 set pitch -30
+400 set render.interior_mask 0
+420 screenshot OUTDIR/off.png
+430 set render.interior_mask 1
+450 screenshot OUTDIR/on.png
+460 quit

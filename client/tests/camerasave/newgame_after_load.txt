@@ -1,0 +1,25 @@
+# camerasave newgame (kenshi-k16.2.134.1, lead rework check): quickload the save whose sidecar restores the camera, then NEW GAME from the game
+# menu -- Escape, NEW GAME (640,253), the "Start a new game?" YES (624,386), BEGIN (640,378), the creator's CONFIRM (300,664). The new game's own
+# placement must win: the camera at the new squad, not the sidecar's eye. Run: run.sh live OUT (makes the save), then run.sh newgame OUT.
+90 key CTRL down
+92 key F9 down
+94 key F9 up
+96 key CTRL up
+180 screenshot OUTDIR/loaded.png
+200 key ESCAPE down
+202 key ESCAPE up
+280 mouse pos 640 253
+282 mouse down left
+284 mouse up left
+430 mouse pos 624 386
+432 mouse down left
+434 mouse up left
+520 mouse pos 640 378
+522 mouse down left
+524 mouse up left
+760 mouse pos 300 664
+762 mouse down left
+764 mouse up left
+1150 screenshot OUTDIR/newgame.png
+1250 screenshot OUTDIR/newgame2.png
+1300 quit

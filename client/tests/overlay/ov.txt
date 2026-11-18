@@ -1,0 +1,22 @@
+# overlay (render sitting 11, kenshi-k16.2.205.12.57): every world overlay block the logic half records (overlaylist.hpp) in a few shots of the
+# boxselect scenario: the nav mesh overlay (debug.navmesh), the trails, the selection ring, a route and the move pin, the --debug HUD and minimap,
+# then the full world map. 1280x720, the free camera on Charlie; the run is live, so two runs differ where the sim moved (and in the HUD's numbers).
+100 set animate 1
+110 set debug.navmesh 1
+111 set markers.selection_ring 1
+112 set markers.route 1
+120 trails all
+150 camera char Charlie
+170 mouse char=@Charlie@
+172 mouse down left
+173 mouse up left
+200 move -49960 -960
+214 dump navdraw
+215 screenshot OUTDIR/overlay.png
+260 screenshot OUTDIR/overlay_later.png
+300 key CTRL down
+302 key M down
+303 key M up
+304 key CTRL up
+330 screenshot OUTDIR/fullmap.png
+340 quit

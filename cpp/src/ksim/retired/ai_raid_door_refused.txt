@@ -1,0 +1,20 @@
+Retired 2026-10-31 (door slice, DOORS.md section 6) from src/ksim/ai.cpp UtilityGroupLayer::adopt. A Raid whose route was refused
+only by a gate (AiReason::DoorRefused) failed its order at once, with a cooldown on the goal:
+
+	if (!route.found)
+	{
+		if (candidate.kind == GoalKind::Raid)
+		{
+			// The order cannot be carried out: the faction reads Failed back.
+			ai.order.status = state::OrderStatus::Failed;
+			ai.order.failure = route.failure;
+			...
+			return false;
+		}
+		fail(context, candidate.kind, candidate.target, route.failure, result);
+		return false;
+	}
+
+The original has raiders beat on a locked gate until it breaks, so an outbound Raid refused by a gate now routes with
+Traveller::bash and stops at the gate for DoorAccess::bashing().seconds (GroupAI::bashGate/bashAt/bashUntil). A raid that the
+gates refuse for any other reason (no route at all, the way back) still fails as before.

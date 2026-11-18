@@ -1,0 +1,4 @@
+100 set animate 1
+150 camera char Wanderer
+200 attack id=@Dust bandit@
+1800 quit

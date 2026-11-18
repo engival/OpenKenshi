@@ -1,0 +1,18 @@
+# manhunters_desert (task CE; docs/reference/PLAYTEST.md 1). The ksim_manhunter_hunt setup as a file: the player alone in the wilderness
+# outside every town, a Manhunter patrol of six nearby. Their dialogue package hunts outside towns (54937 "Man Hunter slave recapture
+# shout", gated by DC_IN_A_NON_PLAYER_TOWN == 0): they should chase the player forever, put them down and take the capture chain through
+# the world package's 167 row (strip, cuff, carry).
+# Only the player is ever ordered (the scenario places the world; SCENARIO_IMPORT.md "Rule").
+KSCEN 2
+scenario title=Hunted%20in%20the%20desert setup=The%20player%20alone%20in%20the%20wilderness%20past%20the%20Hub%27s%20reach%2C%20a%20Manhunter%20patrol%20of%20six%20a%20few%20steps%20away. look_for=Do%20they%20see%20you%20and%20chase%3F%20Do%20they%20keep%20chasing%20across%20the%20open%20ground%20until%20you%20are%20down%3F%20After%20the%20knockout%2C%20do%20they%20strip%2C%20cuff%20and%20carry%20you%2C%20or%20walk%20away%3F bead=kenshi-h2v.5 metrics=targeted_player,fight_s,player_downed_s,bodies_down,captured
+source save=playtest game=1.0.68 radius=0 centre=-48880,-823 leader=Wanderer
+clock day=1 hour=13 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-48880 y=1124.37 z=-823 yaw=0 leader=1 player=1 chase=1 ranged=1 stealth=1
+squad id=2 name=Manhunter%20patrol faction=54587-rebirth.mod template=55016-rebirth.mod package=55017-rebirth.mod player=0
+char id=2 squad=2 name=Manhunter%20leader template=54588-rebirth.mod faction=54587-rebirth.mod x=-48874 y=1126.15 z=-817 yaw=3.14159 leader=1 chase=1 ranged=1
+char id=3 squad=2 name=Manhunter template=54588-rebirth.mod faction=54587-rebirth.mod x=-48886 y=1122.50 z=-829 yaw=3.14159 chase=1 ranged=1
+char id=4 squad=2 name=Manhunter template=54588-rebirth.mod faction=54587-rebirth.mod x=-48868 y=1126.15 z=-823 yaw=3.14159 chase=1 ranged=1
+char id=5 squad=2 name=Manhunter template=54588-rebirth.mod faction=54587-rebirth.mod x=-48892 y=1122.50 z=-823 yaw=3.14159 chase=1 ranged=1
+char id=6 squad=2 name=Manhunter template=54588-rebirth.mod faction=54587-rebirth.mod x=-48874 y=1126.15 z=-835 yaw=3.14159 chase=1 ranged=1
+char id=7 squad=2 name=Manhunter template=54588-rebirth.mod faction=54587-rebirth.mod x=-48886 y=1122.50 z=-811 yaw=3.14159 chase=1 ranged=1

@@ -1,0 +1,9 @@
+# Door sweep known gaps (ksim_door_sweep, kenshi-k16.6.251): building key <TAB> leg <TAB> note. A failing leg not listed here fails the test; remove a line when its leg passes.
+2205050390322549543	deep0	4104-D-TwoStorey.mod Clothing Shop at (67413, -72421): no route (out of search nodes)
+8291443047819058561	floor0	727-gamedata.base Noble House at (68853, -70327): no route (out of search nodes); k16.6.300: radius 1 routes, 2+ runs out: the passage behind the door is a 6-8 u strip, the shipped interior face there is ~40 u wide
+4607850038816622886	deep0	3384-TwoStorey.mod Residential Small at (67542, -71087): no route (out of search nodes)
+11022576561688065035	floor0	4028-TwoStorey.mod Slave Shop at (69352, -70171): no route (out of search nodes); k16.6.300: not examined past the 66 candidate routes all running out of nodes at radius 4 (Noble House: see its line)
+6008011582440996586	deep0	4104-D-TwoStorey.mod Thieves at (69492, -72288): no route (search closed short of the goal (a gap too narrow for the body or a closed door))
+6917413434036383905	deep0	4104-D-TwoStorey.mod Travel Gear at (-63703, 16617): no route (out of search nodes)
+3712288878855487025	deep0	4028-TwoStorey.mod Armory at (-55357, -12190): no route (search closed short of the goal (a gap too narrow for the body or a closed door))
+12302032367796608162	deep0	4092-TwoStorey.mod General Storage at (-54801, -13565): no route (out of search nodes)

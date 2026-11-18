@@ -1,0 +1,54 @@
+# kclient smoke script (60 frames = 1 s, fixed dt 1/60):
+#   tools/headless.sh -- build/kclient --script scripts/smoke.txt
+# SHOTDIR below must be replaced by an absolute directory (sed it into a temp copy).
+# Fly mode: start over the hills near the origin, level view.
+0 set pos 0,0
+0 set alt 300
+0 set yaw 0
+0 set pitch 0
+2 screenshot SHOTDIR/s1_start.png
+# W for 2 s at fly speed 400 u/s -> ~800 units toward -z
+3 key W down
+123 key W up
+125 screenshot SHOTDIR/s2_fly_w.png
+# shift = x10 for 1 s -> ~4000 units
+130 key SHIFT down
+130 key W down
+190 key W up
+190 key SHIFT up
+192 screenshot SHOTDIR/s3_fly_fast.png
+# strafe right 1 s and up 1 s (+400 x, +400 y)
+200 key D down
+260 key D up
+200 key SPACE down
+260 key SPACE up
+262 screenshot SHOTDIR/s4_strafe_up.png
+# mouse look: hold right button, dx 628 * 0.0025 rad = 90 deg right, dy 200 -> pitch down
+270 mouse down right
+271 mouse 628 0
+272 mouse 0 200
+273 mouse up right
+# mouse moves with the button up must not turn the camera
+274 mouse 500 500
+276 screenshot SHOTDIR/s5_mouselook.png
+# walk mode: G toggles; camera must stay at ground + 17 while walking (shift = fast) over relief
+280 set pos 0,0
+280 set yaw 90
+280 set pitch -5
+281 key G down
+282 key G up
+284 key SHIFT down
+284 key W down
+286 screenshot SHOTDIR/s6_walk0.png
+346 screenshot SHOTDIR/s7_walk1.png
+406 screenshot SHOTDIR/s8_walk2.png
+466 key W up
+466 key SHIFT up
+468 screenshot SHOTDIR/s9_walk3.png
+# G again returns to fly: Space now lifts
+470 key G down
+471 key G up
+472 key SPACE down
+532 key SPACE up
+534 screenshot SHOTDIR/s10_flyagain.png
+536 quit

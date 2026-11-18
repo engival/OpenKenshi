@@ -1,0 +1,19 @@
+Retired 2026-11-07 (task BV, kinspect dt11): the "either view" hostility test in cpp/src/ksim/residents.cpp.
+
+Replaced by: the directional relation test in worldTeam (residents.cpp) and the directional hostile set in Simulation::stepCombat (simulation.cpp):
+an enemy only when MY faction's relation to the target is at or below FactionBook::kHostile (-30), or the target carries a personal enemy tag
+(FUN_14079c950; dt11_spawn_hostility.md). The data defines a player's start only from the player side (the Nameless faction lists the bandits at
+-100; a bandit faction lists no relation to Nameless and falls to its `default relation`, -10 for Dust Bandits). Reading both views made every
+faction that hates the player's faction an enemy in return, so a Dust Bandit squad attacked a new player unprovoked; the original reads the
+bandits' own -10 and is neutral (dt10 / dt11: 0 of 5 unprovoked, Bloodraiders at -100 attack).
+
+The rule, as it stood:
+
+// Whether the two factions are hostile: either one's relation to the other is at or below FactionBook::kHostile.
+bool hostileEither(const kdata::GameData& data, flecs::entity a, flecs::entity b)
+{
+	return factionRelation(data, a, b) <= FactionBook::kHostile || factionRelation(data, b, a) <= FactionBook::kHostile;
+}
+
+callers: worldTeam's "is this squad hostile to the player faction" test and its "is this other faction hostile to the player" test, both now
+factionRelation(own, player) <= FactionBook::kHostile (the caller's own view).

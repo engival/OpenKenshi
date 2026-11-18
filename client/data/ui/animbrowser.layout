@@ -1,0 +1,61 @@
+# The animation lab's window body (ui::AnimBrowser in client/src/ui/animbrowser.cpp). The code fills "clips", "readout"
+# and the "view" slot (the host's render), and says what every id does. Format: README.md here.
+
+row gap=10 pad=10
+	col size=280 gap=6
+		row size=30 gap=6
+			dropdown "Race" id=race size=fill tip="The race: its skeleton and clips"
+			check "Female" id=female size=auto
+		row size=30 gap=6
+			edit id=filter size=fill tip="Keep the clips whose name holds this (any case)"
+			dropdown "Group" id=group size=120 tip="Keep one data group's clips"
+		panel look=inset size=fill
+			scroll id=clips x=6 y=6 w=6 h=6
+		row size=30 gap=6
+			button "< PREV" id=prev size=fill tip="The clip before, in the filtered list"
+			button "NEXT >" id=next size=fill tip="The clip after, in the filtered list"
+		label id=count size=auto colour=Main alpha=0.7
+	col size=fill gap=6
+		panel look=inset size=fill
+			slot id=view x=2 y=2 w=2 h=2
+		row size=30 gap=6
+			button "|<" id=stepback size=44 tip="A frame back (comma)"
+			button "PLAY" id=play size=90 tip="Play / pause (Space)"
+			button ">|" id=stepfwd size=44 tip="A frame on (period)"
+			slider id=scrub size=fill min=0 max=1 step=1 tip="The frame"
+			label id=frame size=170 colour=Main text_valign=center
+		row size=30 gap=6
+			label "Speed" size=auto colour=Main alpha=0.7 text_valign=center
+			slider id=speed size=fill min=0.1 max=2 step=0.05
+			label id=speedText size=60 colour=Main text_valign=center
+		label id=reply size=auto colour=Main wrap=on
+	col size=280 gap=6
+		label "CAMERA" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
+		row size=28 gap=4
+			button "SIDE" id=side size=fill
+			button "FRONT" id=front size=fill
+			button "TOP" id=top size=fill
+			button "ORBIT" id=orbit size=fill tip="Drag the picture to turn it"
+		label "PLANT" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
+		row size=28 gap=4
+			button "L HEEL" id=lheel size=fill
+			button "L BALL" id=lball size=fill
+		row size=28 gap=4
+			button "R HEEL" id=rheel size=fill
+			button "R BALL" id=rball size=fill
+		row size=30 gap=4
+			button "NONE" id=none size=70 tip="Nothing planted: the body moves as the clip says"
+			dropdown "Bone" id=bone size=fill tip="Plant any bone"
+		label "OVERLAYS" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
+		check "Sole trails" id=trails size=auto
+		check "Root path" id=root size=auto
+		check "Bone names" id=bones size=auto
+		check "Follow root" id=follow size=auto
+		row size=30 gap=6
+			button "MEASURE" id=measure size=fill tip="Run one loop and measure it"
+			button "MARK" id=mark size=fill tip="Log this clip, time and frame (M)"
+		label id=usedby size=auto colour=Main alpha=0.8 wrap=on
+		label id=rootline size=auto colour=Main wrap=on
+		panel look=inset size=fill
+			scroll id=readout x=6 y=6 w=6 h=6
+		button "COPY" id=copy size=30 tip="The readout, to the clipboard"

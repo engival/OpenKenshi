@@ -1,0 +1,4 @@
+# Live smoke (no input): connect to the fixture server, draw for a while, screenshot, quit. For the Debug build: BUILD=client/build-debug run.sh smoke OUT
+600 screenshot OUTDIR/smoke.png
+1200 screenshot OUTDIR/smoke2.png
+1300 quit

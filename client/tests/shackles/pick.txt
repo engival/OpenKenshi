@@ -1,0 +1,20 @@
+# Locked shackles menu (kenshi-h2v.15.2.1): scenarios/shackled_escape, Picker (squad 2, key 2) wears locked shackles. Run: client/tests/shackles/run.sh pick OUT
+# Pixels are 720p; frames ~60 Hz. Select Picker, open the inventory, hold-right on the worn shackles: three rows, then Pick Lock.
+200 dump chars
+250 select id=@Picker@
+300 key I down
+305 key I up
+400 dump windows
+410 screenshot OUTDIR/inventory.png
+500 mouse gear grid boots 0 0
+560 dump windows
+600 mouse down right
+660 dump windows
+670 screenshot OUTDIR/menu.png
+# release on Pick Lock (row 1: 0 title, 1 Pick Lock)
+680 mouse itemmenu 1
+690 mouse up right
+900 screenshot OUTDIR/picking.png
+2400 screenshot OUTDIR/later.png
+2410 dump windows
+3000 quit

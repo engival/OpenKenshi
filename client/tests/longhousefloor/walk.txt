@@ -1,0 +1,15 @@
+# longhousefloor (kenshi-kyat.1/.2): scenarios/cage_prisoner, the Wanderer walks in the Longhouse, to its west edge and back, and out by the east door; KYLOG=1 prints
+# per-frame `YLOG id tick x z sim terrain inside drawn`. Run: KYLOG=1 client/tests/longhousefloor/run.sh walk OUT (see run.sh here)
+10 set animate 1
+100 select id=@Wanderer@
+110 camera char Wanderer
+300 screenshot OUTDIR/start.png
+310 move 68349.1 -71139.1
+900 screenshot OUTDIR/inside.png
+910 move 68333 -71190
+1500 screenshot OUTDIR/west.png
+1510 move 68349.1 -71139.1
+2000 move 68400 -71139
+2600 screenshot OUTDIR/door.png
+3000 dump chars
+3100 quit

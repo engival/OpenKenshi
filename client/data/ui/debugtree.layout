@@ -1,0 +1,12 @@
+# The DEBUG VIEW tree window's body (ui::DebugTree in client/src/ui/debugtree.cpp). The code fills "rows" and says what
+# the header's ids do. Format: README.md here.
+
+col gap=8 pad=10
+	row size=30 gap=8
+		label id=tick size=110 colour=Main alpha=0.7
+		edit id=filter size=fill tip="Keep the rows whose key or value holds this, and their branches"
+		check "Auto" id=auto size=auto tip="Ask again every few seconds"
+		button "REFRESH" id=refresh size=auto
+		button "COPY" id=copy size=auto tip="The rows shown, as indented text, to the clipboard"
+	panel look=inset size=fill
+		scroll id=rows x=8 y=6 w=8 h=6

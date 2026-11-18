@@ -1,0 +1,5 @@
+# weatherfx mist (kenshi-k16.2.11.3): the Fog Islands, weather "fog islands" -- the one type 4 handler at the pivot, y = terrain + 100.
+30 set particles 0.01666
+30 dump weather
+500 screenshot OUTDIR/mist.png
+560 quit

@@ -1,0 +1,93 @@
+# client/tests/tsan/scenario.txt: the scripted scenario of client/tests/tsan/run.sh (kenshi-k16.2.205.12.29). Fixed dt = 1/60 s per frame, so the
+# run is deterministic; SHOTDIR is replaced by run.sh with its OUT/shots. The coverage, in the order it runs (each line says which hand-off path
+# it puts under the sanitizer):
+#   the Hub scene, fly fast, mouse look      streaming (buildings, foliage, grass), the shadow cascades, the packet's camera and view
+#   walk mode over the relief                the ground camera and the terrain/water paths on the logic thread
+#   the debug and UI keys                    shadow toggle (the shadow cache), help and options windows (the UI recorded in logic, replayed
+#                                            render side), the map (a large texture through the frame-lane jobs)
+#   weather default -> auto, a night time    the sky and clock, the weather map's fog build, regional weather blending
+#   a second scene (dense foliage)           a teleport: the streamer evicts and creates (the resource job queue), the scene's own weather
+#   a window resize                          sappcmd from the logic thread (windowgeom on the sapp thread)
+#   stall / renderstall                      logic's 100 ms bounded wait and its idle link poll; the render thread's wait bound and its
+#                                            last-frame blit when no packet comes
+#   quit                                     rule 8: the stop flag, the notify, the join, then the destroys
+# It is not a pixel reference (the scene test is); the shots and the logs are kept for the report.
+# Fly over the Hub.
+0 set scene hub_overview
+2 set day 140
+2 set time 12.4
+3 screenshot SHOTDIR/01_hub.png
+# Shift + W: ~10 * 400 u/s for 1 s, toward the Hub roofs.
+4 key SHIFT down
+4 key W down
+64 key W up
+64 key SHIFT up
+66 screenshot SHOTDIR/02_fly.png
+# Mouse look: right button held, 90 deg right and down.
+70 mouse down right
+71 mouse 628 200
+72 mouse up right
+74 screenshot SHOTDIR/03_mouselook.png
+# Walk mode over the relief: G, then shift + W.
+80 set pos -50900,3500
+80 set alt 40
+80 set yaw 90
+80 set pitch -10
+82 key G down
+83 key G up
+84 key SHIFT down
+84 key W down
+144 key W up
+144 key SHIFT up
+146 screenshot SHOTDIR/04_walk.png
+# The debug shadow toggle twice (the cascades and the shadow cache go off and on).
+150 key CTRL down
+151 key F3 down
+152 key F3 up
+152 key CTRL up
+160 key CTRL down
+161 key F3 down
+162 key F3 up
+162 key CTRL up
+164 screenshot SHOTDIR/05_noshadows.png
+# The UI: help, then the options window, opened and closed (recorded in logic, replayed on the render side).
+170 key F1 down
+171 key F1 up
+176 key F1 down
+177 key F1 up
+182 key F10 down
+183 key F10 up
+204 key F10 down
+205 key F10 up
+# The map: a large DDS through the frame-lane jobs.
+210 key M down
+211 key M up
+216 key M down
+217 key M up
+# Weather: regional (auto), a night clock, then the pinned default again.
+230 set weather auto
+231 set time 22.5
+240 set weather default
+242 set day 1
+242 set time 9.0
+246 screenshot SHOTDIR/06_weather.png
+# A second scene: dense foliage, a teleport with the streamer's evictions and creates.
+260 set scene foliage_dense
+268 screenshot SHOTDIR/07_foliage.png
+# The window resize from the logic thread (sappcmd), down and back.
+300 resize 960 540
+316 screenshot SHOTDIR/08_resized.png
+320 resize 1280 720
+# The hand-off's stall paths: logic asleep past the render thread's packet wait (no packet: the last frame is shown), then the render thread
+# held past logic's 100 ms bound (the wait expires, the idle hook polls, then it waits again).
+340 stall 150
+352 renderstall 150
+364 screenshot SHOTDIR/09_stalls.png
+# Fly on from the foliage scene: the streamer keeps working.
+370 key SHIFT down
+370 key W down
+430 key W up
+430 key SHIFT up
+432 screenshot SHOTDIR/10_far.png
+# Quit: cleanup joins the logic thread before any destroy.
+500 quit

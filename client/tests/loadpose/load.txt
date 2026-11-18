@@ -1,0 +1,35 @@
+# loadpose (kenshi-k16.2.144): the title's LOAD GAME -> the user's save (a standing player indoors). The player must be standing at 0 / 0.5 / 2 s
+# after the load, no get-up. 720p: LOAD GAME (433,282); row 0 (465,311), LOAD (751,443). The frame numbers are 60 fps.
+300 screenshot OUTDIR/title.png
+330 mouse pos 433 282
+332 mouse down left
+334 mouse up left
+440 mouse pos 465 311
+442 mouse down left
+444 mouse up left
+470 mouse pos 751 443
+472 mouse down left
+474 mouse up left
+476 camera char Wanderer
+478 screenshot OUTDIR/load_478.png
+484 screenshot OUTDIR/load_484.png
+490 screenshot OUTDIR/load_490.png
+500 screenshot OUTDIR/load_500.png
+515 screenshot OUTDIR/load_515.png
+540 screenshot OUTDIR/load_540.png
+600 screenshot OUTDIR/load_600.png
+700 screenshot OUTDIR/load_700.png
+800 screenshot OUTDIR/load_800.png
+900 screenshot OUTDIR/load_900.png
+# a second load in the same client: the quickload (Ctrl+F9) of the same save, kept as quicksave in the save dir
+1000 key CTRL down
+1002 key F9 down
+1004 key F9 up
+1006 key CTRL up
+1010 screenshot OUTDIR/quick_1010.png
+1030 screenshot OUTDIR/quick_1030.png
+1060 screenshot OUTDIR/quick_1060.png
+1100 screenshot OUTDIR/quick_1100.png
+1200 screenshot OUTDIR/quick_1200.png
+1300 screenshot OUTDIR/quick_1300.png
+1400 quit

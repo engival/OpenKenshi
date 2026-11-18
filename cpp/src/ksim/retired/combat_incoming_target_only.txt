@@ -1,0 +1,12 @@
+Retired 2026-11-02 (crowd spacing, kinspect BQ9 / s74_static.md Q3): the incoming-threat list counted only attackers whose target is the fighter.
+The exe's list (buildIncomingThreatList 140667b40 + selectTarget 140665e00) also counts an attacker that has the fighter in its hit list.
+tryInterruptForThreat's gate was `swingProgress <= 0.5`; the exe has `progress <= a && a != progress`, i.e. `<`.
+
+	std::vector<Member*> incoming(Member& m)
+	{
+		...
+			if (o.target == m.id && o.state == CombatState::Attack && o.swingProgress > 0.0
+				&& o.swingProgress < 1.0)
+				out.push_back(&other);
+		...
+	}

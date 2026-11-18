@@ -1,0 +1,25 @@
+Retired 2026-11-09 (task ds/town-port): routine_scorer.cpp scoreMember's own scoring and tier walk, replaced by goalsel::scoreOf per
+candidate and goalsel::select over the scored offers (the G2 selector the world squads use).
+
+		e.score = (bedScore >= 0.0 ? bedScore : utilityOf(candidate.task, utilityRoll)) * e.factor * cageUtility * candidate.weight * routines::kCrowdDecay;
+		const bool same = candidate.task == r.goal && toState(e.site) == r.target;
+		if (same)
+		{
+			e.score *= routines::kCurrentBonus;
+			const routines::Hold hold = routines::holdOf(candidate.task);
+			if (hold.base > 0.0 || hold.span > 0.0)
+				e.score = now < r.holdUntil ? std::max(e.score, routines::kHoldFloor) : std::min(e.score, routines::kHoldCap);
+		}
+
+	const Eval* best = nullptr;
+	for (const routines::Tier tier : {routines::Tier::Urgent, routines::Tier::NonUrgent, routines::Tier::Fluff})
+	{
+		for (const Eval& e : evals)
+			if (e.score > 0.0 && e.candidate.tier == tier && (best == nullptr || e.score >= best->score))
+				best = &e;
+		if (best != nullptr)
+			break;
+	}
+
+The scorer had no rule that boosts a competitor of the running goal; goalsel::scoreOf has it (dt14 section 4, `elif running_tasker and not
+current and s < 1.0: s *= 1.25`, the exe's decode, marked M), so the residents now take it too (user rule: one selector, one rule).

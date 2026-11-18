@@ -1,0 +1,31 @@
+# gamespeed (kenshi-k16.2.181.1): the 5x stutter check. bar_lure, the Wanderer followed and walked south of the Hub, the sim's speed set with
+# `set simspeed`. `set framedt real` steps the world by each frame's real duration, so the render clock keeps real time whatever the frame rate
+# (a shot's fixed 1/60 s would leave it behind the real-time sim and turn the hold's catch-up into drawn jumps); the world time is @SPEED@ times
+# the wall time. The same walk keeps a move order live (one every 60 frames, two points ~620 u apart along the Hub's south line), so at 1x the
+# player turns back and forth near the first point and at 5x it runs most of the leg. `log pos all` (client/src/dev/poslog.cpp) writes every
+# drawn character's sim and drawn position, the render clock, the newest complete snapshot's tick, the frame's wall time and snapshot count.
+100 set animate 1
+105 set framedt real
+110 log pos all
+150 follow char Wanderer
+160 dump players
+170 set simspeed @SPEED@
+200 move -50619 -1300
+260 move -50000 -1300
+320 move -50619 -1300
+380 move -50000 -1300
+440 move -50619 -1300
+500 move -50000 -1300
+560 move -50619 -1300
+620 move -50000 -1300
+680 move -50619 -1300
+740 move -50000 -1300
+800 move -50619 -1300
+860 move -50000 -1300
+920 move -50619 -1300
+980 move -50000 -1300
+1040 move -50619 -1300
+1100 move -50000 -1300
+1160 move -50619 -1300
+1180 dump players
+@FRAMES@ quit

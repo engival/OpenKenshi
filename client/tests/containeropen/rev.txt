@@ -1,0 +1,15 @@
+# kenshi-k16.2.304.1: reverse orders and repeats.
+200 select id=41188
+260 move -50536 -1200
+1500 open id=41070
+1800 dump windows
+1801 open id=41063
+2100 dump windows
+2150 open id=41070
+2450 dump windows
+2451 open id=41070
+2700 dump windows
+2701 open id=41063
+2702 open id=41070
+3000 dump windows
+3100 quit

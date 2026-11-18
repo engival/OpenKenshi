@@ -1,0 +1,21 @@
+# The playtest scenarios window's body (ui::ScenariosWindow in client/src/ui/scenarios.cpp). The code fills the "list" slot
+# (a table of the scenarios) and "results" (a block per version), and says what PLAY does. Format: README.md here.
+
+row gap=12 pad=10
+	col size=360 gap=6
+		label "SCENARIOS" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
+		slot id=list size=fill
+	col size=fill gap=6
+		label id=title font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
+		label id=bead colour=Main alpha=0.6 size=auto
+		label "RECIPE" id=recipehead colour=Main alpha=0.6 size=auto
+		label id=recipe colour=Main wrap=on size=auto
+		label "LOOK FOR" colour=Main alpha=0.6 size=auto
+		label id=lookfor colour=Main wrap=on size=auto
+		label "A single run is evidence, not proof: runs are not deterministic. Compare several runs and versions." id=caveat colour=Accent wrap=on size=auto
+		label "RESULTS" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
+		panel look=inset size=fill
+			scroll id=results x=8 y=6 w=8 h=6
+		row size=34 gap=8
+			label id=status size=fill colour=Main alpha=0.8 text_valign=center
+			button "PLAY" id=play size=130 tip="Load this scenario (the world is swapped, no restart)"

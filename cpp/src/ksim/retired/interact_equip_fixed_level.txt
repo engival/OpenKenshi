@@ -1,0 +1,19 @@
+Retired 2026-10-31 from src/ksim/interact.cpp (Simulation::equipItem) and include/ksim/interact.hpp (kEquipWeaponLevel).
+Replaced by item instances with quality (state::ItemQuality on every Inventory::Entry / GroundItem): equipping rebuilds the
+fighter's weapon / armour from the instance (CombatData::buildWeapon / buildArmour), so a piece keeps the manufacturer, model and
+level it was generated with across unequip, drop, pick up, loot and transfer. Kept for reference only; not built.
+
+// interact.hpp
+// The item level a weapon gets when it is equipped from the pack (UNSURE: no item instances; fists use 0.5 too).
+inline constexpr double kEquipWeaponLevel = 0.5;
+
+// interact.cpp, equipItem, weapon branch:
+// UNSURE: the sim keeps no item instances, so a weapon's quality (manufacturer, level) is not remembered: it comes back
+// at level 0.5 with a neutral manufacturer, whatever it was before it was unequipped.
+f->weapon = combat_->data().makeWeapon(*record, kEquipWeaponLevel);
+
+// interact.cpp, equipItem, armour branch:
+// As makeFighter builds one: a piece with part coverage has level 0.2 x (`armour grade` 1), one without level 1.
+const kdata::RefCategory* coverage = record->findRefs("part coverage");
+const double level = coverage != nullptr && !coverage->entries.empty() ? 0.2 : 1.0;
+state::FighterArmour piece = combat_->data().makeArmour(*record, level);

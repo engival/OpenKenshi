@@ -1,0 +1,243 @@
+Retired 2026-11-07 (task CB, ROADMAP item 0 D): the hand-written slave chain of stepSlaveTrade (carry.cpp).
+
+Replaced by: the GOAP planner (cpp/include/ksim/goap.hpp, cpp/src/ksim/goap.cpp; kinspect dt18_goap_search.md) and its live
+evaluators (cpp/src/ksim/goap_sim.cpp, Simulation::planSlaveChain). The selector plans a goal row that has preconditions (world_tasks.cpp
+for the world squads, routine_scorer.cpp for the town) and stores the chain in state::Routine::plan / step (save v79); stepSlaveTrade
+now runs the plan's steps - 67 Running, 181 STRIP_TARGETS_WEAPONS, 166 CHAIN_TARGET, 168 CARRY_WOUNDED_SLAVES, 108 Put in prison and the
+goal task - and re-plans a goal whose plan fails; there is no hand-written fallback. A goal whose plan does not exist scores 0 and is
+re-planned next update (dt18 section 6).
+
+Among what changed: which phases ran was decided by the Routine's goal and a chainElapsed compare (walk / strip / restrain / lift at
+fixed points), not by a plan; the strip and the restrain, and the lift, were unconditional once the goal was adopted; the put-in was a
+special case of FIND_CAGE_AND_PUT_IN rather than the 108 step a caging plan reaches. The cap (one catch per member, 9.9 s restrain,
+600 s give-up) stayed.
+
+The removed phase machine:
+void Simulation::stepSlaveTrade()
+{
+	if (combat_ == nullptr || combat_->empty())
+		return;
+	flecs::world& ecs = ecsMutable();
+	const auto& members = combat_->members();
+	constexpr double kChainReach = 4.0; // the scorer's kReach: the member is at the body
+	// The chain's own timings (5.8; OURS where marked): the "Restraining" bar is 9.9 s, read from the data's task description; a catch
+	// that has not reached a cage after this much longer lets the person go rather than carry it for ever (no terminal state).
+	constexpr double kRestrainSeconds = 9.9;
+	constexpr double kCarryGiveUpSeconds = 600.0;
+
+	for (std::size_t i = 0; i < members.size(); ++i)
+	{
+		flecs::entity actor = ecs.entity(combatEntities_[i]);
+		const state::Routine* found = actor.get<state::Routine>();
+		if (found == nullptr)
+			continue;
+		const std::uint64_t id = members[i].id;
+		state::Routine r = *found;
+		const std::uint64_t chainBefore = r.chainTarget;
+		const double elapsedBefore = r.chainElapsed;
+		state::Fighter& f = *combat_->find(id);
+
+		// A roaming world member (task BO) has no cage to walk its catch to: its chain ends with the lift, the moment the person is in
+		// its arms. The Routine goes and stepWorldSquads gives the follow back, so the caravan walks on with its captive. The town warden
+		// keeps its Routine (the cage goal 112 above).
+		if (r.goal == routines::task::CaptureSlaves && r.chainTarget != 0 && f.carrying == r.chainTarget && r.chainElapsed >= kRestrainSeconds - 1.0e-9)
+		{
+			const flecs::entity squad = actor.target<state::MemberOf>();
+			if (!squad.is_valid() || !squad.has<state::SquadRoutine>())
+			{
+				actor.remove<state::Routine>();
+				mirrorFighter(id);
+				continue;
+			}
+		}
+
+		// The cage: the member on FIND_CAGE_AND_PUT_IN 112 that carries its catch stands at the cage (the scorer walked it there, so the
+		// route is done): release the carry and set the person in, at the cage's own spot. The routine's chain ends here.
+		if (r.goal == routines::task::FindCageAndPutIn && r.chainTarget != 0 && f.carrying == r.chainTarget && !f.walking()
+			&& r.target.kind == static_cast<std::uint8_t>(routines::SiteKind::Cage))
+		{
+			const routines::Site site{static_cast<routines::SiteKind>(r.target.kind), r.target.object, r.target.slot};
+			const routines::SiteEntry* cage = residentData_ != nullptr ? residentData_->sites.siteAt(site) : nullptr;
+			// The arrival is xz only: the cage's layout height is the piece's own, not the floor the carrier walked (OURS, 5.19). The
+			// person is set down on the carrier's floor, at the cage's spot. The reach is the cage piece's own: its functionality
+			// `use range` x2 once the carrier stands still (dt22's pre-task reach gate; 50 for a cage). The seat tolerance that stood
+			// here before (task BU, 5.19) was a stand-in for it.
+			if (cage != nullptr && gameData_ != nullptr
+				&& std::hypot(f.x - cage->x, f.z - cage->z)
+					<= functionalityReach(*gameData_, cage->record, routines::kFunctionCage, !f.walking()))
+			{
+				const std::uint64_t bodyId = r.chainTarget;
+				const double carrierY = f.y;
+				const double carrierYaw = f.yaw;
+				dropCarried(id);
+				if (state::Fighter* body = combat_->find(bodyId))
+				{
+					body->x = cage->x;
+					body->y = carrierY;
+					body->z = cage->z;
+					body->yaw = carrierYaw;
+					body->velX = 0.0;
+					body->velZ = 0.0;
+					body->building = cage->site.object;
+					body->cageBuilding = cage->site.object;
+					body->cageSlot = cage->site.slot;
+					body->clearRoute();
+					body->forwardSpeed = 0.0;
+					body->lateralSpeed = 0.0;
+					mirrorFighter(bodyId);
+					if (const state::Allegiance* mine = actor.get<state::Allegiance>())
+						noteNpcImprisoned(bodyId, mine->factionSid);
+				}
+				// A caged resident leaves routine mode: it keeps no Routine (and no claim) while it is in the cage.
+				if (combat_->find(bodyId) != nullptr)
+				{
+					fighterEntity(bodyId).remove<state::Routine>();
+					routineBook_.release(bodyId);
+				}
+				routineBook_.release(id);
+				// The client cannot see a put-in (and the reach that allowed it): the server's log carries both (peer, the BV retest).
+				{
+					std::ostringstream line;
+					line << "capture 108 put-in member " << id << " body " << bodyId << " cage " << cage->site.object << ":"
+						<< cage->site.slot << " at " << std::hypot(f.x - cage->x, f.z - cage->z) << " u";
+					logTask(line.str());
+				}
+				r.chainTarget = 0;
+				r.chainElapsed = -1.0;
+				++townStats_.slavesCaged;
+				actor.set<state::Routine>(std::move(r));
+				mirrorFighter(id);
+				continue;
+			}
+		}
+
+		// Only the chain's two goals walk, strip and restrain. A world task's loot (LOOT_THE_DEAD 177, task BO) keeps its body in
+		// Routine::chainTarget too; it must not be treated as a catch (its own step is world_tasks.cpp).
+		if (r.chainTarget == 0 || (r.goal != routines::task::CaptureSlaves && r.goal != routines::task::FindCageAndPutIn))
+			continue;
+		// The scorer moved on to another goal while the catch was in hand: put the person down (a carry is never held for ever).
+		if (f.carrying == r.chainTarget && r.goal != routines::task::CaptureSlaves && r.goal != routines::task::FindCageAndPutIn)
+		{
+			dropCarried(id);
+			r.chainTarget = 0;
+			r.chainElapsed = -1.0;
+			actor.set<state::Routine>(std::move(r));
+			mirrorFighter(id);
+			continue;
+		}
+		// The chain (CAPTURE_NEW_SLAVES 167): walk to the body (the scorer's spot), restrain it, then chain and lift it. The chain ends
+		// without a trace when the body is gone or dead, it wakes before the lift, the catcher is put down, or it takes too long.
+		state::Fighter* body = combat_->find(r.chainTarget);
+		bool ended = body == nullptr || body->dead || f.dead || f.unconscious || f.down;
+		// Already chained: the person is a slave from the cuff on, so no other warden picks it again either way. A body another member
+		// has lifted ends this chain too (task BO: up to five members walk to one body).
+		if (!ended && f.carrying != r.chainTarget && (body->carriedBy != 0 || !(body->unconscious || body->down)))
+			ended = true;
+		if (!ended && r.chainElapsed > kRestrainSeconds + kCarryGiveUpSeconds)
+			ended = true;
+		if (ended)
+		{
+			if (f.carrying == r.chainTarget)
+				dropCarried(id);
+			// Task BR2: the chain's end in the server's log, with what ended it.
+			{
+				std::ostringstream line;
+				line << "capture end 167 member " << id << " body " << r.chainTarget << " (";
+				if (body == nullptr)
+					line << "the body is gone";
+				else if (body->dead)
+					line << "the body died";
+				else if (f.dead || f.unconscious || f.down)
+					line << "the catcher is down";
+				else if (f.carrying != r.chainTarget && body->carriedBy != 0)
+					line << "another member carries it";
+				else if (!(body->unconscious || body->down))
+					line << "the body woke before the cuff";
+				else
+					line << "too long";
+				line << ")";
+				logTask(line.str());
+			}
+			r.chainTarget = 0;
+			r.chainElapsed = -1.0;
+			actor.set<state::Routine>(std::move(r));
+			mirrorFighter(id);
+			continue;
+		}
+		if (r.chainElapsed < 0.0)
+		{
+			// Walking to the body: start the restrain once there and idle (a door step or an interact task is not a restrain yet).
+			const bool free = !f.walking() && !actor.has<state::InteractTask>() && !actor.has<state::DoorStep>()
+				&& !actor.has<state::CarryStep>() && !actor.has<state::TakeOut>();
+			if (free && std::hypot(f.x - body->x, f.z - body->z) <= kChainReach)
+			{
+				f.clearRoute();
+				f.forwardSpeed = 0.0;
+				f.lateralSpeed = 0.0;
+				f.yaw = std::atan2(body->x - f.x, body->z - f.z);
+				// STRIP_TARGETS_WEAPONS 181 (kinspect dt3: 8 frames, "Stripping weapons"): the worn weapons go to the ground before the
+				// restrain bar starts.
+				stripTargetWeapons(r.chainTarget);
+				r.chainElapsed = 0.0;
+				mirrorFighter(id);
+				// Task BR2: the two phases the client's log names (181 stripped, 166 restraining).
+				{
+					std::ostringstream line;
+					line << "capture 181 strip member " << id << " body " << r.chainTarget << ", 166 restrain starts ("
+						<< kRestrainSeconds << " s)";
+					logTask(line.str());
+				}
+			}
+		} else if (r.chainElapsed < kRestrainSeconds) {
+			// RESTRAINING: both stand still; a catcher that is put down gives up.
+			f.clearRoute();
+			f.forwardSpeed = 0.0;
+			f.lateralSpeed = 0.0;
+			r.chainElapsed += kTickSeconds;
+			if (r.chainElapsed >= kRestrainSeconds - 1.0e-9)
+			{
+				if (body->slaveState == 1)
+				{
+					// An earlier member chained it (task BO sends up to five to one body): this chain has nothing left to cuff or
+					// lift, and no second pair of shackles is put on.
+					r.chainTarget = 0;
+					r.chainElapsed = -1.0;
+				} else {
+					// The cuff (TQ22's default): the shackles go on here, not at a cage (kinspect dt3: Prisoner Shackles into the boots
+					// slot at the restrain's end), then the slave state 1 and the captor faction, written only when empty; then the lift,
+					// which stepCarry times and resolves into the carry.
+					// Task slaver-crime (dt5): the cuff of a free, unbountied, player-owned person is crime 1 ENSLAVING on the
+					// cuffer, before the slave state is written (the test reads that state as "free").
+					reportEnslaving(id, r.chainTarget);
+					shackleTarget(r.chainTarget);
+					body->slaveState = 1;
+					if (body->captorSid.empty())
+					{
+						if (const state::Allegiance* mine = actor.get<state::Allegiance>())
+							body->captorSid = mine->factionSid;
+					}
+					noteNpcImprisoned(r.chainTarget, body->captorSid);
+					mirrorFighter(r.chainTarget);
+					beginInteract(id, r.chainTarget, static_cast<std::uint8_t>(InteractAction::Carry), 0, {}, true);
+					++townStats_.slavesCaught;
+					// Task BR2: 166 done, the cuff and the lift (168).
+					{
+						std::ostringstream line;
+						line << "capture 166 restrain done, 168 cuff + lift member " << id << " body " << r.chainTarget << " (slave of '"
+							<< body->captorSid << "')";
+						logTask(line.str());
+					}
+				}
+			}
+		} else {
+			// Lifted: the carry is in hand and the scorer's cage goal 112 walks it; nothing to do but keep the clock.
+			r.chainElapsed += kTickSeconds;
+		}
+		if (r.chainTarget != chainBefore || r.chainElapsed != elapsedBefore)
+		{
+			actor.set<state::Routine>(std::move(r));
+			mirrorFighter(id);
+		}
+	}
+
+	// A caged person stays in its cage: it has no Routine to score, but a squad's order or a stray route could still give it one.

@@ -1,0 +1,9 @@
+# Locomotion fidelity step 1: the foot log over a run-to-point and its stop (client/tools/footlog.py reads the log).
+# Server: OpenKenshi-server --scenario newgame (navworld v11). The newgame Wanderer stands near (-51513, 2536) at the Hub.
+280 set animate 1
+290 dump chars
+300 log feet players
+310 move -51300 2700
+900 move -51513 2536
+1500 log feet off
+1510 quit

@@ -1,0 +1,1 @@
+lua-5.5.0, pristine distribution (from /usr/src/lua-5.5.0 commit fffd8d4, the untouched tarball import). MIT license: see doc/readme.html and the notice at the end of src/lua.h. No local patches.

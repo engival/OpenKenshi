@@ -1,0 +1,7 @@
+# roof_guard (kenshi-k16.2.284): tests/floor_threshold's open-ground-beside-a-low-building case. The Wanderer stands on the open ground beside the dune-sunk Longhouse (the k16.2.274 spot, id 1159 in its walk4).
+KSCEN 2
+scenario title=Roof%20guard setup=The%20Wanderer%20stands%20beside%20a%20low%20dune-sunk%20building. look_for=Is%20the%20Wanderer%20drawn%3F bead=kenshi-k16.2.284 metrics=fight_s
+source save=playtest game=1.0.68 radius=0 centre=68394,-71032 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=68394 y=1230.8 z=-71032 yaw=0 leader=1 player=1

@@ -1,0 +1,7 @@
+# pointer (kenshi-k16.2.205.12.97): the cursor is drawn at pointer::x/y (queue_event / the script's move), not at the packet's copy.
+60 mouse pos 300 200
+70 screenshot OUTDIR/ptr_a.png
+80 mouse pos 900 500
+81 stall 500
+90 screenshot OUTDIR/ptr_b.png
+100 quit

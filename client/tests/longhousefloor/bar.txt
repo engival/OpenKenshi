@@ -1,0 +1,9 @@
+# open-ground walk (kenshi-kyat.2): bar_lure, the Wanderer walks outside the Bar; KYLOG=1 prints YLOG rows.
+# Run: KSCEN=scenarios/bar_lure.kscen KYLOG=1 client/tests/longhousefloor/run.sh slope OUT
+10 set animate 1
+110 camera char Wanderer
+300 screenshot OUTDIR/start.png
+310 move -50619 -1040
+700 move -50560 -1000
+1200 screenshot OUTDIR/end.png
+1300 quit

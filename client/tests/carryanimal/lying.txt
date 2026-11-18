@@ -1,0 +1,20 @@
+100 set animate 1
+150 camera char Goat
+200 attack id=@Goat@
+210 select id=@Green@
+220 attack id=@Goat@
+230 select id=@Beep@
+240 attack id=@Goat@
+250 select id=@Ruka@
+260 attack id=@Goat@
+270 select id=@Kang@
+280 attack id=@Goat@
+290 select id=@Seta@
+300 attack id=@Goat@
+310 select id=@Wanderer@
+900 dump chars
+1000 camera char Goat
+1100 camera char Goat
+1105 screenshot OUTDIR/lying_1105.png
+1200 dump ragdolls
+1300 quit

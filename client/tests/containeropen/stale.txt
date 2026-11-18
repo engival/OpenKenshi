@@ -1,0 +1,9 @@
+# kenshi-k16.2.304.1: a superseded open order opens nothing later. Wanderer 41188 is ordered to open the Storm House shop counter 41063 (a long walk), and
+# 60 frames later to walk to the bar's floor at -50536,-1200 instead (a plain move, no open). Pass: no `container: 41063 ... opened` line, and
+# `dump windows` after the arrival lists the character window only. Before the fix the counter's window opened when the walk ended in its reach.
+200 select id=41188
+260 open id=41063
+320 move -50536 -1200
+1800 dump windows
+1810 screenshot OUTDIR/arrived.png
+1900 quit

@@ -1,0 +1,71 @@
+# kclient scenes: one per line, fields separated by TAB, "#" starts a comment.
+# name <TAB> key=value ...   (README.md "Scenes")
+#   pos=x,y,z (absolute y) or pos=x,z with alt=H (height above ground)
+#   yaw=DEG pitch=DEG (yaw 0 looks toward -z, 90 toward +x) or look=x,y,z (aim at a point)
+#   day=N time=HH:MM|H.H weather=NAME|default ref=NAME (in-game screenshot: a bare file name resolved against $KCLIENT_SCENE_REFS; an absolute path works as is; unset or missing = no reference)
+#   keys=F|R... floor steps (R up, F down) sent after loading, before the shot
+#   build=P construction progress 0..1 of the building nearest the look point (else the camera), set after loading
+#   clouds=D cloud density 0..1 over the weather record's (the capture's, from its SkyXClouds uniforms: (uDensityOffset + 0.8) / 1.4); named weather only
+#   set=KEY=VALUE (repeatable) options for this scene only (put back at the next scene); char=...;settle=SECONDS steps the characters' animation clock before the shot (idle fit)
+#   wind=DEG the wind blows toward this yaw (0 = +Z, 90 = +X) for wind-aimed parts (rotation function 4); else the live wind, or their rest pose
+hub_stormhouse	pos=-50902,1614,3441	look=-50977.6,1560,3516.6	day=1	time=10:15	weather=default	ref=20261030160651_1.jpg
+shobattai_2238	pos=54230,1520,-93889	yaw=-137.5	pitch=-40.4	day=1	time=22:38	weather=Desert Blaster	ref=20261030153439_1.jpg
+shobattai_2258	pos=54230,1520,-93889	yaw=-137.5	pitch=-40.4	day=1	time=22:58	weather=Desert Blaster	ref=20261030153446_1.jpg
+shobattai_night	pos=54230,1520,-93889	yaw=25	pitch=8	day=2	time=00:30	weather=Desert Blaster	ref=20261030154236_1.jpg
+deadlands_spawn	pos=11745,-17500	alt=350	yaw=0	pitch=-20	day=1	time=12:00	weather=default
+shark_lake	pos=-47100,299.7,47700	yaw=180	pitch=-25	day=140	time=12:04	weather=swamp rain no wind	ref=shark_lake_d140_1200_shadow2.png
+foliage_dense	pos=-20736,688.9,43776	yaw=90	pitch=-20	day=140	time=12:08	weather=Drifting-foliage	ref=foliage_dense_d140_1208_shadow2.png
+hub_overview	pos=-51000,2312.0,4284.4	yaw=0	pitch=-50	day=140	time=12:41	weather=Desert-dust-swirls WEATHER	ref=hub_overview_d140_1240_shadow2.png
+# Regional weather (weather=auto: areasmap -> BIOME_GROUP -> SEASON -> WEATHER, blended in space; docs/CLIENT_GOALS.md "Regional weather")
+deadlands_border	pos=0,318.1,6625.7	yaw=0	pitch=-4	day=140	time=12:12	weather=Desert Calm	clouds=0.1	ref=deadlands_border_d140_1200_shadow2.png
+deadlands_inside	pos=6000,344.7,-10343.8	yaw=0	pitch=-8	day=140	time=12:13	weather=Heavy_Rain deadlands	ref=deadlands_inside_d140_1200_shadow2.png
+deadlands_far	pos=0,14000	alt=900	yaw=0	pitch=-5	day=1	time=12:00	weather=auto
+# Building interiors (docs/CLIENT_GOALS.md "Building interiors"): keys=F / R step the floor of the building under the camera once everything has loaded
+interior_above	pos=-51181,2740	alt=140	yaw=0	pitch=-52	day=1	time=12:00	weather=default	keys=F
+# interior_inside: inside the Small Shack at -51271,1583,3561 (not the Hub Storm House; kenshi-jj3.7.4)
+interior_inside	pos=-51309,1600,3549	yaw=200	pitch=-12	day=1	time=12:00	weather=default
+# interior_bar_door: inside the intact Hub bar (Storm House at -50589,1073,-1225), sunlight through the south doorway at 15:00; for render.sun_shafts (kenshi-jj3.7.5; the switch is off in this list)
+interior_bar_door	pos=-50528,1086,-1262	yaw=235	pitch=-6	day=1	time=15:00	weather=default
+# Grass layers (docs/CLIENT.md "Grass"): Canyonlands Crater biome, no in-game reference shot yet
+grass_canyon	pos=-103824,88272	alt=25	yaw=90	pitch=-12	day=1	time=12:00	weather=default
+grass_canyon_dust	pos=-103824,1100.4,88272	yaw=90	pitch=-12	day=140	time=12:20	weather=Sand stream	clouds=0	fogdist=20000	dust=0.5	ref=grass_canyon_dust_d140_1220.png
+grass_far	pos=-103824,88272	alt=300	yaw=90	pitch=-25	day=1	time=12:00	weather=default
+rock_arch	pos=-32725.5,168.7,-13820.3	look=-32985.6,177.7,-13969.5	day=138	time=17:14	weather=auto	ref=rock_arch_d138_1714.png
+greenlands_bridge	pos=-45570.43,157.62,-26244.82	look=-45431.2,104.5,-26505.2	day=138	time=20:24	weather=clear nothing	clouds=0.559	ref=greenlands_bridge_d138_2024_shadow2.png
+# Fog volumes (fogfeatures.dat, docs/CLIENT_GOALS.md "Fog volumes"): the Skinners Roam dome sphere, the Block planes and the Quarry beam
+fog_dome	pos=28729.2,823.1,-14984.1	yaw=-76.8	pitch=3	day=140	time=12:05	weather=Clear Times SHORT hot 0.5	ref=fog_dome_d140_1205_shadow2.png
+fog_block	pos=28333,-15077	alt=150	yaw=-102	pitch=2	day=1	time=12:00	weather=auto
+fog_quarry	pos=-43500,-54000	alt=1500	yaw=-57	pitch=-14	day=1	time=12:00	weather=auto
+swamp_dawn_rain	pos=-73448.66,174.89,55831.83	look=-73490.7,163.9,56128.7	day=139	time=06:30	weather=swamp rain no wind	ref=swamp_dawn_rain_d139_0630_shadow2.png
+swamp_noon_rain	pos=-73448.66,174.89,55831.83	look=-73490.7,163.9,56128.7	day=139	time=12:00	weather=swamp rain no wind	ref=swamp_noon_rain_d139_1200_shadow2.png
+petal_hills	pos=-67016.78,1159.64,80774.80	look=-67050.2,1086.7,81063.9	day=139	time=14:05	weather=light rain	ref=petal_hills_bluesky_rain_d139_1405_shadow2.png
+obsidian_pool	pos=-67540.92,1229.43,84644.78	look=-67380.0,1138.7,84881.1	day=139	time=14:30	weather=light rain	ref=obsidian_orange_water_d139_1430_shadow2.png
+dust_red_dawn	pos=-103592.45,1184.22,88207.66	look=-103857.5,1048.3,88243.8	day=140	time=4.941	weather=Sand stream	clouds=0	fogdist=20000	dust=0.5	ref=dust_storm_red_dawn_d140_0456_shadow2.png
+grass_point_rain	pos=-103592.45,1184.22,88207.66	look=-103857.5,1048.3,88243.8	day=140	time=07:41	weather=Desert Calm	ref=grass_point_rain_d140_0741_shadow2.png
+night_moons	pos=30084.8,756.4,-14692.7	yaw=42	pitch=10	day=140	time=01:11	weather=Clear Times SHORT hot 0.5	ref=night_moons_d140_0111_shadow2.png
+# Characters (docs/CLIENT_GOALS.md "Characters"): char=SPEC places a --character in front of the scene camera (frozen pose in scripted runs)
+characters_hub	pos=-50950,3480	alt=12	yaw=0	pitch=-12	day=1	time=10:00	weather=default	char=wear=Samurai Armour;wear=Samurai Clothpants;faction=United Cities;wear=Samurai Boots;wear=Samurai Helmet;weapon=Katana;clip=combatstance;at=45,-11;yaw=40	char=female;wear=Rag Shirt;wear=Cargopants;hair=Haircut07-millet;weapon=Katana;drawn;clip=sword ready;at=45,0;yaw=-20	char=wear=Drifter's Leather Jacket;wear=Drifter's Leather Pants;wear=Drifter's Boots;hair=Haircut10-oldman;beard=Beard03;weapon=Katana;weapon=Katana;anim=walk lower;anim=walk upper sword;t=0.4;at=45,11;yaw=200
+characters_locomotion	pos=-50950,3480	alt=14	yaw=0	pitch=-10	day=1	time=10:00	weather=default	char=move=0;at=55,-32;yaw=90	char=move=14;t=0.3;at=55,-23;yaw=90	char=move=30;t=0.3;at=55,-14;yaw=90	char=move=60;t=0.3;at=55,-5;yaw=90	char=move=120;t=0.3;at=55,4;yaw=90	char=move=14;t=0.3;legs=40,90;weapon=Katana;drawn;at=55,13;yaw=90	char=move=0;t=1;wound=Chest:0.3;wound=Head:0.5;at=55,22;yaw=90
+characters_combat	pos=-50950,3480	alt=14	yaw=0	pitch=-10	day=1	time=10:00	weather=default	char=move=0;combat;weapon=Iron Club;drawn;at=45,-24;yaw=90	char=move=0;combat;weapon=Katana;drawn;at=45,-16;yaw=90	char=move=0;combat;at=45,-8;yaw=90	char=move=0;combat;weapon=Iron Club;drawn;action=heavy downcut v2;action_speed=1;action_t=0.9;at=45,0;yaw=90	char=move=0;combat;weapon=Iron Club;drawn;action=heavy downcut v2;action_speed=1;action_t=1.7;at=45,8;yaw=90	char=move=0;combat;action=mid blow light;action_t=0.4;at=45,16;yaw=90	char=move=8;strafe=5;t=0.3;combat;weapon=Katana;drawn;at=45,24;yaw=90
+characters_blocks	pos=-50950,3480	alt=14	yaw=0	pitch=-10	day=1	time=10:00	weather=default	char=move=0;combat;weapon=Katana;drawn;yaw=90;action=Block up;action_t=0.4;at=45,-12	char=move=0;combat;weapon=Katana;drawn;yaw=90;action=Block left;action_t=0.4;at=45,-4	char=move=8;strafe=5;t=0.3;combat;weapon=Katana;drawn;yaw=90;action=Block right;action_t=0.4;at=45,4	char=move=0;combat;weapon=Katana;drawn;yaw=90;action=Block right override;action_t=0.4;at=45,12
+characters_blood	pos=-50950,3480	alt=4	yaw=0	pitch=-4	day=1	time=10:00	weather=default	char=clip=idle_stand_guard;speed=0;at=30,-9	char=clip=idle_stand_guard;speed=0;wound=Chest:0.2;wound=Stomach:0.5;at=30,-3	char=clip=idle_stand_guard;speed=0;wound=Head:0;wound=Left Arm:0;at=30,3	char=clip=idle_stand_guard;speed=0;wound=Right Leg:0;wound=Left Leg:0.4;wound=Right Arm:0.3;at=30,9
+characters_hide	pos=-50950,3480	alt=6	yaw=0	pitch=-8	day=1	time=10:00	weather=default	char=wear=Drifter's Leather Jacket;clip=idle_stand_guard;speed=0;at=55,-14	char=wear=Sleeveless Dustcoat;clip=idle_stand_guard;speed=0;at=55,-7	char=wear=Longcoat;clip=idle_stand_guard;speed=0;at=55,0	char=female;wear=Monk Robe;clip=idle_stand_guard;speed=0;at=55,7	char=wear=Plate Jacket;clip=idle_stand_guard;speed=0;at=55,14
+characters_carry	pos=-50950,3480	alt=12	yaw=0	pitch=-8	day=1	time=10:00	weather=default	char=move=0;carry=left;at=30,-14;yaw=90	char=carried=0	char=move=0;carry=right;at=30,-3;yaw=0	char=carried=2	char=move=45;t=0.2;carry=right;at=30,9;yaw=90	char=carried=4;female
+characters_crossbow	pos=-50950,3480	alt=12	yaw=0	pitch=-12	day=1	time=10:00	weather=default	char=move=0;weapon=Katana;weapon=Ranger;at=40,-6;yaw=180	char=move=0;weapon=Katana;weapon=Oldworld Bow MkI;loaded;at=40,0;yaw=180	char=move=0;weapon=Spring Bat;drawn;loaded;at=40,6;yaw=90
+characters_backpack	pos=-50950,3480	alt=12	yaw=0	pitch=-12	day=1	time=10:00	weather=default	char=move=0;wear=Rag Shirt;wear=Large Backpack;at=30,-9;yaw=150	char=move=0;wear=Rag Shirt;wear=Medium Backpack;weapon=Katana;at=30,-3;yaw=180	char=female;move=0;wear=Small Backpack (colored);faction=United Cities;at=30,3;yaw=210	char=move=0;wear=Scavenger's Basket;at=30,9;yaw=135
+blood_ground	pos=-50950,3480	alt=25	yaw=0	pitch=-35	day=1	time=10:00	weather=default	char=clip=idle_stand_guard;speed=0;at=40,0	blood=pool:40,0,0.3	blood=splash:40,-14,0.5,0	blood=splash:30,12,0.2,90	blood=smear:55,8,0.2,0	blood=smear:62,8,0.2,0	blood=smear:69,8,0.2,30
+# Construction (docs/CLIENT_GOALS.md "Construction"): ghost above the cut, solid below, warm band at the cut
+build_hub_30	pos=-50960,1660,3330	look=-50746,1610,3556	day=1	time=10:15	weather=default	build=0.3
+build_hub_70	pos=-50960,1660,3330	look=-50746,1610,3556	day=1	time=10:15	weather=default	build=0.7
+riveroverlook1	pos=-18741.12,1600.78,72192.77	look=-19029.3,1519.6,72172.9	day=138	time=18:29	weather=Sand stream ambient	ref=riveroverlook1_d138_1829.png
+canyonsunset	pos=-54664.82,630.54,90696.9	look=-54960.0,576.9,90695.4	day=138	time=22:26	weather=swamp rain no wind	ref=canyonsunset_d138_2226.png
+obsidian_sunrise	pos=-66996.28,207.7,87763.02	look=-66696.8,191.5,87771.5	day=139	time=05:22	weather=Desert-dust-swirls WEATHER	ref=obsidiansunrise_d139_0522_shadow2.png
+# Foot IK on a slope (kenshi-k16.17.7.18; docs/CLIENT_GOALS.md "Characters"): set=KEY=VALUE applies options for the scene only; settle=SECONDS steps the clock so the idle fit engages.
+# x -51258 z -596: ground 1011.26 / 1010.57 under the feet of a character facing along z (grade 0.224 along +x); the JSON's foot_idle shows engaged, feet_ground_delta > 0.3, slope_w > 0
+slope_foot_ik	pos=-51282,-596	alt=6.5	yaw=90	pitch=1	day=1	time=12:00	weather=default	set=anim.foot_lock=1	set=anim.foot_terrain=1	char=move=0;settle=1;at=24,0;yaw=90
+# kenshi-k16.2.160.1: sneaking and standing, unarmed / sword in hand (left to right): all three crouch in the `crouch idle`; the armed one stood upright before the fix
+sneak_idle_armed	pos=-50950,3480	alt=14	yaw=0	pitch=-10	day=1	time=10:00	weather=default	char=move=0;stealth;settle=1;at=45,-16;yaw=90	char=move=0;stealth;weapon=Katana;drawn;settle=1;at=45,-8;yaw=90	char=move=0;stealth;weapon=Katana;drawn;settle=1;at=45,0;yaw=90;t=2
+# interior_shafts_dust: the bar door's view with the sun shaft and dust mote passes on (render.sun_shafts, render.dust_motes; kenshi-jj3.7.5, kenshi-jj3.8.1), so scene_test covers both (kenshi-k16.2.205.12.54)
+interior_shafts_dust	pos=-50528,1086,-1262	yaw=235	pitch=-6	day=1	time=15:00	weather=default	set=render.sun_shafts=1	set=render.dust_motes=1
+# debug_light_probes: the --debug light probe overlay (debug.light_probes) over interior_inside, the one world overlay a scene can show offline: the nav mesh overlay, sim markers and labels need a sim (render sitting 11, kenshi-k16.2.205.12.57)
+debug_light_probes	pos=-51309,1600,3549	yaw=200	pitch=-12	day=1	time=12:00	weather=default	set=debug.light_probes=1

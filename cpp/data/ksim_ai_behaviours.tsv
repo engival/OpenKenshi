@@ -1,0 +1,104 @@
+# Original AI package -> our behaviour (include/ksim/behaviours.hpp).
+# Columns: match<TAB>key<TAB>behaviour<TAB>note. Rules are tried in this order
+# for one package: `package` (exact name), `unloaded` (UnloadedPlatoonJob of the
+# package or its nearest ancestor), `keyword` (substring of the package name,
+# then of its ancestors', file order). Nothing matches: generic fallback.
+# Behaviours implemented: travel, go_home, stay_home, patrol_local,
+# animal_territory, raid, man_the_gate, trade_circuit, shop_keeper, resident_life, bar_hangout, guard_shift, cage_warden.
+# Any other name is "planned": the squad runs the fallback
+# and the coverage report counts it.
+# `unloaded` comes first because it is the original's own abstract-behaviour
+# field; `keyword` rows cover the packages that set it to NONE (79 of 219).
+# `package` rows pin the cases where the field disagrees with the package's
+# goals (the original only travels or patrols abstractly while unloaded; our
+# squads live their ordinary life at every level, so the goals are the intent).
+# Guard packages: UNSURE field, clear goals. Their unloaded func is
+# TRAVEL_TARGET but their goals are GO_HOME_AND_GO_TO_BED, MAN_A_TURRET,
+# INVESTIGATE_ALARMS, ATTACK_TROUBLE_MAKERS (shift posts: none travels or
+# patrols), and Task_PatrolTown has no loop of its own (it follows the
+# package's target; docs/reference/tasks/Task_PatrolTown.md). So they hold the
+# post: guard_shift (T3e1; the scorer runs the halves' windows and the intruder
+# pickup). "Guard military patrol base" does list PATROL_TOWN: it patrols.
+package	Guard town	guard_shift	shift post; TRAVEL_TARGET in the data is not its intent (TOWN_LIFE_SLICE 5.7, T3e1)
+package	guard town - lawful arrests	guard_shift
+package	guard town - lawful arrests copy	guard_shift
+package	Guard town small-time no shifts	guard_shift
+package	Guard town - gangs	guard_shift
+package	Guard town no shifts 24hr	guard_shift
+package	Guard town shifts -base	guard_shift
+package	Guard town - slave catching	guard_shift
+package	Guard building, residents	guard_shift	5.7: replaces go_home; node 38 + the halves, 223 in the leader list
+package	Guard building 24hr service	guard_shift
+package	Guard building 24hr service law	guard_shift
+package	Guard building 24hr service w/patrol	guard_shift
+package	Guard building 24hr service- squad2 robo guards	guard_shift
+package	Guard building, capture and loot	guard_shift
+package	guard building 24hr aggressive	guard_shift
+package	Storage Guard	guard_shift
+package	Cage Warden	cage_warden	TOWN_LIFE_SLICE 5.19 (T3e2): replaces go_home; the scorer runs catching 167, caging 112, watching 183 and the cage lock 195
+package	Cage Warden copy	cage_warden
+package	Guard military patrol base	patrol_local	has the PATROL_TOWN goal
+package	Shop	shop_keeper	TOWN_LIFE_SLICE 5.7 (T3b2): replaces go_home, the Shopkeeper goal is run by the town scorer
+package	Shop-24hr	shop_keeper
+package	hang out in a bar	bar_hangout	TOWN_LIFE_SLICE 5.17 (T3d): replaces go_home; the scorer runs RELAX 214 at a claimed table
+package	Civilian	resident_life	TOWN_LIFE_SLICE 5.7 (T3b2): replaces go_home
+package	Squatters	resident_life
+package	Cannibals at home	resident_life
+package	Cannibals at home- skinbandits	resident_life
+package	fog resident	resident_life
+package	Gate guard -no turrets	man_the_gate	the leader runs MAN_THE_GATE (180) at the gate's outside point, 0-24 h; the members static-guard (GATES_CARRY_LIVE.md a)
+package	Gate guard- slave catching	man_the_gate
+package	Gate guard  -no turrets -arrests	man_the_gate
+package	Gate guard  -turrets -arrests	man_the_gate
+package	Gate guard stay in town -no turrets	man_the_gate
+package	Wandering from town to town	trade_circuit	the wandering trader (signal func 16): 4 nearest eligible towns, U(5,8) h stay, leaves 06-21; TOWN_LIFE_SLICE T2
+package	Slaver Wandering from town to town	trade_circuit	inherits the trader package
+package	Creature nest agressive	animal_territory	nest creatures keep to their nest
+package	Creature nest agressive nocturnal -eat corpses	animal_territory
+package	Creature nest agressive-no sleep	animal_territory
+package	Patrol map (short range) animal	animal_territory
+package	animal agressive patrol nocturnal	animal_territory
+package	Goat Herder	animal_territory	a herd and its herder graze within a range
+unloaded	TRAVEL_TARGET	travel	original abstract travel to the squad's target
+unloaded	TRAVEL_TARGET_FAST	travel	same, faster in the original; one speed here
+unloaded	GOHOME	go_home	original abstract go-home
+unloaded	PATROL_SHORTRANGE	patrol_local	needs local patrol points
+unloaded	PATROL_TOWN	patrol_local
+unloaded	PATROL_LONGRANGE	patrol_local
+keyword	animal	animal_territory	creature packages: territory around a nest
+keyword	hunter	animal_territory
+keyword	wolf	animal_territory
+keyword	megabeast	animal_territory
+keyword	bugmaster	animal_territory
+keyword	fishman	animal_territory
+keyword	nest	animal_territory
+keyword	goat	animal_territory
+keyword	patrol	patrol_local
+keyword	assault	raid	campaign and raid packages
+keyword	kidnap	raid
+keyword	occupy	raid
+keyword	slaver	raid
+keyword	reaver	raid
+keyword	undertaker	raid
+keyword	attack all	raid
+keyword	shop	shop_keeper	posts: staff the building they belong to (TOWN_LIFE_SLICE T3b2; home-bound like stay_home)
+keyword	hospital	stay_home
+keyword	bar	stay_home
+keyword	noble	stay_home
+keyword	throne	stay_home
+keyword	king	stay_home
+keyword	queen	stay_home
+keyword	resident	resident_life	home-bound like stay_home; the town scorer runs the package at Full detail (T3b2)
+keyword	farm	stay_home
+keyword	mines	stay_home
+keyword	work	stay_home
+keyword	gate guard	man_the_gate	a gate-guard variant not pinned above
+keyword	guard	stay_home
+keyword	police	stay_home
+keyword	prison	stay_home
+keyword	vault	stay_home
+keyword	storage	stay_home
+keyword	thugs	stay_home
+keyword	wander	stay_home
+keyword	robot	stay_home
+keyword	squat	stay_home

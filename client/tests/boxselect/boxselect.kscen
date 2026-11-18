@@ -1,0 +1,21 @@
+# boxselect (kenshi-k16.2.230.1; kenshi-k16.2.230.3 adds the dead and KO'd members): five of the player's characters in a row on open ground with
+# two same-faction NPCs standing among them, for the selection-box check (run.sh). The NPCs are not the player's (player=0): a box over them must not
+# select them. DeadOne (dead=1) is a player character too: a box over its point leaves it out (kenshi-rwh.134). KOOne (ko=60) lies down but is boxed.
+KSCEN 2
+scenario title=Box%20selection setup=Five%20player%20characters%20in%20a%20row%2C%20a%20dead%20one%20and%20a%20KO%27d%20one%2C%20and%20two%20NPCs%20between%20them. look_for=A%20left%20drag%20over%20three%20of%20yours%20selects%20exactly%20those%20three. bead=kenshi-k16.2.230.3 metrics=bodies_down
+source save=playtest game=1.0.68 radius=0 centre=-50000,-1000 leader=Alpha
+clock day=1 hour=12 minute=0
+squad id=1 name=Alpha faction=204-gamedata.base player=1 money=0
+squad id=2 name=Bystanders faction=204-gamedata.base template=1533662-rebirth.mod player=0
+char id=1 squad=1 name=Alpha template=1533662-rebirth.mod faction=204-gamedata.base x=-50016 y=1075 z=-1000 yaw=0 player=1 leader=1
+char id=2 squad=1 name=Bravo template=1533662-rebirth.mod faction=204-gamedata.base x=-50008 y=1075 z=-1000 yaw=0 player=1
+char id=3 squad=1 name=Charlie template=1533662-rebirth.mod faction=204-gamedata.base x=-50000 y=1075 z=-1000 yaw=0 player=1
+char id=4 squad=1 name=Delta template=1533662-rebirth.mod faction=204-gamedata.base x=-49992 y=1075 z=-1000 yaw=0 player=1
+char id=5 squad=1 name=Echo template=1533662-rebirth.mod faction=204-gamedata.base x=-49984 y=1075 z=-1000 yaw=0 player=1
+item char=1 sid=581-gamedata.base section=main qty=1
+char id=6 squad=2 name=Bystander1 template=1533662-rebirth.mod faction=204-gamedata.base x=-50008 y=1075 z=-1004 yaw=0
+char id=7 squad=2 name=Bystander2 template=1533662-rebirth.mod faction=204-gamedata.base x=-49992 y=1075 z=-1004 yaw=0
+char id=8 squad=1 name=DeadOne template=1533662-rebirth.mod faction=204-gamedata.base x=-49976 y=1075 z=-1000 yaw=0 player=1 dead=1
+char id=9 squad=1 name=KOOne template=1533662-rebirth.mod faction=204-gamedata.base x=-50024 y=1075 z=-1000 yaw=0 player=1 ko=60
+# FarOne stands 8000 u north of the row: straight ahead on screen from a level camera, but past the original's 7500 u reach (kenshi-rwh.134)
+char id=10 squad=1 name=FarOne template=1533662-rebirth.mod faction=204-gamedata.base x=-50000 y=1075 z=-9000 yaw=0 player=1

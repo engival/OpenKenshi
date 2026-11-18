@@ -1,0 +1,16 @@
+Retired 2026-11-02 (BQ15, bq15_corpse_cleanup.md a "Consequence for s71 5.3 point 2"): retireWipedSquads retired a spawner squad as
+soon as every member was dead, because we had no event that destroys a corpse (UNSURE, the 7dd2710 behaviour):
+
+	// A spawner squad (state::SquadInstance::slot >= 0) with no member left alive is gone for the quota: retired like a removal ...
+	// every member dead (the exe keeps such a squad at weight 0.5 until its corpses are destroyed or the zone unloads; we have neither,
+	// so it leaves at once, UNSURE), and no member at all (the tick's "no members left" rule).
+	...
+		const SquadVitals vitals = squadVitals(ecs, squad);
+		if (vitals.dead == vitals.members)
+			wiped.push_back(squad);
+
+removeSquadEntity then detached the bodies (MemberOf removed) so they stayed lootable without a squad.
+
+Now: corpses decay (Simulation::stepCorpses), the all-dead squad stays non-intact (0.5 in the quota) until its last corpse is
+destroyed, and the squad is retired by the "no members" rule (`members == 0`). removeSquadEntity's body detaching still serves
+RemoveSquad commands and a squad removed while some members are alive.

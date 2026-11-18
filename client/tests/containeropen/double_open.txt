@@ -1,0 +1,23 @@
+# One open action, one window (kenshi-k16.2.304.1; user 2026-11-16, order_sounds run 20261116-1414: a barrel's context-menu Open left two container windows).
+# scenarios/order_sounds: Wanderer 1 walks to the Storm House bar; the shop counter 41063 and Small Barrel 41070 are foreign (ids move with the data: dump things).
+# Steps as in the playtest: RMB on the counter without ALT (hint + walk, no window), ALT+RMB (force open), then the barrel's menu Open (`open id=` is its action).
+# Run: PORT=47838 client/tests/containeropen/run.sh double_open OUT   Pass: after the barrel's open, `dump windows` lists the character + barrel only.
+200 select id=41188
+260 move -50536 -1200
+1500 dump chars
+1510 screenshot OUTDIR/a_arrived.png
+1600 mouse force 41063
+1610 mouse down right
+1614 mouse up right
+1900 dump windows
+2000 key ALT down
+2010 mouse down right
+2014 mouse up right
+2020 key ALT up
+2200 dump windows
+2210 screenshot OUTDIR/b_counter_forced.png
+2300 open id=41070
+2500 dump windows
+2510 screenshot OUTDIR/c_after_barrel.png
+2700 dump windows
+2800 quit

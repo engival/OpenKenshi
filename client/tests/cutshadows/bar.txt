@@ -1,0 +1,16 @@
+# cutshadows (kenshi-jj3.3.1): the Wanderer walks into the Hub bar (the Storm House, bar_lure scenario), the roof cut hides its upper floors; shots while he is inside (the camera re-aimed at him each time). Run twice by run.sh (off / on).
+100 set animate 1
+150 camera char Wanderer
+310 move -50544 -1231
+850 camera char Wanderer
+# The camera only re-aims (no follow), so the floor level stays the player's (h2v.24.6.2): step it down to the Wanderer's floor to cut the roof.
+852 key F down
+854 key F up
+856 key F down
+858 key F up
+870 screenshot OUTDIR/s870.png
+1050 camera char Wanderer
+1070 screenshot OUTDIR/s1070.png
+1250 camera char Wanderer
+1270 screenshot OUTDIR/s1270.png
+1350 quit

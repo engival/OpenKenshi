@@ -1,0 +1,18 @@
+camerasave: the camera sidecar of a save (kenshi-k16.2.134.1, docs/CLIENT.md "Camera modes").
+
+The server's saves hold no camera. When the client issues a save (the UI panel's SAVE, F5 quicksave) it writes
+$XDG_DATA_HOME/kclient/cameras/<server name>-<data hash>/<save name>.camera: the mode (free / rts / follow), eye, focus, yaw, pitch, the
+distances and the followed / auto-centered character. The load of that save applies it on the load's first snapshot after the reset (at once
+when the sim is paused, which sends no snapshots); a save with no sidecar loads as before. Deleting the save deletes the sidecar. The client log
+says `camera sidecar: saved "<name>": ...` and `camera sidecar: restored "<name>": ...` (the same numbers), `camera sidecar: none for ...`, or
+`camera sidecar: deleted with save ...`.
+
+run.sh MODE OUT: `live` (one OpenKenshi-server on PORT 47835 from camerasave.kscen; quicksave, W / E / END / PERIOD move the camera away, Ctrl+F9
+quickload), `paused` (the same, the sim paused before the quickload), `restart` (a second client, --local-server, the title's LOAD GAME -> the
+save: LOAD GAME (433,282) at 720p, the panel after the local server is up; row 0 (465,311), LOAD (751,443)), `delete` (same panel, the selected
+row, DELETE, YES (624,386)). OUT holds the logs (client-MODE.log), the shots and xdg/ (the server's saves under ksim/saves and the client's
+cameras under kclient/cameras), so a live run then restart/delete in the same OUT share the save and the sidecar. Run: client/tests/camerasave/
+run.sh live OUT (nice -n 10); then grep "camera sidecar" OUT/client-live.log.
+
+The scripts are headless kclient debug scripts: `key NAME down|up` (names as main.cpp key_by_name: W, E, SPACE, END, PERIOD, F5, CTRL, F9,
+DELETE), `mouse pos X Y` / `mouse down|up left` at 1280x720, `screenshot FILE`, `quit`.

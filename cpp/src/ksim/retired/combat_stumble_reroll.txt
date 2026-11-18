@@ -1,0 +1,29 @@
+Retired 2026-10-31 from src/ksim/combat.cpp (CombatArena::Ctx::stumble). The re-roll used the BLOCK chance against the
+strongest incoming swing at the end of the 1.1 s stagger and, on success, re-armed the stagger for another 1.1 s (the
+fitted "stumble re-roll", IMPLEMENTATION.md UNSURE item 10). The traced rule (docs/reference/combat/BLOCK_TIMING_LIVE.md):
+`updateStumbleState` rolls calcDodgeChance, and success LEAVES the stagger into a defence; the logged staggers end at
+1.11 s (129 of 218), 1.2 s into state 1 (28), longer for heavier reactions. Kept for reference only; not built.
+
+	void stumble(Member& m)
+	{
+		Fighter& f = m.fighter;
+		f.stumbleTimer -= dt;
+		if (f.stumbleTimer > 0.0)
+			return;
+		auto threats = incoming(m);
+		Member* e = strongestThreat(threats, -10.0);
+		if (e != nullptr)
+		{
+			const double skill = CombatRules::attackValue(e->fighter);
+			if (draw(f.rng) * 100.0 < rules.blockChance(f, skill))
+			{
+				awardDefenceXp(f, skill, false);
+				f.stumbleTimer = kStumbleTime;
+				return;
+			}
+		}
+		f.recovering = true;
+		f.recoverTimer = kStaggerRecovery;
+		setState(m, CombatState::Hub, true);
+	}
+

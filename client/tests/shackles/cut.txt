@@ -1,0 +1,17 @@
+# Locked shackles (kenshi-h2v.15.2.1), cut: select Spare, inventory, hold-right on the worn shackles (boots grid), release on row 2.
+# Run: PORT=47837 client/tests/shackles/run.sh cut OUT
+250 select id=@Spare@
+300 key I down
+305 key I up
+500 mouse gear grid boots 0 0
+600 mouse down right
+660 screenshot OUTDIR/menu.png
+680 mouse itemmenu 2
+690 mouse up right
+700 key I down
+705 key I up
+710 key Z down
+715 key Z up
+900 screenshot OUTDIR/cut_start.png
+1800 screenshot OUTDIR/cut_mid.png
+3000 quit

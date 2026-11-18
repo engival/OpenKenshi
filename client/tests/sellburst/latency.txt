@@ -1,0 +1,20 @@
+300 interact id=4679 6
+700 reply 0
+1100 mouse pos 685 266
+1101 mouse down right
+1102 mouse up right
+1102 screenshot OUTDIR/lat_1102.png
+1103 screenshot OUTDIR/lat_1103.png
+1104 screenshot OUTDIR/lat_1104.png
+1105 screenshot OUTDIR/lat_1105.png
+1106 screenshot OUTDIR/lat_1106.png
+1107 screenshot OUTDIR/lat_1107.png
+1108 screenshot OUTDIR/lat_1108.png
+1109 screenshot OUTDIR/lat_1109.png
+1110 screenshot OUTDIR/lat_1110.png
+1111 screenshot OUTDIR/lat_1111.png
+1112 screenshot OUTDIR/lat_1112.png
+1113 screenshot OUTDIR/lat_1113.png
+1114 screenshot OUTDIR/lat_1114.png
+1115 screenshot OUTDIR/lat_1115.png
+1200 quit

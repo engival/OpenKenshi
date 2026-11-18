@@ -1,0 +1,29 @@
+# Buyback (kenshi-k16.20.6.1.1): sell one Raw Iron, dump trade, hover the barman's ore, buy it back, then sell again, close and reopen.
+# Raw Iron lands at the barman's stock cell ~ (963,272) at 720p (2026-11-12; check sold1.png if the data moves).
+300 interact id=4679 6
+700 reply 0
+1000 screenshot OUTDIR/trade.png
+1010 dump trade
+1100 mouse pos 685 266
+1101 mouse down right
+1102 mouse up right
+1200 dump trade
+1260 mouse pos 963 272
+1360 screenshot OUTDIR/tip_buyback.png
+1400 mouse down right
+1401 mouse up right
+1500 dump trade
+1510 screenshot OUTDIR/bought_back.png
+1600 mouse pos 685 266
+1601 mouse down right
+1602 mouse up right
+1700 dump trade
+1760 mouse pos 1160 48
+1761 mouse down left
+1762 mouse up left
+1900 interact id=4679 6
+2300 reply 0
+2600 dump trade
+2660 mouse pos 963 272
+2760 screenshot OUTDIR/tip_reopened.png
+2800 quit

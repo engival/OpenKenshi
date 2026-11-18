@@ -1,0 +1,5 @@
+300 interact id=4679 6
+700 reply 0
+1000 screenshot OUTDIR/trade.png
+1010 dump trade
+1300 quit

@@ -1,0 +1,10 @@
+KSCEN 2
+# venge_beams_approach (kenshi-h2v.14.3; docs/reference/VENGE_BEAMS_STATIC.md). The Wanderer starts on the high ground 400 u west of Venge's border (y 1037, on the navmesh)
+# with the weather pinned to the sky beams; the beams are sent to the client within 40000 u. Walk east to enter. Only the player is ever ordered.
+scenario title=Venge%20sky%20beams%2C%20the%20approach setup=Midday%2C%20the%20weather%20pinned%20to%20the%20sky%20beams.%20The%20Wanderer%20stands%20alone%20on%20the%20high%20ground%20just%20west%20of%20Venge%2C%20outside%20the%20biome%20group%20by%20about%20400%20u%2C%20with%20the%20beams%20to%20the%20east.%20Walk%20east%20into%20Venge. look_for=Can%20you%20see%20the%20beams%20before%20you%20enter%20%28they%20are%20sent%20to%20the%20client%20up%20to%2040000%20u%20away%20and%203%20s%20before%20they%20strike%29%3F%20Do%20they%20stay%20on%20the%20ground%20inside%20Venge%20only%2C%20none%20outside%20it%3F%20Does%20the%20Wanderer%20start%20to%20burn%20only%20once%20a%20beam's%20zone%20reaches%20it%3F%20The%20slope%20down%20into%20Venge%20is%20steep%3A%20does%20the%20walk%20in%20work. bead=kenshi-h2v.14 metrics=player_downed_s
+source save=playtest game=1.0.68 radius=0 centre=24759.1,10185.5 leader=Wanderer
+clock day=1 hour=12 minute=0
+weather group=55678-rebirth.mod weather=57717-rebirth.mod
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=12300 y=1037.35 z=10185.5 yaw=1.5707963 leader=1 player=1 chase=1 ranged=1
+item char=1 sid=1168-gamedata.base section=body qty=1

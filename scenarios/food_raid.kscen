@@ -1,0 +1,18 @@
+# food_raid (kenshi-h2v.21.3; docs/reference/SCENARIO_IMPORT.md `town` / `container` / `raid`). The Old Village (a gateless 875 u town; Heft's gates make the raiders
+# assault them first, goal 270, and never loot) is the player's, with a wooden chest of 30 Bread; four Sand ninjas, a campaign force on the march against it (the
+# 'Sand ninja standard raid' record, as live run 1 of rwh.52), start 400 u out. Two player characters stand by the chest: the ninjas knock them out, then loot.
+KSCEN 2
+scenario title=The%20food%20raid setup=Old%20Village%20is%20now%20your%20town%3A%20the%20Wanderer%20and%20a%20defender%20stand%20by%20a%20wooden%20chest%20holding%2030%20Bread%2C%20and%20a%20Sand%20ninja%20raid%20force%20of%20four%2C%20already%20on%20the%20march%2C%20is%20400%20u%20away. look_for=Wait%20about%20a%20minute%20for%20the%20ninjas%20to%20arrive.%20Do%20they%20head%20for%20the%20chest%2C%20fill%20their%20packs%20with%20the%20bread%2C%20fight%20or%20avoid%20your%20two%20defenders%2C%20and%20leave%3F%20Do%20you%20get%20the%20bread%20back%20by%20killing%20them%3F bead=kenshi-h2v.21 metrics=fight_s,bodies_down,targeted_player
+source save=playtest game=1.0.68 radius=1200 centre=76098,-85826 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=76071 y=1001 z=-85797 yaw=0 leader=1 player=1 chase=1 ranged=1
+char id=2 squad=1 name=Defender template=1533662-rebirth.mod faction=204-gamedata.base x=76088 y=1001 z=-85789 yaw=0 player=1 chase=1 ranged=1
+squad id=3 name=Sand%20ninja%20raid faction=1085-gamedata.base template=1309-gamedata.base package= player=0 hostile=1
+char id=3 squad=3 name=Sand%20ninja%201 template=511-gamedata.base faction=1085-gamedata.base x=76356 y=1020 z=-85517 yaw=3.14159 leader=1 chase=1
+char id=4 squad=3 name=Sand%20ninja%202 template=511-gamedata.base faction=1085-gamedata.base x=76366 y=1020 z=-85509 yaw=3.14159 chase=1
+char id=5 squad=3 name=Sand%20ninja%203 template=511-gamedata.base faction=1085-gamedata.base x=76366 y=1020 z=-85525 yaw=3.14159 chase=1
+char id=6 squad=3 name=Sand%20ninja%204 template=511-gamedata.base faction=1085-gamedata.base x=76376 y=1020 z=-85517 yaw=3.14159 chase=1
+town name=Old%20Village owner=player
+container sid=879-gamedata.base x=76101 z=-85807 owner=player stock=1946-gamedata.base:30
+raid faction=1085-gamedata.base campaign=96688-Dialogue.mod town=Old%20Village squads=3 stay=30 retreat=5

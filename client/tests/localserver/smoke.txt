@@ -1,0 +1,14 @@
+# kenshi (full) smoke: title -> NEW GAME -> Wanderer -> BEGIN -> CONFIRM, a few seconds in the game, shots, quit
+300 mouse pos 433 202
+302 mouse down left
+304 mouse up left
+400 mouse pos 640 378
+402 mouse down left
+404 mouse up left
+650 screenshot OUTDIR/creator.png
+700 mouse pos 290 664
+702 mouse down left
+704 mouse up left
+900 screenshot OUTDIR/game1.png
+1300 screenshot OUTDIR/game2.png
+1400 quit

@@ -1,0 +1,32 @@
+.ds-key
+*.key
+/build/
+/reference/
+/cpp/build/
+/cpp/build-bu/
+/cpp/build-bw/
+__pycache__/
+/cpp/build-tsan/
+/cpp/build-prof/
+/cpp/build-bt/
+/client/sokol/
+/cpp/build-bwo/
+/cpp/build-by/
+/cpp/build-goap/
+/cpp/build-*/
+/STATUS.md
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*
+
+# Editor workspace (local) and the client's generated screenshots / HUD dumps (kenshi-k16.2.46)
+/kenshi.code-workspace
+/client/kclient-*.png
+/client/kclient-*.txt
+
+# recorded at test time by ksim_simlink_sample (build dir), never committed: game-data strings (kenshi-379.14.9)
+docs/formats/simlink_sample.bin

@@ -1,0 +1,537 @@
+# Accepted islands of the world island test (ksim_nav_islands, docs/formats/NAVMESH_CACHE.md "Island test").
+# record<TAB>floor_y<TAB>area<TAB>x<TAB>z<TAB>source<TAB>accepted|bug|pending<TAB>class: why.
+# A line is keyed by what the island is (kenshi-k16.7.66), not where its centroid falls: record = the owning building's id, or open world@ZX,ZZ
+# (the zone of the centroid); floor_y = the floor's height above the placement's y (the absolute height in the open world), matched within 8 u;
+# area in u2, matched within a factor of 1.3. x, z: where the island was when the line was written (for a human, never matched).
+# One line covers one island: a second island of the same key is NEW.
+# source: shipped (the original's own navtile), rebaked (a tile our loader replaced: a stale or unverifiable zone or
+# interior), mixed (the island spans both). accepted: the original has the same island (or it is not a place that should
+# be reached). bug: the original's own tile connects this floor to its main mesh, ours does not (kenshi-k16.7.53: listed for a bake
+# fix, not a failure). pending: its class needs the original's behaviour to decide (none left). Decided by `ksim_nav_islands --oracle`.
+open world@61,57	100	254803968	135936.0	115200.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@2,58	100	191102976	-135936.0	122112.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@55,5	100	148635648	108288.0	-122112.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@58,5	100	148635648	122112.0	-122112.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@61,5	100	148635648	135936.0	-122112.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@25,60	100	127401984	-29952.0	129024.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@4,60	100	127401984	-126720.0	129024.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@61,18	100	127401984	135936.0	-64512.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@2,21	100	127401984	-135936.0	-50688.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@53,15	100	127401984	99072.0	-78336.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@55,12	100	127401984	108288.0	-92160.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@56,15	100	127401984	112896.0	-78336.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@58,12	100	127401984	122112.0	-92160.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@59,15	100	127401984	126720.0	-78336.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@61,12	100	127401984	135936.0	-92160.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@4,18	100	127401984	-126720.0	-64512.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@23,3	100	127401984	-39168.0	-133632.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@22,60	100	127401984	-43776.0	129024.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@50,3	100	127401984	85248.0	-133632.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@58,18	100	127401984	122112.0	-64512.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@4,12	100	127401984	-126720.0	-92160.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@2,15	100	127401984	-135936.0	-78336.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@59,9	100	127401984	126720.0	-105984.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@53,9	100	127401984	99072.0	-105984.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@56,9	100	127401984	112896.0	-105984.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@59,21	100	127401984	126720.0	-50688.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@2,3	100	127401984	-135936.0	-133632.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@2,27	100	127401984	-135936.0	-23040.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@3,2	100	106168320	-131328.0	-135936.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@35,60	100	106168320	16128.0	131328.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@56,4	100	84934656	112896.0	-129024.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@47,4	100	84934656	71424.0	-129024.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@59,4	100	84934656	126720.0	-129024.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@53,4	100	63700992	99072.0	-126720.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@4,1	100	63700992	-126720.0	-140544.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@7,1	100	63700992	-112896.0	-140544.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@38,61	100	63700992	29952.0	135936.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@22,1	100	63700992	-43776.0	-140544.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@25,1	100	63700992	-29952.0	-140544.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@26,7	100	42467328	-25344.0	-115200.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@4,40	100	42467328	-126720.0	36864.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@10,1	100	42467328	-99072.0	-142848.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@44,4	100	42467328	57600.0	-129024.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@49,2	100	21233664	80640.0	-135936.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@10,63	100	21233664	-99072.0	145152.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@30,55	100	21233664	-6912.0	108288.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@53,2	100	21233664	99072.0	-135936.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@44,2	100	21233664	57600.0	-135936.0	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@53,59	4686	15838152	98133.9	124701.4	shipped	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@52,59	3662	11235910	95879.8	127073.0	shipped	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@55,59	3821	7348252	109504.2	124702.7	shipped	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@55,58	3509	5499064	106651.8	120969.1	shipped	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@60,44	1126	4959726	132405.6	58069.7	rebaked	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@50,57	1027	4849149	85664.4	116618.2	shipped	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@10,49	1628	4810911	-97885.7	82144.0	shipped	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@57,49	100	3890277	117611.4	80420.7	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@38,56	6101	3716870	29011.9	115193.3	mixed	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@62,41	100	3550280	140288.7	43775.8	shipped	accepted	world-edge sheet: the map edge's y=100 sheet: terrain, not a route
+open world@34,25	1109	3356984	10337.8	-29885.7	rebaked	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@53,60	2713	3331412	100012.2	129742.3	shipped	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@43,43	1693	3009924	51916.3	54275.8	rebaked	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@33,25	1129	2434261	7778.4	-32162.2	mixed	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@51,55	765	2311192	91663.0	110571.3	mixed	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@53,59	3185	2286203	99856.3	128641.2	shipped	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@38,40	1361	2211331	30560.6	38859.6	shipped	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@16,16	972	2116152	-73314.6	-72085.8	rebaked	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@37,51	3570	2107385	26675.5	91288.5	shipped	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@11,51	747	1982065	-96721.1	92080.5	mixed	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@23,21	4509	1807330	-38614.8	-46996.3	rebaked	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@54,46	1810	1681156	104790.1	65352.1	shipped	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@22,20	2738	1608032	-43205.9	-51971.4	mixed	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@55,37	1734	1553462	109605.3	26193.0	rebaked	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@34,8	1173	1491268	11119.1	-106334.8	shipped	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@36,0	1159	1371754	19784.6	-143667.8	rebaked	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@20,30	2444	1146670	-54856.6	-8187.5	mixed	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@12,24	1509	1140349	-91503.9	-33033.0	shipped	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@21,42	600	1052392	-49593.8	47851.4	rebaked	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+open world@44,44	2462	1020778	55852.5	58046.0	rebaked	accepted	open-world terrain: terrain behind its cliffs: not a walkable place the world should reach
+5316-TwoStorey.mod	-7	371200	9652.0	86440.2	rebaked	accepted	roof/top: the roof or top surface of 5316-TwoStorey.mod (nothing above it: no route by design)
+5312-TwoStorey.mod	-12	360454	12563.7	65740.3	rebaked	accepted	roof/top: the roof or top surface of 5312-TwoStorey.mod (nothing above it: no route by design)
+5316-TwoStorey.mod	169	350274	91253.9	53805.7	rebaked	accepted	roof/top: the roof or top surface of 5316-TwoStorey.mod (nothing above it: no route by design)
+5312-TwoStorey.mod	166	317054	-56868.2	57973.7	rebaked	accepted	ours-only floor: 5312-TwoStorey zone 19,44, 166 u above base, 317054 u2 at y 114 (117 samples: 22 main, 0 island at the floor's height; 52 on the shipped main at another height): ground under the lab (y 114, below the slab at 160); entered the gate with k16.7.59 (the canopy fix), not examined further
+54019-Newwworld.mod	240	191766	106344.4	103360.5	rebaked	accepted	roof/top: the roof or top surface of 54019-Newwworld.mod (nothing above it: no route by design)
+4030-TwoStorey.mod	-10	178932	73556.9	2724.8	mixed	accepted	shipped navtile: the original's own navtile (4030-TwoStorey.mod); the island also touches a tile we rebaked
+48727-rebirth.mod	148	144738	-53231.3	74108.6	rebaked	accepted	shipped island: 48727-rebirth zone 20,48, 148 u above base, 144718 u2 (184 samples: 37 main, 52 island at the floor's height): the original's tile has it as an island too (component 14842 u2)
+1111-gamedata.base	152	137822	85944.1	-46640.2	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+14535-Newwworld.mod	307	117268	11840.7	-13679.4	rebaked	accepted	roof/top: the roof or top surface of 14535-Newwworld.mod (nothing above it: no route by design)
+57740-Newwworld.mod	22	109560	33123.8	103693.0	rebaked	accepted	roof/top: the roof or top surface of 57740-Newwworld.mod (nothing above it: no route by design)
+14535-Newwworld.mod	286	97080	133268.1	-17060.3	shipped	accepted	shipped navtile: the original's own navtile (14535-Newwworld.mod)
+1111-gamedata.base	104	95206	-6831.1	81923.4	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+14535-Newwworld.mod	2	94502	11509.8	-13820.5	rebaked	accepted	ours-only floor: 14535-Newwworld zone 34,29, 2 u above base, 94502 u2 (10 interior samples, 4+ u inside the island: 2 main, 0 island at the floor's height, 8 with no shipped polygon): k16.7.57 oracle, was BUG from rim samples k16.7.55: cause found, not a lost link: the floor is the ground inside the 14535 compound wall (shape 9, an open walkable slab, rim at x 11293); our bake leaves a 2-4 u unwalkable slit at the rim between the terrain wall band and the plate's own band, and the shipped tile has no ground inside the wall at all (nothing at y 380-500 there). The oracle's 16 'main' samples are rim polygons within 1.5 u of the outside terrain, an edge artefact. Ledge filter off: unchanged.
+1111-gamedata.base	94	93842	47231.3	-85748.9	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+1111-gamedata.base	109	93442	-7657.5	81833.6	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+1111-gamedata.base	89	92126	61139.3	5509.3	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+1111-gamedata.base	113	92062	-102433.5	139311.8	rebaked	accepted	ours-only floor: 1111-gamedata zone 9,62, 113 u above base, 92062 u2 (171 samples: 35 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+1111-gamedata.base	91	91990	47284.3	-41642.0	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+1111-gamedata.base	100	91968	-61655.7	91588.5	rebaked	accepted	shipped island: 1111-gamedata zone 18,51, 100 u above base, 91968 u2 (161 samples: 16 main, 7 island at the floor's height): the original's tile has it as an island too (component 140305 u2)
+1111-gamedata.base	115	89074	13493.8	-21032.5	rebaked	accepted	ours-only floor: 1111-gamedata zone 34,27, 115 u above base, 89074 u2 (173 samples: 20 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+14535-Newwworld.mod	49	88540	12142.3	-13849.0	rebaked	accepted	ours-only floor: 14535-Newwworld zone 34,28, 49 u above base, 88540 u2 (58 samples: 14 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+5316-TwoStorey.mod	34	79830	9816.7	86519.1	rebaked	accepted	roof/top: the roof or top surface of 5316-TwoStorey.mod (nothing above it: no route by design)
+14535-Newwworld.mod	93	77016	12142.3	-13849.0	rebaked	accepted	ours-only floor: 14535-Newwworld zone 34,28, 49 u above base, 88540 u2 (58 samples: 14 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+14535-Newwworld.mod	93	76128	11509.8	-13820.5	rebaked	accepted	ours-only floor: 14535-Newwworld zone 34,29, 2 u above base, 94502 u2 (10 interior samples, 4+ u inside the island: 2 main, 0 island at the floor's height, 8 with no shipped polygon): k16.7.57 oracle, was BUG from rim samples k16.7.55: cause found, not a lost link: the floor is the ground inside the 14535 compound wall (shape 9, an open walkable slab, rim at x 11293); our bake leaves a 2-4 u unwalkable slit at the rim between the terrain wall band and the plate's own band, and the shipped tile has no ground inside the wall at all (nothing at y 380-500 there). The oracle's 16 'main' samples are rim polygons within 1.5 u of the outside terrain, an edge artefact. Ledge filter off: unchanged.
+1111-gamedata.base	112	74964	87628.0	-89659.4	rebaked	accepted	ours-only floor: 1111-gamedata zone 51,12, 112 u above base, 74964 u2 (124 samples: 29 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+1111-gamedata.base	113	73874	13669.3	65341.0	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+1111-gamedata.base	92	73536	1836.2	-34629.7	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+5224-TwoStorey.mod	99	72952	-25143.8	-103936.7	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+5224-TwoStorey.mod	99	72920	-44108.8	39777.8	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+5224-TwoStorey.mod	99	72910	-46805.2	47887.8	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+5224-TwoStorey.mod	99	72892	-42901.0	39972.0	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+5224-TwoStorey.mod	99	72864	-47943.4	49088.0	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+5224-TwoStorey.mod	100	72834	-40802.2	100339.1	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+5224-TwoStorey.mod	98	72788	-47613.0	49585.6	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+5224-TwoStorey.mod	99	72734	52831.9	62153.9	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+1111-gamedata.base	106	72712	54159.1	-94333.0	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+5224-TwoStorey.mod	99	72702	-38052.1	-84631.7	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+5224-TwoStorey.mod	98	72686	141439.8	54364.3	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+5224-TwoStorey.mod	99	72678	-41335.7	71481.8	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+5224-TwoStorey.mod	99	72610	141990.5	53698.7	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+5224-TwoStorey.mod	99	72272	25168.8	-128438.4	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+5224-TwoStorey.mod	98	72256	86237.9	34831.2	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+5224-TwoStorey.mod	99	72114	25200.7	-127791.3	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+1111-gamedata.base	98	71570	35571.1	-71928.7	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+1111-gamedata.base	110	71554	13765.9	65818.4	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+57740-Newwworld.mod	49	70084	33528.8	103049.2	rebaked	accepted	roof/top: the roof or top surface of 57740-Newwworld.mod (nothing above it: no route by design)
+1111-gamedata.base	87	70034	34298.0	-70955.7	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+5224-TwoStorey.mod	100	68386	-59412.0	63715.7	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+1111-gamedata.base	103	68312	85935.8	-46659.5	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+52180-Newwworld.mod	182	64882	-1464.5	-27201.2	rebaked	bug	BUG ours lost a link: 52180-Newwworld zone 31,26, 182 u above base, 64784 u2 (110 samples: 78 main, 0 island at the floor's height): the original's own tile joins this floor to its main mesh k16.7.55: cause not found, not examined beyond the oracle verdict (needs the same map-and-bake probe as 14535).
+4014-TwoStorey.mod	5	63864	24686.1	10573.4	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+1111-gamedata.base	102	63732	84269.9	-47512.8	rebaked	accepted	ours-only floor: 1111-gamedata zone 50,21, 102 u above base, 63732 u2 (134 samples: 21 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+4014-TwoStorey.mod	5	63306	-104035.1	110460.1	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	4	62958	17103.2	-95269.4	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	4	62942	-7742.5	121963.8	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+1111-gamedata.base	114	62358	627.9	14206.4	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+4078-D-TwoStorey.mod	94	60390	-86828.7	26537.8	rebaked	accepted	roof/top: the roof or top surface of 4078-D-TwoStorey.mod (nothing above it: no route by design)
+4078-D-TwoStorey.mod	94	60162	-50993.8	4027.1	rebaked	accepted	roof/top: the roof or top surface of 4078-D-TwoStorey.mod (nothing above it: no route by design)
+4078-D-TwoStorey.mod	96	60104	5339.5	-100285.1	rebaked	accepted	roof/top: the roof or top surface of 4078-D-TwoStorey.mod (nothing above it: no route by design)
+54019-Newwworld.mod	15	57662	107778.0	112793.2	rebaked	accepted	roof/top: the roof or top surface of 54019-Newwworld.mod (nothing above it: no route by design)
+4028-TwoStorey.mod	10	56456	-8095.4	121777.7	rebaked	accepted	roof/top: the roof or top surface of 4028-TwoStorey.mod (nothing above it: no route by design)
+4104-D-TwoStorey.mod	179	56026	75536.6	62608.0	rebaked	accepted	roof/top: the roof or top surface of 4104-D-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	5	55943	13334.6	64598.8	mixed	accepted	shipped navtile: the original's own navtile (4014-TwoStorey.mod); the island also touches a tile we rebaked
+1111-gamedata.base	104	55292	103065.6	56627.7	rebaked	accepted	ours-only floor: 1111-gamedata zone 54,44, 104 u above base, 55292 u2 (72 samples: 12 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+1111-gamedata.base	106	53264	85238.8	3542.4	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+48727-rebirth.mod	120	52700	-80359.1	-124099.3	rebaked	accepted	ours-only floor: 48727-rebirth zone 14,5, 120 u above base, 52700 u2 (39 samples: 1 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+52180-Newwworld.mod	192	50896	80859.3	82662.6	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+4104-D-TwoStorey.mod	189	49920	-4472.5	-79667.4	rebaked	accepted	roof/top: the roof or top surface of 4104-D-TwoStorey.mod (nothing above it: no route by design)
+57740-Newwworld.mod	30	49756	33387.1	103492.4	rebaked	accepted	roof/top: the roof or top surface of 57740-Newwworld.mod (nothing above it: no route by design)
+48727-rebirth.mod	115	49684	101565.7	63576.8	rebaked	accepted	roof/top: the roof or top surface of 48727-rebirth.mod (nothing above it: no route by design)
+54019-Newwworld.mod	215	49235	105784.4	124673.2	shipped	accepted	shipped navtile: the original's own navtile (54019-Newwworld.mod)
+48727-rebirth.mod	99	48526	52274.0	82231.2	rebaked	accepted	roof/top: the roof or top surface of 48727-rebirth.mod (nothing above it: no route by design)
+3795-TwoStorey.mod	4	47546	50113.0	-43337.0	rebaked	accepted	roof/top: the roof or top surface of 3795-TwoStorey.mod (nothing above it: no route by design)
+4104-D-TwoStorey.mod	192	46686	67340.4	-70698.2	rebaked	accepted	roof/top: the roof or top surface of 4104-D-TwoStorey.mod (nothing above it: no route by design)
+4104-D-TwoStorey.mod	193	45806	-63727.4	16619.0	rebaked	accepted	roof/top: the roof or top surface of 4104-D-TwoStorey.mod (nothing above it: no route by design)
+3795-TwoStorey.mod	59	45322	49982.5	-42322.8	rebaked	accepted	roof/top: the roof or top surface of 3795-TwoStorey.mod (nothing above it: no route by design)
+40599-Newwworld.mod	-14	44654	-104802.3	-27798.6	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+1111-gamedata.base	108	44188	53635.5	-95623.0	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+40599-Newwworld.mod	-13	43884	31724.3	-139628.8	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+40599-Newwworld.mod	-14	43784	31061.8	-139590.2	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+1111-gamedata.base	108	43670	57808.7	-118449.1	rebaked	accepted	ours-only floor: 1111-gamedata zone 44,6, 108 u above base, 43670 u2 (127 samples: 23 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+40599-Newwworld.mod	-14	43084	31919.4	-140142.9	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+40599-Newwworld.mod	-13	43054	-111872.1	-4804.9	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+40591-Newwworld.mod	90	42594	-2376.6	-27127.8	rebaked	accepted	ours-only floor: 40591-Newwworld zone 31,26, 90 u above base, 42594 u2 (81 samples: 18 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+40599-Newwworld.mod	-14	41818	-131931.9	-21780.2	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+40591-Newwworld.mod	89	41792	123600.6	68690.5	rebaked	accepted	roof/top: the roof or top surface of 40591-Newwworld.mod (nothing above it: no route by design)
+4104-D-TwoStorey.mod	210	40926	-96105.5	45844.7	rebaked	accepted	roof/top: the roof or top surface of 4104-D-TwoStorey.mod (nothing above it: no route by design)
+40599-Newwworld.mod	-11	40728	-111404.3	-5526.2	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+40599-Newwworld.mod	-13	38510	-105359.9	-28320.2	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+1111-gamedata.base	113	38300	9006.3	-24421.0	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+40599-Newwworld.mod	-13	38266	34453.5	-120142.9	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	5	38048	57996.9	-119057.7	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	4	38018	64726.2	-49101.6	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+56173-Newwworld.mod	5	37992	17765.8	48099.2	rebaked	accepted	roof/top: the roof or top surface of 56173-Newwworld.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	4	37976	86808.4	-89864.5	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4104-D-TwoStorey.mod	217	37664	-60625.1	92233.6	rebaked	accepted	roof/top: the roof or top surface of 4104-D-TwoStorey.mod (nothing above it: no route by design)
+1111-gamedata.base	112	37012	48857.3	-41555.8	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+40591-Newwworld.mod	93	35940	-75234.8	70697.3	rebaked	accepted	roof/top: the roof or top surface of 40591-Newwworld.mod (nothing above it: no route by design)
+1111-gamedata.base	113	35936	61840.1	6292.7	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+40599-Newwworld.mod	-11	35904	35148.8	-120249.5	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+1111-gamedata.base	104	35834	67738.4	-71570.9	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+57740-Newwworld.mod	52	35686	33224.6	103252.8	rebaked	accepted	roof/top: the roof or top surface of 57740-Newwworld.mod (nothing above it: no route by design)
+4030-TwoStorey.mod	6	35390	-79737.9	16944.6	shipped	accepted	shipped navtile: the original's own navtile (4030-TwoStorey.mod)
+40599-Newwworld.mod	-10	35388	25391.0	94805.6	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+40599-Newwworld.mod	-15	35162	43659.3	74637.9	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+14535-Newwworld.mod	218	35088	11836.7	-13872.9	rebaked	accepted	ours-only floor: 14535-Newwworld zone 34,28, 218 u above base, 35088 u2 (40 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+40599-Newwworld.mod	-9	35076	34169.4	-120642.4	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+40599-Newwworld.mod	-14	34520	-85905.3	5628.6	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+40599-Newwworld.mod	-11	34290	-79803.9	-5068.8	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+54019-Newwworld.mod	68	33248	107919.7	112716.6	rebaked	accepted	roof/top: the roof or top surface of 54019-Newwworld.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	5	33028	-40276.3	-12153.9	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+52180-Newwworld.mod	176	31723	79061.8	110445.8	mixed	accepted	shipped navtile: the original's own navtile (52180-Newwworld.mod); the island also touches a tile we rebaked
+4014-TwoStorey.mod	5	31500	-71591.0	25411.7	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	4	31478	-81890.6	-37734.9	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+40599-Newwworld.mod	9	31256	-96941.5	-53889.8	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+40599-Newwworld.mod	-10	31000	-109325.8	9684.1	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	1	30618	-24785.9	-87021.9	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	5	30578	51803.8	-10347.1	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	4	30556	29637.9	-10796.2	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	4	30436	-61856.1	15954.6	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	4	30262	-79784.6	115081.0	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	5	30164	87077.6	-109558.7	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	4	30158	49658.0	-42760.4	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	5	30150	-7359.0	81329.3	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	4	30054	-46033.3	-54644.0	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	5	29756	-55729.7	-13115.0	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4104-D-TwoStorey.mod	243	29700	-50489.9	-56130.9	rebaked	accepted	roof/top: the roof or top surface of 4104-D-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	5	29684	-36531.0	-43218.6	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+3795-TwoStorey.mod	8	29638	-101160.2	62288.6	rebaked	accepted	roof/top: the roof or top surface of 3795-TwoStorey.mod (nothing above it: no route by design)
+727-gamedata.base	277	29284	-52739.7	109204.2	rebaked	accepted	ours-only floor: 727-gamedata zone 20,55, 277 u above base, 29284 u2 (28 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+4014-TwoStorey.mod	5	29248	-6653.3	81460.0	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	5	29244	47749.9	-41910.0	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+48727-rebirth.mod	109	29232	97283.8	-24448.8	rebaked	accepted	shipped island: 48727-rebirth zone 53,26, 109 u above base, 29232 u2 (130 samples: 4 main, 0 island at the floor's height): the original's tile has it as an island too (component 0 u2)
+727-gamedata.base	278	29142	-79499.3	114875.3	rebaked	accepted	ours-only floor: 727-gamedata zone 14,56, 278 u above base, 29142 u2 (28 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	277	29124	-5473.3	81483.4	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	277	29120	57355.2	-119523.5	rebaked	accepted	ours-only floor: 727-gamedata zone 44,6, 277 u above base, 29120 u2 (29 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+48729-rebirth.mod	277	29116	-128364.8	99170.7	rebaked	accepted	ours-only floor: 48729-rebirth zone 4,53, 277 u above base, 29116 u2 (25 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+52180-Newwworld.mod	277	29110	7517.5	-14280.2	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+727-gamedata.base	277	29108	48128.8	-42332.4	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	277	29108	-60981.2	91379.0	rebaked	accepted	ours-only floor: 727-gamedata zone 18,51, 277 u above base, 29108 u2 (12 interior samples: 6 with only another height's polygon (4 on main, 2 island), 6 none): k16.7.57 oracle, was shipped island (was shipped island under the rim-sampled oracle; k16.7.57)
+48729-rebirth.mod	277	29106	-127883.8	99204.8	rebaked	accepted	ours-only floor: 48729-rebirth zone 4,53, 277 u above base, 29106 u2 (32 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	277	29100	88220.3	-88942.5	rebaked	accepted	ours-only floor: 727-gamedata zone 51,12, 277 u above base, 29100 u2 (23 samples: 0 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+727-gamedata.base	277	29094	-6094.8	82187.3	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	277	29090	-80387.5	115085.6	rebaked	accepted	ours-only floor: 727-gamedata zone 14,56, 277 u above base, 29090 u2 (28 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	277	29082	-53510.9	109574.3	rebaked	accepted	ours-only floor: 727-gamedata zone 20,55, 277 u above base, 29082 u2 (36 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+52180-Newwworld.mod	277	29080	7136.8	-13872.8	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+727-gamedata.base	277	29080	87790.5	-33933.0	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	277	29078	47698.9	-42555.5	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	277	29076	-128699.2	99168.8	rebaked	accepted	ours-only floor: 48729-rebirth zone 4,53, 277 u above base, 29076 u2 (27 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	277	29070	64131.3	-49606.0	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	277	29066	-108881.0	25223.2	rebaked	accepted	ours-only floor: 48729-rebirth zone 8,37, 277 u above base, 29066 u2 (30 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	277	29064	88969.6	-110807.7	rebaked	accepted	ours-only floor: 727-gamedata zone 51,7, 277 u above base, 29064 u2 (34 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	277	29050	85389.7	4373.0	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+52180-Newwworld.mod	277	29050	8001.0	-13055.4	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+48729-rebirth.mod	276	29046	-79966.0	-123321.9	rebaked	accepted	ours-only floor: 48729-rebirth zone 14,5, 276 u above base, 29046 u2 (34 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	277	29042	48665.5	-43272.8	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+52180-Newwworld.mod	278	29040	8839.0	-13633.6	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+48729-rebirth.mod	277	29038	-94024.1	122208.3	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+727-gamedata.base	277	29036	61152.3	-31688.7	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	277	29034	84658.7	4894.5	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	277	29032	-55794.7	44465.8	rebaked	accepted	ours-only floor: 48729-rebirth zone 19,41, 277 u above base, 29032 u2 (38 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor; entered the gate with k16.7.59 (the canopy fix)
+48729-rebirth.mod	277	29024	-109493.4	77544.6	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+48729-rebirth.mod	277	29024	-109033.5	25888.2	rebaked	accepted	ours-only floor: 48729-rebirth zone 8,37, 277 u above base, 29024 u2 (26 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+48729-rebirth.mod	277	29014	-109677.7	25776.2	rebaked	accepted	ours-only floor: 48729-rebirth zone 8,37, 277 u above base, 29014 u2 (31 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	277	29014	-5918.0	81781.0	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	277	29006	-116288.8	95469.3	rebaked	accepted	ours-only floor: 727-gamedata zone 6,52, 277 u above base, 29006 u2 (34 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	277	29004	-6364.2	81328.9	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	277	29002	61703.1	5158.1	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	277	28990	34548.3	-70674.7	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	277	28988	-110320.0	77546.4	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+48729-rebirth.mod	277	28982	-128324.1	99550.7	rebaked	accepted	ours-only floor: 48729-rebirth zone 4,53, 277 u above base, 28982 u2 (34 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	277	28980	70190.3	-70665.1	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	278	28970	34475.7	-72232.9	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	277	28962	-103833.0	139675.8	rebaked	accepted	ours-only floor: 727-gamedata zone 9,62, 277 u above base, 28962 u2 (32 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	277	28960	53070.9	-93425.4	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	277	28956	67869.7	-70936.7	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	277	28952	52778.5	-94610.2	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	277	28952	-109427.1	77912.2	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+52180-Newwworld.mod	276	28952	80323.4	83553.4	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+727-gamedata.base	277	28950	47530.1	-85383.7	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	275	28948	-94337.1	122478.3	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+727-gamedata.base	277	28938	52041.9	-10708.6	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	276	28934	-95861.2	103593.1	rebaked	accepted	ours-only floor: 727-gamedata zone 11,54, 276 u above base, 28934 u2 (43 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	276	28930	68841.9	-70349.6	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	278	28922	77492.0	-6741.3	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+4014-TwoStorey.mod	4	28922	35005.4	-71278.1	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	4	28899	-82941.5	-37011.8	mixed	accepted	shipped navtile: the original's own navtile (4014-TwoStorey.mod); the island also touches a tile we rebaked
+727-gamedata.base	277	28892	-63986.3	-126303.3	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	275	28890	-125127.0	83640.3	rebaked	accepted	ours-only floor: 48729-rebirth zone 4,50, 275 u above base, 28890 u2 (31 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+48729-rebirth.mod	276	28866	-94673.5	122240.0	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+52180-Newwworld.mod	275	28840	79957.6	83393.7	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+727-gamedata.base	277	28838	88011.6	-90162.2	rebaked	accepted	ours-only floor: 727-gamedata zone 51,12, 277 u above base, 28838 u2 (39 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	274	28828	69240.0	57828.5	rebaked	accepted	ours-only floor: 727-gamedata zone 47,44, 274 u above base, 28828 u2 (33 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+52180-Newwworld.mod	275	28826	80639.9	83436.8	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+727-gamedata.base	276	28814	-37406.6	-59756.3	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+52180-Newwworld.mod	276	28800	80859.0	82661.2	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	5	28794	33640.2	-71781.9	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+727-gamedata.base	275	28784	-30007.1	83390.0	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	277	28752	88828.1	63079.3	rebaked	accepted	ours-only floor: 48729-rebirth zone 51,45, 277 u above base, 28752 u2 (65 samples: 0 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+727-gamedata.base	277	28724	62359.2	6305.2	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	272	28696	-79732.2	-137397.5	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+52180-Newwworld.mod	273	28680	72673.4	94295.7	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+727-gamedata.base	276	28678	56714.0	35114.4	rebaked	accepted	ours-only floor: 727-gamedata zone 44,39, 276 u above base, 28678 u2 (48 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+48729-rebirth.mod	273	28620	125337.3	54914.9	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	4	28602	-36067.6	-44239.3	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+48729-rebirth.mod	273	28600	-5616.9	-132709.1	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+727-gamedata.base	277	28594	85822.3	5098.6	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	272	28548	72633.5	35986.5	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+48729-rebirth.mod	273	28534	72366.1	81733.0	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+48729-rebirth.mod	276	28524	-5162.2	-132691.3	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+48729-rebirth.mod	277	28506	-109393.7	26143.6	rebaked	accepted	ours-only floor: 48729-rebirth zone 8,37, 277 u above base, 28506 u2 (32 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+52180-Newwworld.mod	272	28458	79068.9	110436.2	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+52180-Newwworld.mod	275	28422	72265.5	95317.3	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+52180-Newwworld.mod	275	28418	73322.5	95148.4	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+48729-rebirth.mod	274	28398	35265.5	135797.8	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+48729-rebirth.mod	277	28380	-127837.2	98844.4	rebaked	accepted	ours-only floor: 48729-rebirth zone 4,53, 277 u above base, 28380 u2 (47 samples: 0 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+48729-rebirth.mod	276	28348	96854.5	-26480.0	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+40599-Newwworld.mod	-8	28316	49801.8	108135.2	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	5	28196	68699.3	-71827.6	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	4	28106	-38723.1	-84483.3	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+48729-rebirth.mod	276	28028	97521.2	-26712.3	rebaked	accepted	ours-only floor: 48729-rebirth zone 53,26, 276 u above base, 28028 u2 (25 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+4014-TwoStorey.mod	5	27792	-89543.5	15419.4	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+48729-rebirth.mod	265	27586	-104500.7	92121.9	rebaked	accepted	ours-only floor: 48729-rebirth zone 9,51, 265 u above base, 27586 u2 (31 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+56173-Newwworld.mod	5	27526	18514.0	48566.2	rebaked	accepted	roof/top: the roof or top surface of 56173-Newwworld.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	5	27014	-21238.8	-43573.9	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+727-gamedata.base	271	26944	85181.1	-48045.6	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+40599-Newwworld.mod	4	26690	34088.5	103622.3	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+40591-Newwworld.mod	24	26462	-2216.4	-27362.3	rebaked	bug	BUG ours lost a link: 40591-Newwworld zone 31,26, 24 u above base, 26462 u2 (25 samples: 19 main, 0 island at the floor's height): the original's own tile joins this floor to its main mesh k16.7.55: cause not found, not examined beyond the oracle verdict (needs the same map-and-bake probe as 14535).
+52180-Newwworld.mod	273	26274	78670.6	110158.4	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+3793-TwoStorey.mod	36	26240	-71422.3	25533.9	rebaked	bug	BUG ours lost a link: 3793-TwoStorey zone 16,37, 36 u above base, 26240 u2 (51 samples: 49 main, 0 island at the floor's height): the original's own tile joins this floor to its main mesh k16.7.55: cause not found, not examined beyond the oracle verdict (needs the same map-and-bake probe as 14535).
+40591-Newwworld.mod	28	26138	123883.6	68662.0	rebaked	accepted	roof/top: the roof or top surface of 40591-Newwworld.mod (nothing above it: no route by design)
+40591-Newwworld.mod	14	26134	-77691.9	70944.3	rebaked	accepted	roof/top: the roof or top surface of 40591-Newwworld.mod (nothing above it: no route by design)
+3793-TwoStorey.mod	36	25982	-61175.2	-103808.5	rebaked	accepted	roof/top: the roof or top surface of 3793-TwoStorey.mod (nothing above it: no route by design)
+48729-rebirth.mod	277	25818	-128287.8	98884.2	rebaked	accepted	ours-only floor: 48729-rebirth zone 4,53, 277 u above base, 25818 u2 (29 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+1111-gamedata.base	106	25792	70188.9	-71188.6	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+3793-TwoStorey.mod	36	25740	-61761.6	-103495.2	rebaked	accepted	ours-only floor: 3793-TwoStorey zone 18,9, 36 u above base, 25740 u2 (49 samples: 0 main, 7 island at the floor's height): the original has no polygon under this floor
+1111-gamedata.base	99	24894	85266.4	3489.0	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+57740-Newwworld.mod	24	24646	32937.3	103121.4	rebaked	accepted	roof/top: the roof or top surface of 57740-Newwworld.mod (nothing above it: no route by design)
+54019-Newwworld.mod	60	24554	107719.8	113019.9	rebaked	accepted	roof/top: the roof or top surface of 54019-Newwworld.mod (nothing above it: no route by design)
+52180-Newwworld.mod	277	24466	78645.2	110666.6	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+14535-Newwworld.mod	218	24434	11817.8	-14363.6	rebaked	accepted	ours-only floor: 14535-Newwworld zone 34,28, 218 u above base, 24434 u2 (18 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+48727-rebirth.mod	108	24294	35665.6	65848.2	rebaked	accepted	roof/top: the roof or top surface of 48727-rebirth.mod (nothing above it: no route by design)
+4014-TwoStorey.mod	3	24132	87919.8	-34308.8	rebaked	accepted	roof/top: the roof or top surface of 4014-TwoStorey.mod (nothing above it: no route by design)
+3793-TwoStorey.mod	35	24102	-61085.8	-103547.6	rebaked	accepted	ours-only floor: 3793-TwoStorey zone 18,9, 35 u above base, 24102 u2 (39 samples: 4 main, 5 island at the floor's height): the original has no polygon under this floor
+54019-Newwworld.mod	94	24014	106439.6	103134.5	rebaked	accepted	roof/top: the roof or top surface of 54019-Newwworld.mod (nothing above it: no route by design)
+40599-Newwworld.mod	-14	23346	-112003.1	-5792.0	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+1111-gamedata.base	106	23050	565.2	14137.5	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+40599-Newwworld.mod	-7	23042	50133.6	108698.2	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+40599-Newwworld.mod	-12	22710	43664.6	74257.7	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+4030-TwoStorey.mod	-10	22680	73672.0	2867.7	rebaked	accepted	roof/top: the roof or top surface of 4030-TwoStorey.mod (nothing above it: no route by design)
+54019-Newwworld.mod	140	22609	105482.9	124630.0	shipped	accepted	shipped navtile: the original's own navtile (54019-Newwworld.mod)
+48727-rebirth.mod	120	21870	-80396.6	-124134.8	rebaked	accepted	ours-only floor: 48727-rebirth zone 14,5, 120 u above base, 21870 u2 (60 samples: 13 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+40591-Newwworld.mod	16	21858	-75509.4	70726.0	rebaked	accepted	roof/top: the roof or top surface of 40591-Newwworld.mod (nothing above it: no route by design)
+48727-rebirth.mod	91	21452	-57217.1	-136621.5	rebaked	accepted	ours-only floor: 48727-rebirth zone 19,2, 91 u above base, 21452 u2 (66 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+48729-rebirth.mod	226	21048	-115225.8	111000.9	mixed	accepted	shipped navtile: the original's own navtile (48729-rebirth.mod); the island also touches a tile we rebaked
+1111-gamedata.base	121	20886	64902.7	-49601.1	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+54019-Newwworld.mod	332	20594	105635.0	124533.4	shipped	accepted	shipped navtile: the original's own navtile (54019-Newwworld.mod)
+57740-Newwworld.mod	94	20522	33644.8	102870.7	rebaked	accepted	roof/top: the roof or top surface of 57740-Newwworld.mod (nothing above it: no route by design)
+57740-Newwworld.mod	49	20308	33902.5	103589.9	rebaked	accepted	roof/top: the roof or top surface of 57740-Newwworld.mod (nothing above it: no route by design)
+3809-TwoStorey.mod	4	20044	-98362.5	43537.5	shipped	accepted	shipped navtile: the original's own navtile (3809-TwoStorey.mod)
+3809-TwoStorey.mod	5	19987	-39430.4	7772.6	shipped	accepted	shipped navtile: the original's own navtile (3809-TwoStorey.mod)
+727-gamedata.base	323	19958	47693.2	-42553.4	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	323	19948	88220.7	-88943.0	rebaked	accepted	ours-only floor: 727-gamedata zone 51,12, 323 u above base, 19948 u2 (23 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	323	19948	64133.1	-49607.1	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	324	19948	88970.8	-110810.1	rebaked	accepted	ours-only floor: 727-gamedata zone 51,7, 324 u above base, 19948 u2 (31 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	326	19934	57353.9	-119520.6	rebaked	accepted	ours-only floor: 727-gamedata zone 44,6, 326 u above base, 19934 u2 (26 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+48729-rebirth.mod	323	19918	-128361.9	99164.8	rebaked	accepted	ours-only floor: 48729-rebirth zone 4,53, 323 u above base, 19918 u2 (23 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	323	19910	48124.9	-42339.6	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	323	19910	-127880.5	99204.4	rebaked	accepted	ours-only floor: 48729-rebirth zone 4,53, 323 u above base, 19910 u2 (23 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	323	19886	47529.1	-85379.7	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	324	19878	-94016.0	122211.6	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+727-gamedata.base	323	19876	85390.8	4371.7	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	326	19876	-110318.0	77545.7	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+727-gamedata.base	326	19876	70188.2	-70667.2	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	323	19874	-63984.2	-126302.4	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	323	19870	77501.6	-6744.6	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	323	19862	-52739.4	109205.6	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	323	19860	-109400.1	26142.3	rebaked	accepted	ours-only floor: 48729-rebirth zone 8,37, 323 u above base, 19860 u2 (28 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	323	19858	52782.7	-94614.5	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+52180-Newwworld.mod	325	19856	7137.2	-13873.7	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+52180-Newwworld.mod	323	19854	7522.7	-14281.6	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+48729-rebirth.mod	324	19850	-128701.7	99169.8	rebaked	accepted	ours-only floor: 48729-rebirth zone 4,53, 324 u above base, 19850 u2 (27 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+48729-rebirth.mod	324	19842	-94672.0	122238.5	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+48729-rebirth.mod	321	19842	96855.5	-26474.1	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+48729-rebirth.mod	321	19842	97519.1	-26708.1	rebaked	accepted	ours-only floor: 48729-rebirth zone 53,26, 324 u above base, 19708 u2 (38 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+52180-Newwworld.mod	324	19840	7996.3	-13056.7	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+727-gamedata.base	323	19840	-103832.9	139684.5	rebaked	accepted	ours-only floor: 727-gamedata zone 9,62, 323 u above base, 19840 u2 (23 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	323	19840	-5918.7	81779.7	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	323	19836	84658.2	4893.0	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	324	19834	-128320.5	99551.9	rebaked	accepted	ours-only floor: 48729-rebirth zone 4,53, 324 u above base, 19834 u2 (32 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	326	19830	-60979.2	91376.1	rebaked	accepted	ours-only floor: 727-gamedata zone 18,51, 326 u above base, 19830 u2 (32 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	325	19828	-116280.9	95465.5	rebaked	accepted	ours-only floor: 727-gamedata zone 6,52, 325 u above base, 19828 u2 (31 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	324	19820	88014.0	-90164.3	rebaked	accepted	ours-only floor: 727-gamedata zone 51,12, 324 u above base, 19820 u2 (28 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	327	19818	-53511.0	109572.0	rebaked	accepted	ours-only floor: 727-gamedata zone 20,55, 327 u above base, 19818 u2 (26 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+52180-Newwworld.mod	324	19818	8845.0	-13633.1	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+727-gamedata.base	322	19816	69244.1	57828.0	rebaked	accepted	ours-only floor: 727-gamedata zone 47,44, 324 u above base, 19728 u2 (41 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+48729-rebirth.mod	322	19816	-79976.3	-123327.0	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+727-gamedata.base	323	19814	-5475.0	81489.7	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	323	19810	53076.7	-93423.3	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+52180-Newwworld.mod	321	19808	80329.2	83545.0	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+52180-Newwworld.mod	319	19806	72662.1	94305.3	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+52180-Newwworld.mod	325	19806	80857.0	82665.0	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+48729-rebirth.mod	327	19802	-109031.5	25886.8	rebaked	accepted	ours-only floor: 48729-rebirth zone 8,37, 327 u above base, 19802 u2 (29 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+727-gamedata.base	323	19802	87788.1	-33933.1	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	326	19796	61703.8	5155.7	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	331	19796	-95859.5	103593.6	rebaked	accepted	ours-only floor: 727-gamedata zone 11,54, 331 u above base, 19796 u2 (35 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+48729-rebirth.mod	323	19792	-108887.5	25216.0	rebaked	accepted	ours-only floor: 48729-rebirth zone 8,37, 323 u above base, 19792 u2 (25 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+48729-rebirth.mod	323	19790	-55794.3	44468.0	rebaked	accepted	ours-only floor: 48729-rebirth zone 19,41, 323 u above base, 19790 u2 (25 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor; entered the gate with k16.7.59 (the canopy fix)
+52180-Newwworld.mod	322	19790	79950.0	83390.7	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+727-gamedata.base	323	19790	-80389.7	115089.5	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	325	19788	-6092.1	82191.2	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	321	19780	-125129.3	83644.4	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+48729-rebirth.mod	323	19778	-109680.6	25775.6	rebaked	accepted	ours-only floor: 48729-rebirth zone 8,37, 323 u above base, 19778 u2 (23 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+52180-Newwworld.mod	325	19776	80638.9	83434.3	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+727-gamedata.base	326	19776	48664.9	-43273.7	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	325	19774	61151.3	-31688.1	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	321	19768	-30004.2	83400.0	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	324	19754	-37405.6	-59760.5	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	323	19750	-79497.0	114886.2	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	327	19748	34548.7	-70674.0	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	320	19742	-94334.7	122477.3	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+727-gamedata.base	326	19740	67869.9	-70935.6	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	330	19738	-109425.9	77914.2	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+52180-Newwworld.mod	320	19736	73320.8	95147.4	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+48729-rebirth.mod	323	19728	-109491.4	77544.8	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+727-gamedata.base	324	19728	52042.5	-10708.8	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	321	19708	72632.2	35991.1	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+52180-Newwworld.mod	321	19702	72262.9	95319.0	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+48729-rebirth.mod	319	19696	-79727.8	-137395.9	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+727-gamedata.base	324	19690	34471.9	-72234.4	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	321	19688	125335.0	54915.6	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+727-gamedata.base	330	19678	85820.4	5095.4	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	328	19678	88831.3	63074.5	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+48729-rebirth.mod	322	19670	72362.2	81727.3	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+48729-rebirth.mod	320	19646	-5617.7	-132716.2	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+727-gamedata.base	325	19642	62359.9	6303.3	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	323	19614	-6360.5	81332.6	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+54019-Newwworld.mod	364	19605	105810.3	124718.1	shipped	accepted	shipped navtile: the original's own navtile (54019-Newwworld.mod)
+727-gamedata.base	320	19590	85722.0	-47721.8	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+727-gamedata.base	325	19572	68844.3	-70354.8	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	327	19568	-127834.2	98850.2	rebaked	accepted	ours-only floor: 48729-rebirth zone 4,53, 327 u above base, 19568 u2 (44 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+63885-Newwworld.mod	100	19550	92865.7	-3941.6	rebaked	accepted	roof/top: the roof or top surface of 63885-Newwworld.mod (nothing above it: no route by design)
+52180-Newwworld.mod	166	11481	78638.4	110114.7	shipped	accepted	shipped navtile: the original's own navtile (52180-Newwworld.mod); the island also touches a tile we rebaked [re-keyed k16.7.66 rework: after recipe 9 (k16.6.270 prune) the island is 11,481 u2 at floor 166 (was 19,455 at 174); same place, shipped now]
+52180-Newwworld.mod	176	19450	72670.5	94291.9	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+52180-Newwworld.mod	320	19442	79071.4	110434.4	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+727-gamedata.base	320	19382	85184.1	-48049.5	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	328	19376	-5164.0	-132686.4	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+727-gamedata.base	330	19370	56712.7	35115.7	rebaked	accepted	ours-only floor: 727-gamedata zone 44,39, 331 u above base, 19370 u2 (39 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+52180-Newwworld.mod	322	19346	78677.3	110158.0	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+48729-rebirth.mod	324	19338	35269.2	135798.1	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+57740-Newwworld.mod	18	19270	33601.9	103870.2	rebaked	accepted	roof/top: the roof or top surface of 57740-Newwworld.mod (nothing above it: no route by design)
+48729-rebirth.mod	316	19172	-104493.5	92124.5	rebaked	accepted	ours-only floor: 48729-rebirth zone 9,51, 320 u above base, 16134 u2 (52 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+63885-Newwworld.mod	106	18876	13640.9	-112483.5	rebaked	accepted	roof/top: the roof or top surface of 63885-Newwworld.mod (nothing above it: no route by design)
+48729-rebirth.mod	280	18598	-115259.1	110997.3	rebaked	accepted	shipped island: 48729-rebirth zone 6,56, 280 u above base, 18598 u2 (18 samples: 0 main, 0 island at the floor's height): the original's tile has it as an island too (component 0 u2)
+1111-gamedata.base	113	18392	62088.1	-31714.6	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+40599-Newwworld.mod	-4	18326	49510.0	108355.9	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+48729-rebirth.mod	324	18294	-128290.2	98879.5	rebaked	accepted	ours-only floor: 48729-rebirth zone 4,53, 324 u above base, 18294 u2 (29 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+40599-Newwworld.mod	-5	18106	-132339.4	-21590.3	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+48729-rebirth.mod	173	18000	125329.7	54937.5	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+48727-rebirth.mod	122	17958	56339.0	95245.8	rebaked	accepted	roof/top: the roof or top surface of 48727-rebirth.mod (nothing above it: no route by design)
+40599-Newwworld.mod	-13	17824	56686.0	95121.2	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+56171-Newwworld.mod	54	17792	76079.2	62788.4	rebaked	accepted	roof/top: the roof or top surface of 56171-Newwworld.mod (nothing above it: no route by design)
+52180-Newwworld.mod	323	17566	78650.1	110650.9	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+1111-gamedata.base	116	17550	9035.6	-24475.6	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+48727-rebirth.mod	104	17086	97241.8	-24588.2	rebaked	accepted	ours-only floor: 48727-rebirth zone 53,26, 104 u above base, 17086 u2 (114 samples: 12 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+3384-TwoStorey.mod	3	16770	-8325.2	121991.5	rebaked	accepted	roof/top: the roof or top surface of 3384-TwoStorey.mod (nothing above it: no route by design)
+57740-Newwworld.mod	80	15892	33212.4	102844.8	rebaked	accepted	roof/top: the roof or top surface of 57740-Newwworld.mod (nothing above it: no route by design)
+48729-rebirth.mod	165	15784	-104499.8	92055.8	rebaked	bug	BUG ours lost a link: 48729-rebirth zone 9,51, 165 u above base, 15784 u2 (77 samples: 77 main, 0 island at the floor's height): the original's own tile joins this floor to its main mesh k16.7.55: cause not found, not examined beyond the oracle verdict (needs the same map-and-bake probe as 14535).
+40599-Newwworld.mod	-4	15608	-86031.8	5027.1	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+40591-Newwworld.mod	25	15434	-2025.7	-27225.7	rebaked	bug	BUG ours lost a link: 40591-Newwworld zone 31,26, 25 u above base, 15434 u2 (16 samples: 11 main, 0 island at the floor's height): the original's own tile joins this floor to its main mesh k16.7.55: cause not found, not examined beyond the oracle verdict (needs the same map-and-bake probe as 14535).
+40599-Newwworld.mod	-8	15200	55905.4	95354.9	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+48727-rebirth.mod	123	15174	50283.1	108222.5	rebaked	accepted	roof/top: the roof or top surface of 48727-rebirth.mod (nothing above it: no route by design)
+40599-Newwworld.mod	-8	15152	-80541.6	-4838.4	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+40591-Newwworld.mod	-6	15028	123910.5	68867.5	rebaked	accepted	roof/top: the roof or top surface of 40591-Newwworld.mod (nothing above it: no route by design)
+57740-Newwworld.mod	96	14822	33917.0	103166.3	rebaked	accepted	roof/top: the roof or top surface of 57740-Newwworld.mod (nothing above it: no route by design)
+48727-rebirth.mod	128	14706	35239.5	136434.1	rebaked	accepted	ours-only floor: 48727-rebirth zone 39,61, 128 u above base, 14706 u2 (101 samples: 3 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+40591-Newwworld.mod	0	14528	-75537.8	70515.2	rebaked	accepted	roof/top: the roof or top surface of 40591-Newwworld.mod (nothing above it: no route by design)
+52180-Newwworld.mod	230	14524	72269.4	95347.9	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+14535-Newwworld.mod	95	14504	11969.2	-14394.9	rebaked	accepted	ours-only floor: 14535-Newwworld zone 34,28, 95 u above base, 14504 u2 (6 interior samples: 1 main at the floor's height, 5 main at another height): k16.7.57 oracle, was BUG k16.7.55: cause not found. The shipped mesh joins this wall-walk (y 541) to the ground by a ramp near 12309,506,-13722; ours keeps the ramp slab (shape 5, a 45 degree solid) as an island of its own. Ruled out: ledge filter (off: island unchanged), door mat (14535 has no doors), T-junction cracks (none in the window), unlinked tile portals. k16.7.58: the 541 wall-walk floors of this zone (11533 -13829, 12130 -13843) joined once the ramp walked; this one (floor 540-546) stays: a different cause, not found.
+727-gamedata.base	168	14445	85184.1	-48049.5	rebaked	accepted	roof/top: the roof or top surface of 727-gamedata.base (nothing above it: no route by design)
+48729-rebirth.mod	216	14432	96827.8	-26503.5	mixed	accepted	shipped navtile: the original's own navtile (48729-rebirth.mod); the island also touches a tile we rebaked
+40599-Newwworld.mod	-4	14226	56460.2	95607.2	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+52180-Newwworld.mod	229	14180	73347.5	95131.3	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+52180-Newwworld.mod	184	14164	78639.2	110693.0	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+727-gamedata.base	229	14156	69269.8	57830.2	rebaked	bug	BUG ours lost a link: 727-gamedata zone 47,44, 229 u above base, 14156 u2 (40 samples: 22 main, 0 island at the floor's height): the original's own tile joins this floor to its main mesh k16.7.55: cause not found, not examined beyond the oracle verdict (needs the same map-and-bake probe as 14535).
+4030-TwoStorey.mod	-2	13966	-9120.0	121066.4	rebaked	accepted	roof/top: the roof or top surface of 4030-TwoStorey.mod (nothing above it: no route by design)
+5312-TwoStorey.mod	259	13689	-59866.1	-75539.8	shipped	accepted	shipped navtile: the original's own navtile (5312-TwoStorey.mod)
+3793-TwoStorey.mod	4	13514	-12769.9	-90141.8	rebaked	accepted	roof/top: the roof or top surface of 3793-TwoStorey.mod (nothing above it: no route by design)
+5316-TwoStorey.mod	320	13500	-82577.3	77095.8	rebaked	accepted	roof/top: the roof or top surface of 5316-TwoStorey.mod (nothing above it: no route by design)
+54019-Newwworld.mod	110	13470	94603.4	94164.3	rebaked	accepted	roof/top: the roof or top surface of 54019-Newwworld.mod (nothing above it: no route by design)
+1111-gamedata.base	105	13458	48923.8	-41640.6	rebaked	accepted	roof/top: the roof or top surface of 1111-gamedata.base (nothing above it: no route by design)
+5212-TwoStorey.mod	33	13438	128061.4	19460.6	rebaked	accepted	roof/top: the roof or top surface of 5212-TwoStorey.mod (nothing above it: no route by design)
+54019-Newwworld.mod	267	13421	105434.3	124695.4	shipped	accepted	shipped navtile: the original's own navtile (54019-Newwworld.mod)
+5312-TwoStorey.mod	297	13278	69123.2	-71859.3	rebaked	accepted	roof/top: the roof or top surface of 5312-TwoStorey.mod (nothing above it: no route by design)
+5316-TwoStorey.mod	298	13254	91405.8	53829.4	rebaked	accepted	roof/top: the roof or top surface of 5316-TwoStorey.mod (nothing above it: no route by design)
+54019-Newwworld.mod	52	13202	106367.7	103236.6	rebaked	accepted	roof/top: the roof or top surface of 54019-Newwworld.mod (nothing above it: no route by design)
+5312-TwoStorey.mod	297	13200	12671.8	65642.5	rebaked	accepted	roof/top: the roof or top surface of 5312-TwoStorey.mod (nothing above it: no route by design)
+5312-TwoStorey.mod	298	13180	49294.1	-43553.4	rebaked	accepted	roof/top: the roof or top surface of 5312-TwoStorey.mod (nothing above it: no route by design)
+5224-TwoStorey.mod	30	13170	142019.3	53654.7	rebaked	accepted	roof/top: the roof or top surface of 5224-TwoStorey.mod (nothing above it: no route by design)
+14535-Newwworld.mod	339	13168	11816.8	-14566.0	rebaked	accepted	roof/top: the roof or top surface of 14535-Newwworld.mod (nothing above it: no route by design)
+5316-TwoStorey.mod	300	13138	9561.1	86328.7	rebaked	accepted	roof/top: the roof or top surface of 5316-TwoStorey.mod (nothing above it: no route by design)
+3793-TwoStorey.mod	67	13074	61527.3	4836.7	rebaked	accepted	roof/top: the roof or top surface of 3793-TwoStorey.mod (nothing above it: no route by design)
+5316-TwoStorey.mod	299	13070	27541.3	-42197.3	rebaked	accepted	roof/top: the roof or top surface of 5316-TwoStorey.mod (nothing above it: no route by design)
+5316-TwoStorey.mod	294	13038	-23616.8	-87391.6	rebaked	accepted	roof/top: the roof or top surface of 5316-TwoStorey.mod (nothing above it: no route by design)
+48727-rebirth.mod	82	13028	-57148.3	-136650.4	rebaked	bug	BUG ours lost a link: 48727-rebirth zone 19,2, 82 u above base, 13028 u2 (68 samples: 15 main, 0 island at the floor's height): the original's own tile joins this floor to its main mesh k16.7.55: cause not found, not examined beyond the oracle verdict (needs the same map-and-bake probe as 14535).
+5312-TwoStorey.mod	296	13010	-137665.9	68525.4	rebaked	accepted	roof/top: the roof or top surface of 5312-TwoStorey.mod (nothing above it: no route by design)
+5312-TwoStorey.mod	297	12980	-77517.4	-57330.1	rebaked	accepted	roof/top: the roof or top surface of 5312-TwoStorey.mod (nothing above it: no route by design)
+5312-TwoStorey.mod	302	12954	-16653.9	131242.7	rebaked	accepted	roof/top: the roof or top surface of 5312-TwoStorey.mod (nothing above it: no route by design)
+5312-TwoStorey.mod	297	12940	140235.2	-31759.4	rebaked	accepted	roof/top: the roof or top surface of 5312-TwoStorey.mod (nothing above it: no route by design)
+5312-TwoStorey.mod	294	12902	-116869.0	-119075.3	rebaked	accepted	roof/top: the roof or top surface of 5312-TwoStorey.mod (nothing above it: no route by design)
+48729-rebirth.mod	325	12884	-115247.5	111001.0	rebaked	accepted	ours-only floor: 48729-rebirth zone 6,56, 326 u above base, 12876 u2 (20 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+5312-TwoStorey.mod	294	12880	-56754.1	57859.6	rebaked	accepted	ours-only floor: 5312-TwoStorey zone 19,44, 294 u above base, 11562 u2 (36 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+40591-Newwworld.mod	-2	12874	-77712.9	70750.9	rebaked	accepted	roof/top: the roof or top surface of 40591-Newwworld.mod (nothing above it: no route by design)
+5316-TwoStorey.mod	306	12756	-117107.3	61869.6	rebaked	accepted	roof/top: the roof or top surface of 5316-TwoStorey.mod (nothing above it: no route by design)
+4078-D-TwoStorey.mod	-4	12654	5373.2	-100325.5	rebaked	accepted	roof/top: the roof or top surface of 4078-D-TwoStorey.mod (nothing above it: no route by design)
+5212-TwoStorey.mod	32	12600	141517.2	54690.8	rebaked	accepted	roof/top: the roof or top surface of 5212-TwoStorey.mod (nothing above it: no route by design)
+5312-TwoStorey.mod	277	12464	44653.2	14782.9	rebaked	accepted	roof/top: the roof or top surface of 5312-TwoStorey.mod (nothing above it: no route by design)
+5312-TwoStorey.mod	283	12442	58764.9	48477.5	rebaked	accepted	ours-only floor: 5312-TwoStorey zone 44,42, 283 u above base, 12442 u2 (37 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor
+3793-TwoStorey.mod	2	12376	12645.3	-87487.8	rebaked	accepted	roof/top: the roof or top surface of 3793-TwoStorey.mod (nothing above it: no route by design)
+5312-TwoStorey.mod	276	12280	-54311.7	-93465.5	rebaked	accepted	roof/top: the roof or top surface of 5312-TwoStorey.mod (nothing above it: no route by design)
+52180-Newwworld.mod	229	12230	72667.9	94264.0	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+5312-TwoStorey.mod	274	12198	23739.6	18228.3	rebaked	accepted	ours-only floor: 5312-TwoStorey at (23740, 18228), 274 u above base, 12198 u2 (28 samples: 0 main, 0 island at the floor's height): the original has no polygon under this floor; entered the gate with k16.7.59 (the canopy fix)
+4030-TwoStorey.mod	5	12116	33771.6	-70985.8	rebaked	accepted	roof/top: the roof or top surface of 4030-TwoStorey.mod (nothing above it: no route by design)
+3793-TwoStorey.mod	68	12088	55734.6	114867.5	rebaked	accepted	roof/top: the roof or top surface of 3793-TwoStorey.mod (nothing above it: no route by design)
+3793-TwoStorey.mod	70	12052	-109286.3	25373.9	rebaked	accepted	roof/top: the roof or top surface of 3793-TwoStorey.mod (nothing above it: no route by design)
+3793-TwoStorey.mod	69	11874	61749.2	4260.8	rebaked	accepted	roof/top: the roof or top surface of 3793-TwoStorey.mod (nothing above it: no route by design)
+3384-TwoStorey.mod	69	11834	93551.2	-3716.3	rebaked	accepted	roof/top: the roof or top surface of 3384-TwoStorey.mod (nothing above it: no route by design)
+52180-Newwworld.mod	229	11784	79930.9	83405.2	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+40599-Newwworld.mod	-5	11762	-104276.3	-28248.2	rebaked	accepted	roof/top: the roof or top surface of 40599-Newwworld.mod (nothing above it: no route by design)
+52180-Newwworld.mod	229	11750	79079.3	110474.7	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+48729-rebirth.mod	230	11732	72596.4	35983.9	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+4104-D-TwoStorey.mod	51	11710	-89099.4	15926.1	rebaked	accepted	roof/top: the roof or top surface of 4104-D-TwoStorey.mod (nothing above it: no route by design)
+3793-TwoStorey.mod	69	11614	-102873.7	139014.3	rebaked	accepted	roof/top: the roof or top surface of 3793-TwoStorey.mod (nothing above it: no route by design)
+3793-TwoStorey.mod	67	11542	-38354.1	-84295.8	rebaked	accepted	roof/top: the roof or top surface of 3793-TwoStorey.mod (nothing above it: no route by design)
+54019-Newwworld.mod	130	11344	94473.0	94584.7	rebaked	accepted	roof/top: the roof or top surface of 54019-Newwworld.mod (nothing above it: no route by design)
+3793-TwoStorey.mod	70	11102	-61643.9	-103222.5	rebaked	accepted	roof/top: the roof or top surface of 3793-TwoStorey.mod (nothing above it: no route by design)
+48729-rebirth.mod	230	10990	125313.4	54882.1	rebaked	accepted	roof/top: the roof or top surface of 48729-rebirth.mod (nothing above it: no route by design)
+52180-Newwworld.mod	230	10966	78700.2	110188.9	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+48727-rebirth.mod	112	10948	-128199.9	98508.8	rebaked	accepted	ours-only floor: 48727-rebirth zone 4,53, 112 u above base, 10948 u2 (42 samples: 13 main, 0 island at the floor's height): no shipped polygon within 8 u of this height; only another storey's surface within 60 u
+4028-TwoStorey.mod	5	10921	85899.0	-34518.5	shipped	accepted	shipped navtile: the original's own navtile (4028-TwoStorey.mod)
+40591-Newwworld.mod	30	10868	123873.6	68480.6	rebaked	accepted	roof/top: the roof or top surface of 40591-Newwworld.mod (nothing above it: no route by design)
+40591-Newwworld.mod	27	10824	-2336.3	-27463.0	rebaked	bug	BUG ours lost a link: 40591-Newwworld zone 31,26, 27 u above base, 10824 u2 (18 samples: 10 main, 0 island at the floor's height): the original's own tile joins this floor to its main mesh k16.7.55: cause not found, not examined beyond the oracle verdict (needs the same map-and-bake probe as 14535).
+48727-rebirth.mod	123	10698	50298.8	108187.6	rebaked	accepted	roof/top: the roof or top surface of 48727-rebirth.mod (nothing above it: no route by design)
+3793-TwoStorey.mod	4	10662	-61635.6	-103226.6	rebaked	accepted	roof/top: the roof or top surface of 3793-TwoStorey.mod (nothing above it: no route by design)
+3795-TwoStorey.mod	114	10634	-55457.8	-13870.0	shipped	accepted	shipped navtile: the original's own navtile (3795-TwoStorey.mod)
+54019-Newwworld.mod	208	10578	106238.4	103118.8	rebaked	accepted	roof/top: the roof or top surface of 54019-Newwworld.mod (nothing above it: no route by design) (k16.7.58: a 10578 u2 top surface 208 u above base, next to the 13202 one, past the 10,000 u2 gate since the ramp rule)
+52180-Newwworld.mod	183	10574	79933.9	83383.4	rebaked	accepted	roof/top: the roof or top surface of 52180-Newwworld.mod (nothing above it: no route by design)
+3793-TwoStorey.mod	71	10572	56028.2	115723.3	rebaked	accepted	roof/top: the roof or top surface of 3793-TwoStorey.mod (nothing above it: no route by design)
+3793-TwoStorey.mod	-12	10390	26693.0	123639.4	rebaked	accepted	roof/top: the roof or top surface of 3793-TwoStorey.mod (nothing above it: no route by design)

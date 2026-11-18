@@ -1,0 +1,22 @@
+# weatherfx (kenshi-k16.2.11.3) -- the weather's EFFECT classes
+
+kenshi-k16.2.11.3: every EFFECT class the oracle decodes (rwh81_weather_effects_placement.md) drawn by the client, not just rain:
+types 1/5/6 camera cover, 4 one global handler at the camera pivot, 2/3/7/8/9 world-placed on the group timer (7 relocated to the
+nearest player-faction character), 10 the GlobalPoint band refill. This test renders each in the offline viewer (headless, no sim).
+
+    client/tests/weatherfx/run.sh MODE OUT      # ash | mist | mistoff | dust | twister | detritus | lightning | off
+
+Each mode writes OUT/client-MODE.log (the `dump weather` lines show the effect's recipe and its live instances) and its PNG(s);
+OUT/xdg keeps the run's events out of the user's home. Each mode passes its own `--time` (day for ash/the desert, early morning
+for the Fog Islands mist, evening for the deadlands rain); the scripted frames need `set particles 0.01666` for the placed systems
+to emit. Read the shots; `off` (ash) and `mistoff` (the mist) must show a clean frame. The mist's own cloud is subtle by design: put
+mist.png beside mist_noparticles.png (same frame, `--no-particles`) and the cloud covers the view as a few display levels of haze.
+
+The twister row uses `debug weff SCRIPT DX DZ` (--debug only), a dev aid that pins one particle system at the pivot + offset: a
+weather's world instances spawn anywhere in its biome group (tens of km), so a twister in front of the camera cannot be waited for.
+In the lightning row: with no player character in the viewer, type 7 keeps the random cell point (the oracle's empty-party case), so
+the bolts land far away and the dump, not the shot, is the evidence there.
+
+The .pu subset the twister needs: Vortex affectors and exclude_emitter are parsed (k16.2.11.3); Gravity, Jet, ForceField and
+keep_local are not, so Twister-Large renders as a flat scatter and the shot uses Twister-Chuff_Desert01, whose own script needs
+only Vortex (the great_stream psys is the streamers').

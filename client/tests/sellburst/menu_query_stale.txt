@@ -1,0 +1,11 @@
+# menu_query_stale (kenshi-k16.2.121): the server is frozen while two right-click holds go out (the barman, then the Mercenary: the
+# second supersedes the first), so neither is answered; both time out (the second opens its menu with Talk); on resume both
+# MENU_ENTRIES arrive and both are stale for the (no longer) held menu: logged and dropped.
+400 mouse char=4679
+401 mouse down right
+421 mouse up right
+426 mouse char=4709
+427 mouse down right
+447 mouse up right
+570 screenshot OUTDIR/menu_stale.png
+600 quit

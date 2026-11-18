@@ -1,0 +1,20 @@
+Retired 2026-10-31 from src/ksim/simulation.cpp (Simulation::apply, CommandType::FighterMoveTo). The server's route search
+already knows the surface height of every corner (Route::heights); recomputing them waypoint by waypoint from the previous
+height with a +-40 unit window dropped any route with a leg that rises or falls more than 40 units between two corners, with
+no word to the client. A straight-path corner pair can legitimately be that far apart (long slopes, a ramp up to a deck), so
+the check was wrong, not the route. Heights now travel in Command::heights (as the interact order's always did). Kept for
+reference only; not built.
+
+			// Heights: each waypoint on the surface nearest the previous one, from the fighter's own.
+			std::vector<state::RoutePoint> route;
+			double y = f->y;
+			for (const state::GroundPoint& p : command.points)
+			{
+				const std::optional<double> surface = nav->walker().surfaceY(p.x, y, p.z, 40.0);
+				if (!surface)
+					break;
+				y = *surface;
+				route.push_back({p.x, y, p.z});
+			}
+			if (route.size() != command.points.size())
+				break; // the silent drop

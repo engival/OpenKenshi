@@ -1,0 +1,33 @@
+# creatorload (kenshi-k16.2.133.1): title -> NEW GAME (433,202) -> Wanderer (preselected) -> BEGIN (640,378); then a screenshot every 30 frames
+# (0.5 s at 60 fps): the full-screen loading screen must show until the creator scene (platform, character) is drawn, and the creator UI with it.
+300 mouse pos 433 202
+302 mouse down left
+304 mouse up left
+400 mouse pos 640 378
+402 mouse down left
+404 mouse up left
+410 screenshot OUTDIR/s00.png
+440 screenshot OUTDIR/s01.png
+470 screenshot OUTDIR/s02.png
+500 screenshot OUTDIR/s03.png
+530 screenshot OUTDIR/s04.png
+560 screenshot OUTDIR/s05.png
+590 screenshot OUTDIR/s06.png
+620 screenshot OUTDIR/s07.png
+650 screenshot OUTDIR/s08.png
+680 screenshot OUTDIR/s09.png
+710 screenshot OUTDIR/s10.png
+740 screenshot OUTDIR/s11.png
+770 screenshot OUTDIR/s12.png
+800 screenshot OUTDIR/s13.png
+830 screenshot OUTDIR/s14.png
+860 screenshot OUTDIR/s15.png
+890 screenshot OUTDIR/s16.png
+920 screenshot OUTDIR/s17.png
+950 screenshot OUTDIR/s18.png
+980 screenshot OUTDIR/s19.png
+1010 screenshot OUTDIR/s20.png
+1040 screenshot OUTDIR/s21.png
+1070 screenshot OUTDIR/s22.png
+1100 screenshot OUTDIR/s23.png
+1150 quit

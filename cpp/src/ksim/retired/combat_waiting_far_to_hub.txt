@@ -1,0 +1,13 @@
+Retired 2026-11-02 (BQ12 b, kinspect s77_static.md b): a waiter or circler farther than kTuneApproachDistance (150 u, centre distance) went back to
+the hub (which sends it to Approach and its give-up monitor). WaitingStateAI in the exe has no distance branch: it steers straight at the target
+(cap min(200, run) above a gap of 160, cleared below 70, else 18 u/s). The rule was ours: without it the Waiting state chased a runner for ever
+(ksim_bar_fight step 4). Circle keeps the test (still ours, UNSURE). Was in Ctx::circle():
+
+		// A target that got far away is not directly reachable: the hub sends the fighter on to the move-in task (Approach) with its
+		// give-up monitor (hub(): step 2 of ENGAGEMENT.md 4). A waiter that stayed in 6 for ever kept chasing a runner without ever giving up.
+		if (centre(f, target->fighter) > kTuneApproachDistance)
+		{
+			setState(m, CombatState::Hub);
+			return;
+		}
+		steer = f.state == CombatState::Wait ? waitingRing(m) : Steer{true, ringInner(), ringOuter(), kTuneWalkCap, false, true};

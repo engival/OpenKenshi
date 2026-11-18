@@ -1,0 +1,6 @@
+# menu_query_timeout (kenshi-k16.2.121): the server is frozen (SIGSTOP) after the world is up, so MENU_ENTRIES never comes: the menu
+# opens at once with Talk offered and the log says why (the older-server path). mouse char=4679 aims by id; the frozen sim keeps him still.
+400 mouse char=4679
+401 mouse down right
+700 screenshot OUTDIR/menu_timeout.png
+740 quit

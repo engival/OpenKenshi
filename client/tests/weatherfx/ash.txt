@@ -1,0 +1,5 @@
+# weatherfx ash (kenshi-k16.2.11.3): Ashlands, weather Kenshi_Ash-Flakes -- the type 1 camera-cover flakes (Ash-Flakes_Light).
+30 set particles 0.01666
+30 dump weather
+260 screenshot OUTDIR/ash.png
+320 quit

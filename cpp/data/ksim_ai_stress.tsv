@@ -1,0 +1,4 @@
+# Stress table for soak runs (ksim_soak --table): every package with a
+# package name travels, so every squad inside the navigation window moves
+# town to town. Not a mapping of the game; it exercises the travel behaviour.
+keyword	*	travel	everything travels

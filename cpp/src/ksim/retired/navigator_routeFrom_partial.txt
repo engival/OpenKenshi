@@ -1,0 +1,10 @@
+Retired 2026-10-31 from src/ksim/navigator.cpp (MeshNavigator::routeFrom). The original accepts only a complete
+path (docs/reference/MOVE_CLICK_LIVE.md): a goal in another connected area is refused, so the "walk to the closest
+reachable point when Detour's path is partial" branch is gone. Kept for reference only; not built.
+
+	// The end is looked up at any height (a clicked point on the terrain under a deck, or on it).
+	// A partial path (not complete) still ends at the closest reachable point to the click.
+	const knav::PathResult path = query_.findPath(start, end, {static_cast<float>(kClickReach), 1.0e5f,
+		static_cast<float>(kClickReach)});
+	if (!path.found || path.points.empty()) { ...failure... }
+	// (no `path.complete` test: a partial path was followed to its end, with `approach` set)

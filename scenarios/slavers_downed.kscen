@@ -1,0 +1,19 @@
+# slavers_downed (task CE; docs/reference/PLAYTEST.md 1). The ksim_capture_live chain as a file: the player and a Slaver caravan at the Hub,
+# the Boss and its guards. The player attacks the Boss; the caravan puts the player down and then the capture chain is the world package's
+# CAPTURE_NEW_SLAVES 167 row: strip, restrain, carry.
+# Only the player is ever ordered (the scenario places the world; SCENARIO_IMPORT.md "Rule"), and the only order is the attack that starts it.
+KSCEN 2
+scenario title=Down%20in%20front%20of%20the%20slavers setup=The%20player%20at%20the%20Hub%20with%20a%20Slaver%20caravan%20(the%20Boss%20and%20seven%20guards)%20standing%20among%20the%20shelters. look_for=Attack%20the%20Boss.%20When%20you%20go%20down%2C%20do%20the%20slavers%20stop%20fighting%2C%20strip%20you%2C%20cuff%20you%20and%20carry%20you%20off%3F%20Do%20they%20then%20head%20for%20the%20nearest%20slave%20camp%20with%20you%20(k16.6.14)%2C%20or%20stand%20around%3F%20Does%20the%20Hub%27s%20own%20crew%20get%20involved%3F bead=kenshi-h2v.6 metrics=captured,player_downed_s,fight_s,bodies_down,targeted_player
+source save=playtest game=1.0.68 radius=0 centre=-50978.8,2932.48 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-50978.8 y=1533.47 z=2932.48 yaw=0 leader=1 player=1 chase=1 ranged=1 stealth=1
+squad id=2 name=Slaver%20caravan faction=1084-gamedata.base template=3387-gamedata.base package=3389-gamedata.base player=0
+char id=2 squad=2 name=Slaver%20boss template=95766-rebirth.mod faction=1084-gamedata.base x=-50985 y=1532.67 z=2940 yaw=3.14159 leader=1 chase=1 ranged=1
+char id=3 squad=2 name=Slaver%20guard template=95765-rebirth.mod faction=1084-gamedata.base x=-50972 y=1532.69 z=2940 yaw=3.14159 chase=1 ranged=1
+char id=4 squad=2 name=Slaver%20guard template=95765-rebirth.mod faction=1084-gamedata.base x=-50985 y=1534.04 z=2925 yaw=3.14159 chase=1 ranged=1
+char id=5 squad=2 name=Slaver%20guard template=95765-rebirth.mod faction=1084-gamedata.base x=-50972 y=1533.93 z=2925 yaw=3.14159 chase=1 ranged=1
+char id=6 squad=2 name=Slaver%20guard template=95765-rebirth.mod faction=1084-gamedata.base x=-50990 y=1532.67 z=2932 yaw=3.14159 chase=1 ranged=1
+char id=7 squad=2 name=Slaver%20guard template=95765-rebirth.mod faction=1084-gamedata.base x=-50967 y=1532.69 z=2932 yaw=3.14159 chase=1 ranged=1
+char id=8 squad=2 name=Slaver%20guard template=95765-rebirth.mod faction=1084-gamedata.base x=-50978.8 y=1533.47 z=2948 yaw=3.14159 chase=1 ranged=1
+char id=9 squad=2 name=Slaver%20guard template=95765-rebirth.mod faction=1084-gamedata.base x=-50978.8 y=1533.47 z=2917 yaw=3.14159 chase=1 ranged=1

@@ -1,0 +1,64 @@
+# Auto-split (kenshi-k16.20.13.3): wear the Traders Backpack, stack the 6 Bread in its bag (cap 6 there, 1 in main), lift the whole stack (Shift + left)
+# and drop it in main: 6 singles in one click. Run: PORT=47836 KSCEN=splitstack client/tests/sellburst/run.sh autosplit OUT.
+# A lift grabs the item where the pointer is and the drop anchors it there, so each bread is lifted by its top-left cell. Cells (dump windows prints each grid's items and origin): the breads are 3x2 at main 5,0 5,2 0,4 3,4 0,6 3,6; the worn bag's grid is 8x8.
+300 key I down
+301 key I up
+400 screenshot OUTDIR/start.png
+# right click the backpack (no other window open): it is worn
+500 mouse gear grid main 3 2
+510 mouse down right
+511 mouse up right
+700 mouse gear button bag
+710 mouse down left
+711 mouse up left
+750 screenshot OUTDIR/worn.png
+800 mouse gear grid main 5 0
+808 mouse down left
+809 mouse up left
+820 mouse gear grid bag 0 0
+828 mouse down left
+829 mouse up left
+870 mouse gear grid main 5 2
+878 mouse down left
+879 mouse up left
+890 mouse gear grid bag 0 0
+898 mouse down left
+899 mouse up left
+940 mouse gear grid main 0 4
+948 mouse down left
+949 mouse up left
+960 mouse gear grid bag 0 0
+968 mouse down left
+969 mouse up left
+1010 mouse gear grid main 3 4
+1018 mouse down left
+1019 mouse up left
+1030 mouse gear grid bag 0 0
+1038 mouse down left
+1039 mouse up left
+1080 mouse gear grid main 0 6
+1088 mouse down left
+1089 mouse up left
+1100 mouse gear grid bag 0 0
+1108 mouse down left
+1109 mouse up left
+1150 mouse gear grid main 3 6
+1158 mouse down left
+1159 mouse up left
+1170 mouse gear grid bag 0 0
+1178 mouse down left
+1179 mouse up left
+1220 dump windows
+1220 screenshot OUTDIR/stacked.png
+1230 key SHIFT down
+1240 mouse gear grid bag 0 0
+1248 mouse down left
+1249 mouse up left
+1255 key SHIFT up
+1265 mouse gear grid main 3 3
+1275 screenshot OUTDIR/lifted.png
+1280 mouse down left
+1281 mouse up left
+1520 dump windows
+1520 screenshot OUTDIR/split.png
+1620 quit

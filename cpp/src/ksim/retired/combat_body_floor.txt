@@ -1,0 +1,42 @@
+Retired 2026-11-02 (BQ12 c, kinspect s77_static.md c): the 7.07 body floor, replaced by the exe's depenetration rule
+(m = (R - |d|) x (0.5 + (r_n - r_s) / R) against the largest neighbour, per step, footprints from the RACE data, cap 10 u).
+The floor was the hull diagonal candidate of bq9_crowd_spacing.md (UNSURE); the live 6.6-7.7 separation is still unexplained.
+Was CombatArena::kBodyDistance = 7.07 in combat.hpp, and Ctx::separate() in combat.cpp, both players in combat, half each:
+
+	// Body depenetration (kBodyDistance): after everyone moved, two characters that are both in combat (a target set, standing, uncarried,
+	// conscious: the exe's controller depenetration runs only in the combat steering mode, and a KO'd body has no controller) and closer than
+	// kBodyDistance are pushed apart along their line, half each, through the walker. One pass per step, a sweep over x, sorted by (x, id):
+	// deterministic. UNSURE: the 7.07 is the hull diagonal candidate (bq9_crowd_spacing.md), the push strength is not decoded.
+	void separate()
+	{
+		std::vector<Member*> live;
+		for (Member& m : arena.members_)
+		{
+			if (usable(m.fighter) && !m.fighter.down && m.fighter.target != 0)
+				live.push_back(&m);
+		}
+		std::sort(live.begin(), live.end(), [](const Member* a, const Member* b)
+		{
+			return a->fighter.x != b->fighter.x ? a->fighter.x < b->fighter.x : a->id < b->id;
+		});
+		for (std::size_t i = 0; i < live.size(); ++i)
+		{
+			for (std::size_t j = i + 1; j < live.size(); ++j)
+			{
+				Fighter& a = live[i]->fighter;
+				Fighter& b = live[j]->fighter;
+				if (b.x - a.x >= CombatArena::kBodyDistance)
+					break;
+				const double dx = b.x - a.x;
+				const double dz = b.z - a.z;
+				const double d = std::hypot(dx, dz);
+				if (d >= CombatArena::kBodyDistance || std::fabs(b.y - a.y) > kAvoidVertical)
+					continue;
+				const double ux = d > 1.0e-6 ? dx / d : 1.0;
+				const double uz = d > 1.0e-6 ? dz / d : 0.0;
+				const double push = (CombatArena::kBodyDistance - d) * 0.5;
+				shift(a, -ux * push, -uz * push);
+				shift(b, ux * push, uz * push);
+			}
+		}
+	}

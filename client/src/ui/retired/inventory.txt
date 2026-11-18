@@ -1,0 +1,3 @@
+Retired 2026-11-01: inventory.hpp / inventory.cpp (ui::Inventory, the three-column list inventory: equipment rows, pack list, container column,
+Drop / Equip / Unequip / Take / Put / Take all). Replaced by the grid inventory ui::Gear (gear.*, itemgrid.*), which main.cpp uses for I.
+Out of the build (not in client/CMakeLists.txt); kui_demo's Inventory checks and `--show inventory` went with it. Kept for reference only.

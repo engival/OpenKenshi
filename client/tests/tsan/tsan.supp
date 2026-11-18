@@ -1,0 +1,7 @@
+# ThreadSanitizer suppressions for client/tests/tsan/run.sh (TSAN_OPTIONS suppressions=; kenshi-k16.2.205.12.29).
+# Empty is the normal state: a race the client's own code has is a finding for the lead, never an entry here. An entry is only for a report whose
+# both accesses are in code the client does not own (Mesa, the Xlib/GLX libraries, libstdc++'s internals) and that has no bearing on the render
+# thread split. One per line, with the observation that earned it in the comment above it:
+#   race:<mangled name or function pattern>
+#   deadlock:<same>
+#   mutex:<same>

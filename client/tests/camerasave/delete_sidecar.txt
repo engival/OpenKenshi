@@ -1,0 +1,18 @@
+# camerasave delete (kenshi-k16.2.134.1): the title's LOAD GAME panel, the selected save, Delete -> Yes. The save's camera sidecar must go with
+# it (run.sh live OUT first; run.sh delete OUT then finds the sidecar gone). 720p: LOAD GAME (433,282); the panel's row 0 (465,311); the
+# prompt's Yes button is found by probing.
+300 mouse pos 433 282
+302 mouse down left
+304 mouse up left
+420 screenshot OUTDIR/panel.png
+440 mouse pos 465 311
+442 mouse down left
+444 mouse up left
+460 key DELETE down
+462 key DELETE up
+520 screenshot OUTDIR/prompt.png
+540 mouse pos 624 386
+542 mouse down left
+544 mouse up left
+600 screenshot OUTDIR/after.png
+620 quit

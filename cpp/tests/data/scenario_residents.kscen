@@ -1,0 +1,16 @@
+# Synthetic hand-written scenario (KSCEN 2, docs/reference/SCENARIO_IMPORT.md): the non-player squads of a loaded file run the world AI.
+# A Holy Nation Outlaws pair (a citizen and an ex-servant), a Hounds patron of another squad beside them, one hungry bandit ordered to attack the citizen,
+# and a far player (needed for the factions' teams). Not game-derived; the coordinates are the Hub plateau's.
+KSCEN 2
+source save=synthetic_residents game=1.0.68 radius=600 centre=-50960,3150 leader=Tester
+clock day=1 hour=12 minute=30
+squad id=1 name=Tester_1 faction=204-gamedata.base template= package= player=1 money=0
+squad id=2 name=Holy%20Nation%20Outlaws_5 faction=42022-rebirth.mod template=44426-rebirth.mod package=44430-rebirth.mod player=0 money=0
+squad id=3 name=Hounds_0 faction=48814-Dialogue.mod template=58290-Dialogue.mod package=14499-gamedata.base player=0 money=0
+squad id=4 name=Bandits_1 faction=1305-gamedata.base template=1308-gamedata.base package=5201-gamedata.base player=0 money=0 hostile=1
+char id=1 squad=1 name=Tester template=1533662-rebirth.mod race=17-gamedata.quack x=-50978.8 y=1535.0 z=2932.48 yaw=0.0 leader=1 player=1 faction=204-gamedata.base
+char id=2 squad=2 name=Holy%20Citizen template=40558-rebirth.mod race=17-gamedata.quack x=-50964.25 y=1517.5 z=3150.78 yaw=0.0 leader=1 player=0 faction=42022-rebirth.mod
+char id=3 squad=2 name=Ex-Servant template=42061-rebirth.mod race=17-gamedata.quack x=-51053.1 y=1525.5 z=3119.97 yaw=0.0 leader=0 player=0 faction=42022-rebirth.mod
+char id=4 squad=3 name=Pacifier template=58287-Dialogue.mod race=17-gamedata.quack x=-50900.0 y=1520.0 z=3160.0 yaw=0.0 leader=1 player=0 faction=48814-Dialogue.mod
+char id=5 squad=4 name=Hungry%20bandit template=1304-gamedata.base race=17-gamedata.quack x=-50960.0 y=1520.0 z=3230.0 yaw=3.14159 leader=1 player=0 faction=1305-gamedata.base stats=strength:5.0,dexterity:4.0,toughness2:5.0,attack:4.0,defence:5.0,blunt:6.0,athletics:7.0
+order char=5 attack=2

@@ -1,0 +1,31 @@
+# Badges and the ambiguous menu (kenshi-k16.20.13.3): the Wanderer (@Wanderer@) with a box (@box@), then also a trader (4678): transfer badge, then three windows with none marked:
+# a quick right click opens the menu with both destinations, the mark turns it back into a quick click. Run: PORT=47835 KSCEN=sellbox run.sh menu3 OUT.
+300 key I down
+301 key I up
+400 open id=@box@
+500 mouse gear @Wanderer@ grid main 0 0
+560 dump windows
+570 screenshot OUTDIR/badge_transfer.png
+# no other window for a box item that is alone? (the box is the only other window: its item goes to the character)
+600 interact id=4679 6
+1000 reply 0
+# the move order of the trade closes the box (rwh.78): open it again
+1020 open id=@box@
+1050 dump windows
+1060 screenshot OUTDIR/three.png
+# three windows, none marked: a quick right click opens the item menu (two destinations)
+1100 mouse gear @Wanderer@ grid main 0 0
+1160 mouse down right
+1161 mouse up right
+1200 dump windows
+1210 screenshot OUTDIR/menu_ambiguous.png
+# Escape closes it; mark the box: the badge is transfer and the right click moves the iron there
+1220 key ESCAPE down
+1221 key ESCAPE up
+1300 mouse gear @box@ mark
+1310 mouse down left
+1311 mouse up left
+1400 mouse gear @Wanderer@ grid main 0 0
+1460 dump windows
+1470 screenshot OUTDIR/badge_marked.png
+1500 quit

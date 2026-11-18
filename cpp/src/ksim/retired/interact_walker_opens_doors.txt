@@ -1,0 +1,25 @@
+Retired 2026-10-31 (door slice, DOORS.md section 6): Simulation::stepInteractions, the rule "a character walking a route within
+kDoorOpenReach (16 units) of a closed door's centre opens it, at once". The original does it as a timed planner step (walk to the
+door, open at openness 0.6); replaced by Simulation::stepDoorSteps (interact.cpp). Also retired with it: knav::kDoorClosedCost 11
+(a closed door as a path cost, a 13 s "wait"); it is 1 now.
+
+	ecs.each([&](const state::Id& instance, state::Door& door)
+	{
+		if (door.state != 1)
+			return;
+		for (std::size_t i = 0; i < members.size(); ++i)
+		{
+			const state::Fighter& walker = members[i].fighter;
+			if (walker.dead || walker.unconscious || !walker.walking())
+				continue;
+			const state::InteractTask* task = ecs.entity(combatEntities_[i]).get<state::InteractTask>();
+			if (task != nullptr && task->target == instance.value)
+				continue;
+			if (std::hypot(walker.x - door.x, walker.z - door.z) <= kDoorOpenReach && std::fabs(walker.y - door.y) <= kInteractReachY)
+			{
+				door.state = 0;
+				++door.version;
+				return;
+			}
+		}
+	});

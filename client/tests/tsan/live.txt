@@ -1,0 +1,40 @@
+# client/tests/tsan/live.txt: the live scenario of client/tests/tsan/run.sh --only live (kenshi-k16.2.205.12.46): kclient --simlink to a ksim_server
+# running scenarios/bar_lure.kscen, render.thread=lockstep, under ThreadSanitizer. app.sim.active() is true, so the idle hook (main.cpp h.idle) pumps
+# the link (SimView::pumpLink) whenever logic's 100 ms wait for a draw expires: the one cross-thread path the offline scenario never reaches.
+# Fixed dt = 1/60 s per frame. SHOTDIR is replaced by run.sh. The player stands at (-50619,-1086), the Dust Bandit patrol 150 u south of it.
+#   sim running at 2x, camera on the player   snapshots decoded on the logic thread while render draws the previous packet
+#   a left click then a right click           select and order (the sim answers over the link: orders sent from logic)
+#   renderstall MS (render held past 100 ms)  the wait expires, the idle hook polls the link; repeated while the sim runs, then with a snapshot burst
+#   stall MS                                  logic asleep past the render thread's packet wait
+5 set simspeed 2
+10 set pos -50619,-1060
+12 set alt 60
+14 set yaw 180
+16 set pitch -20
+30 screenshot SHOTDIR/live_01_start.png
+# Fly toward the patrol while the sim steps.
+40 key W down
+160 key W up
+170 screenshot SHOTDIR/live_02_near.png
+# Select (left click) and order (right click, no drag) near the middle of the screen.
+180 mouse pos 640 420
+181 mouse down left
+182 mouse up left
+200 mouse pos 640 300
+201 mouse down right
+202 mouse up right
+# Render held past logic's 100 ms bound, five times, the sim stepping and the link delivering snapshots in between.
+230 renderstall 250
+260 renderstall 250
+300 screenshot SHOTDIR/live_03_stall.png
+320 renderstall 400
+360 stall 150
+380 renderstall 250
+420 set simspeed 5
+440 renderstall 300
+470 renderstall 300
+520 screenshot SHOTDIR/live_04_5x.png
+540 set simspeed 1
+560 renderstall 250
+600 screenshot SHOTDIR/live_05_end.png
+620 quit

@@ -1,0 +1,12 @@
+Retired 2026-11-07 (task CH, dt24_131) from src/ksim/routine_scorer.cpp's SHOO_STRANGERS 158 case. 158's precondition was the
+scorer's `stranger()` test, which is narrower than the exe's resolver: a conscious PLAYER character inside the home building (the
+trespass slice's tracked stranger). Kinspect dt24_131 read 158 and 283 as the same resolver (1408ced70) and the same registry row,
+so both now use worldres::shooStrangers283 and the plan [161 SEND_DIALOGUE_SIGNAL_WITHOUT_MOVING, the goal]. The retired use:
+
+	case routines::task::ShooStrangers:
+		skip = !stranger();       // a conscious player character inside the home building
+		...
+
+The `stranger()` lambda itself stays: the bed (153 / 239) and door-lock (155 / 197) goals still read it for their "a stranger in
+the house" gate. Widening those to the exe's neutral-stranger test is a later slice (they read the same "strangers in house"
+predicate the shoo goals clear).

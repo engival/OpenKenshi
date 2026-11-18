@@ -1,0 +1,20 @@
+# Synthetic hand-written scenario (KSCEN 1, docs/reference/SCENARIO_IMPORT.md): one player with a club against two hungry bandits at the Hub.
+# Not game-derived; the real fixtures (tools/ksave_scenario.py) live in kenshi-inspect and never in this repo.
+KSCEN 1
+source save=synthetic game=1.0.68 radius=300 centre=-50978.8,2932.48 leader=Tester
+clock day=1 hour=12 minute=30
+weather group=42262-rebirth.mod weather=46961-Newwworld.mod
+squad id=1 name=Tester_1 faction=204-gamedata.base template= package= player=1 money=0
+squad id=2 name=Bandits_1 faction=1305-gamedata.base template=1308-gamedata.base package=5201-gamedata.base player=0 money=0 hostile=1
+char id=1 squad=1 name=Tester template=1533662-rebirth.mod race=17-gamedata.quack x=-50978.8 y=1535.0 z=2932.48 yaw=0.0 leader=1 player=1 faction=204-gamedata.base chase=1 ranged=1 speed=2 blood=75.75 hunger=2.9 stats=strength:20.0,dexterity:15.0,toughness2:10.0,attack:12.0,defence:10.0,blunt:15.0,athletics:20.0
+item char=1 sid=52295-rebirth.mod section=hip qty=1 level=40 material=914-gamedata.base company=912-gamedata.base
+item char=1 sid=2308-clothes_v1.mod section=legs qty=1 level=20
+look char=1 female=0 head=5341-chareditor.mod hair=2648-clothes_v2.mod
+char id=2 squad=2 name=Hungry%20bandit template=1304-gamedata.base race=17-gamedata.quack x=-50950.0 y=1535.0 z=2955.0 yaw=3.14159 leader=1 player=0 faction=1305-gamedata.base chase=1 ranged=1 speed=2 blood=76.5 hunger=1.7 stats=strength:5.0,dexterity:4.0,toughness2:5.0,attack:4.0,defence:5.0,blunt:6.0,athletics:7.0
+limb char=2 sid=28-gamedata.quack flesh=70.0 hit=80.0 hitmult=1.0 wear=0.0 bandage=0.0 stun=0.0 rig=0.0
+item char=2 sid=52295-rebirth.mod section=hip qty=1 level=10 material=914-gamedata.base company=912-gamedata.base
+item char=2 sid=2309-clothes_v1.mod section=armour qty=1 level=20
+look char=2 female=0
+char id=3 squad=2 name=Hungry%20bandit template=1304-gamedata.base race=17-gamedata.quack x=-50945.0 y=1535.0 z=2975.0 yaw=3.14159 leader=0 player=0 faction=1305-gamedata.base chase=1 ranged=1 speed=2 blood=76.5 hunger=1.7 stats=strength:5.0,dexterity:4.0,toughness2:5.0,attack:4.0,defence:5.0,blunt:6.0,athletics:7.0
+item char=3 sid=52295-rebirth.mod section=hip qty=1 level=10 material=914-gamedata.base company=912-gamedata.base
+look char=3 female=0

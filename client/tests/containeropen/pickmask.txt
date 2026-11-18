@@ -1,0 +1,13 @@
+# kenshi-k16.2.239.5.1: debug.pick_mask on, the camera on the shop counter: the cursor on the counter (its mask), on the strip the barrel beside it picks
+# (its mask: the leak of k16.2.239.4.1), then the camera on the barrel. The mask's pass takes a second or two (2 ms slices), so the shots wait for it.
+200 select id=__WALKER__
+210 set debug.pick_mask true
+300 camera thing id=__A__
+320 mouse pos 640 200
+3000 screenshot OUTDIR/counter.png
+3010 mouse pos 640 360
+6000 screenshot OUTDIR/barrel_strip.png
+6010 camera thing id=__B__
+6030 mouse pos 640 360
+9000 screenshot OUTDIR/barrel.png
+9100 quit

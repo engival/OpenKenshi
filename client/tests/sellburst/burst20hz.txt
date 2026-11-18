@@ -1,0 +1,34 @@
+300 interact id=4679 6
+700 reply 0
+1100 mouse pos 685 266
+1101 mouse down right
+1102 mouse up right
+1103 mouse pos 735 266
+1104 mouse down right
+1105 mouse up right
+1106 mouse pos 685 298
+1107 mouse down right
+1108 mouse up right
+1109 mouse pos 735 298
+1110 mouse down right
+1111 mouse up right
+1112 mouse pos 685 330
+1113 mouse down right
+1114 mouse up right
+1115 mouse pos 735 330
+1116 mouse down right
+1117 mouse up right
+1118 mouse pos 685 363
+1119 mouse down right
+1120 mouse up right
+1121 mouse pos 735 363
+1122 mouse down right
+1123 mouse up right
+1124 mouse pos 685 397
+1125 mouse down right
+1126 mouse up right
+1127 mouse pos 735 397
+1128 mouse down right
+1129 mouse up right
+1430 screenshot OUTDIR/after.png
+1440 quit

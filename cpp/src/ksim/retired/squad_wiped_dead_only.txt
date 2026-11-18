@@ -1,0 +1,16 @@
+Retired 2026-11-02 (squad liveness, docs/ARCHITECTURE.md "Squad liveness"): retireWipedSquads counted a member alive when it was not
+dead, and skipped a squad with no members at all (a guess pending BQ4):
+
+	std::size_t members = 0;
+	std::size_t alive = 0;
+	ecs.query_builder<>().with<state::MemberOf>(squad).build().each([&](flecs::entity member)
+	{
+		const state::Fighter* fighter = member.get<state::Fighter>();
+		++members;
+		alive += fighter == nullptr || !fighter->dead ? 1 : 0;
+	});
+	if (members != 0 && alive == 0)
+		wiped.push_back(squad);
+
+Now: squadVitals (squad_alive.cpp); retire when dead == members, which includes members == 0 (the faction tick's "no members left"
+rule, s71_static.md 5.3). The "KO'd member counts alive" part is unchanged in effect: a squad with a KO'd survivor is not retired.

@@ -1,0 +1,21 @@
+# bar_lure_stealth (kenshi-h2v.1.15.1 fixture): bar_lure's ground, a hostile Dust patrol split in two. Eight bandits stand close
+# ahead of the sneaking Wanderer with their backs to him (unaware: absent from SEEN_BY); one watcher stands further off facing
+# him (aware: in the set). The red fist over the unseen ones, the attack cursor over the watcher, a right click on an unseen one
+# sending order 60 action 14, and the SEEN_BY set holding the watcher alone.
+# Only the player is ever ordered (SCENARIO_IMPORT.md "Rule").
+KSCEN 2
+source save=playtest game=1.0.68 radius=0 centre=-50592,-1211 leader=Wanderer
+clock day=1 hour=14 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-50619 y=1089.49 z=-1086 yaw=0 leader=1 player=1 chase=1 ranged=1 stealth=1
+squad id=2 name=Dust%20bandit%20rear faction=200-gamedata.base template=1302-gamedata.base package=5201-gamedata.base player=0 hostile=1
+char id=2 squad=2 name=Dust%20bandit template=510-gamedata.base faction=200-gamedata.base x=-50643 y=1096 z=-1020 yaw=0 chase=1 ranged=1
+char id=3 squad=2 name=Dust%20bandit template=510-gamedata.base faction=200-gamedata.base x=-50637 y=1096 z=-1020 yaw=0 chase=1 ranged=1
+char id=4 squad=2 name=Dust%20bandit template=510-gamedata.base faction=200-gamedata.base x=-50631 y=1096 z=-1020 yaw=0 chase=1 ranged=1
+char id=5 squad=2 name=Dust%20bandit template=510-gamedata.base faction=200-gamedata.base x=-50625 y=1096 z=-1020 yaw=0 chase=1 ranged=1
+char id=6 squad=2 name=Dust%20bandit template=510-gamedata.base faction=200-gamedata.base x=-50619 y=1096 z=-1020 yaw=0 chase=1 ranged=1
+char id=7 squad=2 name=Dust%20bandit template=510-gamedata.base faction=200-gamedata.base x=-50613 y=1096 z=-1020 yaw=0 chase=1 ranged=1
+char id=8 squad=2 name=Dust%20bandit template=510-gamedata.base faction=200-gamedata.base x=-50607 y=1096 z=-1020 yaw=0 chase=1 ranged=1
+char id=9 squad=2 name=Dust%20bandit template=510-gamedata.base faction=200-gamedata.base x=-50601 y=1096 z=-1020 yaw=0 chase=1 ranged=1
+squad id=3 name=Dust%20watcher faction=200-gamedata.base template=1302-gamedata.base package=5201-gamedata.base player=0 hostile=1
+char id=10 squad=3 name=Dust%20watcher template=510-gamedata.base faction=200-gamedata.base x=-50619 y=1105 z=-930 yaw=3.14159 chase=1 ranged=1
