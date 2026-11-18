@@ -207,6 +207,10 @@ public:
 	int topFloor(int building) const;
 	bool hasGlass() const;	// a peeked part is visible (renderGlass would draw): the caller splits the scene pass before it (Hdr::copyOpaqueDepth)
 	void renderGlass(const float mvp[16], const LightParams& light);	// the peeked parts; after every opaque thing in the scene pass
+	// The cut-away flip fade (kenshi-k16.2.354.1): the back faces of a cut building's single-sided parts, blended over the scene while a wall turned away within the
+	// last kFlipFade seconds. Stateless per face: update() keeps a ring of past eye positions, the shader finds when the face last faced one. No depth write
+	// (the cursor ID pass and everything after see the solid scene); a still camera draws nothing.
+	void renderFlip(const float mvp[16], const LightParams& light);
 	// Cursor ID pass (idbuffer.hpp): the ray the next update() lists the buildings along (those with floors whose box it crosses); renderIds()
 	// draws what the scene drew of them, each with its id, in the ID pass.
 	void cursorRay(const double dir[3], bool on);
@@ -218,6 +222,7 @@ public:
 	// where (distances) the ray enters and leaves the building's parts' box, or its interior bounds
 	bool rayBox(int building, const double origin[3], const double dir[3], double far, double& enter, double& leave, bool interior = false);
 	bool sliced(int building) const { return std::find(cuts_.begin(), cuts_.end(), (uint32_t)building) != cuts_.end(); }
+	std::string floorablesReport(double x, double z, double radius) const;	// dump floorables X Z R: the floorable buildings (maxFloor >= 1, not a ruin: a ruin has no interior parts) within R of the point, nearest first (kenshi-k16.2.355)
 	std::string cutsReport() const;	// dump cuts: every building the floor cut slices (one per occupied building, kenshi-k16.2.332.1), its shown / top floor, the selector level
 	// What cutHides (and so a prop's hidden state in main.cpp) reads: the sliced buildings and the visible floor. A cheap hash, so the per-frame props
 	// list can be kept as is while it does not move (kenshi-k16.2.205.11).
@@ -527,6 +532,7 @@ private:
 		int sub;
 		std::vector<float> onlyShadow, inRange, outRange;	// 12 floats per instance (kInstanceFloats): shadow casters that are not visible; visible and within the shadow range; visible only
 		std::vector<float> glass;	// visible peeked parts (renderGlass), after outRange
+		std::vector<float> flip;	// visible single-sided parts of a cut building while the camera moves (renderFlip), after glass
 		int first = 0;			// instance index in the frame buffer: onlyShadow, inRange, outRange, glass in that order
 		// A ground severed limb's tint (one group per instance: it comes from the wire, per item); limb false draws the part as before
 		float skin[3] = { 0, 0, 0 }, blood[3] = { 0, 0, 0 };
@@ -751,7 +757,7 @@ private:
 	std::vector<HullRef> hulls_;	// update(): the interior mask parts of the buildings near the camera (insideInterior)
 
 	sg_shader shd_ = {};
-	sg_pipeline pip_ = {}, pipInterior_ = {}, pipGlassDepth_ = {}, pipGlass_ = {};
+	sg_pipeline pip_ = {}, pipInterior_ = {}, pipGlassDepth_ = {}, pipGlass_ = {}, pipFlip_ = {};
 	sg_shader maskShd_ = {};
 	sg_pipeline pipMaskFront_ = {}, pipMaskBack_ = {};
 	sg_shader idShd_ = {};
@@ -781,5 +787,11 @@ private:
 	uint64_t frame_ = 0;
 	float fog_ = 60000.0f;
 	double time_ = 0;
+	// the cut-away flip fade's eye ring (update()): the eye history in wall-clock seconds, and the eye at (k + 1) x kFlipFade / 8 seconds ago relative to the eye now
+	struct EyeSample { double t; double p[3]; };
+	std::deque<EyeSample> eyeHist_;
+	float flipEye_[8][4] = {};
+	bool flipMoving_ = false;
+	bool flipPass_ = false;	// draw() fills the flip uniforms
 	Stats stats_;
 };

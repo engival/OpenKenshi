@@ -96,7 +96,7 @@ namespace ui::keys
 			{ "build_move_down", "Minus", "Build: move down", Group::kBuild },
 			{ "playtest.notes", "Ctrl+N", "Playtest: the notes window", Group::kGame },	// during a run (CLIENT_GOALS "Playtest")
 			// The client's development keys (kclient main.cpp), on Ctrl so they stay off the game's.
-			{ "debug.help", "F8", "Debug: the key list", Group::kDebug },
+			{ "debug.help", "F8", "Debug: the debug panel", Group::kDebug },
 			{ "debug.terrain_view", "Ctrl+F2", "Debug: terrain view mode", Group::kDebug },
 			{ "debug.shadows", "Ctrl+F3", "Debug: shadows", Group::kDebug },
 			{ "debug.squad_overlay", "Ctrl+F4", "Debug: squad overlay", Group::kDebug },

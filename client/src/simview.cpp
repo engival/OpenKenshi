@@ -20,6 +20,9 @@
 
 using namespace simlink;
 
+// kenshi-k16.2.237.10 (user 2026-11-18, A/B): drive.facing = travel turns the drawn body of the driven character to its direction of travel and plays the
+// forward walk / run; the movement, the sim heading and the wire are as in camera. Display only (the presentation layer may render off the server's heading).
+static const cfg::Text kDriveFacing{ cfg::Group{ "Direct drive" }, "drive.facing", "camera", { "camera", "travel" }, "Direct drive: camera = the body faces the camera's heading (strafe and backpedal clips); travel = the body turns to its direction of travel and walks forward, strafe / backward / mouse are camera-relative (display only, movement unchanged)" };
 // kenshi-k16.1.3 (run flicker): the legs' speed blends from the previous sample segment's velocity into the current one's, so it is continuous
 // rather than a step a tick; then the original's own filter (below) runs on it.
 static const cfg::Bool kVelBlend{ cfg::Group{ "Locomotion" }, "anim.vel_blend", true, "Locomotion: the legs' speed blends between consecutive sample segments, continuous instead of stepping once a tick (0 = the current pair's velocity alone)" };
@@ -694,6 +697,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		dy -= 6.2831853f * std::floor((dy + 3.14159265f) / 6.2831853f);
 		float yaw = ia->yaw + dy * t;
 		if (id == local_.id) { predict(c, p, yaw); }
+		float byaw = yaw;	// the drawn body's yaw: the sim's, or the travel facing (kenshi-k16.2.237.10); sl.yaw (the camera follow's) stays the sim's
 		const bool posed = (b.flags & (kSeated | kAsleep)) && b.poseClip;	// snapped to the furniture (kinspect bed_seat_pose.md): no interpolation, no ground fit
 		// feet on the drawn ground: the sim's navmesh y is a coarse fit of the terrain (it floats or sinks by a few units), so on open ground the
 		// terrain's height; on a floor or deck (MINE: over 4 u above the terrain) or a sunk interior floor (Longhouse: over 4 u below, kenshi-kyat.1) the sim's y, blended over 2..4 u so stepping up or down has no pop
@@ -723,6 +727,29 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		// the sim's own velocity: the displacement between the two samples around the render tick over their span (world units/s)
 		const double wvx = span > 0 ? (ib->pos[0] - ia->pos[0]) / span * kTickRate : 0.0;
 		const double wvz = span > 0 ? (ib->pos[2] - ia->pos[2]) / span * kTickRate : 0.0;
+		// kenshi-k16.2.237.10 (MINE: a half turn in 0.15 s; no turn speed in the data used): drive.facing = travel. While the character is the direct-drive
+		// one (setDriven: the follow camera on a player, moving or not) the body eases to the travel direction (the prediction's velocity, the wire's when
+		// the prediction is off or settled); still, it keeps its last facing. In combat (swings and blocks follow the sim heading), when the mode is
+		// camera, or on leaving direct drive, it eases back to the sim yaw and releases. Nothing is posed here.
+		{
+			constexpr double kHalfTurn = 0.15, kMoving = 3.0;
+			const bool driven = id == drivenId_ && !posed;
+			const bool travel = driven && kDriveFacing.get() == "travel" && !(b.flags & kCombat);
+			if (!travel && !sl.bodyOn) { sl.bodyOn = false; }
+			else
+			{
+				if (!sl.bodyOn) { sl.bodyYaw = yaw; sl.bodyOn = true; }
+				double want = travel ? sl.bodyYaw : (double)yaw;
+				const double vx = local_.on && local_.id == id ? local_.vel[0] : wvx, vz = local_.on && local_.id == id ? local_.vel[1] : wvz;
+				if (travel && std::hypot(vx, vz) > kMoving) { want = std::atan2(vx, vz); }
+				double d = want - sl.bodyYaw;
+				d -= 6.283185307179586 * std::floor((d + 3.141592653589793) / 6.283185307179586);
+				const double step = 3.141592653589793 / kHalfTurn * dtSim_;
+				sl.bodyYaw += std::clamp(d, -step, step);
+				if (!travel && std::fabs(d) <= step) { sl.bodyOn = false; }
+				else { byaw = (float)sl.bodyYaw; }
+			}
+		}
 		// a sim jump (evlog simjump): the wire segment drawn now moves faster than twice the run speed, which the interpolation shows as a pop
 		if (sl.drawn && !posed && span > 0 && ib->tick != sl.jumpTick)
 		{
@@ -838,7 +865,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 			const bool blendV = kVelBlend.get() && spanZ > 0;
 			const double vx = (blendV ? wvx * t + (ia->pos[0] - iz->pos[0]) / spanZ * kTickRate * (1.0 - t) : wvx) + catchV[0];
 			const double vz = (blendV ? wvz * t + (ia->pos[2] - iz->pos[2]) / spanZ * kTickRate * (1.0 - t) : wvz) + catchV[1];
-			const float fwd = (float)(vx * std::sin(yaw) + vz * std::cos(yaw)), lat = (float)(vx * std::cos(yaw) - vz * std::sin(yaw));
+			const float fwd = (float)(vx * std::sin(byaw) + vz * std::cos(byaw)), lat = (float)(vx * std::cos(byaw) - vz * std::sin(byaw));
 			const float raw[2] = { fwd, lat };
 			for (int a = 0; a < 2; a++)
 			{
@@ -954,7 +981,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		}
 		Characters::Spec& s = chars.live((size_t)sl.index);
 		for (int k = 0; k < 3; k++) { s.pos[k] = p[k]; }
-		s.yaw = yaw;
+		s.yaw = byaw;
 		if (sl.rising)
 		{
 			// the get-up plays once on the lying character; at its end — or at once if the sim moves the character, the original's ragdoll yielding to
@@ -971,7 +998,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 			if (!chars.replace((size_t)sl.index, r, err)) { charError("build", tick_, id, err); continue; }
 			Characters::Spec& rs = chars.live((size_t)sl.index);
 			for (int k = 0; k < 3; k++) { rs.pos[k] = p[k]; }
-			rs.yaw = yaw;
+			rs.yaw = byaw;
 			sl.rising = false;
 			sl.down = Up;
 			sl.poseClip = 0;
@@ -986,13 +1013,16 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		s.wireGap = (float)std::hypot(p[0] - b.pos[0], p[2] - b.pos[2]);	// what the drawn body still has to walk to the newest sample
 		s.strafe = sl.vLat;
 		s.combat = (b.flags & kCombat) != 0;
-		// kenshi-k16.2.237.4 (MINE): a direct-drive strafe (wire bits 22 / 23) plays the forward walk / run clips, timed by the speed along the move
-		// direction (the strafe-only 0.5 gait or a diagonal), the body keeping its facing: W+A / W+D forward, S+A / S+D the reversed clips (sign of the
-		// forward part), strafe alone forward. The sim's `strafe lower` record is the combat circling clip, not a walk, so out of combat it is not used.
-		if ((b.flags & (kStrafeLeft | kStrafeRight)) && !s.combat)
+		// kenshi-k16.2.237.8 (MINE): a direct-drive strafe (wire bits 22 / 23) at any combat state takes the `strafe lower` split (the lower body by the lateral
+		// speed, as in combat; the only side-step record the data has, none other for walking out of combat: newstrafe / strafe 2 / sidestep 2 are bare clips
+		// with no ANIMATION record), the forward walk / run clips carrying the forward part of the move. The user 2026-11-18: no strafe clip out of combat.
+		s.strafeDrive = (b.flags & (kStrafeLeft | kStrafeRight)) != 0;
+		if (sl.bodyOn && kDriveFacing.get() == "travel" && id == drivenId_ && !s.combat)
 		{
-			s.move = std::copysign(std::hypot(sl.vFwd, sl.vLat), b.drive == 2 ? -1.0f : 1.0f);
+			// kenshi-k16.2.237.10 (MINE): travel facing turns the body its way, so the forward walk / run at the travel speed (no strafe split, no backward clip)
+			s.move = std::hypot(sl.vFwd, sl.vLat);
 			s.strafe = 0;
+			s.strafeDrive = false;
 		}
 		s.stealth = (b.flags & kStealth) != 0;
 		s.legs[0] = b.legs[0];
@@ -1460,14 +1490,16 @@ void SimView::predict(const Character& c, double p[3], float& yaw)
 		target = walker_->drive(target.at, (knav::Drive)s.drive, s.heading, gait, fwd, std::min(lead, 1.0 / kTickRate), knav::kGaitAcceleration, true, wireStrafe);
 	}
 	if (!target.onMesh) { local_.on = false; return; }
-	if (!local_.on) { for (int k = 0; k < 3; k++) { local_.pos[k] = p[k]; } local_.fwd = std::clamp((double)s.fwd, -gait, gait); local_.on = true; }
+	if (!local_.on) { for (int k = 0; k < 3; k++) { local_.pos[k] = p[k]; } local_.fwd = std::clamp((double)s.fwd, -gait, gait); local_.vel[0] = local_.vel[1] = 0; local_.on = true; }
 	knav::StepResult mine = walker_->drive({ local_.pos[0], local_.pos[1], local_.pos[2] }, (knav::Drive)local_.drive, local_.heading, gait, local_.fwd, dtSim_, knav::kGaitAcceleration, true, local_.strafe);
 	if (!mine.onMesh) { mine.at = target.at; }
 	const double e = std::hypot(target.at.x - mine.at.x, target.at.z - mine.at.z);
 	const double pull = e > kSnap ? 1.0 : std::min(1.0, kPull * dtSim_);
+	const double prevX = local_.pos[0], prevZ = local_.pos[2];
 	local_.pos[0] = mine.at.x + (target.at.x - mine.at.x) * pull;
 	local_.pos[1] = mine.at.y + (target.at.y - mine.at.y) * pull;
 	local_.pos[2] = mine.at.z + (target.at.z - mine.at.z) * pull;
+	if (dtSim_ > 0) { const double a = std::min(1.0, dtSim_ / 0.1); local_.vel[0] += ((local_.pos[0] - prevX) / dtSim_ - local_.vel[0]) * a; local_.vel[1] += ((local_.pos[2] - prevZ) / dtSim_ - local_.vel[1]) * a; }	// the predicted velocity (kenshi-k16.2.237.10: the travel facing), 0.1 s smoothed
 	if (!local_.drive && !local_.strafe && !s.drive && !wireStrafe && e < kSettle) { local_.on = false; }
 	for (int k = 0; k < 3; k++) { p[k] = local_.pos[k]; }
 	if (local_.drive == 1 || local_.strafe) { yaw = (float)local_.heading; }

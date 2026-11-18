@@ -54,6 +54,7 @@ public:
 		float moveSim = 0;	// the drawn sample's own speed without the catch-up: the stop steer's decel (ds/stop-fix)
 		float wireGap = 0;	// the drawn body's horizontal distance still to the newest sample, u (the stop steer's travel once the sim has stopped)
 		float strafe = 0;	// locomotion, combat: lateral speed (the strafe split)
+		bool strafeDrive = false;	// a direct-drive strafe is held: the strafe split runs out of combat too (k16.2.237.8)
 		bool combat = false, stealth = false;	// locomotion state filters (`is combat mode`, `stealth mode`)
 		float legs[2] = { 100, 100 };	// locomotion: right, left leg values (100 x (health - stun) / (max - wear), <= 100; LOCOMOTION.md; 100 = healthy, kinspect legs_anim.md) against the records' leg damage windows
 		std::string stance = "idle_stand_normal";	// the stored idle stance (brave: idle_stand_guard, fearful: idle_stand_timid)

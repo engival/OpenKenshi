@@ -322,6 +322,9 @@ namespace ui
 		Button* notesButton() const { return notesBtn_; }	// in its own panel (notesButton()->parent())
 		CastWindow* castWindow() const { return cast_.get(); }	// null until spectating first turns on
 		Widget* squadBar() const { return squad_; }
+		Widget* squadSpan() const;	// the bottom-centre column: the space between the corner clusters the squad bar and its tabs fit in
+		Widget* squadArrow(int side) const;	// the portrait bar's page arrows (-1 left, 1 right): shown only while the squad overflows the span
+		size_t squadFirst() const;	// the first portrait shown while paged
 		Widget* toggleRow() const { return toggles_; }	// RUN, STOP
 		Widget* buildPanel() const { return build_ ? build_->parent() : nullptr; }
 
@@ -345,6 +348,8 @@ namespace ui
 		JobList* jobs_ = nullptr;
 		Button* shortcut_[6] = {};
 		Button* speed_[4] = {};
+		class Bottom;
+		Bottom* bottom_ = nullptr;
 		Box* squad_ = nullptr;
 		Box* tabRow_ = nullptr;
 		std::vector<Button*> tabs_;

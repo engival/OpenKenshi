@@ -214,6 +214,8 @@ layout(binding=1) uniform inst_fs_params
 	vec4 skin;      // a severed limb: skinTone rgb (SeveredLimbItem custom 2 = 1 - the victim's Skin Tone, from the wire)
 	vec4 blood;     // a severed limb: bloodColour rgb (custom 3 = the race's `blood colour` 0..1, from the wire)
 	vec4 misc2;     // x = 1: an interior material (the exe's INTERIOR flag, objects.hlsl:213): the dust coat takes dustAmount.y = surf.w
+	vec4 flip;      // x > 0: the cut-away flip fade (renderFlip): seconds between the eye samples; the fragment fades by when its face last faced the eye
+	vec4 flip_eye[8];   // xyz = the eye (k + 1) x flip.x seconds ago, relative to the eye now
 };
 
 in vec3 v_normal;
@@ -291,6 +293,26 @@ void main()
 	bool back = dot(v_normal, face) < 0.0;
 	bool ghost = v_build.x >= 0.0 && v_build.y > v_build.x;
 	if (ghost && ign(gl_FragCoord.xy) > 0.33) { discard; }
+	// the cut-away flip fade (renderFlip draws the faces the cull drops): the newest past eye this face's winding side faced, by the crossing time between samples;
+	// alpha falls from 1 at the turn to 0 over the sample window, a face no sample saw is not drawn
+	float flip_a = 1.0;
+	if (flip.x > 0.0)
+	{
+		vec3 nw = -normalize(face);	// the side the winding shows: away from the eye, as this fragment is a culled one
+		float f0 = dot(nw, -v_cpos);
+		flip_a = 0.0;
+		for (int k = 0; k < 8; k++)
+		{
+			float f1 = dot(nw, flip_eye[k].xyz - v_cpos);
+			if (f1 > 0.0)
+			{
+				flip_a = 1.0 - (float(k) + clamp(-f0 / (f1 - f0), 0.0, 1.0)) / 8.0;
+				break;
+			}
+			f0 = f1;
+		}
+		if (flip_a <= 0.0) { discard; }
+	}
 	// Some meshes carry zero vertex normals (24 vertices of TechRustyJunk_05.mesh): a triangle of them interpolates to 0 and normalize() gives NaN, one
 	// pixel that the bloom spread into a black octagon (kenshi-k16.2.62). Such a pixel takes the triangle's own plane, already turned to the viewer.
 	vec3 n = dot(v_normal, v_normal) > 1e-12 ? normalize(v_normal) : normalize(face + vec3(0.0, 1e-20, 0.0));
@@ -419,7 +441,7 @@ void main()
 		+ light_points_vol(base, ln, v_cpos, clamp(gloss, 0.0, 1.0));
 	if (ghost) { lit *= 1.0 + 2.0 * pow(1.0 - abs(dot(n, vw)), 3.0); }	// fresnel rim: the outline reads at a glance
 	else if (v_build.x >= 0.0 && !reflect_pass() && !term_off(LT_CUTBAND)) { lit += vec3(1.0, 0.6, 0.25) * 1.5 * (1.0 - smoothstep(0.0, 3.0, (v_build.x - v_build.y) * v_build.z)); }	// warm band in the 3 units under the cut
-	frag_color = vec4(light_finish(lit, v_cpos, FOG_MAP_RAY(fog_map, fog_smp, v_wpos.xz, v_cpos.xz)), v_glass * (fade.z == 2.0 ? 1.0 - fadeT : 1.0));
+	frag_color = vec4(light_finish(lit, v_cpos, FOG_MAP_RAY(fog_map, fog_smp, v_wpos.xz, v_cpos.xz)), v_glass * flip_a * (fade.z == 2.0 ? 1.0 - fadeT : 1.0));
 }
 @end
 

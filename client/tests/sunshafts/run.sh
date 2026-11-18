@@ -10,15 +10,12 @@ pick_server "$tree" "$tree/client/build/cpp/OpenKenshi-server"	# 'server: shared
 server=$SERVER
 base=$(mkdir -p "${1:?out dir}" && cd "$1" && pwd)
 . "$(dirname "${BASH_SOURCE[0]}")/../../tools/ports.sh"
-port=$(pick_port "${PORT:-}") || exit 3
 for mode in off on
 do
 	out="$base/$mode"; mkdir -p "$out"
 	sed "s#OUTDIR#$out#g" "$here/${SCRIPT:-bar}.txt" > "$out/script.txt"
-	"$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:$port --scenario-file "$tree/scenarios/bar_lure.kscen" --debug-view > "$out/server.log" 2>&1 &
-	pid=$!
-	for i in $(seq 240); do grep -q "^listening" "$out/server.log" && break; ps -p $pid > /dev/null || break; sleep 0.5; done
-	server_listening "$out/server.log" $pid $port
+	start_server_on_free_port "$out/server.log" "$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:@PORT@ --scenario-file "$tree/scenarios/bar_lure.kscen" --debug-view	# a fresh port per start (kenshi-k16.2.358)
+	pid=$SERVER_PID; port=$SERVER_PORT
 	extra=(--set render.sun_shafts=0); [ "$mode" = on ] && extra=(--set render.sun_shafts=${2:-1})
 	(cd "$tree" && timeout 300 nice -n 10 client/tools/headless.sh -- stdbuf -oL "$tree/client/build/kclient" --simlink 127.0.0.1:$port --debug "${extra[@]}" --script "$out/script.txt" > "$out/client.log" 2>&1)
 	ps -o args= -p "$pid" 2>/dev/null | grep -q -- "--listen 127.0.0.1:$port" && kill "$pid"

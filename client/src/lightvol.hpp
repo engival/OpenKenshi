@@ -15,7 +15,7 @@
 namespace lightvol
 {
 constexpr int kMax = 8;
-constexpr int kParamFloats = 8 + kMax * 7 * 4;	// light_volumes: head, atlas, 7 vec4 per volume
+constexpr int kParamFloats = 8 + kMax * 8 * 4;	// light_volumes: head, atlas, 8 vec4 per volume
 
 struct Volume
 {
@@ -27,6 +27,7 @@ struct Volume
 	float scale[3] = { 1, 1, 1 };
 	std::shared_ptr<const std::vector<uint8_t>> lamps;	// render.lamp_occlusion: lightbake::kMaxLamps bytes per probe (255 = the probe sees the lamp), null: none traced yet
 	int lampCount = 0;
+	double cutY = 1e30;	// building-local height of the floor cut (kenshi-jj3.26.11): the shafts' march and the dust motes take no air above it; 1e30 = not cut
 };
 
 struct Binding

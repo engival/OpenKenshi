@@ -479,6 +479,7 @@ void render_frame(const FramePacket& pk, RenderState& rs)
 		sg_begin_pass(rs.hdr.continuePass());
 	}
 	if (peek) { rs.buildings.renderGlass(mvp, light); }	// the peeked parts, blended over everything opaque
+	if (peek) { rs.buildings.renderFlip(mvp, light); }	// the cut-away walls that just turned away, fading out (k16.2.354.1)
 	sg_end_pass();
 	CPUSTAGE("draw.water+glass+misc");
 	interiorclip::release();

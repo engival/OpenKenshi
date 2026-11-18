@@ -24,6 +24,7 @@ namespace
 
 constexpr size_t kInstanceFloats = 12;	// position + scale, rotation quaternion, per-axis stretch
 constexpr float kGlassBuild = 200000.0f;	// a peeked part: stretch w = -(kGlassBuild + opacity x 1000) (mesh.glsl inst_vs)
+constexpr float kFlipFade = 0.25f;	// MINE (user 2026-11-18): seconds a wall that turned away from the cut-away camera takes to fade out
 constexpr float kGlassAlpha = 0.25f;	// MINE: a fully peeked or ghosted part's opacity
 constexpr double kEffectMargin = 1500.0;	// units of view margin for effect collection: a just-off-screen fire stays alive (ParticleWorld)
 constexpr size_t kInstanceBytes = kInstanceFloats * 4;
@@ -38,7 +39,7 @@ const cfg::Bool kNormalMaps{ cfg::Group{ "Detail" }, "render.normal_maps", true,
 const cfg::Float kBuildingFar{ cfg::Group{ "Draw distance" }, "render.building_far", 60000, 0, 100000, "Towns and rocks: how far their exteriors are drawn (world units, 10 = 1 m; capped by the fog; 0 = only the load radius)" };
 constexpr float kFarFade = 0.15f;	// MINE: the share of the far distance the exteriors dither out over
 const cfg::Bool kSignsIndoors{ cfg::Group{ "Interiors" }, "render.signs_indoors", true, "Display building signs while indoors: on by default (the original): a building's outside signs (shop and bar signs) keep drawing while it is cut to a floor; off hides them until the roof view" };
-const cfg::Bool kCutShadows{ cfg::Group{ "Indoor lighting (experimental)" }, "render.cut_shadows", true, "Floors the roof cut-away hides still cast their sun shadows (the room stays as dark as under the roof; on by default, user 2026-11-13, kenshi-jj3.3)" };
+[[maybe_unused]] const bool kRetiredCutShadows = (cfg::retire("render.cut_shadows", "render.cut_shadows is gone (kenshi-jj3.30): the cut-away floors and roof always cast their sun shadows"), true);
 const cfg::Bool kOpenWindows{ cfg::Group{ "Indoor lighting (experimental)" }, "render.open_windows", false,
 	"Experimental: leave out the small detached quads a building mesh closes its windows and openings with (textured from a dark patch of the atlas: the Storm House's four window barriers, the Watchtower's and Shack's alike), so the slits are see-through and the light bake sees the sky through them; default off" };
 const cfg::Bool kLeafSway{ cfg::Group{ "Detail" }, "render.leaf_sway", false, "A tree's leaves sway in the wind (off: the original, whose leaves do not move; edits are picked up while the client runs)" };
@@ -180,6 +181,11 @@ void WorldBuildings::init(const ResourceIndex* res, const MaterialLib* mats)
 		.src_factor_alpha = SG_BLENDFACTOR_ZERO, .dst_factor_alpha = SG_BLENDFACTOR_ONE };
 	pd.label = "buildings-glass";
 	pipGlass_ = sg_make_pipeline(&pd);
+	// the cut-away flip fade (renderFlip): the faces pipInterior_ drops, blended in at the depth test, no depth write
+	pd.depth.compare = SG_COMPAREFUNC_LESS_EQUAL;
+	pd.cull_mode = SG_CULLMODE_FRONT;
+	pd.label = "buildings-flip";
+	pipFlip_ = sg_make_pipeline(&pd);
 	pd.colors[0].blend = {};
 	pd.depth.compare = SG_COMPAREFUNC_LESS_EQUAL;
 	pd.depth.write_enabled = true;
@@ -316,6 +322,7 @@ void WorldBuildings::shutdown()
 	sg_destroy_pipeline(pipInterior_);
 	sg_destroy_pipeline(pipGlassDepth_);
 	sg_destroy_pipeline(pipGlass_);
+	sg_destroy_pipeline(pipFlip_);
 	sg_destroy_shader(shd_);
 	sg_destroy_pipeline(pipMaskFront_);
 	sg_destroy_pipeline(pipMaskBack_);
@@ -1484,6 +1491,19 @@ void WorldBuildings::updateFocus()
 	{
 		const int bi = o.instance >= 0 ? o.instance : floorableOf(o.building);
 		if (bi >= 0 && !sliced(bi)) { cuts_.push_back((uint32_t)bi); }
+#ifdef KCLIENT_DEV_TOOLS
+		if (bi < 0 && logFloor)	// kenshi-k16.2.355: a wire building the client has no floorable instance for (once per key)
+		{
+			static uint64_t last = 0;
+			if (last != o.building)
+			{
+				last = o.building;
+				const auto k = o.building ? data_.byKey.find(o.building) : data_.byKey.end();
+				printf("floor: wire building %llu has no floorable instance (%s%s)\n", (unsigned long long)o.building, k == data_.byKey.end() ? "not a placement key" : "placement known, maxFloor ",
+					k == data_.byKey.end() ? "" : std::to_string((int)data_.instances[k->second].maxFloor).c_str());
+			}
+		}
+#endif
 	}
 	int in = -1, autoFloor = -1;
 	if (hasLead)
@@ -2073,6 +2093,28 @@ bool WorldBuildings::partGeometry(uint32_t index, uint32_t k, bool withVerts, Pa
 int WorldBuildings::instanceFloor(uint32_t index) { return index < data_.instances.size() && data_.instances[index].parent >= 0 ? floorOfInstance(data_.instances[index]) : -1; }
 int WorldBuildings::instanceShown(uint32_t index) const { return index < data_.instances.size() && data_.instances[index].parent >= 0 ? shownOf((uint32_t)data_.instances[index].parent) : 3; }
 
+// dump floorables X Z R (kenshi-k16.2.355): the floorable buildings within R of the point, nearest first.
+std::string WorldBuildings::floorablesReport(double x, double z, double radius) const
+{
+	std::vector<std::pair<double, uint32_t>> near;
+	for (const uint32_t bi : topFloors_)
+	{
+		const BuildingInstance& b = data_.instances[bi];
+		const double d = std::hypot(b.x - x, b.z - z);
+		if (d <= radius) { near.push_back({ d, bi }); }
+	}
+	std::sort(near.begin(), near.end());
+	std::string out = "floorables: " + std::to_string(near.size()) + " within " + std::to_string((int)radius) + " u\n";
+	for (const auto& [d, bi] : near)
+	{
+		const BuildingInstance& b = data_.instances[bi];
+		char line[256];
+		snprintf(line, sizeof line, "floorable %s at %.0f %.0f %.0f maxFloor %d dist %.0f\n", data_.names[b.nameId].c_str(), b.x, b.y, b.z, (int)b.maxFloor, d);
+		out += line;
+	}
+	return out;
+}
+
 // dump cuts (kenshi-k16.2.332.1): every building the floor cut slices, its shown / top floor, the selector level.
 std::string WorldBuildings::cutsReport() const
 {
@@ -2195,6 +2237,35 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 	time_ = time;
 	advanceMotion();
 	for (int k = 0; k < 3; k++) { cam_[k] = cam[k]; }
+	// the eye ring of the cut-away flip fade, in wall-clock seconds (a paused game still orbits; a blocking scripted run takes the scripted time, frame / 60,
+	// so its shots are deterministic): the eye at each of 8 times back over kFlipFade
+	{
+		const double now = blocking ? time : std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+		if (!eyeHist_.empty())
+		{
+			const double* l = eyeHist_.back().p;
+			if (std::fabs(cam[0] - l[0]) + std::fabs(cam[1] - l[1]) + std::fabs(cam[2] - l[2]) > 200.0) { eyeHist_.clear(); }	// a jump (another character, a teleport) is not an orbit
+		}
+		eyeHist_.push_back({ now, { cam[0], cam[1], cam[2] } });
+		while (eyeHist_.size() > 2 && eyeHist_[1].t < now - kFlipFade - 0.05) { eyeHist_.pop_front(); }
+		flipMoving_ = false;
+		for (int k = 0; k < 8; k++)
+		{
+			const double t = now - (k + 1) * (double)kFlipFade / 8.0;
+			size_t i = eyeHist_.size() - 1;
+			while (i > 0 && eyeHist_[i - 1].t >= t) { i--; }
+			double p[3];
+			if (i == 0 || eyeHist_[i].t <= t) { std::copy(eyeHist_[i].p, eyeHist_[i].p + 3, p); }
+			else
+			{
+				const EyeSample& a = eyeHist_[i - 1], &b = eyeHist_[i];
+				const double u = (t - a.t) / (b.t - a.t);
+				for (int c = 0; c < 3; c++) { p[c] = a.p[c] + (b.p[c] - a.p[c]) * u; }
+			}
+			for (int c = 0; c < 3; c++) { flipEye_[k][c] = (float)(p[c] - cam[c]); }
+			flipMoving_ = flipMoving_ || std::fabs(flipEye_[k][0]) + std::fabs(flipEye_[k][1]) + std::fabs(flipEye_[k][2]) > 1e-3f;
+		}
+	}
 	fog_ = fogDist;
 	if (frame_ % 120 == 0) { evict(); }
 	const Stats prev = stats_;
@@ -2320,7 +2391,7 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 	}
 	const double maxDist = drawLimit > 0 ? drawLimit : std::min((double)fogDist, nearDist);	// lights and interior parts; exterior parts: farDist_
 
-	for (Group& g : groups_) { g.onlyShadow.clear(); g.inRange.clear(); g.outRange.clear(); g.glass.clear(); }
+	for (Group& g : groups_) { g.onlyShadow.clear(); g.inRange.clear(); g.outRange.clear(); g.glass.clear(); g.flip.clear(); }
 	lightCands_.clear();
 	placed_.clear();
 	size_t total = 0;
@@ -2388,9 +2459,9 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 				if (def.kind == 2 || (def.kind != 0 && !near)) { continue; }
 				if (def.sign && !furniture && shown < b.maxFloor && !kSignsIndoors.get()) { continue; }
 				if (rt.openHide && anyOpen) { continue; }	// the black cavity lining behind an opening this switch opened (render.open_windows; draw and shadow)
-				// render.cut_shadows: a part the floor cut hides is not drawn, but keeps casting its shadow (not the cut floor's black cap, not its lights / effects)
+				// a part the floor cut hides is not drawn, but keeps casting its shadow (not the cut floor's black cap, not its lights / effects)
 				const bool cutHidden = (furniture ? furnitureFloor : def.floor) > shown && !(def.sign && kSignsIndoors.get());	// a sign on a hidden floor still draws when the option is on (the original's signs ignore the cut)
-				if (cutHidden && (!kCutShadows.get() || def.blackCap || shadowFar <= 0)) { continue; }
+				if (cutHidden && (def.blackCap || shadowFar <= 0)) { continue; }
 				if (def.blackCap && def.floor == shown && shown < b.maxFloor) { continue; }	// the cut floor's black cap (BuildingPartDef::blackCap)
 				if (!cutHidden && (furniture || def.kind == 1 || night) && !c.far) { for (uint32_t k = 0; k < def.lightCount; k++) { addLight(b, ii, def, def.firstLight + k, cam, planes, maxDist); } }
 				for (uint32_t k = 0; k < def.effectCount && !c.far && !cutHidden; k++) { addEffect(b, ii, (int32_t)pid, &def, def.firstEffect + k, cam, planes); }
@@ -2422,7 +2493,7 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 					const bool limb = b.limb && def.limb;
 					const uint64_t key = limb ? (0x8000000000000000ull | ((uint64_t)ii << 8) | (uint64_t)(s & 0xff)) : (((uint64_t)pid << 16) | s);
 					auto [it, fresh] = groupIds_.emplace(key, (int)groups_.size());
-					if (fresh) { groups_.push_back({ pid, (int)s, {}, {}, {}, {}, 0 }); }
+					if (fresh) { groups_.push_back({ pid, (int)s, {}, {}, {}, {}, {}, 0 }); }
 					Group& g = groups_[it->second];
 					if (limb)
 					{
@@ -2449,6 +2520,11 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 					if (cursorOwner && vis) { idDraws_.push_back({ it->second, (uint8_t)(casts ? 0 : 1), (uint32_t)(dst.size() / kInstanceFloats), owner }); }
 					dst.insert(dst.end(), inst, inst + kInstanceFloats);
 					total++;
+					if (vis && flipMoving_ && !furniture && build == 0.0f && !glassy && shown < b.maxFloor && !cutHidden && cullsBackFaces(def) && !def.blackCap && !def.sign && total < kMaxInstances)
+					{
+						g.flip.insert(g.flip.end(), inst, inst + kInstanceFloats);	// the cut-away flip fade draws its back faces too (renderFlip)
+						total++;
+					}
 					if (!vis) { continue; }
 					stats_.submeshDraws++;
 					stats_.realTextured += rt.subTex[s] >= 0 && textures_[rt.subTex[s]].state == Ready;
@@ -2515,12 +2591,13 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 	for (size_t i = 0; i < groups_.size(); i++)
 	{
 		Group& g = groups_[i];
-		if (g.onlyShadow.empty() && g.inRange.empty() && g.outRange.empty() && g.glass.empty()) { continue; }
+		if (g.onlyShadow.empty() && g.inRange.empty() && g.outRange.empty() && g.glass.empty() && g.flip.empty()) { continue; }
 		g.first = (int)(frameData_.size() / kInstanceFloats);
 		frameData_.insert(frameData_.end(), g.onlyShadow.begin(), g.onlyShadow.end());
 		frameData_.insert(frameData_.end(), g.inRange.begin(), g.inRange.end());
 		frameData_.insert(frameData_.end(), g.outRange.begin(), g.outRange.end());
 		frameData_.insert(frameData_.end(), g.glass.begin(), g.glass.end());
+		frameData_.insert(frameData_.end(), g.flip.begin(), g.flip.end());
 		active_.push_back((int)i);
 	}
 	for (MaskGroup& g : maskGroups_)
@@ -2882,6 +2959,11 @@ int WorldBuildings::draw(uint32_t pid, int sub, sg_buffer inst, int instByteOffs
 	fs.fade[2] = (float)fadeMode;
 	std::copy(xray, xray + 4, fs.xray);
 	fs.misc[2] = def.featureMode == 4 ? 1.0f : 0.0f;	// FOLIAGE mode: COLOURING (vertex colour); otherwise lit like any StaticObject
+	if (flipPass_)
+	{
+		fs.flip[0] = kFlipFade / 8.0f;
+		std::copy(&flipEye_[0][0], &flipEye_[0][0] + 32, &fs.flip_eye[0][0]);
+	}
 	fs.misc2[0] = def.interior ? 1.0f : 0.0f;	// the dust coat takes the weather's `dust inside` (objects.hlsl INTERIOR, k16.2.202.1)
 	if (limbSkin)	// the wire's tint (SeveredLimbItem custom 2 / custom 3)
 	{
@@ -3176,6 +3258,25 @@ void WorldBuildings::renderGlass(const float mvp[16], const LightParams& light)
 	}
 }
 
+void WorldBuildings::renderFlip(const float mvp[16], const LightParams& light)
+{
+	if (!flipMoving_) { return; }
+	const float noBase[3] = {};
+	bool applied = false;
+	flipPass_ = true;
+	for (const int gi : active_)
+	{
+		const Group& g = groups_[gi];
+		if (g.flip.empty()) { continue; }
+		if (!applied) { drawstats::pipeline(pipFlip_); applied = true; }
+		const int before = (int)((g.onlyShadow.size() + g.inRange.size() + g.outRange.size() + g.glass.size()) / kInstanceFloats);
+		float fadeStart, fadeEnd;
+		fadeOf(g.part, fadeStart, fadeEnd);
+		draw(g.part, g.sub, instBuf_, (g.first + before) * (int)kInstanceBytes, (int)(g.flip.size() / kInstanceFloats), noBase, mvp, light, fadeStart, fadeEnd, 0, nullptr, nullptr);
+	}
+	flipPass_ = false;
+}
+
 void WorldBuildings::cursorRay(const double dir[3], bool on)
 {
 	for (int k = 0; k < 3; k++) { cursorDir_[k] = dir[k]; }
@@ -3429,6 +3530,12 @@ bool WorldBuildings::lightVolumes(const double cam[3], double radius, size_t max
 			std::lock_guard<std::mutex> lk(probeMu_);
 			const auto it = lampVis_.find(bi);
 			if (it != lampVis_.end()) { v.lamps = it->second.data; v.lampCount = it->second.count; }
+		}
+		if (sliced((int)bi))	// the same height aboveSlab hides parts at: the air above it belongs to the floors the cut hides (kenshi-jj3.26.11)
+		{
+			const int s = shownOf(bi);
+			const BInfo* info = s < std::min<int>(b.maxFloor, 3) ? infoFor(bi) : nullptr;
+			if (info && info->hasBounds) { v.cutY = info->floorY[s + 1] - 4; }
 		}
 		out.push_back(std::move(v));
 		if (out.size() >= max) { break; }

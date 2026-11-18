@@ -26,6 +26,7 @@ namespace ui
 		void update();	// every frame, before ui::frame
 		bool shown() const;
 		void show(bool on);
+		void showTab(const std::string& section);	// opens the window at that tab (the F8 panel's Keys button); an unknown section opens it as it was
 		// For scripted tests; null when out of range / unknown.
 		Widget* tab(size_t i) const { return i < tabs_.size() ? tabs_[i].button : nullptr; }
 		Widget* control(const std::string& key) const;	// a key row's: its first KeyField

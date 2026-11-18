@@ -604,7 +604,8 @@ struct App
 	uint64_t gearGroup = 0;		// the last moveAll group's id
 	uint64_t clockTick = 0;	// the last sim CLOCK applied to sky.clock (live: the sim owns the time; the sky advances it between frames)
 	double followDist = 60, followBase = 0, followOffset = 0;	// camera distance; smoothed camera yaw behind the character; the user's orbit on top
-	double followPulled = 1e9, followHold = 0, followBoom = 0;	// the collision boom (update_follow): the length the world allows it (1e9: free), seconds left before it may ease out
+	double followPulled = 1e9, followHold = 0, followBoom = 0, rtsPulled = 1e9, rtsHold = 0, rtsBoom = 0;
+	bool rtsLog = false;	// script `rtsboom log`: update_rts prints its boom each frame	// the collision boom (update_follow): the length the world allows it (1e9: free), seconds left before it may ease out
 	// The game camera (docs/CLIENT.md "Camera modes"): floating over the ground at rtsDist from focus, on yaw / pitch; centerId != 0 = auto-center on
 	// that character. Off = the debug free camera; follow (the hover / drive camera) overrides both.
 	bool rts = false;
@@ -620,6 +621,7 @@ struct App
 	bool autorun = false;
 	uint8_t driveSent = 0;
 	int strafeSent = 0;	// the strafe of the last drive order (mouse look + A / D, kenshi-k16.2.237.4)
+	double lookDx = 0;	// mouse-look pixels since the last frame's log line (kenshi-k16.2.237.9)
 	double headingSent = 0, driveAge = 0;	// seconds since the last drive order
 	bool charsReady = false;	// init_characters() ran (game data loaded): scenes may place their char= specs
 	Mods mods;
@@ -1334,9 +1336,9 @@ static const ogre::Mesh* move_marker()
 // The original draws nothing under a selected character and no route (kinspect selection_marker.md): our ring and route line are debug aids
 const cfg::Bool kSelectionRing{ cfg::Group{ "Markers" }, "markers.selection_ring", false, "Debug: a ring under each selected character (the original draws none)" };
 const cfg::Bool kNavOverlay{ cfg::Group{ "Navmesh" }, "debug.navmesh", false, "Debug: the client's navmesh as glowing edges round the camera focus (rims and gaps bright, doors coloured)" };
-const cfg::Float kSunShafts{ cfg::Group{ "Indoor lighting (experimental)", "shows in the cut-away view only with render.cut_shadows" }, "render.sun_shafts", 0.0, 0.0, 10.0, "Experimental (kenshi-jj3.7.1): visible sunbeams in the air inside buildings (a ray march against the sun's shadow map through the baked probe volumes of the nearest buildings); the value scales the haze density (0 = off, 1 = the default look). Needs render.cut_shadows to show in the cut-away view" };
+const cfg::Float kSunShafts{ cfg::Group{ "Indoor lighting (experimental)" }, "render.sun_shafts", 0.0, 0.0, 10.0, "Experimental (kenshi-jj3.7.1): visible sunbeams in the air inside buildings (a ray march against the sun's shadow map through the baked probe volumes of the nearest buildings); the value scales the haze density (0 = off, 1 = the default look)" };
 const cfg::Float kLampBeams{ cfg::Group{ "Indoor lighting (experimental)", "turns render.lamp_occlusion's baked lamp visibility on while above 0" }, "render.lamp_beams", 0.0, 0.0, 1.0, "Experimental, our own effect (kenshi-jj3.28.1; the original has no beams): a faint volumetric cone under each shaded hanging lamp (a spot light pointing down) in the air of the nearest baked buildings, in the lamp's colour, fading with distance and stopped at the lamp's own walls and floors by the baked lamp visibility (so it needs and switches on render.lamp_occlusion's bake). 1 is clearly fainter than render.sun_shafts 1; 0 = off" };
-const cfg::Float kDustMotes{ cfg::Group{ "Indoor lighting (experimental)", "shows in the cut-away view only with render.cut_shadows; works without render.sun_shafts" }, "render.dust_motes", 0.0, 0.0, 10.0, "Experimental (kenshi-jj3.8.1): drifting dust motes in the air of the nearest baked building that show only inside a sunbeam (the sun's shadow lookup of render.sun_shafts, no ambient); the value scales the mote count (0 = off, 1 = the default). Needs render.cut_shadows to show in the cut-away view" };
+const cfg::Float kDustMotes{ cfg::Group{ "Indoor lighting (experimental)", "works without render.sun_shafts" }, "render.dust_motes", 0.0, 0.0, 10.0, "Experimental (kenshi-jj3.8.1): drifting dust motes in the air of the nearest baked building that show only inside a sunbeam (the sun's shadow lookup of render.sun_shafts, no ambient); the value scales the mote count (0 = off, 1 = the default)" };
 #ifdef KCLIENT_DEV_TOOLS
 const cfg::Int kSunShaftsDebug{ cfg::Group{ "Light debug", "needs render.sun_shafts above 0", "Debug" }, "render.sun_shafts_debug", 0, 0, 8, "Debug (kenshi-jj3.7.3; needs render.sun_shafts > 0): 1 = the sun visibility the march reads, averaged over each view ray (white = lit air); 2 = the sun visibility at the scene surface (compare with the sunlit floor patch); 3 = the normal beams with the sun forced lit (the density check); 4 = the baked enclosure the indoor density follows, averaged over the ray; 5 = the volume weight (the probe box's edge ramp) along the ray; 6 = the indoor density gate x weight; 7 = the accumulated in-scatter x8; 8 = the density the march used x5 (a scale check)" };
 #endif
@@ -2874,6 +2876,47 @@ void set_follow(bool on)
 	set_follow_id(!app.sim.selected().empty() ? app.sim.selected()[0] : app.inspect);
 }
 
+// The collision boom (kenshi-k16.2.289.1; user 2026-11-15: a follow camera never hides the character; shared with the RTS camera's look-up,
+// kenshi-k16.2.353.1): a sphere kBoomRadius swept from the pivot back along the view to the wanted distance; solid world (terrain, walls, large building
+// shapes, foliage) shortens the boom to just before the contact, at once. Thin props (CollisionPick::thin) are not in the way: the occluder cone dithers
+// them (the frame's cone). It eases back out at `outRate` u/s once it has held kBoomHold s since the last blockage, so a post passed never makes it
+// jitter. `pulled`/`hold` are the caller's state (1e9: free). minLen is the shortest the boom is cut to; sweep false skips the world test (the boom only
+// eases out). Every constant is MINE.
+struct Boom { double len, allowed; std::string blocker; };
+Boom boom_step(const double pivot[3], const double back[3], double wanted, double minLen, double outRate, bool sweep, double dt, double& pulled, double& hold)
+{
+	constexpr double kBoomRadius = 3.0, kBoomMargin = 0.5, kBoomHold = 0.6, kGroundClear = 2.0, kStep = 3.0;	// u, u, s, u, u
+	double allowed = wanted;
+	std::string blocker;
+	float bbox[6] = {};
+	if (sweep)
+	{
+		if (double t; app.collide.sweep(pivot, back, allowed + kBoomMargin, kBoomRadius, t, bbox, app.scripted() ? &blocker : nullptr)) { allowed = std::max(t - kBoomMargin, minLen); }
+		else { blocker.clear(); }
+		if (char box[96]; app.scripted() && !blocker.empty()) { snprintf(box, sizeof box, " box %.0f %.0f %.0f - %.0f %.0f %.0f", bbox[0], bbox[1], bbox[2], bbox[3], bbox[4], bbox[5]); blocker += box; }
+		for (double d = kStep; d < allowed + kStep; d += kStep)	// the terrain: the first step under the ground, then the last one over it
+		{
+			const double l = std::min(d, allowed);
+			if (pivot[1] + back[1] * l < app.hm->height(pivot[0] + back[0] * l, pivot[2] + back[2] * l) + kGroundClear)
+			{
+				double lo = d - kStep, hi = l;
+				for (int i = 0; i < 6; i++)
+				{
+					const double m = 0.5 * (lo + hi);
+					(pivot[1] + back[1] * m < app.hm->height(pivot[0] + back[0] * m, pivot[2] + back[2] * m) + kGroundClear ? hi : lo) = m;
+				}
+				allowed = std::max(lo, minLen);
+				break;
+			}
+			if (l >= allowed) { break; }
+		}
+	}
+	if (allowed < std::min(pulled, wanted)) { pulled = allowed; hold = kBoomHold; }	// snap in
+	else if ((hold -= dt) <= 0) { pulled = std::min(pulled + outRate * dt, allowed < wanted ? allowed : 1e9); }	// ease out, slowly
+	if (pulled >= wanted) { pulled = 1e9; }
+	return { std::min(wanted, pulled), allowed, blocker };
+}
+
 // Follow camera: behind the character at followDist, its yaw smoothed towards the character's facing, or towards the route ahead so the corners
 // don't snap it; while driving the camera's yaw is the heading. Drive orders on change, steering at most at the tick rate.
 void update_follow(double dt)
@@ -2896,6 +2939,7 @@ void update_follow(double dt)
 		// A / D steer; stopped, they turn in place (drive 0 with the heading: the sim turns only a character in its drive hold)
 		// kenshi-k16.2.237.4: with mouse look held (the right button), A / D strafe (order 20's strafe, facing = the camera heading) and do not turn
 		const double ad = (held("camera_right") ? 1 : 0) - (held("camera_left") ? 1 : 0);
+		// SIMLINK sign as is (A = -1, D = +1). The sim's lateral is mirrored on screen until kenshi-k16.8.38 lands; the prediction's knav::Walker follows it.
 		const int strafe = app.look ? (int)ad : 0;
 		const double turn = app.look ? 0.0 : ad;
 		app.yaw += turn * kTurnRate * dt;
@@ -2905,6 +2949,7 @@ void update_follow(double dt)
 		const double heading = drive == 2 && !strafe ? yaw : heading_of(app.yaw);
 		if (drive != app.driveSent || strafe != app.strafeSent) { send_drive(drive, heading, strafe); }
 		else if ((drive || turn || strafe) && app.driveAge >= 1 / SimView::kTickRate && std::abs(wrap_angle(heading - app.headingSent)) > kMinHeadingStep) { send_drive(drive, heading, strafe); }
+		if (drive || strafe) { app.sim.aim(app.followId, wrap_angle(heading)); }
 		if (drive || turn || strafe)
 		{
 			app.followBase = app.yaw;
@@ -2945,50 +2990,27 @@ void update_follow(double dt)
 		app.followBase += dev * std::min(1.0, (kSmooth + 4.0 * std::abs(dev)) * dt);
 		app.yaw = app.followBase + app.followOffset;
 	}
-	if (app.scripted()) { printf("followcam: frame %llu cam_heading %.1f drawn_yaw %.1f diff %.1f route_look %.1f route %s drive %u\n", (unsigned long long)app.frames, heading_of(app.yaw) * 180.0 / M_PI, yaw * 180.0 / M_PI, wrap_angle(heading_of(app.yaw) - yaw) * 180.0 / M_PI, rawLook * 180.0 / M_PI, route && !route->points.empty() ? "yes" : "no", app.driveSent); }	// kenshi-k16.2.237.5: the camera's behind-heading against the drawn facing, per frame
+	{ static const bool followLog = std::getenv("KCLIENT_FOLLOWCAM_LOG") != nullptr; if (followLog && app.scripted()) { printf("followcam: frame %llu cam_heading %.1f drawn_yaw %.1f diff %.1f route_look %.1f route %s drive %u\n", (unsigned long long)app.frames, heading_of(app.yaw) * 180.0 / M_PI, yaw * 180.0 / M_PI, wrap_angle(heading_of(app.yaw) - yaw) * 180.0 / M_PI, rawLook * 180.0 / M_PI, route && !route->points.empty() ? "yes" : "no", app.driveSent); } }	// kenshi-k16.2.237.5: the camera's behind-heading against the drawn facing, per frame
+	if (app.scripted() && std::getenv("KDLOOK"))	// kenshi-k16.2.237.9: per frame mouse delta, sent / predicted / server heading, drawn yaw, camera yaw, eye
+	{
+		const simlink::Dynamic& d = app.sim.decoder().chars.at(app.followId).cur;
+		printf("dlook: %llu dx %.1f sent %.4f pred %.4f server %.4f serveryaw %.4f drawn %.4f cam %.4f pos %.2f %.2f eye %.2f %.2f %.2f\n", (unsigned long long)app.frames, app.lookDx, app.headingSent, app.sim.localHeading(), (double)d.heading, (double)d.yaw, yaw, heading_of(app.yaw), pos[0], pos[2], app.pos[0], app.pos[1], app.pos[2]);
+		app.lookDx = 0;
+	}
 	if (app.scripted() && app.frames % 10 == 0 && app.sim.predicting())
 	{
 		const simlink::Dynamic& d = app.sim.decoder().chars.at(app.followId).cur;
 		printf("predict: shown %.1f %.1f  server %.1f %.1f (tick %llu, drive %u)\n", pos[0], pos[2], d.pos[0], d.pos[2], (unsigned long long)d.tick, d.drive);
 	}
-	// The collision boom (kenshi-k16.2.289.1; user 2026-11-15: a follow camera never hides the character): a sphere kBoomRadius swept from the head
-	// pivot back along the view to the wanted distance; solid world (terrain, walls, large building shapes, foliage) shortens the boom to just before the
-	// contact, at once. Thin props (CollisionPick::thin) are not in the way: the occluder cone dithers them (the frame's cone, below). It eases back out
-	// at kBoomOut once it has held kBoomHold s since the last blockage, so a post passed never makes it jitter. Every constant is MINE.
-	constexpr double kBoomRadius = 3.0, kBoomMargin = 0.5, kBoomOut = 30.0, kBoomHold = 0.6, kBoomMin = 4.0, kGroundClear = 2.0, kStep = 3.0;	// u, u, u/s, s, u, u, u
+	constexpr double kBoomMin = 4.0;	// u
 	double f[3];
 	forward_vec(app.yaw, app.pitch, f);
 	const double pivot[3] = { pos[0], pos[1] + kEye, pos[2] };
 	const double back[3] = { -f[0], -f[1], -f[2] };
-	double allowed = app.followDist;
-	std::string blocker;
-	float bbox[6] = {};
-	if (double t; app.collide.sweep(pivot, back, allowed + kBoomMargin, kBoomRadius, t, bbox, app.scripted() ? &blocker : nullptr)) { allowed = std::max(t - kBoomMargin, kBoomMin); }
-	else { blocker.clear(); }
-	if (char box[96]; app.scripted() && !blocker.empty()) { snprintf(box, sizeof box, " box %.0f %.0f %.0f - %.0f %.0f %.0f", bbox[0], bbox[1], bbox[2], bbox[3], bbox[4], bbox[5]); blocker += box; }
-	for (double d = kStep; d < allowed + kStep; d += kStep)	// the terrain: the first step under the ground, then the last one over it
-	{
-		const double l = std::min(d, allowed);
-		if (pivot[1] + back[1] * l < app.hm->height(pivot[0] + back[0] * l, pivot[2] + back[2] * l) + kGroundClear)
-		{
-			double lo = d - kStep, hi = l;
-			for (int i = 0; i < 6; i++)
-			{
-				const double m = 0.5 * (lo + hi);
-				(pivot[1] + back[1] * m < app.hm->height(pivot[0] + back[0] * m, pivot[2] + back[2] * m) + kGroundClear ? hi : lo) = m;
-			}
-			allowed = std::max(lo, kBoomMin);
-			break;
-		}
-		if (l >= allowed) { break; }
-	}
-	if (allowed < std::min(app.followPulled, app.followDist)) { app.followPulled = allowed; app.followHold = kBoomHold; }	// snap in
-	else if ((app.followHold -= dt) <= 0) { app.followPulled = std::min(app.followPulled + kBoomOut * dt, allowed < app.followDist ? allowed : 1e9); }	// ease out, slowly
-	if (app.followPulled >= app.followDist) { app.followPulled = 1e9; }
-	const double boom = std::min(app.followDist, app.followPulled);
-	for (int k = 0; k < 3; k++) { app.pos[k] = pivot[k] + back[k] * boom; }
-	app.followBoom = boom;
-	if (app.scripted()) { printf("boom: len %.2f wanted %.2f allowed %.2f hold %.2f cam %.1f %.1f %.1f %s\n", boom, app.followDist, allowed, std::max(app.followHold, 0.0), app.pos[0], app.pos[1], app.pos[2], blocker.c_str()); }
+	const Boom b = boom_step(pivot, back, app.followDist, kBoomMin, 30.0, true, dt, app.followPulled, app.followHold);
+	for (int k = 0; k < 3; k++) { app.pos[k] = pivot[k] + back[k] * b.len; }
+	app.followBoom = b.len;
+	if (app.scripted()) { printf("boom: len %.2f wanted %.2f allowed %.2f hold %.2f cam %.1f %.1f %.1f %s\n", b.len, app.followDist, b.allowed, std::max(app.followHold, 0.0), app.pos[0], app.pos[1], app.pos[2], b.blocker.c_str()); }
 }
 
 // The floating camera on: from the free camera, the focus is where the view meets the ground; center = a character to auto-center on (0 = none).
@@ -3091,7 +3113,7 @@ void follow_retarget()
 void update_rts(double dt)
 {
 	constexpr double kOrbitRate = 54 * M_PI / 180.0, kTiltRate = 12 * M_PI / 180.0, kZoomRate = 1.5, kSmooth = 8, kTether = 2250, kCenterLift = 10.8;	// rad/s, rad/s, e-folds/s (MINE), 1/s (MINE), u, u
-	constexpr double kMinPitch = -66.9 * M_PI / 180.0, kMaxPitch = 11.5 * M_PI / 180.0;
+	constexpr double kMinPitch = -66.9 * M_PI / 180.0, kMaxPitch = 80.0 * M_PI / 180.0;	// the original stops at +11.5; past it the collision boom shortens the orbit (kenshi-k16.2.353.1)
 	const double panX = (held("camera_right") ? 1 : 0) - (held("camera_left") ? 1 : 0), panZ = (held("camera_forward") ? 1 : 0) - (held("camera_back") ? 1 : 0);
 	double at[3];
 	float hull[3];
@@ -3131,14 +3153,26 @@ void update_rts(double dt)
 	}
 	double f[3];
 	forward_vec(app.yaw, app.pitch, f);
-	for (int k = 0; k < 3; k++) { app.pos[k] = app.focus[k] - f[k] * app.rtsDist; }
-	const double lift = app.hm->height(app.pos[0], app.pos[2]) + std::min(0.2 * app.rtsDist, 20.0) + 10 - app.pos[1];
+	// Looking up (user 2026-11-18: look at the sky): the follow camera's collision boom (boom_step) shortens the orbit as the ground (indoors the
+	// floor, walls, ceiling) comes between the focus and the eye, and eases back out to rtsDist, the player's zoom, as the view tilts down. At
+	// or below the horizon the orbit is the original's, untouched.
+	const double back[3] = { -f[0], -f[1], -f[2] };
+	const Boom b = boom_step(app.focus, back, app.rtsDist, 0.0, std::max(30.0, 1.5 * app.rtsDist), f[1] > 0, dt, app.rtsPulled, app.rtsHold);
+	// The boom's length blends in over pitch 0..11.5 deg (smoothstep), so tilting up from the horizon never jumps the orbit (kenshi-k16.2.353.2);
+	// below 11.5 the ground lift below keeps the eye out of the ground, as the original did.
+	const double wt = std::clamp(app.pitch / (11.5 * M_PI / 180.0), 0.0, 1.0), w = wt * wt * (3 - 2 * wt);
+	const double len = app.rtsDist + (b.len - app.rtsDist) * w;
+	app.rtsBoom = len;
+	for (int k = 0; k < 3; k++) { app.pos[k] = app.focus[k] + back[k] * len; }
+	const double lift = app.hm->height(app.pos[0], app.pos[2]) + std::min(0.2 * len, 20.0) + 10 - app.pos[1];
 	if (lift > 0)
 	{
-		app.focus[1] += lift;
+		if (w < 1 || b.len >= app.rtsDist) { app.focus[1] += lift; }	// the original's: the focus rides up with the eye; a shortened boom lifts the eye alone, or the focus would climb
 		app.pos[1] += lift;
 	}
+	if (app.scripted() && app.rtsLog) { printf("rtsboom: pitch %.3f len %.2f dist %.1f allowed %.2f eye %.1f %.1f %.1f ground %.1f\n", app.pitch * 180.0 / M_PI, len, app.rtsDist, b.allowed, app.pos[0], app.pos[1], app.pos[2], app.hm->height(app.pos[0], app.pos[2])); }
 }
+
 
 // The screenshot key's folder: screenshot.dir, else the XDG data home's kclient/screenshots.
 std::filesystem::path shot_dir()
@@ -3551,7 +3585,11 @@ static dev::Context& dev_context()
 		app.squads, app.towns, app.townsReady, app.follow, app.rts, app.autorun, kNavOverlay, kNavPruned, debug_toggle,
 		app.opt.cmdline, app.opt.debug, app.look, app.weatherMix, app.followId, app.followDist, app.followOffset, app.focus, app.rtsDist, app.focusOn,
 		compass, camera_mode_name, keys_held, [] { return app.cursors.current(); }, clicks_report, pick_owner_report, hints_for_pick, dev_pick_screen,
-		camera_subject, build_mvp, shot_hud_text
+		camera_subject, build_mvp, [] {
+#ifdef KCLIENT_DEV_TOOLS
+			if (app.lightsPanel) { app.lightsPanel->show(true); }
+#endif
+		}, [] { app.options->showTab("Keys"); }, [] { app.wmap.full = !app.wmap.full; }, shot_hud_text
 #ifdef KCLIENT_DEBUG_VIEW
 		, app.debugView, app.debugSubscribed, app.infoChar, debug_tree_open, tree_state_value
 #endif
@@ -4078,6 +4116,7 @@ void exec_cmd(const Cmd& c)
 		else if (a[0] == "alt") { free_camera(); app.pos[1] = ground + atof(a[1].c_str()); }
 		else if (a[0] == "yaw") { app.yaw = atof(a[1].c_str()) * 3.14159265358979 / 180.0; }
 		else if (a[0] == "pitch") { app.pitch = atof(a[1].c_str()) * 3.14159265358979 / 180.0; }
+		else if (a[0] == "rtsboom") { app.rtsLog = atoi(a[1].c_str()) != 0; }	// update_rts prints pitch, boom length and eye height each frame
 		else if (a[0] == "portraits") { app.showPortraits = atoi(a[1].c_str()) != 0; }
 		else if (a[0] == "exposure") { app.opt.exposure = a[1] == "auto" ? 0.0 : atof(a[1].c_str()); }
 		else if (a[0] == "time") { app.sky.clock.setHours(atof(a[1].c_str())); }
@@ -6552,6 +6591,7 @@ static void logic_paths(FramePacket& pk)
 	if (app.follow) { update_follow(dt); }
 	else if (app.rts) { update_rts(dt); }
 	else { update_camera(dt); }
+	app.sim.setDriven(app.follow && app.sim.isPlayer(app.followId) ? app.followId : 0);	// direct drive: the drawn body's travel facing (kenshi-k16.2.237.10)
 	CPUSTAGE("camera");
 	if (app.sim.active())
 	{
@@ -11094,6 +11134,7 @@ void event(const sapp_event* e)
 			{
 				if (app.follow && !driving()) { app.followOffset += dx * 0.0025; }	// orbit; while driving, mouse look steers
 				else { app.yaw += dx * 0.0025; }
+				app.lookDx += dx;
 				app.pitch = std::fmax(-1.55, std::fmin(1.55, app.pitch - dy * 0.0025));
 			}
 		}

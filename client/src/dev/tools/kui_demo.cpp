@@ -87,8 +87,8 @@ const cfg::Text kProgressBars{ cfg::Group{ "HUD and labels" }, "ui.progress_bars
 const cfg::Bool kWindowRemember{ cfg::Group{ "Windows" }, "window.remember", true, "Remember the game window's position, size and fullscreen state per monitor layout and restore them at the next start (X11; best effort under Wayland)" };
 // Stand-ins for the host's sun shadow options (worldbuildings.cpp, main.cpp, shadow.cpp; kui_demo links none) for the options find check
 // (k16.2.227.1): a key, a key and help, help only. Our own help text, the keys and types as the host's.
-const cfg::Bool kCutShadows{ cfg::Group{ "Indoor lighting (experimental)" }, "render.cut_shadows", true, "Demo stand-in: the cut-away floors keep casting their shadows" };
-const cfg::Float kShadowSoft{ cfg::Group{ "Indoor lighting (experimental)", "needs render.cut_shadows" }, "render.shadow_soft", 0.0, 0.0, 10.0, "Demo stand-in: soft shadow edges, the sun's half angle" };
+const cfg::Bool kDemoToggle{ cfg::Group{ "Indoor lighting (experimental)" }, "render.demo_shadow_toggle", true, "Demo stand-in: a tick other rows need" };
+const cfg::Float kShadowSoft{ cfg::Group{ "Indoor lighting (experimental)", "needs render.demo_shadow_toggle" }, "render.shadow_soft", 0.0, 0.0, 10.0, "Demo stand-in: soft shadow edges, the sun's half angle" };
 const cfg::Bool kSunSmooth{ cfg::Group{ "Indoor lighting (experimental)" }, "render.sun_smooth", true, "Demo stand-in: the sun's shadow map follows the sun smoothly" };
 const cfg::Float kSunBounce{ cfg::Group{ "Indoor lighting (experimental)" }, "render.sun_bounce", 0.0, 0.0, 1.0, "Demo stand-in: light bounced off the lit ground" };
 
@@ -1525,7 +1525,7 @@ void build()
 	fl.wrap = true;
 	fl.rect = { 0, 0, 360, 0 };
 	ui::Panel& tb = root.add<ui::Panel>(ui::Look::kInset, 20);
-	tb.rect = { 560, 300, 300, 140 };
+	tb.rect = { 560, 300, 160, 140 };	// narrow: the progress bars (at 0.62 of the width) clear it at 5:4 (k16.3.41)
 	ui::Label& tl = tb.add<ui::Label>("Inset text box", "Kenshi_StandardFont_Medium");
 	tl.colour = ui::style().textColour(ui::Look::kInset, ui::State::kNormal, false);
 	ui::Panel& fd = root.add<ui::Panel>(ui::Look::kField, 0);
@@ -1611,6 +1611,16 @@ void script()
 	// The middle of row i of a list of n single-line rows.
 	struct Pt { float x, y; };
 	auto clickOn = [&](const ui::Widget* w, uint32_t mods = 0) { const ui::Rect& r = w->screen(); return click(r.x + r.w / 2, r.y + r.h / 2, mods); };
+	// The HUD's portrait bar paged until portrait i shows (a no-op while every portrait fits; k16.3.41).
+	auto pageTo = [&](size_t i)
+	{
+		ui::Widget* spanW = demo.hud->squadSpan();
+		for (int guard = 0; guard < 40 && !demo.hud->portrait(i)->shown(); guard++)
+		{
+			clickOn(demo.hud->squadArrow(demo.hud->squadFirst() > i ? -1 : 1));
+			spanW->place(spanW->screen(), ui::scale());
+		}
+	};
 	auto selectedIds = [] { std::string s; for (const ui::HudMember& m : demo.hs.squad) { if (m.selected) { s += std::to_string(m.id) + " "; } } return s; };
 	auto check = [](bool ok, const char* what) { printf("kui_demo script: %s %s\n", ok ? "ok  " : "FAIL", what); if (!ok) { demo.failed = true; } };
 	if (demo.frame == 1)	// a portrait image on Greenlander (a stand-in texture, the straw hat's icon: the host's are Portraits::get cells)
@@ -1691,9 +1701,42 @@ void script()
 			const ui::Rect& r = demo.hud->medicalBar(0)->screen();
 			check(click(r.x + r.w / 2, r.y + r.h / 2), "medical panel: a bar takes the mouse (tooltip), not the world");
 		}
+		{
+			// The bottom-centre column spans the space between the corner clusters at any aspect (k16.3.41): the medical panel left of it, the
+			// diamonds and shortcuts right; the tabs and the portrait bar inside it. Portraits that don't fit page behind < > arrows.
+			const ui::Hud& h = *demo.hud;
+			const ui::Rect span = h.squadSpan()->screen(), bar = h.squadBar()->parent()->screen(), tabs = h.squadTab(0)->parent()->screen();
+			const float u = ui::scale();
+			const float right = std::min(h.shortcutsPanel()->screen().x, std::min(h.floorDiamond()->screen().x, h.moveSpeedDiamond()->screen().x));
+			check(span.x >= h.medicalPanel()->screen().right() + 8 * u - 1 && span.right() <= right - 8 * u + 1 && bar.x >= span.x - 1 && bar.right() <= span.right() + 1
+				&& tabs.x >= span.x - 1 && tabs.right() <= span.right() + 1 && std::abs(bar.x + bar.w / 2 - (span.x + span.w / 2)) <= 1,
+				"squad bar: centred in the space between the medical panel and the diamonds / shortcuts, the tabs and portraits inside it");
+			const ui::Widget* prev = h.squadArrow(-1);
+			const ui::Widget* next = h.squadArrow(1);
+			size_t shownN = 0;
+			for (size_t i = 0; h.portrait(i); i++) { shownN += h.portrait(i)->shown(); }
+			const size_t n = demo.hs.squad.size();
+			if (shownN == n) { check(!prev->shown() && !next->shown() && h.squadFirst() == 0, "squad bar: every portrait fits, no page arrows"); }
+			else
+			{
+				check(prev->shown() && next->shown() && !prev->enabled && next->enabled && shownN >= 1 && h.portrait(0)->shown() && !h.portrait(n - 1)->shown(),
+					("squad bar: " + std::to_string(shownN) + " of " + std::to_string(n) + " portraits shown, the arrows at its ends, < off at the start").c_str());
+				ui::Widget* spanW = h.squadSpan();
+				auto relayout = [&] { spanW->place(spanW->screen(), u); };
+				const ui::Rect p0 = h.portrait(0)->screen();
+				send(SAPP_EVENTTYPE_MOUSE_MOVE, p0.x + p0.w / 2, p0.y + p0.h / 2);
+				send(SAPP_EVENTTYPE_MOUSE_SCROLL, p0.x + p0.w / 2, p0.y + p0.h / 2, -1);
+				relayout();
+				check(h.squadFirst() == 1 && !h.portrait(0)->shown() && h.portrait(1)->shown() && prev->enabled, "squad bar: the wheel over it pages one portrait on");
+				check(clickOn(prev) && (relayout(), h.squadFirst() == 0 && h.portrait(0)->shown()), "squad bar: < pages back");
+				check(clickOn(next) && (relayout(), h.squadFirst() == 1), "squad bar: > pages on");
+			}
+		}
+		pageTo(2);
 		check(clickOn(demo.hud->portrait(2)) && selectedIds() == "102 ", "portrait click selects only that character (through its image)");
 		check(demo.hud->portraitInitial(2)->text.empty() && demo.hud->portraitInitial(1)->text == "R" && static_cast<ui::Button*>(demo.hud->portrait(1))->text.empty(),
 			"a portrait image replaces the initial; none keeps it");
+		pageTo(3);
 		check(clickOn(demo.hud->portrait(3), SAPP_MODIFIER_SHIFT) && selectedIds() == "102 103 ", "Shift + portrait click adds to the selection");
 	}
 	if (demo.frame == 4)	// the toggles follow the selection a frame later, as with the sim
@@ -1843,6 +1886,7 @@ void script()
 			demo.hud->update(hs);
 			check(!h.medicalName().empty() && !h.medicalName().starts_with("Wanderer"), "inspect focus: cleared, the selection's member again");
 		}
+		pageTo(2);
 		demo.hoverMe = demo.hud->portrait(2);
 		const ui::Rect& r = demo.hoverMe->screen();
 		send(SAPP_EVENTTYPE_MOUSE_MOVE, r.x + r.w / 2, r.y + r.h / 2);
@@ -2358,7 +2402,7 @@ void script()
 				check(!windowTab && got == "row named on off on", ("options: window.remember is an Interface row (no Window tab), its tick sets the key (" + got + ")").c_str());
 			}
 			// Groups (kenshi-k16.2.244.2): Graphics has a header per group, the stand-ins under Indoor lighting (experimental); the stand-in's needs
-			// note (our own, "needs render.cut_shadows") shows under its row by the label, "needs Cut shadows" (k16.2.244.7), dimmed while render.cut_shadows is off.
+			// note (our own, "needs render.demo_shadow_toggle") shows under its row by the label, "needs Demo shadow toggle" (k16.2.244.7), dimmed while render.demo_shadow_toggle is off.
 			{
 				ui::Widget *gfx = nullptr, *iface = nullptr;
 				for (size_t i = 0; o.tab(i); i++)
@@ -2382,10 +2426,10 @@ void script()
 					{
 						got += " " + note->text;
 						const float on = note->colour.a;
-						cfg::setUser("render.cut_shadows", "off");
+						cfg::setUser("render.demo_shadow_toggle", "off");
 						o.update();
 						const float off = note->colour.a;
-						cfg::setUser("render.cut_shadows", "on");
+						cfg::setUser("render.demo_shadow_toggle", "on");
 						o.update();
 						got += off < on && note->colour.a == on ? " dims" : " no dim";
 					}
@@ -2393,7 +2437,7 @@ void script()
 					o.update();
 					ui::frame(0);
 				}
-				check(got == "group note needs Cut shadows dims", ("options: Graphics groups under headers, a needs note under its row that dims while unmet (" + got + ")").c_str());
+				check(got == "group note needs Demo shadow toggle dims", ("options: Graphics groups under headers, a needs note under its row that dims while unmet (" + got + ")").c_str());
 			}
 			// The Find bar (k16.2.227.1): Ctrl+F focuses the field; typing 'shadow' goes to the first match and shows 'n of m'; Enter steps through
 			// every match across the tabs (the tab switched, the row in view and highlighted) and wraps; Shift+Enter and PREVIOUS go back; no tab
@@ -2466,7 +2510,7 @@ void script()
 					if (tabsSeen.find("," + t) == std::string::npos) { tabsSeen += "," + t; }
 				}
 				const size_t tabCount = std::count(tabsSeen.begin(), tabsSeen.end(), ',') / 2;
-				check(stepped && o.hit() == start && tabCount >= 2 && got.find("render.cut_shadows ") != std::string::npos,
+				check(stepped && o.hit() == start && tabCount >= 2 && got.find("render.demo_shadow_toggle ") != std::string::npos,
 					("options find: Enter steps through every match across " + std::to_string(tabCount) + " tabs, each shown, highlighted, nothing hidden, and wraps (" + got + ")").c_str());
 				// Back: Shift+Enter and PREVIOUS, wrapping from the first to the last.
 				for (size_t k = 0; k < n && o.hit() != 0; k++) { key(SAPP_KEYCODE_ENTER); }
@@ -2482,16 +2526,16 @@ void script()
 				settle();
 				check(nextB && o.hit() == (int)n - 1, "options find: NEXT goes to the next match");
 				// A highlighted row's control still works, and the find stays.
-				for (size_t k = 0; k < n && o.highlighted() != "render.cut_shadows"; k++) { o.step(true); }
+				for (size_t k = 0; k < n && o.highlighted() != "render.demo_shadow_toggle"; k++) { o.step(true); }
 				settle();
-				ui::Widget* cs = o.control("render.cut_shadows");
-				const bool was = kCutShadows.get();
+				ui::Widget* cs = o.control("render.demo_shadow_toggle");
+				const bool was = kDemoToggle.get();
 				const int at = o.hit();
-				const bool clicked = o.highlighted() == "render.cut_shadows" && cs && clickOn(cs);
+				const bool clicked = o.highlighted() == "render.demo_shadow_toggle" && cs && clickOn(cs);
 				settle();
-				check(clicked && kCutShadows.get() != was && o.query() == "shadow" && o.hit() == at && o.highlighted() == "render.cut_shadows",
+				check(clicked && kDemoToggle.get() != was && o.query() == "shadow" && o.hit() == at && o.highlighted() == "render.demo_shadow_toggle",
 					"options find: the highlighted row's tick sets its option, the find stays on it");
-				cfg::setUser("render.cut_shadows", was ? "on" : "off");
+				cfg::setUser("render.demo_shadow_toggle", was ? "on" : "off");
 				// Ctrl+F (the tick has the keyboard's window) selects the field's text: a new word replaces it; no match reads '0 matches'.
 				ui::focus(o.window());
 				const bool ctrlF2 = shiftKey(SAPP_KEYCODE_F, SAPP_MODIFIER_CTRL);
@@ -2752,9 +2796,10 @@ void script()
 	{
 		{
 			const ui::Widget* p = demo.hud->shortcutPanel();
+			// hud.cpp anchors it bottom-right (halign/valign kEnd), rect.x units in from the window's right edge: the same rule at any aspect.
 			const ui::Widget* b = demo.hud->shortcutButton(1);
 			const float s = ui::scale();
-			check(p && b && b->tip() == "Character stats (C)" && std::fabs(p->screen().right() - (sapp_widthf() / 2 + 471 * s)) < 2
+			check(p && b && b->tip() == "Character stats (C)" && std::fabs(p->screen().right() - (sapp_widthf() - p->rect.x * s)) < 2
 				&& std::fabs(p->screen().bottom() - sapp_heightf()) < 2, ("hud: the shortcut panel's place and key tooltips (" + (b ? b->tip() : "") + ")").c_str());
 		}
 		demo.opts->show(false);
@@ -3189,7 +3234,9 @@ void script()
 	if (demo.frame == 40)
 	{
 		const float w = demo.hud->squadTab(0)->preferred().w;
-		check(demo.hud->squadTab(5) && w < 200 && std::abs(w * 6 + 4 * 5 - 762) < 6, ("hud: six squad tabs shrink to share the header (" + std::to_string(w) + ")").c_str());
+		const float header = std::min(762.0f, demo.hud->squadSpan()->screen().w / ui::scale());
+		check(demo.hud->squadTab(5) && w < 200 && std::abs(w * 6 + 4 * 5 - header) < 6,
+			("hud: six squad tabs shrink to share the header, 762 or the span if narrower (" + std::to_string(w) + ")").c_str());
 		ui::focus(sw.window());
 		check(key(SAPP_KEYCODE_ESCAPE) && !sw.shown(), "squads: Escape closes it");
 		demoSquads();
@@ -4167,8 +4214,10 @@ void script()
 		const float u = ui::scale();
 		check(!demo.hud->hintText().empty() && demo.hud->hintText() == demo.hud->medicalBar(4)->tip() && demo.hud->hintBox()->visible,
 			"hud tips: a hovered medical bar's tip shows in the fixed box");
-		check(b.x >= m.right() && std::abs(b.bottom() - (ui::root().screen().bottom() - 199 * u)) <= 1 && std::abs(b.w - 398 * u) <= 1 && b.bottom() <= run.y
-			&& (!tab || b.bottom() <= tab->screen().y), "hud tips: the box 398 wide, 199 off the bottom, right of the medical panel, above RUN and the squad tabs");
+		check(b.x >= m.right() && std::abs(b.bottom() - (ui::root().screen().bottom() - 199 * u)) <= 1 && b.w <= 398 * u + 1 && b.bottom() <= run.y
+			&& (std::abs(b.w - 398 * u) <= 1 || b.right() <= std::min(demo.hud->moveSpeedDiamond()->screen().x, demo.hud->shortcutsPanel()->screen().x) - 8 * u + 1)
+			&& (!tab || b.bottom() <= tab->screen().y),
+			"hud tips: the box 398 wide (narrower only to end left of the diamonds), 199 off the bottom, right of the medical panel, above RUN and the squad tabs");
 		cfg::setUser("ui.hud_tips", "float");
 		demo.hud->update(demo.hs);
 		check(!demo.hud->hintBox()->visible && demo.hud->hintText().empty(), "hud tips: ui.hud_tips=float hides the box (the tips float again)");

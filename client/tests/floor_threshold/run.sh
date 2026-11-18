@@ -16,7 +16,6 @@ tree=$(cd "$here/../../.." && pwd)
 . "$tree/client/tools/server_bin.sh"	# pick_server: KSIM_SERVER, else the shared master build, else this build dir's (kenshi-k16.2.306.1)
 out=$(mkdir -p "${1:?out dir}" && cd "$1" && pwd)
 . "$(dirname "${BASH_SOURCE[0]}")/../../tools/ports.sh"
-port=$(pick_port "${PORT:-}") || exit 3
 build=${BUILD:-$tree/client/build}
 pick_server "$tree" "$build/cpp/OpenKenshi-server"	# 'server: shared PATH' / 'server: built (reason)'
 server=$SERVER
@@ -26,11 +25,9 @@ fail=0
 # start a scenario's server and run $d/script.txt against it; server.log and client.log land in $d
 run_live()
 {
-	local d=$1 scen=${2:-order_sounds} pid i
-	"$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:$port --scenario-file "$tree/scenarios/$scen.kscen" --debug-view > "$d/server.log" 2>&1 &
-	pid=$!
-	for i in $(seq 240); do grep -q "^listening" "$d/server.log" && break; ps -p $pid > /dev/null || break; sleep 0.5; done
-	server_listening "$d/server.log" $pid $port
+	local d=$1 scen=${2:-order_sounds} pid i port
+	start_server_on_free_port "$d/server.log" "$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:@PORT@ --scenario-file "$tree/scenarios/$scen.kscen" --debug-view	# a fresh port per start (kenshi-k16.2.358)
+	pid=$SERVER_PID; port=$SERVER_PORT
 	(cd "$tree" && timeout 580 nice -n 10 client/tools/headless.sh -- stdbuf -oL "$build/kclient" --simlink 127.0.0.1:$port --debug --script "$d/script.txt" > "$d/client.log" 2>&1)
 	kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
 }
@@ -53,7 +50,7 @@ hiddenCount() { grep -E "^  (label feet|body \(Characters pos\))" "$1/client.log
 # the frames the followed subject was not drawn (WorldBuildings' per-frame line "floor: subject hidden", kenshi-k16.2.236.15): zero outside a manual step
 frameHidden() { grep -c "^floor: subject hidden" "$1/client.log"; }
 cutDumps() { grep -c "^cut id " "$1/client.log"; }
-lastFloor() { grep -o "floor: Storm House.*" "$1/client.log" | tail -1; }
+lastFloor() { grep -o "floor: [A-Z][A-Za-z ]* shown .*" "$1/client.log" | tail -1; }	# any named building (the Small Shack too, kenshi-k16.2.355); the '- shown' no-lead default never matches
 # finish NAME DIR WANT_REGEX LAST_GLOB [KNOWN_REASON] [NO_INVARIANT]: WANT_REGEX matches the sequence, LAST_GLOB the last `dump floor` line, the invariant holds
 # (cut dumps present and none hidden; NO_INVARIANT=1 skips it for a case that steps the level itself). A KNOWN_REASON turns a miss into KNOWN-FAIL.
 finish()
@@ -415,7 +412,10 @@ run_start_indoors()
 # other_building (review section 5; kenshi-k16.2.236.14): out of one floorable building and into a second. order_sounds' Storm House stands alone
 # (the nearest other building with floors, the Hub's, is ~4000 u north), so this case plays in the Hub (journey_walk: the Wanderer alone at the
 # new-game start): into the Bar (a Storm House, -51181 2639), R steps the view up to 1 while the lead is on its floor 0 (the player's own step,
-# held), out of the Bar (the door ends the step: 0) and into the Storm House 550 u north (-51192 3192; floor 0, the view stays 0).
+# held), out of the Bar (the door ends the step: 0) and into the Small Shack 926 u north (-51271 3561, maxFloor 1; floor 0, the view stays 0).
+# The Storm House 550 u north of the Bar (-51192 3192) is a RUIN on this data (destroyed meshes, no interior, maxFloor 0): the client cuts nothing
+# there and the floor line is the empty default, so it is no fixture (kenshi-k16.2.355; `dump floorables X Z R` lists the floorable buildings near a point).
+# The shack is further, so the walk's dump window runs to 2800 (~926 u at walking pace after the Bar's door at ~1060).
 # 3, 0 (start), 1 (R), 0 (out of the door); the wire names the second building at the end, and the lead is never hidden.
 run_other_building()
 {
@@ -427,9 +427,9 @@ run_other_building()
 		dumps 400 880 60 "$id"
 		echo "900 key R down"; echo "901 key R up"
 		dumps 940 1000 60 "$id"
-		echo "1020 move -51190 3180"	# out of the Bar and into the second Storm House
-		dumps 1080 2400 60 "$id"
-		echo "2460 quit"
+		echo "1020 move -51271 3550"	# out of the Bar and into the Small Shack
+		dumps 1080 2800 60 "$id"
+		echo "2860 quit"
 	} > "$d/script.txt"
 	run_live "$d" journey_walk
 	a=$(grep -o "floortrace .* building [0-9]* floor" "$d/client.log" | grep -v ' building 0 ' | head -1 | grep -o 'building [0-9]*')

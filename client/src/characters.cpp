@@ -2789,7 +2789,10 @@ void Characters::locomote(Char& c, float dt, bool instant)
 	const bool acting = action && !c.actionDone;
 	// strafe split (14051de70): frac of the lower layer to `strafe lower`, played at play speed x lateral speed
 	const float sum = std::fabs(x) + std::fabs(s.strafe);
-	const float frac = s.combat && sum > 1 ? std::fabs(s.strafe) / sum : 0.0f;
+	// kenshi-k16.2.237.8: out of combat a body backing away (the direct drive's S) plays the forward walk LOWER clips reversed, but its upper body takes the
+	// idle pick (the carry / weapon pose, no arm swing): the reversed upper walk clips swung the arms wrong (user 2026-11-18)
+	const bool backUpper = !s.combat && x < 0;
+	const float frac = (s.combat || s.strafeDrive) && sum > 1 ? std::fabs(s.strafe) / sum : 0.0f;
 	float total[5] = {};
 	for (Layer& l : c.layers)
 	{
@@ -2823,10 +2826,11 @@ void Characters::locomote(Char& c, float dt, bool instant)
 						l.contacts.stride, s.strafe);
 				}
 			}
-			l.target = frac > 0 && stateFits(a) ? frac : 0.0f;
+			l.target = frac > 0 && (stateFits(a) || s.strafeDrive) ? frac : 0.0f;
 			continue;
 		}
 		if ((x == 0 && !s.combat) || a.idle || !stateFits(a)) { continue; }
+		if (backUpper && a.code == 1) { continue; }
 		// kenshi-k16.2.237.1 (MINE): the game data has no backward clip outside combat (`walk lower combat shuffle long BK` is the only backward set and its state
 		// filter is combat), so out of combat a body backing away (the direct drive's S) takes the forward walk / jog / run bands by its speed's magnitude; the
 		// layer's rate keeps the speed's sign, so the clip plays in reverse, upper body (arms) included, as the combat sets' negative play speeds do.
@@ -2835,7 +2839,7 @@ void Characters::locomote(Char& c, float dt, bool instant)
 		l.target = 1.0f / (1.0f + std::exp(-(2.0f * hat - 1.0f) * 10.0f)) * legFactor(a) * (a.upper ? weaponFactor(a) : 1.0f);
 		total[a.code] += l.target;
 	}
-	if (x == 0 || s.combat)
+	if (x == 0 || s.combat || backUpper)
 	{
 		// The idle pick as the original does it (kenshi-rwh.101, rwh101_idle_pick_static.md; the gates H, the order H for the stock set):
 		// - the gates are pass/fail: category (the idle list), `is combat mode` / `stealth mode` (2 or equal; nothing ranks an exact match over an `either`), `crouched`
@@ -2942,6 +2946,16 @@ void Characters::locomote(Char& c, float dt, bool instant)
 			phaseRate += l.target * l.info->play;
 			if (l.info->code == 0 && l.contacts.stride > 0) { strideSum += l.target * l.contacts.stride * (l.info->play < 0 ? -1.0f : 1.0f); }
 		}
+	}
+	// kenshi-k16.2.237.8: KCLIENT_DRIVELOG=<id> logs the chosen lower / upper clips and rates of that character each frame (the drive's S / strafe check)
+	if (static const char* dl = getenv("KCLIENT_DRIVELOG"); dl && (s.strafeDrive || x < 0) && (uint64_t)strtoull(dl, nullptr, 10) == s.id)
+	{
+		std::string o;
+		for (const Layer& l : c.layers)
+		{
+			if (l.target > 0.01f && l.info && !l.overlay) { char b[160]; snprintf(b, sizeof b, " [%s w%.2f r%.3f]", l.info->name.c_str(), (double)l.target, (double)l.rate); o += b; }
+		}
+		fprintf(stderr, "drivelog: combat %d move %.1f lat %.1f frac %.2f clips:%s\n", (int)s.combat, (double)s.move, (double)s.strafe, (double)frac, o.c_str());
 	}
 	// stride warp (task L4): the phase rate from the clips' planted stride (deriveContacts: the ground per cycle with the feet held), so a
 	// planted foot stays put. 434d373a's 1.4x band was too tight for a run (the clip's own cadence lags the sim's speed), but fdbea25c's

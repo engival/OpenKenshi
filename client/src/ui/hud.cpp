@@ -155,6 +155,53 @@ namespace ui
 		Bar* bar = nullptr;
 	};
 
+	// The bottom-centre column (RUN / STOP, the squad tabs, the portrait bar), stretched over the space between the corner clusters (update
+	// sets the margins), so it never runs under them at any aspect (kenshi-k16.3.41). Laid out into that span: the tabs share min(header,
+	// span); portraits that don't fit page behind < > arrows at the bar's ends (and the wheel over it).
+	class Hud::Bottom : public Box
+	{
+	public:
+		Bottom() : Box(true, 6) {}
+		Box* tabs = nullptr;
+		Box* squad = nullptr;
+		Button *prev = nullptr, *next = nullptr;
+		size_t first = 0;
+		static constexpr float kArrowW = 24;
+
+		void place(const Rect& px, float s) override
+		{
+			const float span = px.w / s;
+			const size_t nTabs = tabs->children().size();
+			for (const auto& t : tabs->children()) { t->rect.w = std::min(std::min(kTabsW, span) / nTabs - tabs->spacing, 200.0f); }
+			const auto& cols = squad->children();
+			const size_t n = cols.size();
+			float total = 0;
+			for (const auto& c : cols) { c->visible = true; total += c->preferred().w + squad->spacing; }
+			total -= squad->spacing;
+			const bool paged = squad->visible && n > 1 && total > span;
+			prev->visible = next->visible = paged;
+			if (!paged) { first = 0; }
+			else
+			{
+				const float pitch = total / n + squad->spacing * (n - 1) / n;	// a column and its gap
+				const size_t fit = (size_t)std::max(1.0f, std::floor((span - 2 * (kArrowW + squad->spacing) + squad->spacing) / pitch));
+				first = std::min(first, n - std::min(n, fit));
+				for (size_t i = 0; i < n; i++) { cols[i]->visible = i >= first && i < first + fit; }
+				prev->enabled = first > 0;
+				next->enabled = first + fit < n;
+			}
+			Box::place(px, s);
+		}
+
+		bool onScroll(float dy) override
+		{
+			if (!prev->visible) { return false; }
+			if (dy > 0 && prev->enabled) { first--; }
+			else if (dy < 0 && next->enabled) { first++; }
+			return true;
+		}
+	};
+
 	// The status panel's rows: label left, value right-aligned at the right edge, a fixed pitch.
 	class Hud::Rows : public Widget
 	{
@@ -327,11 +374,12 @@ namespace ui
 		speedAtlas_ = kSpeedIcons.get() == "atlas" && res::themed("gfx/Kenshi_UI.png") && res::images("Kenshi_CharacterSpeedSet");
 		moveSpeed_->picture = [this](const Rect& r, const Color& ink) { mover(r, ink, last_.moveSpeed, speedAtlas_); };
 
-		// Selection toggles above the squad bar, bottom centre.
-		Box& bottom = top_->add<Box>(true, 6);
-		bottom.halign = A::kCenter;
+		// Selection toggles above the squad bar, bottom centre: the column spans the space between the corner clusters (update sets its margins).
+		Bottom& bottom = top_->add<Bottom>();
+		bottom.halign = A::kStretch;
 		bottom.valign = A::kEnd;
 		bottom.rect = { 0, 16, 0, 0 };
+		bottom_ = &bottom;
 		toggles_ = &bottom.add<Box>(false, 4);
 		toggles_->halign = A::kCenter;
 		auto tick = [this](Widget& parent, HudToggle t, const char* caption, const char* tip)
@@ -349,8 +397,22 @@ namespace ui
 		stop.onClicked = [this] { if (act_.stop) { act_.stop(); } };
 		tabRow_ = &bottom.add<Box>(false, 4);
 		tabRow_->halign = A::kCenter;
-		squad_ = &bottom.add<Box>(false, 6);
-		squad_->halign = A::kCenter;
+		Box& strip = bottom.add<Box>(false, 6);	// the portrait bar between its page arrows
+		strip.halign = A::kCenter;
+		bottom.prev = &strip.add<Button>("", Look::kScrollLeft);
+		squad_ = &strip.add<Box>(false, 6);
+		bottom.next = &strip.add<Button>("", Look::kScrollRight);
+		for (Button* b : { bottom.prev, bottom.next })
+		{
+			b->rect = { 0, 0, Bottom::kArrowW, 72 };
+			b->visible = false;
+		}
+		bottom.prev->tooltip = "Earlier squad members";
+		bottom.next->tooltip = "Later squad members";
+		bottom.prev->onClicked = [&bottom] { if (bottom.first > 0) { bottom.first--; } };
+		bottom.next->onClicked = [&bottom] { if (bottom.next->enabled) { bottom.first++; } };
+		bottom.tabs = tabRow_;
+		bottom.squad = squad_;
 
 		// The ShortcutsPanel left of the OrdersPanel (Dark UI [1356,914,77,255], its foot off the screen): a button per window, the tooltip naming
 		// its key.
@@ -595,6 +657,9 @@ namespace ui
 		return { std::round(right - w), foot - h, w, h };
 	}
 
+	Widget* Hud::squadSpan() const { return bottom_; }
+	Widget* Hud::squadArrow(int side) const { return side < 0 ? bottom_->prev : bottom_->next; }
+	size_t Hud::squadFirst() const { return bottom_->first; }
 	Widget* Hud::portrait(size_t i) const { return i < portraits_.size() ? portraits_[i]->frame : nullptr; }
 	Widget* Hud::portraitMark(size_t i) const { return i < portraits_.size() ? portraits_[i]->face->mark : nullptr; }
 	const PortraitFace* Hud::portraitFace(size_t i) const { return i < portraits_.size() ? portraits_[i]->face : nullptr; }
@@ -661,9 +726,6 @@ namespace ui
 		claimTips(top_, box);
 		hint_->text = box ? claimedTip() : std::string();
 		hintBox_->visible = !hint_->text.empty();	// only while there is a tip (user, 2026-11-03; the original keeps it up)
-		hintBox_->rect.x = medical_->rect.x + medical_->preferred().w + 8;	// beside the medical panel, at its width
-		hintBox_->rect.h = std::max(72.0f, std::ceil(hint_->preferred().h) + 20);	// a long tip (a tag's) grows it upwards
-		hint_->rect.h = hintBox_->rect.h - 20;
 		moneyLabel_->visible = moneyAmount_->visible = s.money >= 0;
 		if (s.money >= 0) { moneyAmount_->text = trade::cats(s.money); }
 		const Color ink = res::colour("HudMoney", res::colour("Main"));	// Dark UI's grey on our panel, dark on the original's parchment
@@ -807,6 +869,21 @@ namespace ui
 
 		jobs_->visible = s.jobsValid;
 		jobs_->setJobs(s.jobs);
+
+		// The bottom-centre column's margins: the left cluster (status and medical panels, the medical one's room kept while it is hidden, so
+		// the bar doesn't jump with the selection) and the right one (the diamonds over the shortcuts; NOTES left of them in a playtest run),
+		// a panel gap off each.
+		bottom_->rect.x = medical_->rect.x + medical_->preferred().w + 8;
+		bottom_->rect.w = std::max(shortcuts_->rect.x + shortcuts_->rect.w, diamonds_->rect.x + diamonds_->rect.w) + 8;
+		if (notesBtn_ && notesBtn_->parent()->visible) { bottom_->rect.w = std::max(bottom_->rect.w, notesBtn_->parent()->rect.x + notesBtn_->parent()->rect.w + 8); }
+		// The tip box beside the medical panel, 398 wide where there is room; narrower (its text wrapping) where the screen leaves less before the
+		// right cluster (4:3, 5:4), never under the diamonds (k16.3.41). A long tip (a tag's) grows it upwards.
+		hintBox_->rect.x = bottom_->rect.x;
+		const float room = top_->screen().w / scale() - bottom_->rect.x - bottom_->rect.w;
+		hintBox_->rect.w = top_->screen().w > 0 ? std::clamp(room, 120.0f, 398.0f) : 398;
+		hint_->rect.w = hintBox_->rect.w - 24;
+		hintBox_->rect.h = std::max(72.0f, std::ceil(hint_->preferred().h) + 20);
+		hint_->rect.h = hintBox_->rect.h - 20;
 		if (s.spectating)	// no player character: nothing to order
 		{
 			for (Widget* w : { (Widget*)squad_, (Widget*)tabRow_, (Widget*)toggles_, orders_, money_, build_->parent(), (Widget*)moveSpeed_, (Widget*)shortcut_[0], (Widget*)shortcut_[4] }) { w->visible = false; }

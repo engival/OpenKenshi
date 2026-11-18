@@ -299,6 +299,10 @@ void debugCommand(const Context& cx, const std::string& id)
 		animationsCommand();
 		return;
 	}
+	if (id == "debug.lights") { cx.openLights(); debugReply = "LIGHTS window"; return; }
+	if (id == "debug.keys") { cx.openOptionsKeys(); debugReply = "Options: Keys"; return; }
+	if (id == "debug.full_map") { cx.toggleFullMap(); return; }
+	if (id == "debug.trails_window") { toggleTrailsPanel(); return; }
 	if (id == "debug.decisions")	// the DEBUG VIEW tree of the status panel's character, its decisions readable (k16.2.99)
 	{
 		if (!cx.infoChar) { debugReply = "no character in the status panel"; return; }
@@ -440,6 +444,10 @@ void debugPanelFrame(const Context& cx)
 #ifdef KCLIENT_DEBUG_VIEW
 	s.commands.push_back({ "debug.spawn_bandits", "Spawn bandit patrol", cx.sim.active() && cx.townsReady });
 	s.commands.push_back({ "animations", "Animations", labAvailable() });	// the animation browser window
+	s.commands.push_back({ "debug.lights", "Lights", true });	// the LIGHTS window (Shift+F7)
+	s.commands.push_back({ "debug.keys", "Keys", true });	// Options at the Keys tab: the key list
+	s.commands.push_back({ "debug.full_map", "Full map", true });	// the full-screen world map (Ctrl+M)
+	s.commands.push_back({ "debug.trails_window", "Trails window", true });	// the trails window (Shift+F6)
 	// the cheats (kenshi-h2v.6.4): a running game with a debug view. Before DEBUG_INFO says so (it comes with the squad overlay's subscribe) they
 	// are enabled like the weather buttons, and a view that is off answers its refusal on the reply line.
 	const bool cheatOn = cx.sim.active() && (!cx.debugView.infoSeen || cx.debugView.enabled);
@@ -868,6 +876,11 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 		const WorldBuildings::FloorStatus fl = buildings.floorStatus();
 		printf("floor: %s shown %d/%d lead %d (%s) level %d\n", fl.valid ? fl.name.c_str() : "-", fl.shown, fl.top, fl.leadFloor,
 			fl.leadFloor < 0 ? "no lead" : fl.following ? "following" : "not following", buildings.level());
+		return true;
+	}
+	if (a.size() == 4 && a[0] == "floorables")	// dump floorables X Z R: the floorable buildings near a point (kenshi-k16.2.355; stdout)
+	{
+		printf("%s", buildings.floorablesReport(atof(a[1].c_str()), atof(a[2].c_str()), atof(a[3].c_str())).c_str());
 		return true;
 	}
 	if (a.size() == 1 && a[0] == "cuts")	// dump cuts: every building the floor cut slices, with the floor shown of each (kenshi-k16.2.332.1; stdout)

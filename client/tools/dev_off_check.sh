@@ -94,21 +94,10 @@ RC=$?
 echo "dev_off_check: ok   a bare --screenshot with no server ($OUT/bare.png)"
 
 # 3. a new game: a server on the newgame scenario, the client joins it and reaches its first world frame
-[ -n "$PORT" ] || PORT=$(pick_port "") || fail "no free port"
-if ss -Hltn "sport = :$PORT" 2>/dev/null | grep -q .
-then
-	fail "port busy: $PORT is in use (--port N, or leave it out)"
-fi
-(cd "$ROOT" && exec "$SERVER" --data "$DATA" --listen "127.0.0.1:$PORT" --scenario newgame) >"$OUT/server.log" 2>&1 &
-SPID=$!
+# a fresh free port per start, a bind failure picks another (start_server_on_free_port, ports.sh; --port N keeps that port or fails; kenshi-k16.2.358)
+START_PORT=$PORT start_server_on_free_port "$OUT/server.log" env -C "$ROOT" "$SERVER" --data "$DATA" --listen "127.0.0.1:@PORT@" --scenario newgame
+SPID=$SERVER_PID; PORT=$SERVER_PORT
 trap 'kill "$SPID" 2>/dev/null; wait "$SPID" 2>/dev/null' EXIT
-for ((i = 0; i < 120; i++))
-do
-	grep -q '^listening ' "$OUT/server.log" && break
-	kill -0 "$SPID" 2>/dev/null || fail "the server exited early, see $OUT/server.log"
-	sleep 0.5
-done
-grep -q '^listening ' "$OUT/server.log" || fail "the server is not listening after 60 s, see $OUT/server.log"
 rm -f "$OUT/newgame.png"
 "$HEADLESS" -- "$KCLIENT" --data "$DATA" --simlink "127.0.0.1:$PORT" --screenshot "$OUT/newgame.png" >"$OUT/newgame.log" 2>&1
 RC=$?

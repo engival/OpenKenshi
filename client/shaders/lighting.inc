@@ -370,7 +370,7 @@ layout(binding=5) uniform light_volumes
 {
 	vec4 vol_head;	// x = volume count (0 = off), y = strength 0..1 (render.interior_light: 1 - its value), z = the open-ground albedo of the bake, w = strength 0..1 (render.sun_bounce)
 	vec4 vol_atlas;	// xyz = the sky atlas size in probes, w = the sun atlas' page width in probes (the latest bake; the page it replaces follows it along x)
-	vec4 vol_m[56];	// per volume, 7 vec4: [0..2] camera-relative position -> probe index (xyz coefficients, w offset); [3..5] the world -> building rotation rows (xyz), w = probes per axis;
+	vec4 vol_m[64];	// per volume, 8 vec4: [0..2] camera-relative position -> probe index (xyz coefficients, w offset); [3..5] the world -> building rotation rows (xyz), w = probes per axis;
 					// [6] x = atlas x offset in probes, y = blend-in 0..1 (a bake that just arrived fades in over a second), z = the sun bake's cross-fade 0..1, w = 1: the volume has a sun term
 };
 layout(binding=19) uniform texture3D vol_sh;	// rgba16f: the sky transfer SH (L00, L1y, L1z, L1x) x usable
@@ -408,7 +408,7 @@ vec2 light_vol(vec3 rel, vec3 n, out vec3 bounce)
 	const bool no_interior = term_off(LT_INTERIOR), no_bounce = term_off(LT_BOUNCE);
 	for (int i = 0; i < cnt; i++)
 	{
-		const vec4 a0 = vol_m[i * 7], a1 = vol_m[i * 7 + 1], a2 = vol_m[i * 7 + 2], r0 = vol_m[i * 7 + 3], r1 = vol_m[i * 7 + 4], r2 = vol_m[i * 7 + 5], inf = vol_m[i * 7 + 6];
+		const vec4 a0 = vol_m[i * 8], a1 = vol_m[i * 8 + 1], a2 = vol_m[i * 8 + 2], r0 = vol_m[i * 8 + 3], r1 = vol_m[i * 8 + 4], r2 = vol_m[i * 8 + 5], inf = vol_m[i * 8 + 6];
 		const vec3 g = vec3(dot(a0.xyz, rel) + a0.w, dot(a1.xyz, rel) + a1.w, dot(a2.xyz, rel) + a2.w);	// probe index
 		const vec3 top = vec3(r0.w, r1.w, r2.w) - 1.0;
 		// the weight: 1 inside, 0 past the grid's outer margin (two probes: the bake's margin round the building); no fade at the bottom (the floor sits on the grid's lowest layer)
@@ -444,7 +444,7 @@ layout(binding=25) uniform texture3D vol_lamp;
 
 float lamp_vis(vec3 rel, int code)
 {
-	const int vi = ((code - 1) >> 3) * 7, lamp = (code - 1) & 7;
+	const int vi = ((code - 1) >> 3) * 8, lamp = (code - 1) & 7;
 	const vec4 a0 = vol_m[vi], a1 = vol_m[vi + 1], a2 = vol_m[vi + 2], r0 = vol_m[vi + 3], r1 = vol_m[vi + 4], r2 = vol_m[vi + 5], inf = vol_m[vi + 6];
 	const vec3 g = vec3(dot(a0.xyz, rel) + a0.w, dot(a1.xyz, rel) + a1.w, dot(a2.xyz, rel) + a2.w);
 	const vec3 top = vec3(r0.w, r1.w, r2.w) - 1.0;

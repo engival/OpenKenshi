@@ -318,7 +318,7 @@ void Volumes::begin(const double cam[3], const std::vector<Volume>& in, float st
 								  { 2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x) },
 								  { 2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y) } };
 		const double d[3] = { cam[0] - v.origin[0], cam[1] - v.origin[1], cam[2] - v.origin[2] };
-		float* m = p + 8 + k * 28;
+		float* m = p + 8 + k * 32;
 		for (int i = 0; i < 3; i++)
 		{
 			const double rt[3] = { R[0][i], R[1][i], R[2][i] };	// the row i of R^T
@@ -332,6 +332,7 @@ void Volumes::begin(const double cam[3], const std::vector<Volume>& in, float st
 		m[25] = s.blend;
 		m[26] = s.fade;					// render.sun_bounce: 1 = the latest bake, ramping up from 0 as it replaces sunOld's page
 		m[27] = s.sunOffset >= 0 ? 1.0f : 0.0f;	// this volume has a sun term packed
+		m[28] = v.cutY < 1e29 ? (float)(v.cutY / g.spacing - g.min[1] / g.spacing) : 1e9f;	// [7].x: the floor cut's height in probe index y (kenshi-jj3.26.11); 1e9 = not cut
 	}
 }
 

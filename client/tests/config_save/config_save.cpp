@@ -82,8 +82,10 @@ int main(int argc, char** argv)
 			"t.bool=" + away + "\n"
 			"t.int=" + idef + "\n"
 			"another.build.key=1\n"
+			"t.gone=off\n"
 			"window.aaaa1111.rect=0,0,1280,720\n"
 			"window.aaaa1111.monitor=DP-1\n");
+		cfg::retire("t.gone", "t.gone is gone (a retired key, kenshi-jj3.30)");
 		cfg::load();
 		check(kBool.get() == (away == "on"), "the file's away value is in effect after load");
 		cfg::setUser("t.bool", away);	// the user toggles it back to the default
@@ -103,6 +105,7 @@ int main(int argc, char** argv)
 		f = read(path);
 		check(hasLine(f, "t.int=7"), "an option set away from its default is saved");
 		check(!hasKey(f, "t.bool"), "the dropped key is not written back on a later save");
+		check(!hasKey(f, "t.gone") && hasKey(f, "another.build.key"), "a retired key's line is gone after a save, another build's key stays (kenshi-jj3.30)");
 		// Grouped layout (kenshi-k16.2.244.1): the comment first, the option under its "# Section / Group" header, unknown keys at the end.
 		const size_t pComment = f.find("# a comment kept by a save"), pHead = f.find("# Debug / Test\nt.int=7"), pUnknown = f.find("another.build.key=1"), pWin = f.find("window.aaaa1111.rect");
 		check(pComment == 0, "the leading comment stays on top");

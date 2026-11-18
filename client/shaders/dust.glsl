@@ -101,14 +101,14 @@ float dust_indoor(vec3 p)
 	const int cnt = int(vol_head.x);
 	for (int i = 0; i < cnt; i++)
 	{
-		const vec4 a0 = vol_m[i * 7], a1 = vol_m[i * 7 + 1], a2 = vol_m[i * 7 + 2], r0 = vol_m[i * 7 + 3], r1 = vol_m[i * 7 + 4], r2 = vol_m[i * 7 + 5], inf = vol_m[i * 7 + 6];
+		const vec4 a0 = vol_m[i * 8], a1 = vol_m[i * 8 + 1], a2 = vol_m[i * 8 + 2], r0 = vol_m[i * 8 + 3], r1 = vol_m[i * 8 + 4], r2 = vol_m[i * 8 + 5], inf = vol_m[i * 8 + 6];
 		if (inf.y <= 0.0) { continue; }
 		const vec3 g = vec3(dot(a0.xyz, p) + a0.w, dot(a1.xyz, p) + a1.w, dot(a2.xyz, p) + a2.w);
 		const vec3 top = vec3(r0.w, r1.w, r2.w) - 1.0;
 		const float sx = smoothstep(0.0, 2.0, min(g.x, top.x - g.x)), sz = smoothstep(0.0, 2.0, min(g.z, top.z - g.z));
 		const float sy = smoothstep(0.0, 2.0, top.y - g.y) * clamp(g.y + 1.0, 0.0, 1.0);
 		const float w = sx * sy * sz;
-		if (w <= 0.0) { continue; }
+		if (w <= 0.0 || g.y > vol_m[i * 8 + 7].x) { continue; }	// no motes above the floor cut (kenshi-jj3.26.11)
 		const vec3 uvw = (clamp(g, vec3(0.0), top) + vec3(0.5 + inf.x, 0.5, 0.5)) / vol_atlas.xyz;
 		const vec2 u = textureLod(sampler3D(vol_use, vol_smp), uvw, 0.0).rg;	// r = usable, g = enclosure x usable
 		const float enclosure = clamp(u.g / max(u.r, 0.05), 0.0, 1.0);

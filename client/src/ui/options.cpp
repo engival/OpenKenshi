@@ -248,6 +248,12 @@ namespace ui
 
 	bool Options::shown() const { return window_->visible; }
 
+	void Options::showTab(const std::string& section)
+	{
+		show(true);
+		for (size_t t = 0; t < tabs_.size(); t++) { if (tabs_[t].section == section) { tabBar_->select(t); break; } }
+	}
+
 	void Options::show(bool on)
 	{
 		window_->visible = on;

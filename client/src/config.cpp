@@ -194,6 +194,7 @@ namespace cfg
 					continue;
 				}
 				if (r.opts.count(key)) { seenOption = true; continue; }	// re-emitted below, grouped
+				if (r.retired.count(key)) { seenOption = true; continue; }	// a retired key (cfg::retire) is warned about at load and dropped here (kenshi-jj3.30)
 				seenOption = true;
 				tail.push_back(line);	// another build's option, or a free-form key (window.<layout>.*)
 			}
@@ -420,7 +421,7 @@ namespace cfg
 			{ "camera", "Camera" },
 			{ "ui", "Interface" }, { "markers", "Interface" }, { "screenshot", "Interface" }, { "window", "Interface" }, { "key", "Keys" },
 			{ "combat", "Game" }, { "squad", "Game" }, { "xp", "Game" }, { "ai", "Game" }, { "sim", "Game" }, { "session", "Game" }, { "orders", "Game" },
-			{ "audio", "Audio" },
+			{ "audio", "Audio" }, { "drive", "Game" },
 			{ "mod", "Mods" },
 			{ "debug", "Debug" }, { "demo", "Debug" }, { "client", "Debug" },
 		};

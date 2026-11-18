@@ -90,7 +90,7 @@ void main()
 	const int steps = int(shaft.w);
 	for (int i = 0; i < cnt; i++)
 	{
-		const vec4 a0 = vol_m[i * 7], a1 = vol_m[i * 7 + 1], a2 = vol_m[i * 7 + 2], r0 = vol_m[i * 7 + 3], r1 = vol_m[i * 7 + 4], r2 = vol_m[i * 7 + 5], inf = vol_m[i * 7 + 6];
+		const vec4 a0 = vol_m[i * 8], a1 = vol_m[i * 8 + 1], a2 = vol_m[i * 8 + 2], r0 = vol_m[i * 8 + 3], r1 = vol_m[i * 8 + 4], r2 = vol_m[i * 8 + 5], inf = vol_m[i * 8 + 6];
 		// the ray in probe index space (light_vol's affine map): g(t) = g0 + gd t, the same t as the camera relative ray
 		const vec3 g0 = vec3(a0.w, a1.w, a2.w);
 		const vec3 gd = vec3(dot(a0.xyz, dir), dot(a1.xyz, dir), dot(a2.xyz, dir));
@@ -98,8 +98,19 @@ void main()
 		const vec3 inv = 1.0 / mix(gd, vec3(1e-6), lessThan(abs(gd), vec3(1e-6)));
 		const vec3 ta = (vec3(0.0) - g0) * inv, tb = (top - g0) * inv;
 		const vec3 tlo = min(ta, tb), thi = max(ta, tb);
-		const float t0 = max(max(tlo.x, tlo.y), max(tlo.z, 0.0));
-		const float t1 = min(min(thi.x, thi.y), min(thi.z, dist));
+		float t0 = max(max(tlo.x, tlo.y), max(tlo.z, 0.0));
+		float t1 = min(min(thi.x, thi.y), min(thi.z, dist));
+		// the floor cut (kenshi-jj3.26.11): the air above the cut height belongs to the floors the cut hides, so the march stops at that plane (probe index y); 1e9 = not cut
+		const float cut_g = vol_m[i * 8 + 7].x;
+		if (cut_g < 1e8)
+		{
+			if (abs(gd.y) < 1e-6) { if (g0.y > cut_g) { continue; } }
+			else
+			{
+				const float tc = (cut_g - g0.y) / gd.y;
+				if (gd.y > 0.0) { t1 = min(t1, tc); } else { t0 = max(t0, tc); }
+			}
+		}
 		if (t1 <= t0 || inf.y <= 0.0) { continue; }
 		const float dt = (t1 - t0) / float(steps);
 		for (int k = 0; k < steps; k++)

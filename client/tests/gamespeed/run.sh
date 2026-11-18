@@ -32,13 +32,11 @@ n=0
 for speed in $speeds; do
 	dir=$out/speed$speed
 	mkdir -p "$dir"
-	if [ -n "${PORT:-}" ]; then port=$((port0 + n)); else port=$(pick_port ""); fi; n=$((n + 1))
+	if [ -n "${PORT:-}" ]; then START_PORT=$((port0 + n)); fi; n=$((n + 1))
 	sed -e "s#OUTDIR#$dir#g" -e "s#@SPEED@#$speed#g" -e "s#@FRAMES@#$frames#g" "$here/script.txt" > "$dir/script.txt"
-	nice -n 10 "$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:$port --scenario-file "$tree/scenarios/bar_lure.kscen" \
-		--navworld "${KENSHI_NAVWORLD:?set KENSHI_NAVWORLD to a navworld bake dir}" > "$dir/server.log" 2>&1 &
-	pid=$!
-	for i in $(seq 240); do grep -q "^listening" "$dir/server.log" && break; ps -p "$pid" > /dev/null || break; sleep 0.5; done
-	server_listening "$dir/server.log" $pid $port
+	start_server_on_free_port "$dir/server.log" nice -n 10 "$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:@PORT@ --scenario-file "$tree/scenarios/bar_lure.kscen" \
+		--navworld "${KENSHI_NAVWORLD:?set KENSHI_NAVWORLD to a navworld bake dir}"	# a fresh port per start (kenshi-k16.2.358)
+	pid=$SERVER_PID; port=$SERVER_PORT
 	(cd "$tree" && XDG_DATA_HOME="$dir/xdg" nice -n 10 timeout 900 "$tree/client/tools/headless.sh" -W "$width" -H "$height" -- \
 		stdbuf -oL "$client" --simlink 127.0.0.1:$port --debug --script "$dir/script.txt" --no-shadows --no-grass --no-foliage --no-fog-volumes \
 		> "$dir/client.log" 2>&1)

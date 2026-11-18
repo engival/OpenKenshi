@@ -10,7 +10,6 @@ pick_server "$tree" "$tree/client/build/cpp/OpenKenshi-server"
 server=$SERVER
 base=$(mkdir -p "${1:?out dir}" && cd "$1" && pwd)
 . "$(dirname "${BASH_SOURCE[0]}")/../../tools/ports.sh"
-port=$(pick_port "${PORT:-}") || exit 3
 for mode in ${MODES:-b0 b0.3 b1 b1_sun}
 do
 	out="$base/$mode"; mkdir -p "$out"
@@ -25,10 +24,8 @@ do
 		sun) extra=(--set render.sun_shafts=1) ;;
 		occ) extra=(--set render.lamp_occlusion=true) ;;
 	esac
-	"$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:$port --scenario-file "$tree/scenarios/bar_lure.kscen" --debug-view > "$out/server.log" 2>&1 &
-	pid=$!
-	for i in $(seq 240); do grep -q "^listening" "$out/server.log" && break; ps -p $pid > /dev/null || break; sleep 0.5; done
-	server_listening "$out/server.log" $pid $port
+	start_server_on_free_port "$out/server.log" "$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:@PORT@ --scenario-file "$tree/scenarios/bar_lure.kscen" --debug-view	# a fresh port per start (kenshi-k16.2.358)
+	pid=$SERVER_PID; port=$SERVER_PORT
 	(cd "$tree" && timeout 300 nice -n 10 client/tools/headless.sh -- stdbuf -oL "$tree/client/build/kclient" --simlink 127.0.0.1:$port --debug "${extra[@]}" ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} --script "$out/script.txt" > "$out/client.log" 2>&1)
 	for tm in night:01:00 day:12:00; do n=${tm%%:*}; h=${tm#*:}; for k in 0 1 2 3 4; do grep -q "^time: $h" "$out/$n$k.txt" 2>/dev/null && { cp "$out/$n$k.png" "$out/$n.png"; break; }; done; [ -f "$out/$n.png" ] || echo "$mode: no $n shot at the right hour"; done
 	ps -o args= -p "$pid" 2>/dev/null | grep -q -- "--listen 127.0.0.1:$port" && kill "$pid"

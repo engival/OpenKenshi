@@ -182,6 +182,9 @@ namespace dev
 		Pick (*pickScreen)(double mx, double my, std::vector<PickSkip>& skipped);	// main.cpp's pick_screen: the sidecar's pick, `building` and skips included
 		uint64_t (*cameraSubject)();	// main.cpp's camera_subject (`.txt`: `tracked:`)
 		void (*buildMvp)(float mvp[16], float nearZ, float farZ);	// main.cpp's build_mvp (the trees capture's on-screen test)
+		void (*openLights)();	// main.cpp: the LIGHTS window (debug.lights_panel), shown
+		void (*openOptionsKeys)();	// main.cpp: Options at its Keys tab
+		void (*toggleFullMap)();	// main.cpp: the full-screen world map (debug.full_map, Ctrl+M)
 		std::string (*hudText)();	// main.cpp's shot_hud_text: "hud.KEY: TEXT" lines of the developer text block under --debug, "" otherwise (k16.2.335.1)
 #ifdef KCLIENT_DEBUG_VIEW
 		dbg::DebugView& debugView;	// App::debugView

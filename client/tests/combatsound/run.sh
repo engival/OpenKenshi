@@ -19,15 +19,11 @@ server=$SERVER
 mode=${1:?fight, beak, shot, female or goat}
 out=$(mkdir -p "${2:?out dir}" && cd "$2" && pwd)
 . "$(dirname "${BASH_SOURCE[0]}")/../../tools/ports.sh"
-port=$(pick_port "${PORT:-}") || exit 3
 case $mode in fight) kscen=dismember_fight;; beak) kscen=beak_open_ground;; shot) kscen=cage_prisoner;; female) kscen=female_fight;; goat) kscen=goat_fight;; *) echo "unknown mode $mode"; exit 2;; esac
 scenario=${KSCEN:-$tree/scenarios/$kscen.kscen}
-start_server()	# start_server PORT LOG: the server in the background and listened (SERVER_PID)
+start_server()	# start_server LOG: the server in the background on a fresh free port and listened (SERVER_PID, SERVER_PORT; kenshi-k16.2.358)
 {
-	"$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:$1 --scenario-file "$scenario" --debug-view > "$2" 2>&1 &
-	SERVER_PID=$!
-	for i in $(seq 240); do grep -q "^listening" "$2" && break; ps -p $SERVER_PID > /dev/null || break; sleep 0.5; done
-	server_listening "$2" $SERVER_PID $1
+	start_server_on_free_port "$1" "$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:@PORT@ --scenario-file "$scenario" --debug-view
 }
 # kenshi-k16.2.315: the beak world fights on its own - the Beak Things are hostile wild animals 20 u off and their first hit downs the
 # Wanderer inside the world's first second. The id probe is a client session too, and the sim ticks while it is connected, so a probe on
@@ -36,15 +32,13 @@ start_server()	# start_server PORT LOG: the server in the background and listene
 # session. The other modes start their fight from the script's own attack, so their probe stays on the measured server.
 if [ "$mode" = beak ]
 then
-	probe_port=$(pick_port) || exit 3
-	while [ "$probe_port" = "$port" ]; do probe_port=$(pick_port) || exit 3; done
-	start_server "$probe_port" "$out/probe-server.log"
-	probe_pid=$SERVER_PID
+	PORT= start_server "$out/probe-server.log"
+	probe_pid=$SERVER_PID; probe_port=$SERVER_PORT
 	if ! probe_char_ids "$tree/client/build" "$tree" "$probe_port" "$out/ids.txt"; then echo "run.sh: id probe found no characters (see $out/idprobe.log)" >&2; kill "$probe_pid" 2>/dev/null; exit 4; fi
 	kill "$probe_pid" 2>/dev/null; wait "$probe_pid" 2>/dev/null
 fi
-start_server "$port" "$out/server.log"
-pid=$SERVER_PID
+start_server "$out/server.log"
+pid=$SERVER_PID; port=$SERVER_PORT
 if [ "$mode" != beak ] && ! probe_char_ids "$tree/client/build" "$tree" "$port" "$out/ids.txt"; then echo "run.sh: id probe found no characters (see $out/idprobe.log)" >&2; kill "$pid" 2>/dev/null; exit 4; fi
 charids_fill "$here/$mode.txt" "$out/ids.txt" "$out" "$out/script.txt" || { kill "$pid" 2>/dev/null; exit 4; }
 cd "$tree" && KAUDIO_WAV="$out/mix.wav" timeout 300 client/tools/headless.sh -- stdbuf -oL "$tree/client/build/kclient" --simlink 127.0.0.1:$port --debug --set debug.audio_trace=1 --script "$out/script.txt" > "$out/client.log" 2>&1

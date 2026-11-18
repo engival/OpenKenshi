@@ -148,7 +148,7 @@ Mods, Debug) and a group inside it, so related settings sit together. The same g
 |---|---|---|
 | Graphics | Detail | `render.normal_maps`, `render.leaf_sway` |
 | Graphics | Draw distance | `render.building_far` |
-| Graphics | Indoor lighting (experimental) | `render.interior_light`, `render.shadow_soft`, `render.cut_shadows`, `render.sun_smooth`, `render.sun_bounce`, `render.sun_shafts`, `render.dust_motes`, `render.lamp_beams` |
+| Graphics | Indoor lighting (experimental) | `render.interior_light`, `render.shadow_soft`, `render.sun_smooth`, `render.sun_bounce`, `render.sun_shafts`, `render.dust_motes`, `render.lamp_beams` |
 | Graphics | Interiors | `render.interior_mask`, `render.signs_indoors` |
 | Graphics | Performance | `render.thread`, `render.char_instancing`, `gfx.vsync`, `gfx.fps_cap` |
 | Graphics | Shadows | `render.shadow_crossfade`, `render.shadow_cache` |
@@ -198,8 +198,8 @@ body of its race, `off` nothing until it is ready. When the real look is ready t
 
 Dependencies: `render.sun_bounce` needs `render.interior_light` below 1 (it does nothing while it is 1); `post.moonlight` needs `post.sky_ambient`;
 `camera.occluder_ghost` needs `camera.occluder_fade`; `post.eye_adapt` only shows indoors with `render.interior_light` below 1. `render.sun_shafts` and
-`render.dust_motes` are independent of each other and of `render.interior_light` and `render.sun_bounce`; both only show in the cut-away view
-with `render.cut_shadows` on (the default). All of Graphics / "Indoor lighting (experimental)" is off by default except `render.cut_shadows`,
+`render.dust_motes` are independent of each other and of `render.interior_light` and `render.sun_bounce`; both show in the cut-away view.
+All of Graphics / "Indoor lighting (experimental)" is off by default except
 `render.sun_smooth` and `render.interior_light` (0.25, the effect at the strength 0.75 gave before): to try the rest of the look, set
 `render.sun_bounce`, `render.sun_shafts` and `render.dust_motes` (for example 1) and `post.eye_adapt` on.
 
@@ -209,9 +209,7 @@ example `set Graphics`, `set indoor` (a group, the first letters of its name are
 **The saved file** (`kclient.cfg`) is written grouped: each group under a `# Section / Group` comment, only the settings that differ from the
 default, then other builds' keys and window positions at the end. `kclient --print-defaults` prints every option under the same headers.
 
-`render.cut_shadows` (on by default; settings file / `set`) makes the floors and roof that the cut-away hides while you are inside a building still
-cast their sun shadows, so the room is as dark as under the roof and sun only comes through the door, hatches and windows. Off, the
-building's shadow outside changes when the roof comes off.
+The floors and roof that the cut-away hides while you are inside a building still cast their sun shadows (always; the old `render.cut_shadows` setting is gone), so the room is as dark as under the roof and sun only comes through the door, hatches and windows. When you orbit the camera in the cut-away view, a wall that turns its back to you does not vanish at once: for a quarter of a second it fades out as see-through glass (clicks pass through it to the room).
 
 `render.signs_indoors` ("Display building signs while indoors", on by default, as the original; options popup) keeps a building's outside signs (shop and bar signs) drawing while the building is cut to a floor; off hides them until the roof view.
 
@@ -234,13 +232,13 @@ Experimental, off by default: `render.lamp_occlusion` (settings file / `set`) st
 
 Experimental, off by default: `render.shadow_soft` (sun half angle in degrees, 0 = off; settings file / `set`) makes the sun shadows near the camera soft the way real ones are: crisp where an object touches the surface it shadows, wider the farther the shadow falls from it (stair shadows on a wall read as a soft shape, not hard bars). The real sun is 0.27; 1.5 to 2 is an artistic, clearly soft look.
 
-Experimental, off by default: `render.sun_shafts` (density scale, 0 = off, 1 = the default look; settings file / `set`) draws sunbeams in the air of the nearest baked buildings (the same bake as `render.interior_light`, which it does not need below 1): a ray march against the sun's shadow map, so a beam runs from each door, window or roof hatch to the patch of floor it lights. Nothing outdoors, in rooms the sun does not enter, or at night. Needs `render.cut_shadows` (on by default) to show in the cut-away view.
+Experimental, off by default: `render.sun_shafts` (density scale, 0 = off, 1 = the default look; settings file / `set`) draws sunbeams in the air of the nearest baked buildings (the same bake as `render.interior_light`, which it does not need below 1): a ray march against the sun's shadow map, so a beam runs from each door, window or roof hatch to the patch of floor it lights. Nothing outdoors, in rooms the sun does not enter, or at night.
 
 Experimental, off by default: `post.eye_adapt` lets the auto exposure reach far lower (floor 0.02 instead of the original's 0.8, a dark room compensated only 85%), so with `render.interior_light` below 1 a room lit through its door reads bright inside and the doorway blows out; outdoors by day nothing changes. Eyes adapt at the game's rate, so walking in or out fades over a second or two.
 
 Experimental, off by default: `render.sun_bounce` (0..1, settings file / `set`; does nothing unless `render.interior_light` is below 1) adds the light the sun bounces off the floor and walls to the indoor ambient: the sun patch at the door lights the walls beside it warm, and a wall the sun never reaches stays as `render.interior_light` left it. It follows the sun: the nearest buildings that hold the camera or a player character re-bake as the sun moves (about 5 degrees, in the background on a worker thread), and the new bake fades in over a second. Nothing outdoors, in rooms the sun does not enter, or at night.
 
-Experimental, off by default: `render.dust_motes` (mote count scale, 0 = off, 1 = the default look; settings file / `set`) draws small dust motes drifting in the air of the nearest baked building that show only inside a sunbeam (the same sun shadow lookup as `render.sun_shafts`, which need not be on; no ambient, so a mote outside a beam is invisible). None outdoors or at night. Needs `render.cut_shadows` (on by default) to show in the cut-away view.
+Experimental, off by default: `render.dust_motes` (mote count scale, 0 = off, 1 = the default look; settings file / `set`) draws small dust motes drifting in the air of the nearest baked building that show only inside a sunbeam (the same sun shadow lookup as `render.sun_shafts`, which need not be on; no ambient, so a mote outside a beam is invisible). None outdoors or at night.
 
 Experimental, off by default, our own effect (the original has none): `render.lamp_beams` (0..1, 0 = off; settings file / `set`) draws a faint cone of light under each shaded hanging lamp (a spot light pointing down) in the air of the nearest baked buildings, in the lamp's colour, fading with distance and stopped at the lamp's own walls and floors (it switches on the baked lamp visibility of `render.lamp_occlusion` while above 0). At 1 it is clearly fainter than `render.sun_shafts` 1. Works at night and without `render.sun_shafts`.
 
@@ -384,7 +382,9 @@ box is ignored (no order, no cursor change) and the box keeps going; it works wh
 selection. `ui.style=original` draws the game's own box: a thin near-black outline with no fill.
 
 The portrait bar along the bottom centre holds the active squad's characters. A tab over it picks another of your
-squads. A portrait:
+squads. The bar and its tabs fit between the panels in the bottom corners at any window shape: on a narrow (4:3, 5:4) or
+crowded screen the tabs narrow, and portraits that don't fit page behind the < and > arrows at the bar's ends (or roll
+the mouse wheel over the bar). A portrait:
 
 - click — selects the character; Shift adds to the selection;
 - double-click — focuses the camera on the character (the camera then follows it: see "Following" below);
@@ -771,11 +771,14 @@ follows the selection; pin it (the caption's pin) and it stays on the character 
 - **Your own buildings** (anything your faction owns, built or still a site) are drawn where the sim puts them. A site starts as a pale dithered blue ghost and fills in from the ground up as the work progresses; a finished building is solid. The cursor over one is the **build** hammer while it is a site, the spanner when it is damaged, else the plain use cursor.
 - **Camera**: right-drag looks around, middle-drag orbits, the wheel zooms (and sets the fly speed of
   the free camera). The keyboard camera keys are in section 7.
+  The floating camera tilts up past the horizon, to about 80 degrees, so you can look at the sky: the original stops at 11.5. The
+  ground (indoors the floor, walls and ceiling) comes between the focus and the camera as it tilts, so the camera moves in toward the
+  focus, and eases back out to your zoom as you tilt down again.
 - **Direct drive**: `V`, or a double right click on one of your own characters, puts the camera behind that character
   at the default close distance, whatever the floating camera's zoom was (leaving and re-entering starts there again).
   `W` / `S` walk forward / back, `A` / `D` steer (stopped, they turn the character in place); with the right button held
   (mouse look) `A` / `D` strafe instead, sideways at half the walk speed with the body keeping its facing, and `W` / `S` + `A` / `D`
-  walk the diagonals (the forward walk / run clips play). The mouse looks. Any wheel step, `Home` or `End` leaves the drive (the floating camera on the same character, `W` `A` `S` `D` move the camera again) and zooms it that step. The camera never hides the character: a wall or the ground behind it pulls the camera in at once and it eases back
+  walk the diagonals (the forward walk / run clips play). The mouse looks. Option `drive.facing` (Options, Game: Direct drive; default `camera`): `travel` turns the drawn body to the way it is moving and plays the plain forward walk / run, so strafe, backpedal and the mouse are all camera-relative; where you go on screen is unchanged (only the animation). Any wheel step, `Home` or `End` leaves the drive (the floating camera on the same character, `W` `A` `S` `D` move the camera again) and zooms it that step. The camera never hides the character: a wall or the ground behind it pulls the camera in at once and it eases back
   out slowly; thin props (signs, rails, poles) fade to a see-through dither instead. Leave it with `V`, `Escape`, or a double right click on the character being driven: the camera returns to the
   floating view centred on it. While driving, the floor and move speed diamonds wear a gold rim.
   A single right click keeps its usual order; on your own character alone in the selection that is no order at all, and
@@ -804,7 +807,8 @@ These are development views. They exist only when the client runs with `--debug`
   lab, 6.2). Below them the cheats, with a running game and a debug view: `Heal`, `Knock out`, `Wake` and `Kill` each act
   on the character the status panel shows (none shown: the server's first player character) — heal every part and stand
   up, drop it with a knock-out, clear the knock-out, or bleed it out. `Decisions` opens that character's DEBUG VIEW
-  tree (6.4). The reply line under them says what the server answered (`ok`, or why it refused, e.g. `not down`).
+  tree (6.4). `Lights` opens the LIGHTS window (`Shift+F7`), `Trails window` the trails window (`Shift+F6`), `Full map` the
+  full-screen world map (`Ctrl+M`), and `Keys` opens Options at its Keys tab: the key list lives in Options > Keys, not in this panel. The reply line under them says what the server answered (`ok`, or why it refused, e.g. `not down`).
 - **Time** — `Dawn`, `Noon`, `Dusk`, `Midnight`, `+1h`, and beside them a round 24-hour dial: midnight at the bottom, noon
   at the top, the hours running clockwise (6 on the left, 18 on the right), daylight shaded gold, the hand at the game
   time. Click or drag on the dial to set that time (to the quarter hour, sent when you let go); its tooltip shows the
