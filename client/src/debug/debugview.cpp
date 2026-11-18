@@ -1,7 +1,7 @@
 #include "debug/debugview.hpp"
 
 #include "ksim/debugview/enums.hpp"
-#include "simlink_io.hpp"
+#include "net/simlink_io.hpp"
 
 namespace dbg
 {

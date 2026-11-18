@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cctype>
 
-#include "config.hpp"
+#include "app/config.hpp"
 #include "ui/icons.hpp"
 #include "ui/trade.hpp"
 #include "ui/ui.hpp"

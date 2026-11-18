@@ -8,10 +8,10 @@
 #include "sokol_gfx.h"
 #include "sokol_gl.h"
 #include "sokol_debugtext.h"
-#include "sky.hpp"	// LightParams
+#include "render/sky.hpp"	// LightParams
 #include "ui/widget.hpp"	// ui::PortraitRef: the offscreen image the browser window shows
 #include "dev/labframe.hpp"
-#include "renderqueue.hpp"
+#include "render/renderqueue.hpp"
 
 class Characters;
 class Shadow;

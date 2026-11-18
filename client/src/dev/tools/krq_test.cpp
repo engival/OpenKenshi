@@ -6,7 +6,7 @@
 #include <thread>
 #include <vector>
 
-#include "renderqueue.hpp"
+#include "render/renderqueue.hpp"
 
 namespace
 {

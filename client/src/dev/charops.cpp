@@ -11,13 +11,13 @@
 #include <utility>
 #include <vector>
 
-#include "characters.hpp"
-#include "collisionpick.hpp"
+#include "characters/characters.hpp"
+#include "input/collisionpick.hpp"
 #include "dev/debughost.hpp"
 #include "dev/devhooks.hpp"
 #include "kworld/heightmap.hpp"
-#include "shadow.hpp"
-#include "simview.hpp"
+#include "render/shadow.hpp"
+#include "net/simview.hpp"
 #include "ui/progressbars.hpp"
 
 namespace dev

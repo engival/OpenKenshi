@@ -11,8 +11,8 @@ fail=0
 ok() { echo "ok   $1"; }
 bad() { echo "FAIL $1"; fail=1; }
 
-c++ -std=c++20 -w -I"$HERE/src" -I"$HERE/third_party" -x c++ "$HERE/third_party/tinyfiledialogs/tinyfiledialogs.c" -x c++ "$HERE/src/datapicker.cpp" \
-	"$HERE/src/datadir.cpp" "$HERE/tests/datapicker_main.cpp" -o "$T/drv" || { echo "FAIL build"; exit 1; }
+c++ -std=c++20 -w -I"$HERE/src" -I"$HERE/third_party" -x c++ "$HERE/third_party/tinyfiledialogs/tinyfiledialogs.c" -x c++ "$HERE/src/app/datapicker.cpp" \
+	"$HERE/src/app/datadir.cpp" "$HERE/tests/datapicker_main.cpp" -o "$T/drv" || { echo "FAIL build"; exit 1; }
 
 mkdir -p "$T/good/data" "$T/bad" "$T/bin" "$T/home" "$T/cfg"
 touch "$T/good/data/gamedata.base"

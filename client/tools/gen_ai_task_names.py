@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the client's AI_TASK name table (src/aitask.hpp's aiTaskName) from docs/formats/AI_TASK_ENUMS.md.
+"""Generate the client's AI_TASK name table (src/net/aitask.hpp's aiTaskName) from docs/formats/AI_TASK_ENUMS.md.
 
 The doc is the generated source of truth (tools/ai_task_names.py writes it from kinspect's enum map), so the names are never
 hand-typed here: this parses its table at build time and emits one row per value, the value being the array index. Run by
@@ -50,7 +50,7 @@ def main() -> int:
 	rows = '\n'.join('\t\t%s,	// %d' % (literal(names[v]), v) for v in range(top + 1))
 	text = (
 		'// Generated from docs/formats/AI_TASK_ENUMS.md by client/tools/gen_ai_task_names.py: do not edit.\n'
-		'#include "aitask.hpp"\n'
+		'#include "net/aitask.hpp"\n'
 		'\n'
 		'namespace\n'
 		'{\n'

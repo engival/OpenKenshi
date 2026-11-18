@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "config.hpp"
+#include "app/config.hpp"
 #include "ui/widget.hpp"
 
 // The options window (docs/UI.md): every declared cfg option, one tab per key prefix (audio, ui, mod, ...), built from cfg::list(), so a new option

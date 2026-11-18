@@ -54,7 +54,7 @@ BUILD=$PWD/client/build-debug client/tests/sellburst/run.sh smoke OUT   # a live
 The unoptimised Debug build also aborts on libstdc++'s `operator[]` range checks (seen with GCC 15), where release reads past the end.
 
 **ThreadSanitizer build (the render thread's hand-off).** `render.thread=lockstep` puts `logic_frame` on its own thread
-(`src/logicthread.hpp`); `-DKCLIENT_TSAN=ON` builds every target with `-fsanitize=thread` for the races between the two. Keep it in its own
+(`src/app/logicthread.hpp`); `-DKCLIENT_TSAN=ON` builds every target with `-fsanitize=thread` for the races between the two. Keep it in its own
 directory, `client/build-tsan` (git-ignored). `client/tests/tsan/run.sh` configures and builds that directory, then runs the scene test and a
 scripted lockstep scenario under it and writes the reports' summary to `OUT/summary.txt`:
 
@@ -70,16 +70,16 @@ The reports are written by TSan's `log_path` into `OUT/tsan/`, one file per proc
 
 Three binaries from the same libraries: `kclient` (client only; single player forks `OpenKenshi-server` from the build dir's `cpp/`), `OpenKenshi-server`
 (dedicated) and `OpenKenshi` (full: the same client with the server in its process). `OpenKenshi` is not in the default build (it shares the client objects with
-kclient; only main.cpp and localserver.cpp compile a second time): `nice -n 10 cmake --build client/build -j4 --target OpenKenshi`. Its `LocalServer` (`src/localserver.cpp`, `KENSHI_EMBED_SERVER`)
+kclient; only main.cpp and localserver.cpp compile a second time): `nice -n 10 cmake --build client/build -j4 --target OpenKenshi`. Its `LocalServer` (`src/app/localserver.cpp`, `KENSHI_EMBED_SERVER`)
 runs `ksim::runServer` on a `std::thread` and stops it with the server's stop flag; the client still joins over loopback TCP, the same path as
 multiplayer. The server's globals are shared with the client (crash recorder tick, process-wide state): the audit is kenshi-379.7. The smoke run
 (title, New Game, Wanderer, BEGIN, CONFIRM, a few seconds in the Hub, quit) is `tests/localserver/run.sh BINARY OUT` (use `OpenKenshi` or `kclient`).
 
-**No flags for a player (kenshi-379.13).** The game data is resolved at runtime (`src/datadir.cpp`): `--data DIR`, then `$KENSHI_DATA`, then a
+**No flags for a player (kenshi-379.13).** The game data is resolved at runtime (`src/app/datadir.cpp`): `--data DIR`, then `$KENSHI_DATA`, then a
 saved `data=PATH` line in `$XDG_CONFIG_HOME/kenshi-client/data.conf` (`~/.config/kenshi-client/data.conf`; `~/Library/Application Support/kenshi-client/`
 on macOS, `%APPDATA%\kenshi-client\` on Windows), then the Steam/GOG default installs (Linux: `~/.steam/steam` and `~/.local/share/Steam`, plus
 their `libraryfolders.vdf` libraries; macOS: Steam's `common/Kenshi` and a `Kenshi` folder beside the binary; a copied Windows install works
-there, the game has no macOS build). A hit is saved; nothing found opens a native folder picker ("Where is Kenshi installed?", `src/datapicker.cpp`, tinyfiledialogs: zenity/kdialog/qarma on Linux, the shell dialog on Windows, osascript on macOS) before the window exists; the install folder or its `data/` folder is accepted and saved as `data=PATH` (a folder without `gamedata.base` reopens it with the reason in its title). Cancel, no dialog tool, no display (Linux: no `DISPLAY`/`WAYLAND_DISPLAY`), `KCLIENT_NO_DIALOG=1` or `KCLIENT_CONFIG=none` (headless.sh sets both) print every place it looked and the three ways to set one, then exit 1. A
+there, the game has no macOS build). A hit is saved; nothing found opens a native folder picker ("Where is Kenshi installed?", `src/app/datapicker.cpp`, tinyfiledialogs: zenity/kdialog/qarma on Linux, the shell dialog on Windows, osascript on macOS) before the window exists; the install folder or its `data/` folder is accepted and saved as `data=PATH` (a folder without `gamedata.base` reopens it with the reason in its title). Cancel, no dialog tool, no display (Linux: no `DISPLAY`/`WAYLAND_DISPLAY`), `KCLIENT_NO_DIALOG=1` or `KCLIENT_CONFIG=none` (headless.sh sets both) print every place it looked and the three ways to set one, then exit 1. A
 dev build searches the configure-time `KENSHI_DATA` first among the installs; a release build (dev tools OFF) carries no path, in the client or the
 in-process server (`KSIM_BAKE_DATA_PATH` follows `KCLIENT_DEV_TOOLS`, and the client passes the resolved `--data` to its server). `kenshi` with
 no options behaves as `play.sh title` — the title and its own server, also for a scripted/headless run; `--debug` keeps the offline fly-around
@@ -316,14 +316,14 @@ client/tools/scene_test.sh [--bless] [--scenes NAME,NAME] [OUTDIR]
 
 Runs `kclient --scene-test OUTDIR [--scenes ...]` through `headless.sh`: per scene it jumps, sets time/day/weather, renders until nothing is loading (buildings, features, foliage; at least 3 frames; 1500 frames = load failure), and writes `OUTDIR/NAME.png` and `NAME.json`
 (drawn and resident counts: buildings, features, foliage, foliage cells, water chunks drawn, terrain chunks drawn/resident; CPU ms, load wait ms, failed mesh/texture counts, `sg_errors`, `hud_box`). Animation time and the clock are frozen, so repeated runs are pixel-identical.
-With `KCLIENT_PROFILE` on (the default; `cmake -DKCLIENT_PROFILE=OFF` compiles the GPU timers, the submit counters and their JSON fields out of the client and the UI library), the JSON also carries `gpu_characters_ms`, `gpu_character_shadows_ms`, `gpu_items_ms`, `gpu_ui_ms` and `passes`: per GPU section (the pass timers of `src/gputimer.hpp`), means over the measured frames of draw calls, instances, triangles and pipeline / binding changes, counted at the client's submit wrappers (`src/drawstats.hpp`) and at the sokol_gl batches of the UI layer, whose pipelines and bindings are internal to sgl and read 0. A section with no submits that frame is left out; `ui` draws only with the interface up, which a scene shot hides, and a scene of 3 frames often ends before the GL timer's results are collected (`gpu_*_ms` 0.00, the counters still exact).
+With `KCLIENT_PROFILE` on (the default; `cmake -DKCLIENT_PROFILE=OFF` compiles the GPU timers, the submit counters and their JSON fields out of the client and the UI library), the JSON also carries `gpu_characters_ms`, `gpu_character_shadows_ms`, `gpu_items_ms`, `gpu_ui_ms` and `passes`: per GPU section (the pass timers of `src/render/gputimer.hpp`), means over the measured frames of draw calls, instances, triangles and pipeline / binding changes, counted at the client's submit wrappers (`src/render/drawstats.hpp`) and at the sokol_gl batches of the UI layer, whose pipelines and bindings are internal to sgl and read 0. A section with no submits that frame is left out; `ui` draws only with the interface up, which a scene shot hides, and a scene of 3 frames often ends before the GL timer's results are collected (`gpu_*_ms` 0.00, the counters still exact).
 kclient exits non-zero on any `[sg][error]` or a scene that never finished loading. The wrapper then compares each PNG with the baseline in `~/.cache/kclient/scene-baseline/` (outside git; `KCLIENT_SCENE_BASELINE` overrides), ignoring the HUD box:
 RMSE and the percentage of pixels with a channel difference above 16. `pass` = at most 0.5 % changed, otherwise `changed` (reported, exit code stays 0); `new` = no baseline yet. `--bless` copies the current output over the baseline.
 It prints one line per scene and writes `NAME.sheet.png` (reference | baseline | current) and `overview.png` (all scenes) into OUTDIR (default: a fresh `/tmp/scene-test.*`). A full run takes about 10 s.
 
 ### Per-frame profiling (dev builds)
 
-`KCLIENT_STAGES=<ms>` prints one line per world frame to stderr (`src/cpustage.hpp`): the wall ms between the frame's stage marks,
+`KCLIENT_STAGES=<ms>` prints one line per world frame to stderr (`src/app/cpustage.hpp`): the wall ms between the frame's stage marks,
 `gap` = the time outside `frame()` (present, sokol events), `total`, and the HUD's `cpu`; frames under the threshold are not printed
 (0 = every frame). `KCLIENT_GPULOG=1` appends each GPU section's ms and its submit counters (draws, instances, triangles) to the
 same line — the GPU values are collected two frames late, so a timer never stalls the frame it measures. `KCLIENT_ABL=a,b` removes

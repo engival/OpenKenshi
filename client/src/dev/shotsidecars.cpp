@@ -20,20 +20,20 @@
 #include <utility>
 #include <vector>
 
-#include "characters.hpp"
-#include "clientnav.hpp"
-#include "config.hpp"
+#include "characters/characters.hpp"
+#include "world/clientnav.hpp"
+#include "app/config.hpp"
 #include "dev/debughost.hpp"
 #include "dev/lightterms.hpp"
-#include "eventlog.hpp"
-#include "pick.hpp"
-#include "simlink.hpp"
-#include "simview.hpp"
-#include "sky.hpp"
-#include "squads.hpp"
-#include "trails.hpp"
-#include "windowgate.hpp"
-#include "worldbuildings.hpp"
+#include "app/eventlog.hpp"
+#include "input/pick.hpp"
+#include "net/simlink.hpp"
+#include "net/simview.hpp"
+#include "render/sky.hpp"
+#include "world/squads.hpp"
+#include "render/trails.hpp"
+#include "app/windowgate.hpp"
+#include "world/worldbuildings.hpp"
 #ifdef KCLIENT_DEBUG_VIEW
 #include "debug/debugview.hpp"
 #endif

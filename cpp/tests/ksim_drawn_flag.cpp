@@ -3,7 +3,7 @@
 // the sheathed weapon staying equipped (Inventory::kSheathed, on the wire in section 0). argv[1]: the world navmesh bake (exit 77 without Heft).
 #include "ksim/simlink.hpp"
 #include "ksim/simulation.hpp"
-#include "simlink.hpp" // client/src/simlink.hpp
+#include "net/simlink.hpp" // client/src/net/simlink.hpp
 
 #include "scenario_rig.hpp"
 #include "sim_access.hpp"

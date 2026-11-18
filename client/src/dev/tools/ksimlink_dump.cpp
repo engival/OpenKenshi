@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "simlink.hpp"
+#include "net/simlink.hpp"
 
 using namespace simlink;
 

@@ -18,7 +18,7 @@
 #include "dev/playtest.hpp"
 #include "dev/scenehost.hpp"
 #include "dev/viewhost.hpp"
-#include "readback.hpp"
+#include "render/readback.hpp"
 #include "ui/dev/notes.hpp"
 #include "ui/dev/scenarios.hpp"
 #include "ui/ui.hpp"

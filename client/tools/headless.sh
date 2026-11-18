@@ -36,7 +36,7 @@ then
 fi
 # Headless runs are silent (docs/AUDIO_ENGINE.md): no kclient audio unless KAUDIO_WAV renders it to a file or KCLIENT_NOAUDIO=0 is set.
 [ -n "$KAUDIO_WAV" ] || export KCLIENT_NOAUDIO=${KCLIENT_NOAUDIO-1}
-# No first-run folder picker (src/datapicker.cpp): a headless run never shows a dialog.
+# No first-run folder picker (src/app/datapicker.cpp): a headless run never shows a dialog.
 export KCLIENT_NO_DIALOG=1
 # Deterministic: options at their defaults, the user's kclient.cfg neither read nor written (config.hpp), unless KCLIENT_CONFIG names a file.
 export KCLIENT_CONFIG=${KCLIENT_CONFIG-none}

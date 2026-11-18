@@ -9,13 +9,13 @@
 #include <utility>
 #include <vector>
 
-#include "camera.hpp"
+#include "render/camera.hpp"
 #include "dev/debughost.hpp"
 #include "dev/devhooks.hpp"
-#include "hdr.hpp"
+#include "render/hdr.hpp"
 #include "kworld/heightmap.hpp"
-#include "particles.hpp"
-#include "readback.hpp"
+#include "render/particles.hpp"
+#include "render/readback.hpp"
 
 namespace dev
 {

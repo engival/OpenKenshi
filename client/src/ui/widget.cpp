@@ -5,7 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 
-#include "config.hpp"
+#include "app/config.hpp"
 #include "sokol_app.h"
 #include "ui/ui.hpp"
 

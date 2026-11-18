@@ -412,7 +412,7 @@ Moved to `CLIENT_GOALS.md` (one section per feature): M1 — walk the bare terra
   F12) also writes `<shot>.trails.tsv` beside the .png: `id name t tick kind x y z warn`, one row a kept point, kind lfoot / rfoot / sim /
   drawn, the whole kept history (not the view window). Kept when a track moved over 0.5 u (at most 20 Hz) or 0.25 s passed, 640 points a track
   (the widest draw window, 30 s x 20 Hz = 600, plus a margin; ~5 MB with the 64-character cap; the points past it are `debug.trails_dump`'s), 64
-  characters (`src/trails.cpp`). **A player character keeps more (kenshi-k16.2.231.1):** 60 s, or the whole time since its newest move_to order
+  characters (`src/render/trails.cpp`). **A player character keeps more (kenshi-k16.2.231.1):** 60 s, or the whole time since its newest move_to order
   when that is longer, capped at 120 s (2400 points a track at the top rate; the whole span goes in the shot's `.trails.tsv`), so a walk out of a
   building that took a minute and a half is still in the shot. Beside it a `--debug` shot writes `<shot>.route.tsv` (`shot_route` in
   `src/main.cpp`, `KCLIENT_DEV_TOOLS`): per selected character — every player character when none is selected — the wire's current CHAR_ROUTE
@@ -634,24 +634,27 @@ per notable runtime event (wall time, seconds since start, render sim tick, kind
 
 ## Code map (`client/src/`)
 
-| file | does |
+One subsystem per directory, one level deep (kenshi-k16.2.369, 2026-11-18). Includes name the path from `client/src`
+(`#include "render/sky.hpp"`), never a bare name or `../`. A new file goes in the directory of the subsystem it serves;
+a new directory only for a new subsystem (put it in this table). Platform-specific code lives only under `platform/<os>/`
+(windowing, Metal/.mm, input), picked by CMake; shared non-graphics platform code is the server's too and goes to
+`cpp/` kutil (agreed with the sim lead on kenshi-k16.6.387).
+
+| dir | holds |
 |---|---|
-| main.cpp | app, frame loop, load steps (`app.loadSteps`), camera, HUD, scenes/scripts, `--scene-test` |
-| loadscreen.* | game-style loading screen (art, 9-slices, tips, TTF text) |
-| resources.*, mods.* | install paths, mod folders, merged game data |
-| dds.*, ogremesh.*, materials.* | texture and Ogre mesh loaders, material parsing |
-| terrain.*, colourmap.*, detail.* | heightmap tiles, colour map mosaic, splat detail layers (biome table, absorbance) |
-| worldmap.*, towns.*, squads.* | zone/world map, town placements, squad dots |
-| characters.* | skinned characters: RACE body + HEAD, shirts, ARMOUR meshes, hair; clip playback (`--character`) |
-| buildings.*, worldbuildings.* | building records and the world pass (features, culling rule `cullsBackFaces`) |
-| foliage.*, grass.* | procedural FOLIAGE_LAYER meshes; GRASS cards (density maps per ref) |
-| sky.*, weathermap.*, speccube.* | SkyX dome, sun/moons, weather pick + blend, fog map, env cube |
-| fogvolume.*, particles.*, water.* | fog-plane volumes, rain/dust ParticleUniverse subset, water |
-| hdr.*, shadow.*, gputimer.* | HDR target + exact hdrfp4 luminance chain, sun shadows, GPU timing |
-| post.* | optional post effects (ours, each its own key, all off by default; the original's display is the base; CLIENT_GOALS "Post effects") |
-| ao.* | post.ao / post.indirect: half-res SSAO and one-bounce indirect light from the scene depth and colour after the scene pass, per eye; the lit programs bind `ao_binding()` (lighting.inc `light_ao`, ambient only) |
-| eventlog.* | the critical-events log ("Critical-events log" above) |
-| meshview.*, kmeshdump.cpp | standalone mesh viewer / dump tool |
+| main.cpp | app, frame loop, load steps (`app.loadSteps`), camera, HUD, scenes/scripts (being split: kenshi-k16.2.369.2) |
+| app/ | config, data-dir discovery and picker, load screen, embedded server, logic thread, work pool, event log, frame stats |
+| platform/ | sokol implementation unit, window geometry; `linux/`, `macos/` the per-OS halves |
+| assets/ | DDS and Ogre mesh loaders, materials, resource paths, mods, stb |
+| render/ | terrain, sky, water, foliage/grass, shadows, HDR, post/AO, particles, draw lists, render frame/queue, GPU timers |
+| world/ | buildings (records and world pass), towns, world map, weather, nav, floor follow, squads |
+| characters/ | skinned characters, ragdoll, physics, portraits, character creator |
+| net/ | SIMLINK decoder and I/O, sim view (snapshots, prediction), AI task names, progress feed |
+| input/ | picking, cursors, control hints, input queue |
+| audio/ | Wwise bank/vorbis decode, mixer, music, sound events |
+| ui/ | the UI library (UI worker's) |
+| dev/, debug/ | dev-only code behind `KCLIENT_DEV_TOOLS`; the debug view |
+| retired/ | code kept for reference, not built |
 
 Shaders in `client/shaders/`: `lighting.inc` (the shared deferred light model), `biome.inc` (terrain splat), `terrain`, `mesh` (buildings/features/foliage), `sky`, `hdr`, `post`, `ao`, `particles`, `fogvolume`, `character` (body / armour / hair / shadow). Formulas and their game sources: `docs/reference/LIGHTING.md` (sections 1-15).
 

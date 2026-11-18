@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(kclient LANGUAGES CXX)
 if(APPLE)
-	# sokol_app and the Metal backend are Objective-C: src/sokol_impl.mm (kenshi-379.32.1)
+	# sokol_app and the Metal backend are Objective-C: src/platform/macos/sokol_impl.mm (kenshi-379.32.1)
 	enable_language(OBJCXX)
 	set(CMAKE_OBJCXX_STANDARD 20)
 	set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
@@ -104,9 +104,9 @@ option(KCLIENT_DEV_TOOLS "Build the dev-only tools (src/dev/, the dev tool execu
 set(KSIM_BAKE_DATA_PATH ${KCLIENT_DEV_TOOLS} CACHE BOOL "Compile KENSHI_DATA into runServer's fallback (follows KCLIENT_DEV_TOOLS)" FORCE)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../cpp ${CMAKE_CURRENT_BINARY_DIR}/cpp EXCLUDE_FROM_ALL)
 
-# Jolt Physics v5.6.0 (third_party/JoltPhysics, MIT): client ragdolls only (src/physics.cpp, docs/reference/PHYSICS.md 2). The vendored tree is the
+# Jolt Physics v5.6.0 (third_party/JoltPhysics, MIT): client ragdolls only (src/characters/physics.cpp, docs/reference/PHYSICS.md 2). The vendored tree is the
 # library alone (no samples, tests, viewer or debug renderer). JPH_DOUBLE_PRECISION: the world spans +-147456 u (kworld::kWorldMin / kWorldExtent),
-# see the measurement in src/physics.cpp. Jolt.cmake makes its defines and instruction-set flags PUBLIC (a mismatch is an ABI break it detects).
+# see the measurement in src/characters/physics.cpp. Jolt.cmake makes its defines and instruction-set flags PUBLIC (a mismatch is an ABI break it detects).
 set(PHYSICS_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/JoltPhysics")
 set(DOUBLE_PRECISION ON)
 include("${PHYSICS_REPO_ROOT}/Jolt/Jolt.cmake")
@@ -123,95 +123,95 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../cpp/cmake/recast.cmake)
 # The one sokol implementation unit: Objective-C++ on macOS. The window geometry memory: X11 on Linux, Cocoa on macOS (the macOS tester's
 # windowgeom_macos.mm, kenshi-379.32.13).
 if(APPLE)
-	set(KCLIENT_SOKOL_IMPL src/sokol_impl.mm)
-	set(KCLIENT_WINDOWGEOM src/windowgeom_macos.mm)
+	set(KCLIENT_SOKOL_IMPL src/platform/macos/sokol_impl.mm)
+	set(KCLIENT_WINDOWGEOM src/platform/macos/windowgeom.mm)
 else()
-	set(KCLIENT_SOKOL_IMPL src/sokol_impl.cpp)
-	set(KCLIENT_WINDOWGEOM src/windowgeom.cpp)
+	set(KCLIENT_SOKOL_IMPL src/platform/sokol_impl.cpp)
+	set(KCLIENT_WINDOWGEOM src/platform/linux/windowgeom.cpp)
 endif()
 
 # The client sources, compiled once into this OBJECT library and shared by kclient and OpenKenshi (kenshi-379.6.2.1). Only the files that
 # depend on KENSHI_EMBED_SERVER (main.cpp, localserver.cpp; the only includers of localserver.hpp) compile per executable, below.
 add_library(kclient_obj OBJECT
-	src/ao.cpp
-	src/lightvol.cpp
-	src/buildings.cpp
-	src/camera.cpp
-	src/characters.cpp
-	src/creator.cpp
-	src/eventlog.cpp
-	src/simlink.cpp
-	src/simview.cpp
-	src/datadir.cpp
-	src/steamvdf.cpp
-	src/datapicker.cpp
+	src/render/ao.cpp
+	src/render/lightvol.cpp
+	src/world/buildings.cpp
+	src/render/camera.cpp
+	src/characters/characters.cpp
+	src/characters/creator.cpp
+	src/app/eventlog.cpp
+	src/net/simlink.cpp
+	src/net/simview.cpp
+	src/app/datadir.cpp
+	src/app/steamvdf.cpp
+	src/app/datapicker.cpp
 	third_party/tinyfiledialogs/tinyfiledialogs.c
-	src/trails.cpp
-	src/clientnav.cpp
-	src/navoverlay.cpp
-	src/collisionpick.cpp
-	src/pick.cpp
-	src/controlhints.cpp
-	src/cursors.cpp
-	src/sappcmd.cpp
-	src/logicthread.cpp
-	src/lastframe.cpp
-	src/colourmap.cpp
-	src/blooddecals.cpp
-	src/renderqueue.cpp
-	src/drawlist_gpu.cpp
-	src/overlaylist.cpp
-	src/portraits.cpp
-	src/dds.cpp
-	src/detail.cpp
-	src/foliage.cpp
-	src/floorfollow.cpp
-	src/fogvolume.cpp
-	src/sunshafts.cpp
-	src/dust.cpp
-	src/grass.cpp
-	src/gputimer.cpp
-	src/hdr.cpp
-	src/reflection.cpp
-	src/idbuffer.cpp
-	src/readback.cpp
-	src/renderframe.cpp
-	src/post.cpp
-	src/smaa_lut.cpp
-	src/materials.cpp
-	src/mods.cpp
-	src/ogremesh.cpp
-	src/openwindows.cpp
-	src/particles.cpp
-	src/particleworld.cpp
-	src/beamfield.cpp
-	src/physics.cpp
-	src/ragdolldrive.cpp
-	src/ragdoll.cpp
-	src/resources.cpp
-	src/shadow.cpp
-	src/sky.cpp
-	src/creatorscene.cpp
-	src/speccube.cpp
-	src/weatherinstances.cpp
-	src/weathermap.cpp
-	src/squads.cpp
-	src/arrows.cpp
-	src/terrain.cpp
-	src/towns.cpp
-	src/water.cpp
-	src/lightbake.cpp
-	src/worldbuildings.cpp
-	src/loadscreen.cpp
-	src/worldmap.cpp
+	src/render/trails.cpp
+	src/world/clientnav.cpp
+	src/render/navoverlay.cpp
+	src/input/collisionpick.cpp
+	src/input/pick.cpp
+	src/input/controlhints.cpp
+	src/input/cursors.cpp
+	src/app/sappcmd.cpp
+	src/app/logicthread.cpp
+	src/app/lastframe.cpp
+	src/render/colourmap.cpp
+	src/render/blooddecals.cpp
+	src/render/renderqueue.cpp
+	src/render/drawlist_gpu.cpp
+	src/render/overlaylist.cpp
+	src/characters/portraits.cpp
+	src/assets/dds.cpp
+	src/render/detail.cpp
+	src/render/foliage.cpp
+	src/world/floorfollow.cpp
+	src/render/fogvolume.cpp
+	src/render/sunshafts.cpp
+	src/render/dust.cpp
+	src/render/grass.cpp
+	src/render/gputimer.cpp
+	src/render/hdr.cpp
+	src/render/reflection.cpp
+	src/render/idbuffer.cpp
+	src/render/readback.cpp
+	src/render/renderframe.cpp
+	src/render/post.cpp
+	src/render/smaa_lut.cpp
+	src/assets/materials.cpp
+	src/assets/mods.cpp
+	src/assets/ogremesh.cpp
+	src/render/openwindows.cpp
+	src/render/particles.cpp
+	src/render/particleworld.cpp
+	src/render/beamfield.cpp
+	src/characters/physics.cpp
+	src/characters/ragdolldrive.cpp
+	src/characters/ragdoll.cpp
+	src/assets/resources.cpp
+	src/render/shadow.cpp
+	src/render/sky.cpp
+	src/characters/creatorscene.cpp
+	src/render/speccube.cpp
+	src/world/weatherinstances.cpp
+	src/world/weathermap.cpp
+	src/world/squads.cpp
+	src/render/arrows.cpp
+	src/render/terrain.cpp
+	src/world/towns.cpp
+	src/render/water.cpp
+	src/render/lightbake.cpp
+	src/world/worldbuildings.cpp
+	src/app/loadscreen.cpp
+	src/world/worldmap.cpp
 	${KCLIENT_SOKOL_IMPL}
-	src/audiohook.cpp
-	src/config.cpp
+	src/audio/audiohook.cpp
+	src/app/config.cpp
 	${KCLIENT_WINDOWGEOM}
-	src/windowgate.cpp
-	src/serverrows.cpp
-	src/workpool.cpp
-	src/stb_impl.cpp
+	src/app/windowgate.cpp
+	src/app/serverrows.cpp
+	src/app/workpool.cpp
+	src/assets/stb_impl.cpp
 )
 add_dependencies(kclient_obj kclient_shaders)
 # The sim's DEBUG VIEW (docs/formats/SIMLINK.md "DEBUG VIEW"): src/debug/. ON by default in every build type (a small decoder; the data flows
@@ -254,10 +254,10 @@ endif()
 # tinyfiledialogs is C that compiles as C++ (upstream: "rename this .c file as .cpp"); the project is CXX only. Vendored untouched, so no warnings from it.
 set_source_files_properties(third_party/tinyfiledialogs/tinyfiledialogs.c PROPERTIES LANGUAGE CXX COMPILE_OPTIONS -w)
 # the SMAA tables must match upstream bit for bit: no fused multiply-adds
-set_source_files_properties(src/smaa_lut.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
+set_source_files_properties(src/render/smaa_lut.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
 target_include_directories(kclient_obj PRIVATE src ${SHADER_DIR})
 target_include_directories(kclient_obj SYSTEM PRIVATE third_party third_party/sokol)
-# The build's git hash: --help shows it and every playtest run records it (src/playtest.cpp, src/githash.hpp). tools/githash.cmake writes
+# The build's git hash: --help shows it and every playtest run records it (src/playtest.cpp, src/app/githash.hpp). tools/githash.cmake writes
 # githash.cpp in the build tree on every build, so a commit shows without a reconfigure; the file changes only when the hash does, so an
 # unchanged hash rebuilds nothing. "-dirty" counts client/ paths only (the shared tree holds other sessions' work); no git says "unknown".
 set(KCLIENT_GITHASH_CPP "${CMAKE_CURRENT_BINARY_DIR}/githash.cpp")
@@ -275,7 +275,7 @@ add_custom_target(kclient_githash
 add_dependencies(kclient_obj kclient_githash)
 target_sources(kclient_obj PRIVATE ${KCLIENT_GITHASH_CPP})
 
-# The AI task names for CHAR_STATS' AI tail (rows 16 / 18; src/aitask.hpp, main.cpp): generated from the docs' table at build time, so no
+# The AI task names for CHAR_STATS' AI tail (rows 16 / 18; src/net/aitask.hpp, main.cpp): generated from the docs' table at build time, so no
 # name is typed in the client and a doc rerun shows without a client edit. Rebuilt only when the doc or the generator changes.
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(KCLIENT_AI_TASK_NAMES_CPP "${CMAKE_CURRENT_BINARY_DIR}/gen/ai_task_names.cpp")
@@ -316,7 +316,7 @@ endif()
 
 # UI layer (src/ui/, docs/UI.md): widgets drawn with the game's skins and fonts. The host supplies the sokol, stb_image and stb_truetype
 # implementations and config.cpp (kclient: sokol_impl, stb_impl, loadscreen).
-add_library(kui STATIC src/drawlist.cpp src/ui/xml.cpp src/ui/gfx.cpp src/ui/skin.cpp src/ui/font.cpp src/ui/widget.cpp src/ui/ui.cpp src/ui/hud.cpp src/ui/diamond.cpp src/ui/statgrid.cpp src/ui/options.cpp src/ui/keys.cpp src/ui/creator.cpp src/ui/stats.cpp src/ui/prompt.cpp src/ui/squads.cpp src/ui/overview.cpp src/ui/savepanel.cpp src/ui/menus.cpp src/ui/newgame.cpp src/ui/tutorials.cpp src/ui/jobs.cpp src/ui/prospecting.cpp src/ui/advanced.cpp src/ui/build.cpp src/ui/research.cpp src/ui/crafting.cpp src/ui/faction.cpp src/ui/trade.cpp src/ui/icons.cpp src/ui/itemgrid.cpp src/ui/gear.cpp src/ui/itemwindows.cpp src/ui/dialogue.cpp src/ui/bubbles.cpp src/ui/progressbars.cpp src/ui/namelabels.cpp src/ui/buildingwindow.cpp src/ui/cast.cpp src/ui/layout.cpp src/ui/style.cpp)
+add_library(kui STATIC src/render/drawlist.cpp src/ui/xml.cpp src/ui/gfx.cpp src/ui/skin.cpp src/ui/font.cpp src/ui/widget.cpp src/ui/ui.cpp src/ui/hud.cpp src/ui/diamond.cpp src/ui/statgrid.cpp src/ui/options.cpp src/ui/keys.cpp src/ui/creator.cpp src/ui/stats.cpp src/ui/prompt.cpp src/ui/squads.cpp src/ui/overview.cpp src/ui/savepanel.cpp src/ui/menus.cpp src/ui/newgame.cpp src/ui/tutorials.cpp src/ui/jobs.cpp src/ui/prospecting.cpp src/ui/advanced.cpp src/ui/build.cpp src/ui/research.cpp src/ui/crafting.cpp src/ui/faction.cpp src/ui/trade.cpp src/ui/icons.cpp src/ui/itemgrid.cpp src/ui/gear.cpp src/ui/itemwindows.cpp src/ui/dialogue.cpp src/ui/bubbles.cpp src/ui/progressbars.cpp src/ui/namelabels.cpp src/ui/buildingwindow.cpp src/ui/cast.cpp src/ui/layout.cpp src/ui/style.cpp)
 target_include_directories(kui PUBLIC src)
 # the UI counts its sgl batches for the Ui GPU section (kenshi-k16.2.101.1); compiled out with KCLIENT_PROFILE=OFF
 target_compile_definitions(kui PRIVATE KCLIENT_PROFILE=$<BOOL:${KCLIENT_PROFILE}>)
@@ -336,7 +336,7 @@ target_compile_options(kui PRIVATE -Wall -Wextra)
 # The dev tool executables (kenshi-k16.2.153): built only with KCLIENT_DEV_TOOLS, sources in src/dev/tools/.
 if(KCLIENT_DEV_TOOLS)
 	# Every widget on one screen (interactive, or --screenshot under tools/headless.sh).
-	add_executable(kui_demo src/dev/tools/kui_demo.cpp src/drawlist_gpu.cpp src/dds.cpp src/config.cpp src/serverrows.cpp ${KCLIENT_SOKOL_IMPL} src/stb_impl.cpp)
+	add_executable(kui_demo src/dev/tools/kui_demo.cpp src/render/drawlist_gpu.cpp src/assets/dds.cpp src/app/config.cpp src/app/serverrows.cpp ${KCLIENT_SOKOL_IMPL} src/assets/stb_impl.cpp)
 	target_compile_options(kui_demo PRIVATE -Wall -Wextra)
 	target_compile_definitions(kui_demo PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 	target_link_libraries(kui_demo PRIVATE kui Threads::Threads ${CMAKE_DL_LIBS} m)
@@ -356,7 +356,7 @@ endif()
 
 if(KCLIENT_DEV_TOOLS)
 	# Parity-test CLI for the Ogre mesh reader (no graphics).
-	add_executable(kmeshdump src/dev/tools/kmeshdump.cpp src/ogremesh.cpp src/resources.cpp src/materials.cpp)
+	add_executable(kmeshdump src/dev/tools/kmeshdump.cpp src/assets/ogremesh.cpp src/assets/resources.cpp src/assets/materials.cpp)
 	target_include_directories(kmeshdump PRIVATE src)
 	target_compile_options(kmeshdump PRIVATE -Wall -Wextra)
 
@@ -366,29 +366,29 @@ if(KCLIENT_DEV_TOOLS)
 	target_compile_options(kwindowgeom_test PRIVATE -Wall -Wextra)
 
 	# The render-side resource job queue's unit check (renderqueue.hpp: lanes, serials, the stream budget, Handle): no sokol.
-	add_executable(krq_test src/dev/tools/krq_test.cpp src/renderqueue.cpp)
+	add_executable(krq_test src/dev/tools/krq_test.cpp src/render/renderqueue.cpp)
 	target_include_directories(krq_test PRIVATE src)
 	target_compile_options(krq_test PRIVATE -Wall -Wextra)
 
 	# The 2D draw list's unit check (drawlist.hpp, render hook 8: the recorder, colour packing, uploads, ids): no sokol.
-	add_executable(kdl_test src/dev/tools/kdl_test.cpp src/drawlist.cpp)
+	add_executable(kdl_test src/dev/tools/kdl_test.cpp src/render/drawlist.cpp)
 	target_include_directories(kdl_test PRIVATE src)
 	target_compile_options(kdl_test PRIVATE -Wall -Wextra)
 
 	# The floor view model's table-driven traces (floorfollow.hpp: the manual level, the auto floor, the stair latch): no GL, no data.
-	add_executable(kfloor_test src/dev/tools/kfloor_test.cpp src/floorfollow.cpp)
+	add_executable(kfloor_test src/dev/tools/kfloor_test.cpp src/world/floorfollow.cpp)
 	target_include_directories(kfloor_test PRIVATE src)
 	target_compile_options(kfloor_test PRIVATE -Wall -Wextra)
 
 	# The Steam VDF parsing behind the data-dir discovery (steamvdf.hpp): libraryfolders.vdf nesting, escapes, appmanifest installdir. ctest: kdatadir.
-	add_executable(kdatadir_test src/dev/tools/kdatadir_test.cpp src/steamvdf.cpp)
+	add_executable(kdatadir_test src/dev/tools/kdatadir_test.cpp src/app/steamvdf.cpp)
 	target_include_directories(kdatadir_test PRIVATE src)
 	target_compile_options(kdatadir_test PRIVATE -Wall -Wextra)
 	enable_testing()
 	add_test(NAME kdatadir COMMAND kdatadir_test)
 
 	# SIMLINK decoder test CLI (docs/formats/SIMLINK.md): decodes a recorded server stream, or --selftest.
-	add_executable(ksimlink_dump src/dev/tools/ksimlink_dump.cpp src/simlink.cpp)
+	add_executable(ksimlink_dump src/dev/tools/ksimlink_dump.cpp src/net/simlink.cpp)
 	target_include_directories(ksimlink_dump PRIVATE src)
 	target_compile_options(ksimlink_dump PRIVATE -Wall -Wextra)
 endif()
@@ -426,12 +426,12 @@ endif()
 
 # The two executables (client/README.md "Release targets"): both link the kclient_obj objects; main.cpp and localserver.cpp compile per target.
 # kclient is the client only (LocalServer fork()+execv of OpenKenshi-server); OpenKenshi is the full single-player target, with LocalServer running
-# ksim::runServer on a std::thread (KENSHI_EMBED_SERVER, src/localserver.cpp), joined over loopback TCP, plus the ksim library. Defines, includes
+# ksim::runServer on a std::thread (KENSHI_EMBED_SERVER, src/app/localserver.cpp), joined over loopback TCP, plus the ksim library. Defines, includes
 # and libraries are taken from kclient_obj at the end of this file, so every later option reaches both. OpenKenshi stays out of the default build
 # (cmake --build ... --target OpenKenshi).
 get_target_property(KENSHI_DEFS kclient_obj COMPILE_DEFINITIONS)
 get_target_property(KENSHI_LIBS kclient_obj LINK_LIBRARIES)
-set(KENSHI_PER_TARGET_SOURCES src/main.cpp src/localserver.cpp)
+set(KENSHI_PER_TARGET_SOURCES src/main.cpp src/app/localserver.cpp)
 foreach(tgt kclient OpenKenshi)
 	if(tgt STREQUAL "kclient")
 		add_executable(kclient ${KENSHI_PER_TARGET_SOURCES} $<TARGET_OBJECTS:kclient_obj>)

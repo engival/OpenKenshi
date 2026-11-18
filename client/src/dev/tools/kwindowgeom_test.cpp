@@ -2,7 +2,7 @@
 // Run: kwindowgeom_test (exit 0 and "kwindowgeom_test ok").
 #include <cstdio>
 
-#include "windowgeom.hpp"
+#include "platform/windowgeom.hpp"
 
 using namespace windowgeom;
 

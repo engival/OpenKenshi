@@ -1,5 +1,5 @@
 #include "dev/animlab.hpp"
-#include "drawstats.hpp"
+#include "render/drawstats.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -9,14 +9,14 @@
 #include <map>
 #include <vector>
 
-#include "characters.hpp"
-#include "drawlist_gpu.hpp"
+#include "characters/characters.hpp"
+#include "render/drawlist_gpu.hpp"
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"	// the lazy init's merged data load
-#include "resources.hpp"
-#include "sappcmd.hpp"
+#include "assets/resources.hpp"
+#include "app/sappcmd.hpp"
 #include "sokol_app.h"
-#include "readback.hpp"
+#include "render/readback.hpp"
 
 namespace
 {

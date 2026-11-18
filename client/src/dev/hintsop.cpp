@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "controlhints.hpp"
+#include "input/controlhints.hpp"
 #include "dev/debughost.hpp"
 #include "dev/devhooks.hpp"
 

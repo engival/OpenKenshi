@@ -621,7 +621,7 @@ add_executable(ksim_server tools/ksim_server.cpp)
 target_link_libraries(ksim_server PRIVATE ksim kutil)
 # The dedicated server ships as OpenKenshi-server (kenshi-379.17); the CMake target keeps its name so the tests' add_test lines work.
 set_target_properties(ksim_server PROPERTIES OUTPUT_NAME OpenKenshi-server)
-# TRANSITIONAL: a ksim_server symlink beside it keeps the client's callers (client/src/localserver.cpp, client/tools/*.sh,
+# TRANSITIONAL: a ksim_server symlink beside it keeps the client's callers (client/src/app/localserver.cpp, client/tools/*.sh,
 # client/tests/*/run.sh, client/src/main.cpp's cpp/ksim_server) working until the client lead moves them; then this goes.
 add_custom_command(TARGET ksim_server POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E create_symlink OpenKenshi-server $<TARGET_FILE_DIR:ksim_server>/ksim_server)
@@ -1263,10 +1263,10 @@ add_test(NAME ksim_speed_modes COMMAND ksim_speed_modes ${CMAKE_CURRENT_BINARY_D
 set_tests_properties(ksim_speed_modes PROPERTIES FIXTURES_REQUIRED knav_cache)
 
 # SIMLINK server (docs/formats/SIMLINK.md): a loopback session against the client session's
-# own decoder (client/src/simlink.cpp, compiled in unchanged), replay from the order log, and
+# own decoder (client/src/net/simlink.cpp, compiled in unchanged), replay from the order log, and
 # the recorded sample stream. The sample is recorded at test time by ksim_simlink_sample into the build dir, never kept in the tree: it
 # carries game-data strings (kenshi-379.14.9, user 2026-11-18: "If it's not part of our running system, then no, we don't need a bin capture").
-add_executable(ksim_simlink tests/ksim_simlink.cpp ../client/src/simlink.cpp)
+add_executable(ksim_simlink tests/ksim_simlink.cpp ../client/src/net/simlink.cpp)
 target_include_directories(ksim_simlink PRIVATE ../client/src)
 target_link_libraries(ksim_simlink PRIVATE ksim)
 target_compile_definitions(ksim_simlink PRIVATE
@@ -1321,7 +1321,7 @@ add_test(NAME ksim_saves COMMAND ksim_saves ${CMAKE_CURRENT_BINARY_DIR}/hub.knav
 set_tests_properties(ksim_saves PROPERTIES FIXTURES_REQUIRED knav_cache)
 
 # Single-player new game (SIMLINK.md order 84, STARTS 33, NEW_GAME 111 / 62; MULTIPLAYER.md section 4).
-add_executable(ksim_newgame tests/ksim_newgame.cpp ../client/src/simlink.cpp)
+add_executable(ksim_newgame tests/ksim_newgame.cpp ../client/src/net/simlink.cpp)
 target_include_directories(ksim_newgame PRIVATE ../client/src)
 target_link_libraries(ksim_newgame PRIVATE ksim)
 target_compile_definitions(ksim_newgame PRIVATE
@@ -1333,14 +1333,14 @@ add_test(NAME ksim_newgame COMMAND ksim_newgame ${CMAKE_CURRENT_BINARY_DIR}/hub.
 set_tests_properties(ksim_newgame PROPERTIES FIXTURES_REQUIRED knav_cache)
 
 # Player buildings (BUILDINGS_SLICE.md Phases 1-2): placement (orders 90 / 91, BUILDING 47 through the client's decoder, save) and the construction math.
-add_executable(ksim_buildings_place tests/ksim_buildings_place.cpp ../client/src/simlink.cpp)
+add_executable(ksim_buildings_place tests/ksim_buildings_place.cpp ../client/src/net/simlink.cpp)
 target_include_directories(ksim_buildings_place PRIVATE ../client/src tests)
 target_link_libraries(ksim_buildings_place PRIVATE ksim)
 target_compile_definitions(ksim_buildings_place PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(ksim_buildings_place)
 add_test(NAME ksim_buildings_place COMMAND ksim_buildings_place ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
 set_tests_properties(ksim_buildings_place PROPERTIES FIXTURES_REQUIRED knav_cache)
-add_executable(ksim_buildings_build tests/ksim_buildings_build.cpp ../client/src/simlink.cpp)
+add_executable(ksim_buildings_build tests/ksim_buildings_build.cpp ../client/src/net/simlink.cpp)
 target_include_directories(ksim_buildings_build PRIVATE ../client/src tests)
 target_link_libraries(ksim_buildings_build PRIVATE ksim)
 target_compile_definitions(ksim_buildings_build PRIVATE KENSHI_DATA="${KENSHI_DATA}")
@@ -2090,7 +2090,7 @@ kdata_warnings(ksim_dialogue_econ)
 add_test(NAME ksim_dialogue_econ COMMAND ksim_dialogue_econ)
 # The reply menu at the server / wire level (DIALOGUE.md 13.2-13.4, 13.8 rows 1-3): an open menu freezes the tick and CLOCK says so; a
 # reply or end_talk lifts it; a dropped session clears the hold and the reconnect snapshot resends the menu; the grace ends it (reason 5).
-add_executable(ksim_dialogue_menu tests/ksim_dialogue_menu.cpp ../client/src/simlink.cpp)
+add_executable(ksim_dialogue_menu tests/ksim_dialogue_menu.cpp ../client/src/net/simlink.cpp)
 target_include_directories(ksim_dialogue_menu PRIVATE ../client/src)
 target_link_libraries(ksim_dialogue_menu PRIVATE ksim)
 target_compile_definitions(ksim_dialogue_menu PRIVATE KENSHI_DATA="${KENSHI_DATA}")
@@ -3310,7 +3310,7 @@ add_test(NAME ksim_caravan_idle COMMAND ksim_caravan_idle ${KSIM_NAVWORLD})
 set_tests_properties(ksim_caravan_idle PROPERTIES SKIP_RETURN_CODE 77)
 
 # kenshi-k16.6.132: CHAR_DYNAMIC kFlagDrawn follows the weapon in the hand (tasks 6 / 7), cage_prisoner's guards after the fight.
-add_executable(ksim_drawn_flag tests/ksim_drawn_flag.cpp ../client/src/simlink.cpp)
+add_executable(ksim_drawn_flag tests/ksim_drawn_flag.cpp ../client/src/net/simlink.cpp)
 target_include_directories(ksim_drawn_flag PRIVATE ../client/src)
 target_link_libraries(ksim_drawn_flag PRIVATE ksim)
 target_compile_definitions(ksim_drawn_flag PRIVATE

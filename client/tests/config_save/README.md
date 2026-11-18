@@ -6,7 +6,7 @@ retired one) and a free-form raw key (`window.<layout>.*`) keep their lines. Onl
 is an option default. `kclient --print-defaults` prints every option with its static default and help line as config-file text and
 exits (no window, no data, the config file is not read and not written).
 
-run.sh OUT (CXX, BUILD): builds the unit check twice against client/src/config.cpp, once with t.int default 5 and once with 6, and
+run.sh OUT (CXX, BUILD): builds the unit check twice against client/src/app/config.cpp, once with t.int default 5 and once with 6, and
 runs the second on the first's file (an away value outlives a changed default); then runs the built client's --print-defaults against
 a config file that sets another value and checks the listing is the static default and the file is untouched. No game data and no
 display are needed; OUT holds the logs and the built checks.

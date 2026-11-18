@@ -13,25 +13,25 @@
 #include <unordered_map>
 #include <vector>
 
-#include "camera.hpp"
-#include "dds.hpp"
+#include "render/camera.hpp"
+#include "assets/dds.hpp"
 #include "dev/debughost.hpp"
 #include "dev/devhooks.hpp"
 #include "dev/viewhost.hpp"
-#include "drawstats.hpp"
-#include "framestats.hpp"
-#include "gputimer.hpp"
-#include "materials.hpp"
+#include "render/drawstats.hpp"
+#include "app/framestats.hpp"
+#include "render/gputimer.hpp"
+#include "assets/materials.hpp"
 #include "mesh.glsl.h"
-#include "ogremesh.hpp"
-#include "overlaylist.hpp"
-#include "readback.hpp"
-#include "renderframe.hpp"
-#include "resources.hpp"
+#include "assets/ogremesh.hpp"
+#include "render/overlaylist.hpp"
+#include "render/readback.hpp"
+#include "render/renderframe.hpp"
+#include "assets/resources.hpp"
 #include "sokol_gfx.h"
 #include "sokol_gl.h"
 #include "sokol_glue.h"
-#include "worldmap.hpp"	// begin_overlay, end_overlay, draw_text, draw_panel, text_scale
+#include "world/worldmap.hpp"	// begin_overlay, end_overlay, draw_text, draw_panel, text_scale
 
 namespace fs = std::filesystem;
 

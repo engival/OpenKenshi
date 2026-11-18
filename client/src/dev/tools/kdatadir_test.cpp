@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "steamvdf.hpp"
+#include "app/steamvdf.hpp"
 
 namespace
 {

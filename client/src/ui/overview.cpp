@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-#include "config.hpp"
+#include "app/config.hpp"
 #include "sokol_app.h"
 #include "ui/ui.hpp"
 

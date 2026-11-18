@@ -7,7 +7,7 @@
 #include <fstream>
 #include <set>
 
-#include "config.hpp"
+#include "app/config.hpp"
 #include "ui/ui.hpp"
 
 namespace ui

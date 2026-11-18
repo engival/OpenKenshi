@@ -8,8 +8,8 @@
 #include "sokol_gfx.h"
 #include "sokol_gl.h"
 #include "sokol_debugtext.h"
-#include "characters.hpp"	// Characters::FrameData
-#include "sky.hpp"	// LightParams
+#include "characters/characters.hpp"	// Characters::FrameData
+#include "render/sky.hpp"	// LightParams
 
 
 namespace dev

@@ -1,4 +1,4 @@
-// Blood decal painter (src/blooddecals.cpp): one blood image quad into a patch tile of the decal atlas. The game's Quad2DMaterial (materials/forward/basic2D.hlsl:
+// Blood decal painter (src/render/blooddecals.cpp): one blood image quad into a patch tile of the decal atlas. The game's Quad2DMaterial (materials/forward/basic2D.hlsl:
 // position = mul(float3(pos, 1), WorldMatrix).xy, out = tex x Colour), blended RGB src_alpha / one_minus_src_alpha, alpha added.
 @vs decal_vs
 layout(binding=0) uniform decal_vs_params

@@ -1,6 +1,6 @@
 // Retired 2026-11-15 (kenshi-k16.2.256.4): the six-colour ambient cube that lighting.inc light_irradiance used before the client sampled the game's static
 // irradiance cube exactly. Kept as the reference for the approximation's numbers; not built (the shader globs only client/shaders/*.glsl) and no fallback path
-// reads it: the compiled shaders sample irr_cube (mp_irradiance.dds, src/speccube.cpp) at mip 3 unconditionally.
+// reads it: the compiled shaders sample irr_cube (mp_irradiance.dds, src/render/speccube.cpp) at mip 3 unconditionally.
 //
 // `light_irradiance_cube_faces` blended each cube face mean (mip 0, already x alpha x 4, so in the shader's units) by the squared normal, an ambient cube. It
 // matched the live cube within ~1 % red/green at every normal, but at the Black Desert City dome's normal (+Z) it gave 1.32 1.41 1.74 against the exe's exact

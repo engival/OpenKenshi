@@ -15,7 +15,7 @@
 #include <functional>
 
 #include "dev/labframe.hpp"
-#include "simlink.hpp"
+#include "net/simlink.hpp"
 #endif
 
 class SimView;

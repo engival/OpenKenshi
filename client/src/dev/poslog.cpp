@@ -16,8 +16,8 @@
 #include <cstdlib>
 #include <map>
 
-#include "simlink.hpp"
-#include "simview.hpp"
+#include "net/simlink.hpp"
+#include "net/simview.hpp"
 
 namespace dev
 {

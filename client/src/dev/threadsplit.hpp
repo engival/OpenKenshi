@@ -16,7 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
-#include "../cpustage.hpp"
+#include "app/cpustage.hpp"
 
 namespace threadsplit
 {

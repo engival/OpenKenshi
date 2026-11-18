@@ -1,5 +1,5 @@
 // Shared lighting (included by terrain.glsl, mesh.glsl and sky.glsl with `@include lighting.inc` + `@include_block lighting`; the lit stages add `@include_block lighting_ao`).
-// One uniform block, filled once per frame from Sky::light() (src/sky.cpp, struct LightParams); every world shader shades with the
+// One uniform block, filled once per frame from Sky::light() (src/render/sky.cpp, struct LightParams); every world shader shades with the
 // same two functions, so terrain, buildings and features always agree.
 @block lighting
 layout(binding=2) uniform light_params
@@ -61,7 +61,7 @@ float scale_fn(float c, float sd)
 // 0.96 = FresnelDiffuse(dielectric_spec 0.04). The ambient is not the sky: it is the game's static irradiance cube data/materials/mp_irradiance.dds (16^2 BC3 x 6 faces,
 // 5 mips, the deferred material's `cubic_texture mp_irradiance.dds` on Main_Lighting_RTW unit 6), sampled at mip 3 by the normal exactly as deferred.hlsl
 // CalcEnvironmentLight does: texCUBElod(irr, N, 3) x a x 4 (kenshi-inspect findings rwh141_bdc_irradiance_live.md; the cube carries no hour, weather or sky input).
-// The cube is bound as irr_cube by spec_cube_init (src/speccube.cpp) and filtered with spec_smp, the linear clamp sampler of the specularity cube next to it (a new
+// The cube is bound as irr_cube by spec_cube_init (src/render/speccube.cpp) and filtered with spec_smp, the linear clamp sampler of the specularity cube next to it (a new
 // sampler binding would not fit: SG_MAX_SAMPLER_BINDSLOTS 14, all in use). ambientMult (ambientmap.png) is sampled at the camera by Sky (rgb = amb_mult, alpha x 2
 // folded into sun_col; the Hub is white, alpha 127 = x0.996); envColour.w (zenith.w) and ambientParams.w (nadir.w) are scalars the exe feeds (not traced; the
 // common.program defaults 1 are used). sun_col is already sunColour.rgb x sunColour.w; fog_col.w = exposure.

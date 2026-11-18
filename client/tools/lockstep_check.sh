@@ -57,8 +57,8 @@ fail()
 #   main.cpp 2        :4430 / :4489 in init() on the sapp (render) thread, before the logic thread exists; the logic half reads the value
 #                     portraitTable.setOrigin stored (logic asks sokol nothing)
 # Only image_state (a pool-slot read, racy against a concurrent make on another thread) matters, and no caller of it is on the logic thread.
-declare -A KNOWN=([client/src/colourmap.cpp]=2 [client/src/detail.cpp]=2 [client/src/worldbuildings.cpp]=2 [client/src/grass.cpp]=1
-	[client/src/particles.cpp]=1 [client/src/worldmap.cpp]=1 [client/src/dds.cpp]=2 [client/src/main.cpp]=2)
+declare -A KNOWN=([client/src/render/colourmap.cpp]=2 [client/src/render/detail.cpp]=2 [client/src/world/worldbuildings.cpp]=2 [client/src/render/grass.cpp]=1
+	[client/src/render/particles.cpp]=1 [client/src/world/worldmap.cpp]=1 [client/src/assets/dds.cpp]=2 [client/src/main.cpp]=2)
 cd "$TREE" || exit 2
 BAD=0
 while read -r f n

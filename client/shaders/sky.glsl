@@ -1,7 +1,7 @@
 // Sky: single-scattering atmosphere (O'Neil, "Accurate Atmospheric Scattering", GPU Gems 2 ch. 16, in SkyX's layout: one ray from the
 // camera to the outer sphere, `scale()` optical-depth fit, Rayleigh + Henyey-Greenstein-style Mie phase), then night floor, starfield (rotating about the sun path's pole),
 // one 2D cloud layer and the two moons. Everything is one fullscreen triangle drawn first; terrain and buildings draw over it.
-// Constants come from the exe (docs/reference/SKY_EXE.md section 2), packed by src/sky.cpp so the CPU colour sampling and this shader share them.
+// Constants come from the exe (docs/reference/SKY_EXE.md section 2), packed by src/render/sky.cpp so the CPU colour sampling and this shader share them.
 @vs sky_vs
 in vec2 pos;
 out vec2 v_ndc;

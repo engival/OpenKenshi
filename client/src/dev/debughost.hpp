@@ -10,10 +10,10 @@
 #include <unordered_map>
 #include <vector>
 
-#include "doorpose.hpp"
-#include "idbuffer.hpp"	// IdBuffer::Hit: `dump peek` reads the cursor pass's last result
-#include "pick.hpp"	// Pick: the shot sidecar's cursor pick (dev/shotsidecars.cpp)
-#include "opencont.hpp"	// OpenCont: `dump windows` lists the open item windows
+#include "world/doorpose.hpp"
+#include "render/idbuffer.hpp"	// IdBuffer::Hit: `dump peek` reads the cursor pass's last result
+#include "input/pick.hpp"	// Pick: the shot sidecar's cursor pick (dev/shotsidecars.cpp)
+#include "app/opencont.hpp"	// OpenCont: `dump windows` lists the open item windows
 #include "ui/hud.hpp"	// ui::HudBuildingInfo: the machine panel main.cpp builds (dev::Context::machinePanel)
 
 class BeamField;

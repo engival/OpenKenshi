@@ -1,7 +1,7 @@
 #!/bin/bash
 # config_save (kenshi-k16.2.243.1): config.cpp's save() drops a line whose value equals the option's static compiled-in default
 # (so a changed default reaches the user), keeps a comment, an unknown key, a window.<layout>.* line and any away value, and does not
-# write a dropped key back. run.sh builds the check twice against src/config.cpp, the second time with a different t.int default, and
+# write a dropped key back. run.sh builds the check twice against src/app/config.cpp, the second time with a different t.int default, and
 # runs the base build's file through it (an away value outlives a changed default). Then `kclient --print-defaults`: exit 0 with no
 # window and no game data, the static default of a key printed although the config file sets another value, and the file untouched.
 # Needs no game data and no display. Usage: run.sh OUT (CXX, BUILD as for the other checks).
@@ -17,7 +17,7 @@ rc=0
 for kind in base changed; do
 	extra=(-DT_INT_DEFAULT=5)
 	[ "$kind" = changed ] && extra=(-DT_INT_DEFAULT=6)
-	"$cxx" -std=c++20 -O1 -Wall -Wextra -I "$srcdir" "${extra[@]}" "$here/config_save.cpp" "$srcdir/config.cpp" \
+	"$cxx" -std=c++20 -O1 -Wall -Wextra -I "$srcdir" "${extra[@]}" "$here/config_save.cpp" "$srcdir/app/config.cpp" \
 		-o "$out/bin/config_save-$kind" || { echo "run.sh: cannot build $out/bin/config_save-$kind" >&2; exit 2; }
 done
 export KCLIENT_CONFIG="$out/kclient.cfg"

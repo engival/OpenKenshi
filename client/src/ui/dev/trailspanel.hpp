@@ -9,7 +9,7 @@
 #include "ui/widget.hpp"
 
 // The trails panel (kenshi-k16.3.11; docs/UI.md "trailspanel.*"): a debug window (--debug, the host's) that drives the host's
-// Trails (client/src/trails.hpp, kenshi-k16.2.73) without a script: on / off, all or one character, the last X seconds (at most the host's cap;
+// Trails (client/src/render/trails.hpp, kenshi-k16.2.73) without a script: on / off, all or one character, the last X seconds (at most the host's cap;
 // 0 = the cap, LAST N S; kenshi-k16.2.106), clear; one row per character with its track colour, points and pops (pops > 0 in the warning ink); the host's
 // status line at the bottom. The body is client/data/ui/trailspanel.layout. Host-fed: the state in every frame while shown, actions out.
 namespace ui

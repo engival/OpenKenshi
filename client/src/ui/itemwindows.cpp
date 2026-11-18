@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-#include "config.hpp"
+#include "app/config.hpp"
 #include "ui/font.hpp"
 #include "ui/ui.hpp"
 

@@ -6,7 +6,7 @@
 #include <map>
 #include <memory>
 
-#include "config.hpp"
+#include "app/config.hpp"
 
 namespace ui
 {

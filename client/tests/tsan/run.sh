@@ -14,7 +14,7 @@
 #   whenever a held render makes logic's 100 ms wait expire. The summary counts those polls. Needs client/build/cpp/OpenKenshi-server (target
 #   ksim_server; the normal build tree) and a navworld bake (KENSHI_NAVWORLD, default ~/git/kenshi/navworld). --port N: the server's port (default: a free one).
 #
-# render.thread comes from a config file the script writes (client/src/config.cpp KCLIENT_CONFIG), so both the scene test and the scripted run get
+# render.thread comes from a config file the script writes (client/src/app/config.cpp KCLIENT_CONFIG), so both the scene test and the scripted run get
 # it: the scene test takes no extra kclient arguments. --mode overlap is accepted for when it lands; until then the client prints its loud
 # "overlap IS NOT IMPLEMENTED" line and runs lockstep, and the summary counts the logic thread that ran.
 # OUT defaults to client/build-tsan/tsan-run (in the worker's tree, gitignored); OUT/tsan/ holds the TSan reports (TSAN_OPTIONS log_path, one file

@@ -7,9 +7,9 @@
 #include <cstdio>
 #include <vector>
 
-#include "config.hpp"
+#include "app/config.hpp"
 #include "ui/gfx.hpp"
-#include "windowgate.hpp"
+#include "app/windowgate.hpp"
 
 namespace dev::pickmask
 {

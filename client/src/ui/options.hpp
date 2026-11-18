@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "config.hpp"
+#include "app/config.hpp"
 #include "ui/layout.hpp"
 #include "ui/widget.hpp"
 

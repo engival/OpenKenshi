@@ -1,4 +1,4 @@
-// Skinned characters (src/characters.cpp): the game's hardware skinning (data/materials/deferred/skin.hlsl main_vs: WEIGHTS 3, BONES 60, a 3x4 matrix per bone)
+// Skinned characters (src/characters/characters.cpp): the game's hardware skinning (data/materials/deferred/skin.hlsl main_vs: WEIGHTS 3, BONES 60, a 3x4 matrix per bone)
 // and its body shader (character.hlsl main_fs: body + head texture sets in one mesh, the head at uv.y + 1), shaded with the shared deferred light (lighting.inc).
 @vs char_vs
 // One instanced draw per (mesh, material) group (kenshi-k16.2.205.8): the per-view block is only the matrix; everything per character is read from the

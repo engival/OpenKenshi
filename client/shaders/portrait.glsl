@@ -1,4 +1,4 @@
-// Portrait copy (src/portraits.cpp): the rendered HDR scratch into its RGBA8 atlas cell (the viewport), as is: the world shaders already apply the
+// Portrait copy (src/characters/portraits.cpp): the rendered HDR scratch into its RGBA8 atlas cell (the viewport), as is: the world shaders already apply the
 // baked exposure. Clear pixels keep alpha 0 so the UI's portrait frame shows through.
 @include origin.inc
 

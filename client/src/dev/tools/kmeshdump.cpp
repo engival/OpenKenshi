@@ -4,9 +4,9 @@
 
 #include <cstring>
 
-#include "materials.hpp"
-#include "ogremesh.hpp"
-#include "resources.hpp"
+#include "assets/materials.hpp"
+#include "assets/ogremesh.hpp"
+#include "assets/resources.hpp"
 
 int main(int argc, char** argv)
 {

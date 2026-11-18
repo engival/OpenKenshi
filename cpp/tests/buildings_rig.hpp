@@ -3,7 +3,7 @@
 // The rig of ksim_buildings_*: a scenario simulation with a player faction, one in-process Session whose output goes through the client's
 // own decoder (client/src/simlink.cpp, compiled in unchanged), and helpers to send orders 90 / 91 / 94 as frames.
 
-#include "simlink.hpp" // the client's decoder (client/src), compiled in unchanged
+#include "net/simlink.hpp" // the client's decoder (client/src), compiled in unchanged
 
 #include "ksim/buildings.hpp"
 #include "ksim/navigator.hpp"

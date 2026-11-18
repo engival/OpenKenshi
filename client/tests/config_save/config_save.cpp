@@ -3,7 +3,7 @@
 // build's), free-form raw keys (window.<layout>.*) and any value set away from the default. Built twice by run.sh, the second time
 // with a different t.int default, to show a saved away value outlives a changed default. The defaults are the two macros below,
 // standing in for the client's literal declarations; a value detected at runtime is never an option default and has no option here.
-#include "config.hpp"
+#include "app/config.hpp"
 
 #include <cstdio>
 #include <cstdlib>

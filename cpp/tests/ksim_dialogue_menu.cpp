@@ -31,7 +31,7 @@
 #include "kworld/heightmap.hpp"
 #include "kworld/loadorder.hpp"
 
-#include "simlink.hpp" // client/src/simlink.hpp
+#include "net/simlink.hpp" // client/src/net/simlink.hpp
 
 #include "test_util.hpp"
 

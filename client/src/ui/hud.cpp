@@ -5,7 +5,7 @@
 #include <cmath>
 #include <cstdio>
 
-#include "config.hpp"
+#include "app/config.hpp"
 #include "ui/diamond.hpp"
 #include "ui/keys.hpp"
 #include "ui/prompt.hpp"

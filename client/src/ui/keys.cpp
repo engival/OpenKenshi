@@ -8,7 +8,7 @@
 #include <deque>
 #include <map>
 
-#include "config.hpp"
+#include "app/config.hpp"
 #include "ui/ui.hpp"
 
 namespace ui::keys

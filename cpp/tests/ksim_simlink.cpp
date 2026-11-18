@@ -1,6 +1,6 @@
 // SIMLINK server end to end (docs/formats/SIMLINK.md): an in-process ksim server (a thread
 // running SimLinkServer on a loopback port) and a test client built on the client session's own
-// decoder (client/src/simlink.cpp, compiled in unchanged, so the two halves are checked
+// decoder (client/src/net/simlink.cpp, compiled in unchanged, so the two halves are checked
 // against each other). Checks: HELLO both ways, refusal on a data hash / protocol / garbage
 // mismatch, the string table before first use, snapshot bracketing, orders answered with event
 // 9 or 10 carrying the tick, move_to / attack / stop / block / pause / speed / interest / view
@@ -23,7 +23,7 @@
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
 
-#include "simlink.hpp" // client/src/simlink.hpp
+#include "net/simlink.hpp" // client/src/net/simlink.hpp
 
 #include "test_util.hpp"
 
@@ -176,7 +176,7 @@ World makeNewGameWorld(const kworld::LoadOrder& order, const std::shared_ptr<con
 
 // ---- what the client's decoder does not know yet ----
 //
-// The decoder (client/src/simlink.cpp, owned by kenshi-0f) reads CHAR_DYNAMIC with `driveSeq` and
+// The decoder (client/src/net/simlink.cpp, owned by kenshi-0f) reads CHAR_DYNAMIC with `driveSeq` and
 // CHAR_ROUTE (type 23), but has no event 12 (position_corrected) yet. The test therefore reads event 12
 // itself and keeps every CHAR_ROUTE it sees (the decoder holds only the latest per character).
 // Delete the event 12 part when the client decoder learns it.

@@ -2,7 +2,7 @@
 // that wrote the floor view (WorldBuildings::visible_) from WorldBuildings::updateFocus: W1 the snap on engage, W2 the auto threshold (with its
 // stair up-hold / down-hold), W3 the stair hotspot (the top-kZoneSteps-tread zone, armed / held, the height band), and the follow safety net's
 // remnants (stairWatch_, the "crossed but kept" log). Each fired once on an event and a missed or misread event was never corrected (the review's
-// section 2). They are replaced by the one per-frame model ff::FloorFollow (client/src/floorfollow.hpp), which updateFocus feeds a sample each frame.
+// section 2). They are replaced by the one per-frame model ff::FloorFollow (client/src/world/floorfollow.hpp), which updateFocus feeds a sample each frame.
 // This is the code as it stood at client 8e987bca (the last hash with it live). The fields it used, all removed from worldbuildings.hpp:
 //   WorldBuildings: startSubject, leadKnown, snapId_, autoIn_, autoFloor_, autoTracked_, leadIn_, leadAt_, stairWatch_, kZoneSteps
 //   StairHot: mn / mx (the hotspot zone rect), yZone, armed, held

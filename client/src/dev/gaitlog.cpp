@@ -10,9 +10,9 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "characters.hpp"
-#include "simlink.hpp"
-#include "simview.hpp"
+#include "characters/characters.hpp"
+#include "net/simlink.hpp"
+#include "net/simview.hpp"
 
 namespace dev
 {

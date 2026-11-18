@@ -1,4 +1,4 @@
-// Sun shadow lookup (cascaded shadow map atlas, see src/shadow.cpp and docs/reference/LIGHTING.md "Shadows").
+// Sun shadow lookup (cascaded shadow map atlas, see src/render/shadow.cpp and docs/reference/LIGHTING.md "Shadows").
 // The including fragment shader declares, before `@include_block shadowing`, the atlas and its comparison sampler:
 //   layout(binding=N) uniform texture2D shadow_tex;  layout(binding=M) uniform sampler shadow_smp;
 @block shadowing
@@ -129,7 +129,7 @@ float shadow_air(vec3 p)
 
 // Caster side, every shadow map fragment shader: the game's ShadowCaster_FP (common/shadowcaster.hlsl; kenshi-inspect findings/terrain_shadow_casting.md,
 // rwh.23) lifts the stored depth by min(cap, slope x |depth gradient|) + fixed, the terrain included. This is what keeps a sun-facing slope lit at a grazing
-// sun (kenshi-k16.2.57). Call it first, before any discard (derivatives). b: x = slope (RTW 6.0), y = cap in this cascade's normalised depth (src/shadow.cpp),
+// sun (kenshi-k16.2.57). Call it first, before any discard (derivatives). b: x = slope (RTW 6.0), y = cap in this cascade's normalised depth (src/render/shadow.cpp),
 // z = fixed (RTW 0).
 @block caster_bias
 void caster_bias(vec4 b)

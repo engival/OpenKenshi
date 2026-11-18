@@ -6,7 +6,7 @@
 //   the logged command replays to the same hash, and save -> load -> continue after a new game.
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
-#include "simlink.hpp" // the client's decoder (client/src), compiled in unchanged
+#include "net/simlink.hpp" // the client's decoder (client/src), compiled in unchanged
 
 #include "ksim/clock.hpp"
 #include "ksim/creator.hpp"
