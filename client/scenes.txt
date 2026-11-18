@@ -69,3 +69,5 @@ sneak_idle_armed	pos=-50950,3480	alt=14	yaw=0	pitch=-10	day=1	time=10:00	weather
 interior_shafts_dust	pos=-50528,1086,-1262	yaw=235	pitch=-6	day=1	time=15:00	weather=default	set=render.sun_shafts=1	set=render.dust_motes=1
 # debug_light_probes: the --debug light probe overlay (debug.light_probes) over interior_inside, the one world overlay a scene can show offline: the nav mesh overlay, sim markers and labels need a sim (render sitting 11, kenshi-k16.2.205.12.57)
 debug_light_probes	pos=-51309,1600,3549	yaw=200	pitch=-12	day=1	time=12:00	weather=default	set=debug.light_probes=1
+# characters_carry_par: five carriers with a carried body each (10 characters, over kPoseMinItems) so the parallel pose pass runs on a carry (kenshi-k16.2.205.12.110)
+characters_carry_par	pos=-50950,3480	alt=12	yaw=0	pitch=-8	day=1	time=10:00	weather=default	char=move=0;carry=left;at=30,-14;yaw=90	char=carried=0	char=move=0;carry=right;at=30,-3;yaw=0	char=carried=2;female	char=move=45;t=0.2;carry=right;at=30,9;yaw=90	char=carried=4	char=move=0;carry=left;at=45,-14;yaw=180	char=carried=6;female	char=move=45;t=0.5;carry=left;at=45,-3;yaw=90	char=carried=8

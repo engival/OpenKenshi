@@ -8,8 +8,8 @@
 #include "ui/widget.hpp"
 
 // The debug panel (docs/UI.md; the user, 2026-11-05: the old key list (Ctrl+F1, now F8) was a wall of text): a movable DEBUG window, top left. On its
-// left (client/data/ui/debug.layout; resizable) the host's debug toggles (a tick box each, its key beside it) and the debug scenes (offline only); on its right the key list, built
-// here from ui::keys, grouped (headings DebugHeading, keys DebugKey, titles Main), then the mouse, then the host's extra rich text.
+// left (client/data/ui/debug.layout; resizable) the host's debug toggles (a tick box each, its key beside it), under them the host's extra rich text,
+// then the debug scenes (offline only); beside them the commands, time and weather. No key list (k16.2.352): the Options Keys tab lists every binding.
 namespace ui
 {
 	struct DebugToggle
@@ -31,7 +31,7 @@ namespace ui
 	{
 		std::vector<DebugToggle> toggles;
 		std::vector<std::string> scenes;	// scene names; empty: the list hides (the host's, offline only)
-		std::string extra;	// rich text after the key list (the squad sources)
+		std::string extra;	// rich text under the toggles (the squad overlay's sources); "": hidden
 		std::vector<DebugCommand> commands;	// a button each, in order
 		std::vector<std::string> weathers;	// the chooser's names, after its own "auto" row
 		std::string weather;	// the current one; "auto" or "": normal weather
@@ -78,7 +78,7 @@ namespace ui
 	class DebugPanel
 	{
 	public:
-		static constexpr float kW = 1100, kH = 640, kSideW = 240, kMidW = 270;
+		static constexpr float kW = 570, kH = 640, kSideW = 240, kMidW = 270;
 		explicit DebugPanel(DebugActions actions = {});
 		~DebugPanel();
 		void update(const DebugState& s);	// every frame while shown (cheap when nothing changed)
@@ -95,24 +95,20 @@ namespace ui
 		Button* timeButton(size_t i) const;	// dawn, noon, dusk, midnight, +1h
 		ClockDial* timeDial() const { return dial_; }
 		Label* reply() const { return reply_; }
-		const std::vector<std::pair<std::string, std::string>>& keyRows() const { return keyRows_; }	// (group heading, action name) in order
 		Widget* extra() const;	// the RichText
-		ScrollView* keyList() const { return list_; }
 		const Layout& layout() const { return *layout_; }
 
 	private:
 		void rebuildSide();
-		void rebuildKeys();
 		void rebuildMid();	// the command buttons and the weather rows
 		void refreshMid();	// enabled / checked / the reply, from last_
 		CaptionWindow* win_ = nullptr;
 		void bind(Layout& l);	// the file's widgets, after each (re)build
 		std::unique_ptr<Layout> layout_;
 		Widget *toggles_ = nullptr, *scenes_ = nullptr;
-		Box* keys_ = nullptr;
 		Widget* scenesBox_ = nullptr;
+		Widget* extraBox_ = nullptr;
 		RichText* extra_ = nullptr;
-		ScrollView* list_ = nullptr;
 		std::vector<Button*> toggleButtons_, sceneButtons_, commandButtons_, weatherButtons_;
 		Widget* commands_ = nullptr;
 		ScrollView* weathers_ = nullptr;
@@ -120,7 +116,6 @@ namespace ui
 		Button* time_[5] = {};
 		ClockDial* dial_ = nullptr;
 		bool revealWeather_ = false;
-		std::vector<std::pair<std::string, std::string>> keyRows_;
 		DebugState last_;
 		DebugActions act_;
 		bool built_ = false;

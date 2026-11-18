@@ -78,6 +78,7 @@ layout(binding=1) uniform sampler depth_smp;
 layout(binding=1) uniform dust_fs_params
 {
 	vec4 zinfo;	// x = near, y = far, z = 1 when the depth is already 0..1 clip (Vulkan), w = phase g
+	vec4 dinfo;	// x = 1 when the sun lights motes (sun up, shadow map live), y = the lamp cones' gain (render.lamp_beams x the cone gain; 0 = off)
 };
 in vec3 v_rel;
 in vec2 v_uv;
@@ -127,17 +128,47 @@ void main()
 	if (d < 0.99999 && v_vz > zv) { discard; }
 	const float indoor = dust_indoor(v_rel);
 	if (indoor <= 0.0) { discard; }
-	// Only the core of a fairly bright beam lights a mote (kenshi-jj3.8.4): the sun lookup at the mote and at four taps a hand's breadth around it, perpendicular to the sun, the
-	// minimum of the five, through a threshold. A thin lit sliver (a shadow-map leak at a roof / wall join, a penumbra edge) is not a beam and shows no mote; the user saw those as "stars".
-	const vec3 sx = normalize(cross(ldir.xyz, abs(ldir.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
-	const vec3 sy = cross(ldir.xyz, sx);
-	const float kTap = 0.35;
-	const float core = min(min(shadow_air(v_rel + sx * kTap), shadow_air(v_rel - sx * kTap)), min(shadow_air(v_rel + sy * kTap), shadow_air(v_rel - sy * kTap)));
-	const float sun = shadow_air(v_rel) * smoothstep(0.75, 0.95, min(core, 1.0));
-	if (sun <= 0.0) { discard; }
-	// the same light as the shafts' air: pi x the sun radiance x the phase towards the eye; nothing else lights a mote
 	const vec3 dir = normalize(v_rel);
-	const vec3 lit = sun_col.rgb * (nadir.w * fog_col.w * (kPi * phase_hg(dot(dir, ldir.xyz), zinfo.w) * sun));
+	vec3 lit = vec3(0.0);
+	// The sun beam (kenshi-jj3.8.11): the sun term of the light debugger gates it (sun_direct off = no sun on a mote), and a mote the shadow map does not light has nothing.
+	if (dinfo.x > 0.5 && term_on(LT_SUN) > 0.5)
+	{
+		// Only the core of a fairly bright beam lights a mote (kenshi-jj3.8.4): the sun lookup at the mote and at four taps a hand's breadth around it, perpendicular to the sun, the
+		// minimum of the five, through a threshold. A thin lit sliver (a shadow-map leak at a roof / wall join, a penumbra edge) is not a beam and shows no mote.
+		const vec3 sx = normalize(cross(ldir.xyz, abs(ldir.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+		const vec3 sy = cross(ldir.xyz, sx);
+		const float kTap = 0.35;
+		const float core = min(min(shadow_air(v_rel + sx * kTap), shadow_air(v_rel - sx * kTap)), min(shadow_air(v_rel + sy * kTap), shadow_air(v_rel - sy * kTap)));
+		const float sun = shadow_air(v_rel) * smoothstep(0.75, 0.95, min(core, 1.0));
+		// the same light as the shafts' air: pi x the sun radiance x the phase towards the eye
+		lit += sun_col.rgb * (nadir.w * fog_col.w * (kPi * phase_hg(dot(dir, ldir.xyz), zinfo.w) * sun));
+	}
+	// The lamps' cones (render.lamp_beams; the shafts' march, sunshafts.glsl): the spot lamps of the light list pointing down, cut by their building's walls (lamp_vis).
+	if (dinfo.y > 0.0 && !term_off(LT_LAMPS))
+	{
+		const int pn = int(pl_head.x);
+		vec3 lc = vec3(0.0);
+		int n = 0;
+		for (int i = 0; i < pn && n < 16; i++)
+		{
+			if (!(pl[4 * i + 1].w > 0.5 && pl[4 * i + 2].y < -0.5 && int(pl[4 * i + 3].w + 0.5) > 0)) { continue; }
+			n++;
+			const vec4 lp = pl[4 * i], lcol = pl[4 * i + 1], ls = pl[4 * i + 3];
+			const vec3 dl = lp.xyz - v_rel;
+			const float dd = length(dl);
+			if (dd > lp.w) { continue; }
+			const vec3 l = dl / max(dd, 1e-4);
+			const float xr = clamp(dd / lp.w / 0.6, 0.0, 1.0);
+			float att = (1.0 - xr) * (1.0 - xr);
+			const float den = ls.x - ls.y;
+			att *= clamp(pow(clamp(dot(pl[4 * i + 2].xyz, -l) - ls.y, 0.0, 1.0) / (abs(den) < 1e-6 ? 1e-6 : den), ls.z), 0.0, 1.0);
+			if (att <= 0.0) { continue; }
+			att *= lamp_vis(v_rel, int(ls.w + 0.5));
+			lc += lcol.rgb * (att * phase_hg(dot(dir, l), zinfo.w));
+		}
+		lit += lc * (kPi * dinfo.y * fog_col.w);
+	}
+	if (dot(lit, vec3(1.0)) <= 0.0) { discard; }
 	frag_color = vec4(lit * (v_gain * indoor * round_mask), 0.0);
 }
 @end

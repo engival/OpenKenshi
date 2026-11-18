@@ -1,7 +1,6 @@
 #include "ui/dev/debugpanel.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <cstdio>
 
@@ -12,46 +11,9 @@ namespace ui
 {
 	namespace
 	{
-		const float kBodyH = DebugPanel::kH - CaptionWindow::kHeaderH, kRowH = 24, kChordW = 190;
+		const float kBodyH = DebugPanel::kH - CaptionWindow::kHeaderH;
 		const char* const kTimeIds[5] = { "dawn", "noon", "dusk", "midnight", "plus1h" };	// debug.layout ids
 		const char* const kTimePresets[5] = { "dawn", "noon", "dusk", "midnight", "+1h" };	// what DebugActions::time gets
-		const char* const kGroups[] = { "GAME", "BUILD MODE", "DEBUG" };	// keys::Group order
-		const char* const kMouse[] = {	// our own wording of kclient's mouse handling
-			"Left click: select a character (Shift adds)",
-			"Right click: attack the character there, else move (Shift queues)",
-			"Right button held: look around",
-			"Wheel: fly speed (zoom; in direct drive it leaves the drive)",
-		};
-
-		Label& heading(Box& parent, const char* text)
-		{
-			Label& l = parent.add<Label>(text, "Kenshi_PaintedTextFont_Medium");
-			l.colour = res::colour("DebugHeading");
-			return l;
-		}
-
-		void keyRow(Box& parent, const std::string& chord, const std::string& title, float w)
-		{
-			Widget& row = parent.add<Widget>();
-			row.rect = { 0, 0, w, kRowH };
-			row.halign = Widget::Align::kStretch;
-			Label& k = row.add<Label>(chord, "Kenshi_StandardFont_Medium");
-			k.colour = res::colour("DebugKey");
-			k.valign = Widget::Align::kCenter;
-			Label& t = row.add<Label>(title, "Kenshi_StandardFont_Medium");
-			t.colour = res::colour("Main");
-			t.rect.x = kChordW;
-			t.valign = Widget::Align::kCenter;
-		}
-
-		std::string withoutPrefix(const std::string& title)	// "Debug: navmesh overlay" under DEBUG reads "Navmesh overlay"
-		{
-			const std::string p = "Debug: ";
-			if (title.rfind(p, 0) != 0 || title.size() == p.size()) { return title; }
-			std::string t = title.substr(p.size());
-			t[0] = (char)std::toupper((unsigned char)t[0]);
-			return t;
-		}
 	}
 
 	DebugPanel::DebugPanel(DebugActions actions) : act_(std::move(actions))
@@ -64,7 +26,7 @@ namespace ui
 		win_->rect = { 8, 230, kW, kH };
 		win_->visible = false;
 		win_->resizable = true;
-		win_->minSize = { 860, 400 };
+		win_->minSize = { 560, 400 };
 		win_->body().rect.h = kBodyH;
 		layout_ = std::make_unique<Layout>(win_->body(), "debug", [this](Layout& l) { bind(l); });
 		if (!toggles_) { bind(*layout_); }	// the file failed: spares, so the panel works under the red box
@@ -75,7 +37,6 @@ namespace ui
 		toggles_ = &l.at<Flex>("toggles");
 		scenesBox_ = &l.at<Flex>("scenesBox");
 		scenes_ = &l.at<Flex>("scenes");
-		list_ = &l.at<ScrollView>("keys");
 		commands_ = &l.at<Flex>("commands");
 		reply_ = &l.at<Label>("reply");
 		reply_->colour = res::colour("Main");
@@ -101,19 +62,19 @@ namespace ui
 		}
 		commandButtons_.clear();
 		weatherButtons_.clear();
-		keys_ = &static_cast<Box&>(list_->body());
-		keys_->spacing = 0;
 		toggleButtons_.clear();
 		sceneButtons_.clear();
-		keyRows_.clear();
-		extra_ = nullptr;
+		extraBox_ = &l.at<Flex>("extra");
+		extra_ = &extraBox_->add<RichText>(last_.extra);	// under the toggles (k16.2.352: the key list it followed left the panel)
+		extra_->rect.w = kSideW;
+		extra_->halign = Widget::Align::kStretch;
+		extraBox_->visible = !last_.extra.empty();
 		if (built_)	// a reload: the file's widgets are new
 		{
 			rebuildSide();
 			rebuildMid();
 			revealWeather_ = true;
 			refreshMid();
-			rebuildKeys();
 		}
 	}
 
@@ -213,43 +174,10 @@ namespace ui
 		reply_->visible = !last_.reply.empty();
 	}
 
-	void DebugPanel::rebuildKeys()
-	{
-		keys_->clear();
-		keyRows_.clear();
-		const float w = kW - kSideW - kMidW - 72;
-		for (int g = 0; g < 3; g++)
-		{
-			bool any = false;
-			for (const keys::Action& a : keys::actions())
-			{
-				if ((int)a.group != g) { continue; }
-				const std::string k = keys::label(a.name);
-				if (k.empty()) { continue; }
-				if (!any) { heading(*keys_, kGroups[g]); }
-				any = true;
-				keyRow(*keys_, k, g == (int)keys::Group::kDebug ? withoutPrefix(a.title) : a.title, w);
-				keyRows_.push_back({ kGroups[g], a.name });
-			}
-			if (any) { keys_->add<Widget>().rect = { 0, 0, w, 10 }; }
-		}
-		heading(*keys_, "MOUSE");
-		for (const char* m : kMouse)
-		{
-			Label& l = keys_->add<Label>(m, "Kenshi_StandardFont_Medium");
-			l.colour = res::colour("Main");
-		}
-		keys_->add<Widget>().rect = { 0, 0, w, 10 };
-		extra_ = &keys_->add<RichText>(last_.extra);
-		extra_->rect.w = w;
-		extra_->halign = Widget::Align::kStretch;
-	}
-
 	void DebugPanel::update(const DebugState& s)
 	{
 		if (built_ && s == last_) { return; }
 		const bool side = !built_ || s.toggles.size() != last_.toggles.size() || s.scenes != last_.scenes;
-		const bool keys = !built_;
 		const bool newWeather = !built_ || s.weather != last_.weather;
 		const bool mid = !built_ || s.commands.size() != last_.commands.size() || s.weathers != last_.weathers
 			|| [&] { for (size_t i = 0; i < s.commands.size(); i++) { if (s.commands[i].id != last_.commands[i].id) { return true; } } return false; }();
@@ -267,8 +195,8 @@ namespace ui
 				toggleButtons_[i]->checked = s.toggles[i].on;
 			}
 		}
-		if (keys) { rebuildKeys(); }
 		extra_->text = s.extra;
+		extraBox_->visible = !s.extra.empty();
 		built_ = true;
 	}
 
@@ -279,7 +207,7 @@ namespace ui
 		win_->visible = on;
 		if (on)
 		{
-			rebuildKeys();	// the bindings may have changed since
+			rebuildSide();	// the toggles' chords: the bindings may have changed since
 			win_->raise();
 			focus(win_);
 		}

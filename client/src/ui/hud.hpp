@@ -304,6 +304,11 @@ namespace ui
 		Widget* pausedPanel() const { return pausedPanel_; }	// for scripted tests
 		Widget* shortcutPanel() const { return shortcuts_; }
 		Widget* timePanel() const { return time_; }
+		// The control hints panel's dock (ui::dockHints, kenshi-k16.2.294.10.1): w x h pixels, its right edge on the cluster's (the BuildPanel's),
+		// its foot one panel gap (the money box to the BuildPanel, from the layout) over the highest shown cluster panel under it: the speed /
+		// money row, or a diamond where the panel is wide enough to reach it. Empty while the HUD is hidden.
+		Rect hintsDock(float w, float h) const;
+		float panelGap() const;	// the gap the bottom-right panels keep between each other, pixels
 		Diamond* floorDiamond() const { return floor_; }
 		Diamond* moveSpeedDiamond() const { return moveSpeed_; }
 		bool speedAtlas() const { return speedAtlas_; }	// the speed diamond shows the atlas's icons (ui.speed_icons atlas and a themed atlas)

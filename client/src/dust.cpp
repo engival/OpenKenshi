@@ -15,6 +15,7 @@ constexpr int kMaxMotes = 60000;
 constexpr float kRadius = 0.06f;	// world units
 constexpr float kGain = 15.0f;		// the lab's 30 clipped white against the sky seen through a door (90 more so); half of it keeps the sun-lit motes below the clip
 constexpr float kG = 0.6f;			// Henyey-Greenstein g of the lab's dust
+constexpr float kLampGain = 0.35f;	// sunshafts.cpp kLampGain: the lamps' cone gain at render.lamp_beams 1
 constexpr float kNearFade = 0.5f;
 }
 
@@ -49,10 +50,11 @@ void Dust::shutdown()
 	shd_ = {};
 }
 
-int Dust::render(const Camera& c, const LightParams& light, const Shadow& shadow, float scale, float sunY, double time, sg_view depth)
+int Dust::render(const Camera& c, const LightParams& light, const Shadow& shadow, float scale, float lampScale, float sunY, double time, sg_view depth)
 {
 	const lightvol::Binding& lv = lightvol::binding();
-	if (scale <= 0.0f || lv.params[0] < 0.5f || !shadow.active() || sunY <= 0.0f) { return 0; }
+	const bool sunLit = shadow.active() && sunY > 0.0f;	// the sun lights a mote only where its beam reaches (kenshi-jj3.8.11); the lamps' cones are the other light
+	if (scale <= 0.0f || lv.params[0] < 0.5f || (!sunLit && lampScale <= 0.0f)) { return 0; }
 	// the nearest live volume (lightvol.hpp: nearest first): its probe box, back in camera relative space: g = A rel + off, so rel = A^-1 (g - off)
 	const float* v = lv.params + 8;
 	if (v[24 + 1] <= 0.0f) { return 0; }	// a volume whose light has not arrived
@@ -105,6 +107,8 @@ int Dust::render(const Camera& c, const LightParams& light, const Shadow& shadow
 	fp.zinfo[2] = 1;
 #endif
 	fp.zinfo[3] = kG;
+	fp.dinfo[0] = sunLit ? 1.0f : 0.0f;
+	fp.dinfo[1] = lampScale * kLampGain;
 	drawstats::pipeline(pip_);
 	sg_bindings bd = {};
 	bd.views[VIEW_depth_tex] = depth;

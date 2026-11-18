@@ -573,25 +573,17 @@ std::string WorldBuildings::propReport(uint64_t id) const
 // spot `at`, the nearest to it when several do; the ray enters its box at t. -1: no piece holds the spot, 0: the ray misses it, 1: hit.
 int WorldBuildings::bedRay(const double at[3], const double origin[3], const double dir[3], double& t) const
 {
-	constexpr double kBedSlack = 2, kBedSearch = 12;
-	double bestD = 1e30;
-	int found = -1;
-	for (int dx = -3; dx <= 3; dx++)
+	// The piece depends on the spot only (not the ray): bedPiece once per spot and generation, the ray test per call (kenshi-k16.2.205.12.111)
+	uint64_t key = 1469598103934665603ull;
+	for (int a = 0; a < 3; a++) { uint64_t bits; std::memcpy(&bits, &at[a], sizeof bits); key = (key ^ bits) * 1099511628211ull; }
+	auto it = bedMemo_.find(key);
+	if (it == bedMemo_.end() || it->second.dataGen != dataGen_ || it->second.holdGen != holdGen_ || it->second.at[0] != at[0] || it->second.at[1] != at[1] || it->second.at[2] != at[2])
 	{
-		for (int dz = -3; dz <= 3; dz++)
-		{
-			const auto g = furnGrid_.find(furnKey(at[0] + 4 * dx, at[2] + 4 * dz));
-			if (g == furnGrid_.end()) { continue; }
-			for (const uint32_t i : g->second)
-			{
-				const BuildingInstance& b = data_.instances[i];
-				const double d = std::hypot(b.x - at[0], b.z - at[2]);
-				if (d > kBedSearch || d >= bestD || !instanceHolds(i, at, kBedSlack)) { continue; }
-				bestD = d;
-				found = (int)i;
-			}
-		}
+		if (it == bedMemo_.end() && bedMemo_.size() >= 4096) { bedMemo_.clear(); }	// beds of zones left behind
+		BedMemo m = { { at[0], at[1], at[2] }, dataGen_, holdGen_, bedPiece(at) };
+		it = bedMemo_.insert_or_assign(key, m).first;
 	}
+	const int found = it->second.piece;
 	return found < 0 ? -1 : instanceRay((uint32_t)found, origin, dir, t) ? 1 : 0;
 }
 
@@ -889,6 +881,7 @@ void WorldBuildings::uploadMesh(MeshEntry& m, MeshCpu& cpu, bool blocking)
 	m.radius = std::sqrt((m.bmax[0] - m.bmin[0]) * (m.bmax[0] - m.bmin[0]) + (m.bmax[1] - m.bmin[1]) * (m.bmax[1] - m.bmin[1])
 		+ (m.bmax[2] - m.bmin[2]) * (m.bmax[2] - m.bmin[2])) / 2;
 	m.state = blocking ? Ready : Uploading;
+	holdGen_++;	// the boxes and, blocking, Ready (bedRay's memo)
 }
 
 // A decoded texture: the image and its view in a job, as uploadMesh. A blocking create is Ready at once; if sokol refuses the image the draw binds
@@ -948,7 +941,7 @@ void WorldBuildings::promote()
 		{
 			MeshEntry& m = meshes_[id];
 			if (!m.gpu.ready()) { uploading_[keep++] = uploading_[i]; continue; }
-			if (m.state == Uploading) { m.state = Ready; stateGen_++; }
+			if (m.state == Uploading) { m.state = Ready; stateGen_++; holdGen_++; }
 		} else {
 			TexEntry& t = textures_[id];
 			if (!t.gpu.ready()) { uploading_[keep++] = uploading_[i]; continue; }
@@ -988,7 +981,7 @@ void WorldBuildings::drain(bool wait, int maxItems)
 		{
 			MeshEntry& m = meshes_[r.id];
 			if (r.ok) { uploadMesh(m, r.mesh, wait); stats_.uploadedMeshes++; if (!wait) { uploading_.push_back({ true, r.id }); } }
-			else { m.state = Failed; }
+			else { m.state = Failed; holdGen_++; }
 		} else {
 			TexEntry& t = textures_[r.id];
 			if (r.ok)
@@ -1062,7 +1055,11 @@ void WorldBuildings::ensurePart(uint32_t pid)
 {
 	PartRt& rt = partRt_[pid];
 	const BuildingPartDef& def = data_.parts[pid];
-	if (rt.mesh == -2) { rt.mesh = def.marker && hideMarkers ? -1 : meshFor(def.mesh); }
+	if (rt.mesh == -2)
+	{
+		rt.mesh = def.marker && hideMarkers ? -1 : meshFor(def.mesh);
+		holdGen_++;	// the part has its mesh (instanceHolds reads it: bedRay's memo)
+	}
 	if (rt.mesh < 0) { return; }
 	MeshEntry& m = meshes_[rt.mesh];
 	m.lastUsed = frame_;
@@ -1070,6 +1067,7 @@ void WorldBuildings::ensurePart(uint32_t pid)
 	if (m.state == Unloaded)
 	{
 		m.state = Loading;
+		holdGen_++;	// every mesh state move bumps it (bedRay's memo, kenshi-k16.2.205.12.111)
 		queue(true, rt.mesh, m.path);
 	}
 	if (m.state == Failed) { rt.openDone = true; return; }	// nothing to classify (and the bake's render.open_windows gate must not wait for it)
@@ -1194,6 +1192,7 @@ void WorldBuildings::evict()
 			rq::push("buildings.mesh-free", [h = m.gpu] { sg_destroy_buffer(h.get().vbuf); sg_destroy_buffer(h.get().ibuf); }, m.lane);
 			m.gpu = rq::Handle<MeshGpu>();
 			m.state = Unloaded;
+			holdGen_++;
 			m.hullPos.clear();
 			m.hullIdx.clear();
 			for (PartRt& rt : partRt_) { if (rt.mesh == (int)i) { rt.resolved = false; } }
@@ -1284,10 +1283,11 @@ std::string WorldBuildings::nameOfInstance(int index) const
 	return n < data_.names.size() ? data_.names[n] : std::string();
 }
 
-// The layout furniture piece a bed's sleeping spot `at` lies in (the same search as bedRay: nearest piece whose mesh boxes hold the spot), -1 none.
-// Report only (the F12 shot's pick lines, kenshi-k16.2.234.1); bedRay stays the decision.
+// The layout furniture piece a bed's sleeping spot `at` lies in: the piece whose oriented mesh box (grown by kBedSlack) holds the spot, the nearest
+// to it when several do; -1 none. bedRay's search (through its memo) and the F12 shot's pick lines (kenshi-k16.2.234.1).
 int WorldBuildings::bedPiece(const double at[3]) const
 {
+	constexpr double kBedSlack = 2, kBedSearch = 12;
 	double bestD = 1e30;
 	int found = -1;
 	for (int dx = -3; dx <= 3; dx++)
@@ -1300,7 +1300,7 @@ int WorldBuildings::bedPiece(const double at[3]) const
 			{
 				const BuildingInstance& b = data_.instances[i];
 				const double d = std::hypot(b.x - at[0], b.z - at[2]);
-				if (d > 12 || d >= bestD || !instanceHolds(i, at, 2)) { continue; }
+				if (d > kBedSearch || d >= bestD || !instanceHolds(i, at, kBedSlack)) { continue; }
 				bestD = d;
 				found = (int)i;
 			}

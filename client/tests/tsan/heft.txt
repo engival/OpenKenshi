@@ -1,0 +1,32 @@
+# client/tests/tsan/heft.txt: the Heft crowd under the parallel pose pass (kenshi-k16.2.205.12.110):
+#   TSAN_SCENARIO=cage_prisoner TSAN_LIVE_SCRIPT=client/tests/tsan/heft.txt client/tests/tsan/run.sh --mode overlap --only live
+# The camera over the Heft Storm House (the reported shot's position, as in tools/container_pick_check.sh), so the characters there (more than
+# Characters::kPoseMinItems) pose on anim.pose_threads threads while render draws the previous packet; the camera turns, render and logic stall.
+# About 60 s of frames (3600 at the fixed 1/60 s). SHOTDIR is replaced by run.sh.
+5 set simspeed 2
+10 set pos 68228,-70842
+12 set alt 170
+14 set yaw -33
+16 set pitch -51
+30 screenshot SHOTDIR/heft_00_start.png
+300 set yaw -10
+320 renderstall 250
+600 set yaw 20
+620 renderstall 250
+900 set simspeed 5
+1000 set yaw 50
+1020 renderstall 250
+1200 screenshot SHOTDIR/heft_01_mid.png
+1400 set yaw 80
+1420 stall 150
+1700 set simspeed 2
+1800 set yaw 110
+1820 renderstall 250
+2200 set yaw 140
+2220 renderstall 250
+2600 set yaw 170
+2620 stall 150
+3000 set yaw 200
+3020 renderstall 250
+3400 screenshot SHOTDIR/heft_02_end.png
+3600 quit

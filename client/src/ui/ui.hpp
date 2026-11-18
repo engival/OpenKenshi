@@ -56,8 +56,8 @@ namespace ui
 	bool fixedTips();	// ui.hud_tips=box: screens claim their fixed-box tips; float: they float at the pointer
 	Widget* hoveredWidget();	// the widget under the pointer (the tooltip's), null over the world
 
-	// Control hints panel (docs/UI.md "Control hints", kenshi-k16.2.294): a small see-through list on the right edge, one line per input
-	// of the thing under the pointer. The host calls setHints each frame from its resolver (title = the target); an empty block hides it.
+	// Control hints panel (docs/UI.md "Control hints", kenshi-k16.2.294): a small see-through list, one line per input of the thing under
+	// the pointer, docked above the HUD's bottom-right cluster (dockHints; without a dock: the right edge, centred). The host calls setHints each frame from its resolver (title = the target); an empty block hides it.
 	// While the pointer is over a widget (or under one) whose hints() lists lines, those show instead. Off unless ui.control_hints (F6).
 	struct HintBlock
 	{
@@ -67,6 +67,9 @@ namespace ui
 	void setHints(const HintBlock& b);
 	bool hintsShown();	// the panel is up this frame (setting on and lines to show)
 	HintBlock shownHints();	// what it shows (scripted tests), empty when hidden
+	Rect hintsRect();	// where it draws this frame, pixels (scripted tests); empty when hidden
+	// The screen the panel docks to (the HUD while shown): given the panel's size in pixels, its rect; an empty rect: undocked. Null clears.
+	void dockHints(std::function<Rect(float w, float h)> dock);
 
 	bool pressed(const Widget* w);
 	bool focused(const Widget* w);

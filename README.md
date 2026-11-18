@@ -14,6 +14,15 @@ no game assets or data: it requires a purchased copy of Kenshi (Steam or GOG), a
 This is our own implementation. No Lo-Fi Games code was copied. Community reverse-engineering references (see
 [CREDITS.md](CREDITS.md)) were read as documentation only.
 
+## Project goals
+
+- **Network-based server/client first.** The simulation is a server and the client is a view of it, even in
+  single-player.
+- **A mod interface, not direct mod compatibility.** Mods made for the original are not a target; instead the engine
+  aims for an extendable, Lua-based mod interface.
+- **The game's data and intended behaviour, not its bugs.** The engine plays your installed game data as the original
+  means it to, without reproducing the original's bugs or limits.
+
 ## License
 
 [MIT](LICENSE). Kenshi's game data and assets are not covered: they belong to Lo-Fi Games, and you need a purchased copy of Kenshi.

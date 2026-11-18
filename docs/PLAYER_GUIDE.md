@@ -504,9 +504,10 @@ that.", "Discovered <place>", and the hint "Hold down the ALT key to pick the lo
 container that is not yours without ALT; one message at a time, about four seconds each); a toast appears at the top centre in a dark rounded bubble for short news (a screenshot saved); toasts go after about four seconds, even while the game is paused, the same news again counts up in its bubble ("(x3)") instead of stacking, and at most three show at once. Entering a new zone shows its name as a
 large banner across the upper middle, fading out.
 
-**Control hints** (`F6`, off by default; Options setting `ui.control_hints`): a small dark see-through panel on the
-right edge lists what the mouse does on the thing under the pointer: one line per input ("Shift+Click   Add to the
-selection"), its name on top. A greyed line is not possible right now and says why after it. Separate from the tooltips.
+**Control hints** (`F6`, off by default; Options setting `ui.control_hints`): a small dark see-through panel just
+above the bottom-right HUD (the speed buttons and money box), lined up with its right edge, lists what the mouse does on the thing under the pointer: one line per input ("Shift+Click   Add to the
+selection"), its name on top; it grows upward with more lines. A greyed line is not possible right now and says why after it.
+Separate from the tooltips. With the HUD hidden it sits against the right edge, halfway up.
 
 **Text boxes** (names, save names, notes, options):
 
@@ -774,7 +775,7 @@ follows the selection; pin it (the caption's pin) and it stays on the character 
   at the default close distance, whatever the floating camera's zoom was (leaving and re-entering starts there again).
   `W` / `S` walk forward / back, `A` / `D` steer (stopped, they turn the character in place); with the right button held
   (mouse look) `A` / `D` strafe instead, sideways at half the walk speed with the body keeping its facing, and `W` / `S` + `A` / `D`
-  walk the diagonals (the forward walk / run clips play). The mouse looks. Any wheel step leaves the drive (the floating camera on the same character, `W` `A` `S` `D` move the camera again) and zooms it that step. The camera never hides the character: a wall or the ground behind it pulls the camera in at once and it eases back
+  walk the diagonals (the forward walk / run clips play). The mouse looks. Any wheel step, `Home` or `End` leaves the drive (the floating camera on the same character, `W` `A` `S` `D` move the camera again) and zooms it that step. The camera never hides the character: a wall or the ground behind it pulls the camera in at once and it eases back
   out slowly; thin props (signs, rails, poles) fade to a see-through dither instead. Leave it with `V`, `Escape`, or a double right click on the character being driven: the camera returns to the
   floating view centred on it. While driving, the floor and move speed diamonds wear a gold rim.
   A single right click keeps its usual order; on your own character alone in the selection that is no order at all, and
@@ -785,8 +786,7 @@ A menu or a window takes the mouse and the keys while it is up; the game keys ar
 ## 6. Debug and visualisation (`--debug`)
 
 These are development views. They exist only when the client runs with `--debug` (the `fly`, `game`, `scenario` and
-`spectate` modes pass it; `title` does not). Their keys are in the Debug keys tab of the Options window and in the F8
-panel's key list.
+`spectate` modes pass it; `title` does not). Their keys are in the Debug keys tab of the Options window.
 
 ### 6.1 The F8 debug panel
 
@@ -795,7 +795,8 @@ panel's key list.
 - **Toggles**, each with its key: Navmesh overlay (`Ctrl+F5`), Navmesh: pruned polygons (no key; a settings key), Trails
   (`Ctrl+F6`), Squad overlay (`Ctrl+F4`), Shadows (`Ctrl+F3`), Walk on the ground (`Ctrl+G`), Follow camera
   (`Ctrl+C`, with a running game), Free camera (`Ctrl+F`; with Options open it goes to
-  Options' Find instead), Autorun (`Ctrl+Q`, while following), Clock paused (`Ctrl+P`).
+  Options' Find instead), Autorun (`Ctrl+Q`, while following), Clock paused (`Ctrl+P`). Under them, the squads the client knows with their
+  colours and counts (with the squad overlay).
   The settings key `debug.light_probes` (experimental, off) draws the light probes of the nearest building with an interior as points, grey by how much
   sky reaches them and red inside walls; the first time it bakes that building on a background thread (seconds) and keeps the result in the cache.
 - **Scenes** — the scene bookmarks, as buttons. Offline only (no running game).
@@ -809,8 +810,6 @@ panel's key list.
   time. Click or drag on the dial to set that time (to the quarter hour, sent when you let go); its tooltip shows the
   time under the pointer. **Weather** — a scrollable list of the game's weathers,
   "auto" first. With a running game these go through the server's debug view.
-- **The key list** — every action in its group (`GAME`, `BUILD MODE`, `DEBUG`), then the mouse summary, then the squads
-  the client knows with their colours and counts.
 
 ### 6.2 The animation lab
 
@@ -946,7 +945,7 @@ marked *inert* is bound today but the client does not act on it yet: **not built
 | Camera | `Left Ctrl` (held) + mouse | Rotate the camera with the mouse |
 | Camera | `Z` | Focus the camera on the selection |
 | Camera | `Semicolon` | First-person camera — *inert* |
-| Camera | `V` | Hover / direct-drive camera on the selection (again: leave it), or a double right click on your character |
+| Camera | `V` | Hover / direct-drive camera on the selection (again: leave it), or a double right click on your character; a wheel step, `Home` or `End` also leaves it |
 | Camera | `Shift+Semicolon` | Camera grid — *inert* |
 | Camera | `R` / `F` | Floor up / down |
 | Camera | Wheel | Zoom while following; fly speed on the free camera |

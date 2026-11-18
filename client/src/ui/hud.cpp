@@ -541,6 +541,7 @@ namespace ui
 			if (act_.extend) { act_.extend(extended_); }
 		};
 		place();
+		dockHints([this](float w, float h) { return hintsDock(w, h); });
 		for (int i = 0; i < kLimbs; i++)
 		{
 			auto* l = new Limb;
@@ -574,7 +575,24 @@ namespace ui
 		prompt_.reset();
 		for (Limb* l : limbs_) { delete l; }
 		for (Portrait* p : portraits_) { delete p; }
+		if (ready()) { dockHints(nullptr); }
 		if (ready() && top_) { root().remove(top_); }
+	}
+
+	float Hud::panelGap() const { return build_->parent()->screen().x - money_->screen().right(); }
+
+	Rect Hud::hintsDock(float w, float h) const
+	{
+		if (!top_->visible) { return {}; }
+		const float right = build_->parent()->screen().right();
+		float top = top_->screen().bottom();
+		for (const Widget* p : std::initializer_list<const Widget*>{ time_, money_, build_->parent(), floor_, moveSpeed_, orders_ })
+		{
+			const Rect r = p->screen();
+			if (p->visible && r.right() > right - w && r.x < right) { top = std::min(top, r.y); }
+		}
+		const float foot = std::round(top - panelGap());
+		return { std::round(right - w), foot - h, w, h };
 	}
 
 	Widget* Hud::portrait(size_t i) const { return i < portraits_.size() ? portraits_[i]->frame : nullptr; }

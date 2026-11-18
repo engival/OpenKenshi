@@ -399,6 +399,12 @@ private:
 	bool instanceRay(uint32_t index, const double origin[3], const double dir[3], double& t, bool drawn = false, double tMin = 0, double tMax = 1e30) const;
 	bool triangleRay(int mesh, const double o[3], const double d[3], const double off[3], double& t, double tMin = 0, double tMax = 1e30) const;
 	mutable std::unordered_map<std::string, std::vector<float>> pickTris_;	// mesh path -> triangle corners (xyz x 3 per triangle), decoded on the first drawn pick
+	// bedRay's piece search (bedPiece) by the bed's sleeping spot, kept while dataGen_ and holdGen_ stand (kenshi-k16.2.205.12.111): the search reads
+	// only furnGrid_ (setData), the instances (dataGen_) and which part meshes are Ready with their boxes (holdGen_). Not stateGen_: texture uploads
+	// bump it too, most frames while Heft streams. Logic thread only, like pickTris_: written and read by bedRay inside pick_at (hover, click, the
+	// F12 report); the draw (render thread) never touches it.
+	struct BedMemo { double at[3]; uint64_t dataGen, holdGen; int piece; };
+	mutable std::unordered_map<uint64_t, BedMemo> bedMemo_;
 	bool partWorldBox(const BuildingInstance& b, uint32_t k, double lo[3], double hi[3]) const;
 	bool instanceHolds(uint32_t index, const double p[3], double slack) const;
 	std::map<std::pair<uint64_t, uint32_t>, uint32_t> layoutPieces_;	// interior furniture by (building doorKey, piece data index): the wire's container tail
@@ -642,6 +648,7 @@ private:
 	uint64_t dataGen_ = 0;		// setData / setProps / addPart: the instance and part set changed
 	uint64_t doorGen_ = 0;		// setDoors changed a door's pose (the shadow cache's key)
 	uint64_t stateGen_ = 0;		// a mesh or texture became ready, failed or was evicted
+	uint64_t holdGen_ = 0;		// a mesh's state moved or a part found its mesh: what instanceHolds sees changed (bedRay's memo, kenshi-k16.2.205.12.111). Logic thread
 	void addLight(const BuildingInstance& b, uint32_t ii, const BuildingPartDef& def, uint32_t li, const double cam[3], const float planes[4][4], double maxDist);
 	void addOwnLight(const BuildingInstance& b, uint32_t ii, uint32_t li, const double cam[3], const float planes[4][4], double maxDist);
 	void addEffect(const BuildingInstance& b, uint32_t ii, int32_t part, const BuildingPartDef* def, uint32_t ei, const double cam[3], const float planes[4][4]);

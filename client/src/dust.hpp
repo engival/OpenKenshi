@@ -12,8 +12,8 @@ class Dust
 public:
 	void init();
 	void shutdown();
-	// scale: render.dust_motes (the count scale, > 0), sunY: the unclamped sun height, time: seconds (the drift), viewH: the target height in pixels. Returns the motes drawn (0 = none).
-	int render(const Camera& c, const LightParams& light, const Shadow& shadow, float scale, float sunY, double time, sg_view depth);
+	// lampScale: render.lamp_beams (0 = no lamp light on the motes), scale: render.dust_motes (the count scale, > 0), sunY: the unclamped sun height, time: seconds (the drift), viewH: the target height in pixels. Returns the motes drawn (0 = none).
+	int render(const Camera& c, const LightParams& light, const Shadow& shadow, float scale, float lampScale, float sunY, double time, sg_view depth);
 
 private:
 	sg_shader shd_ = {};

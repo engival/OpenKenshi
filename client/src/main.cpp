@@ -199,6 +199,7 @@ void sim_opened();
 void place_characters(const std::vector<std::string>& specs, double x, double z, double yawRad);
 bool set_follow_id(uint64_t id);
 void leave_follow();
+void update_rts(double dt);
 void open_creator(const std::string& what);
 void creator_slider(const std::string& name, float v);
 void place_blood(const std::vector<std::string>& specs, double x, double z, double yawRad);
@@ -1717,11 +1718,12 @@ Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped = nullptr)
 	// beds (INTERACTABLE kind 5): the bed's own placed shape, the layout furniture piece holding the sleeping spot (its mesh box, oriented: a click
 	// anywhere on the drawn bed picks it, not a sphere over the spot); a sphere only for a bed no drawn piece holds (MINE, k16.2.220)
 	double bedAt[3] = {};
+	{	// scope of the bed loop
+	CPUSTAGE_ACC("pa.beds");	// the bed loop's time (+pa.beds; kenshi-k16.2.205.12.109 found 0.55-0.65 ms at Heft, .111 memoizes bedRay's search)
 	for (const auto& [id, th] : app.sim.things())
 	{
 		if (th.kind != simlink::Interactable::kBed) { continue; }
 		const double at[3] = { th.pos[0], th.pos[1], th.pos[2] };
-		if (cut_hidden(at) || pick_hidden(at)) { continue; }	// a bed on a floor the cut hides is not drawn: the ray goes through it (Storm House floor 0: the floor-1 beds sat over the stairs, k16.2.233.1)
 		double entry = 0;
 		const int piece = app.buildings.bedRay(at, from, dir, entry);
 		bool hit = piece > 0;
@@ -1733,13 +1735,16 @@ Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped = nullptr)
 			hit = along > 0 && perp2 < kBedReach * kBedReach;
 			entry = along - std::sqrt(std::max(0.0, kBedReach * kBedReach - perp2));
 		}
-		if (hit && entry <= std::min(best, world + 1))
-		{
-			p.kind = Pick::Bed;
-			p.id = id;
-			best = std::max(entry, 0.0);
-			for (int k = 0; k < 3; k++) { bedAt[k] = at[k]; p.hit[k] = from[k] + dir[k] * best; }
-		}
+		if (!hit || entry > std::min(best, world + 1)) { continue; }
+		// a bed on a floor the cut hides is not drawn: the ray goes through it (Storm House floor 0: the floor-1 beds sat over the stairs, k16.2.233.1).
+		// Tested only for a bed that would take the pick: cut_hidden casts a collide ray per bed, most of the loop's time at Heft once bedRay's search
+		// was memoized (kenshi-k16.2.205.12.111); a filter, so the pick is the same as testing it first.
+		if (cut_hidden(at) || pick_hidden(at)) { continue; }
+		p.kind = Pick::Bed;
+		p.id = id;
+		best = std::max(entry, 0.0);
+		for (int k = 0; k < 3; k++) { bedAt[k] = at[k]; p.hit[k] = from[k] + dir[k] * best; }
+	}
 	}
 	// a sleeper lies inside the bed's box, so it is behind the box's near face: the character wins over the bed it lies in. A character the floor cut
 	// hides is not drawn (Characters::culled): the ray goes through it (k16.2.259: the draw's own test, so a character that shows still picks).
@@ -2880,6 +2885,9 @@ void update_follow(double dt)
 	app.driveAge += dt;
 	constexpr double kZoomRate = 1.5;	// MINE: e-folds/s of the distance
 	const double zoom = (held("camera_zoom_out") ? 1 : 0) - (held("camera_zoom_in") ? 1 : 0);
+	// kenshi-k16.2.237.7 (user k16.2.237 part 6: "any zoom is the 'disable cruise control'"): Home / End in the follow of a player character leave it like the wheel,
+	// to the RTS camera on the same character, and zoom it this frame. A spectator's follow keeps its zoom.
+	if (zoom != 0 && app.sim.isPlayer(app.followId)) { leave_follow(); update_rts(dt); return; }
 	app.followDist = std::clamp(app.followDist * std::exp(zoom * kZoomRate * dt), 10.0, 2000.0);	// the scroll wheel's clamp
 	if (app.sim.isPlayer(app.followId))
 	{
@@ -2910,7 +2918,20 @@ void update_follow(double dt)
 		if (route && !route->points.empty())
 		{
 			const auto* p = &route->points.back();
-			for (const auto& q : route->points) { if (std::hypot(q[0] - pos[0], q[2] - pos[2]) >= kLookAhead) { p = &q; break; } }
+			// kenshi-k16.2.237.7: the wire's route keeps the waypoints already passed (it is the whole path from the order's start, n stays 5 as the body
+			// walks it), so a passed waypoint 15 u behind the body counted as the look-ahead and pointed the camera backwards. The look-ahead starts at
+			// the end of the route segment nearest the body.
+			size_t first = 0;
+			double bestD = 1e30;
+			for (size_t i = 0; i + 1 < route->points.size(); i++)
+			{
+				const auto &u = route->points[i], &v = route->points[i + 1];
+				const double ex = v[0] - u[0], ez = v[2] - u[2], l2 = ex * ex + ez * ez;
+				const double t = l2 > 0 ? std::clamp(((pos[0] - u[0]) * ex + (pos[2] - u[2]) * ez) / l2, 0.0, 1.0) : 0.0;
+				const double d = std::hypot(pos[0] - (u[0] + t * ex), pos[2] - (u[2] + t * ez));
+				if (d < bestD - 1e-6) { bestD = d; first = i + 1; }
+			}
+			for (size_t i = first; i < route->points.size(); i++) { const auto& q = route->points[i]; if (std::hypot(q[0] - pos[0], q[2] - pos[2]) >= kLookAhead) { p = &q; break; } }
 			if (std::hypot((*p)[0] - pos[0], (*p)[2] - pos[2]) > 1) { look = std::atan2((*p)[0] - pos[0], (*p)[2] - pos[2]); }
 		}
 		// kenshi-k16.2.237.5 (user 2026-11-14: on a right-click walk down a hill the camera swung to the character's front): the route's look-ahead can lie

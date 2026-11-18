@@ -1962,6 +1962,27 @@ void script()
 	if (demo.frame == 120 && demo.showHints)
 	{
 		check(key(SAPP_KEYCODE_F6) && !ui::hintsShown() && key(SAPP_KEYCODE_F6) && ui::hintsShown(), "hints: F6 again hides it, a third press shows it");
+		// Docked above the bottom-right cluster (kenshi-k16.2.294.10.1): its foot one panel gap over the speed / money row, its right edge
+		// on the BuildPanel's; more lines grow it upward. Run at two window sizes (docs/UI.md "Control hints").
+		const ui::Hud& h = *demo.hud;
+		const ui::Rect r = ui::hintsRect(), row = h.timePanel()->screen(), bp = h.buildButton()->parent()->screen();
+		const float gap = h.panelGap();
+		check(h.shown() && gap > 0 && std::abs(h.moneyBox()->screen().x - row.right() - gap) <= 1,
+			("hints: the HUD's panel gap from its layout (" + std::to_string(gap) + " px)").c_str());
+		check(std::abs(row.y - gap - r.bottom()) <= 1 && r.right() == bp.right() && r.x > row.x,
+			("hints: docked, foot " + std::to_string(row.y - r.bottom()) + " px over the speed row (gap " + std::to_string(gap) + "), right edge on the HUD's ("
+				+ std::to_string(r.right()) + " / " + std::to_string(bp.right()) + ")").c_str());
+		const ui::HintBlock five = ui::shownHints();
+		ui::HintBlock two = five;
+		two.lines.resize(2);
+		ui::setHints(two);
+		const ui::Rect r2 = ui::hintsRect();
+		ui::setHints(five);
+		check(r2.bottom() == r.bottom() && r2.y > r.y && r2.right() == r.right(), "hints: fewer lines, a shorter panel on the same foot (it grows upward)");
+		demo.hud->show(false);
+		const ui::Rect u = ui::hintsRect();
+		demo.hud->show(true);
+		check(u.right() == ui::root().screen().right() && std::abs(u.y + u.h / 2 - ui::root().screen().h / 2) <= 1, "hints: the HUD hidden, the panel against the right edge, centred");
 	}
 	if (demo.frame == 7)
 	{
@@ -6264,24 +6285,14 @@ void script()
 		check(dp.toggle(0)->checked, "debug: the host's next state ticks it");
 		demo.debugLog.clear();
 		check(dp.scenesBox()->visible && clickOn(dp.scene(1)) && demo.debugLog == "scene squin_gate;", "debug: a scene button asks for its scene");
-		int help = 0, all = 0, bound = 0;
-		bool once = true;
-		for (const ui::keys::Action& a : ui::keys::actions())
 		{
-			if (ui::keys::label(a.name).empty()) { continue; }
-			bound++;
-			int n = 0;
-			for (const auto& [g, name] : dp.keyRows()) { if (name == a.name) { n++; } }
-			once = once && n == 1;
+			// The key list left the panel (k16.2.352: the Options Keys tab has every binding); the host's extra text sits under the toggles.
+			const ui::Widget* ex = dp.extra();
+			const ui::Rect er = ex->screen(), last = dp.toggle(3)->screen(), sb = dp.scenesBox()->screen();
+			check(static_cast<const ui::RichText*>(ex)->text == demo.dbg.extra && ex->shown() && er.h > 40 && er.y >= last.bottom() && er.bottom() <= sb.y + 0.5f
+				&& er.right() <= dp.command(0)->screen().x, ("debug: the host's extra text (two sources) under the toggles, above the scenes (" + std::to_string(er.y) + "+" + std::to_string(er.h) + ")").c_str());
+			check(dp.window()->screen().w < 620 * ui::scale(), "debug: no key list, the panel narrows to the toggles and commands");
 		}
-		for (const auto& [g, name] : dp.keyRows())
-		{
-			all++;
-			if (name == "debug.help" && g == "DEBUG") { help++; }
-			if (name.rfind("debug.scene_", 0) == 0) { once = false; }
-		}
-		check(once && all == bound && help == 1 && ui::keys::label("debug.help") == "F8", ("debug: every bound action listed once under its group, F8 under DEBUG, no scene keys (" + std::to_string(all) + ")").c_str());
-		check(static_cast<const ui::RichText*>(dp.extra())->text == demo.dbg.extra, "debug: the host's extra text under the keys");
 		{
 			// The middle column: commands, the reply, time, weather.
 			demo.debugLog.clear();
@@ -6402,16 +6413,15 @@ void script()
 		demo.dbg.scenes.clear();
 		dp.update(demo.dbg);
 		check(!dp.scenesBox()->visible, "debug: no scenes, no list (a sim connected)");
-		ui::ScrollView& sv = *dp.keyList();
-		const ui::Rect th = sv.thumb(), v = sv.screen();
-		const float top = sv.offset;
-		drag({ th.x + th.w / 2, th.y + th.h / 2 }, { th.x + th.w / 2, v.bottom() + 50 });
-		ui::frame(0);
-		const float end = sv.offset;
-		check(th.h > 0 && top == 0 && end > 0 && std::abs(sv.thumb().bottom() - v.bottom()) < 1.5f, ("debug: the key list's thumb drags to the end (" + std::to_string(end) + ")").c_str());
-		click(th.x + th.w / 2, v.y + 2);
-		ui::frame(0);
-		check(sv.offset < end && (sv.offset > 0) == (end > v.h / ui::scale()), "debug: a click above the thumb pages up");
+		{
+			const std::string extra = demo.dbg.extra;
+			demo.dbg.extra.clear();
+			dp.update(demo.dbg);
+			const bool hidden = !dp.extra()->shown();
+			demo.dbg.extra = extra;
+			dp.update(demo.dbg);
+			check(hidden && dp.extra()->shown(), "debug: no extra text, no gap; back when the host sends it");
+		}
 		demo.debugLog.clear();
 		check(key(SAPP_KEYCODE_ESCAPE) && !dp.shown() && demo.debugLog == "close;", "debug: Escape closes it");
 		dp.show(true);

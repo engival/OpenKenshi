@@ -1,11 +1,12 @@
-# The debug window's body (ui::DebugPanel in client/src/ui/debugpanel.cpp; F8). The code fills "toggles", "scenes",
-# "commands", "weathers" and "keys", hides "scenesBox" while a sim is connected and "reply" while it is empty, and gives the
+# The debug window's body (ui::DebugPanel in client/src/ui/dev/debugpanel.cpp; F8). The code fills "toggles", "extra"
+# (the host's rich text: the squad overlay's sources), "scenes", "commands" and "weathers", hides "scenesBox" while a sim is connected and "reply" while it is empty, and gives the
 # time buttons ("dawn", "noon", "dusk", "midnight", "plus1h") their presets; the slot "clock" holds the 24 h dial (ui::ClockDial). Format: README.md here.
 
 row gap=16 pad=12
 	col size=240 gap=4
 		label "TOGGLES" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
 		col id=toggles size=auto gap=2
+		col id=extra size=auto
 		col id=scenesBox size=auto gap=4
 			label "SCENES" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
 			col id=scenes size=auto gap=2
@@ -28,5 +29,3 @@ row gap=16 pad=12
 		label "WEATHER" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
 		panel look=inset size=fill
 			scroll id=weathers x=4 y=4 w=4 h=4
-	panel look=inset size=fill
-		scroll id=keys x=10 y=8 w=10 h=8

@@ -52,13 +52,14 @@ namespace ui
 			std::vector<Menu*> held;	// open held menus (openMenu)
 			std::vector<const Widget*> claimed;	// claimTips areas
 			HintBlock hints;	// the host's (setHints)
+			std::function<Rect(float, float)> hintsDock;	// dockHints
 			Btn pressBtn = Btn::kLeft, lastBtn = Btn::kLeft;
 			float mx = -1, my = -1, scale = 1;
 			int vw = 0, vh = 0;	// the framebuffer in pixels, from the host (setViewport)
 			bool warnedViewport = false;
 			double time = 0, lastClickT = 0, hoverSince = 0;
 			uint32_t mods = 0;
-			const Font *tipFont = nullptr, *richTipFont = nullptr;
+			const Font *tipFont = nullptr, *richTipFont = nullptr, *hintFont = nullptr;
 		};
 		Ctx c_;
 
@@ -226,43 +227,64 @@ namespace ui
 			return c_.hints.lines.empty() ? HintBlock() : c_.hints;
 		}
 
-		// Our own drawn look in both styles: no frame, a dark see-through box against the right edge, vertically centred; the title, then one
-		// row per input, the inputs in a column. A greyed row (not doable now) says why after its label.
+		// The panel's measures (kenshi-k16.2.294.10.1: a notch under the first cut, Kenshi_StandardFont_MediumSmall, padding 8, column gap 14).
+		struct HintsLayout
+		{
+			Rect box;
+			float pad = 0, gap = 0, rowH = 0, w = 0, inW = 0;
+			size_t n = 0;
+			std::vector<std::string> labels;
+		};
+
+		// Our own drawn look in both styles: no frame, a dark see-through box docked by the HUD (dockHints: above its bottom-right cluster),
+		// else against the right edge, vertically centred; the title, then one row per input, the inputs in a column. It grows upward. A
+		// greyed row (not doable now) says why after its label.
+		HintsLayout hintsLayout(const HintBlock& b)
+		{
+			HintsLayout L;
+			const Font& f = *c_.hintFont;
+			const float s = c_.scale, maxW = 400 * s;
+			L.pad = std::round(8 * s);
+			L.gap = std::round(14 * s);
+			L.rowH = std::round(f.lineHeight() + 2 * s);
+			L.n = std::min(b.lines.size(), kHintLines);
+			for (size_t i = 0; i < L.n; i++)
+			{
+				const HintLine& l = b.lines[i];
+				L.inW = std::max(L.inW, f.width(l.input));
+				L.labels.push_back(!l.enabled && !l.why.empty() ? l.label + "  (" + l.why + ")" : l.label);
+			}
+			L.w = f.width(b.title);
+			for (const std::string& l : L.labels) { L.w = std::max(L.w, L.inW + L.gap + f.width(l)); }
+			L.w = std::min(L.w, maxW);
+			const float bh = std::round((b.title.empty() ? 0 : L.rowH) + L.n * L.rowH + 2 * L.pad), bw = std::round(L.w + 2 * L.pad);
+			const Rect docked = c_.hintsDock ? c_.hintsDock(bw, bh) : Rect();
+			if (docked.w > 0) { L.box = docked; return L; }
+			const Rect screen = c_.root->screen();
+			L.box = { std::round(screen.right() - bw), std::round(screen.y + (screen.h - bh) / 2), bw, bh };
+			return L;
+		}
+
 		void drawHints()
 		{
 			const HintBlock b = currentHints();
-			if (b.lines.empty() || !c_.tipFont) { return; }
-			const Font& f = *c_.tipFont;
-			const float s = c_.scale, pad = std::round(10 * s), gap = std::round(18 * s), rowH = std::round(f.lineHeight() + 2 * s), maxW = 460 * s;
-			const size_t n = std::min(b.lines.size(), kHintLines);
-			float inW = 0;
-			std::vector<std::string> labels;
-			for (size_t i = 0; i < n; i++)
-			{
-				const HintLine& l = b.lines[i];
-				inW = std::max(inW, f.width(l.input));
-				labels.push_back(!l.enabled && !l.why.empty() ? l.label + "  (" + l.why + ")" : l.label);
-			}
-			float w = f.width(b.title);
-			for (const std::string& l : labels) { w = std::max(w, inW + gap + f.width(l)); }
-			w = std::min(w, maxW);
-			const float bh = (b.title.empty() ? 0 : rowH) + n * rowH + 2 * pad, bw = w + 2 * pad;
-			const Rect screen = c_.root->screen();
-			const Rect box = { std::round(screen.right() - bw), std::round(screen.y + (screen.h - bh) / 2), std::round(bw), std::round(bh) };
-			gfx::fill(box, { 0.03f, 0.03f, 0.03f, 0.62f });
+			if (b.lines.empty() || !c_.hintFont) { return; }
+			const Font& f = *c_.hintFont;
+			const HintsLayout L = hintsLayout(b);
+			gfx::fill(L.box, { 0.03f, 0.03f, 0.03f, 0.62f });
 			const auto clip = [&](const std::string& t, float room) { return t.substr(0, f.fit(t, room)); };
-			float y = box.y + pad;
+			float y = L.box.y + L.pad;
 			if (!b.title.empty())
 			{
-				f.draw(box.x + pad, y, clip(b.title, w), res::colour("Title"));
-				y += rowH;
+				f.draw(L.box.x + L.pad, y, clip(b.title, L.w), res::colour("Title"));
+				y += L.rowH;
 			}
 			const Color main = res::colour("Main"), input = res::colour("Special");
-			for (size_t i = 0; i < n; i++, y += rowH)
+			for (size_t i = 0; i < L.n; i++, y += L.rowH)
 			{
 				const bool on = b.lines[i].enabled;
-				f.draw(box.x + pad, y, b.lines[i].input, on ? input : main.alpha(0.4f));
-				f.draw(box.x + pad + inW + gap, y, clip(labels[i], w - inW - gap), on ? main : main.alpha(0.4f));
+				f.draw(L.box.x + L.pad, y, b.lines[i].input, on ? input : main.alpha(0.4f));
+				f.draw(L.box.x + L.pad + L.inW + L.gap, y, clip(L.labels[i], L.w - L.inW - L.gap), on ? main : main.alpha(0.4f));
 			}
 		}
 	}
@@ -314,6 +336,7 @@ namespace ui
 		m.valign = Widget::Align::kEnd;
 		c_.message = &m;
 		c_.tipFont = fonts::get("Kenshi_StandardFont_Medium");
+		c_.hintFont = fonts::get("Kenshi_StandardFont_MediumSmall");
 		c_.richTipFont = fonts::get("Kenshi_StandardFont_Large");	// item tooltips: measured against the in-game capture
 		return true;
 	}
@@ -458,6 +481,14 @@ namespace ui
 	void setHints(const HintBlock& b) { c_.hints = b; }
 	bool hintsShown() { return c_.ready && !currentHints().lines.empty(); }
 	HintBlock shownHints() { return c_.ready ? currentHints() : HintBlock(); }
+	void dockHints(std::function<Rect(float w, float h)> dock) { c_.hintsDock = std::move(dock); }
+
+	Rect hintsRect()
+	{
+		if (!c_.ready || !c_.hintFont) { return {}; }
+		const HintBlock b = currentHints();
+		return b.lines.empty() ? Rect() : hintsLayout(b).box;
+	}
 
 	std::string claimedTip()
 	{

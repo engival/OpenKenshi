@@ -8,6 +8,7 @@
 #
 #   client/tests/tsan/run.sh [--mode off|lockstep|overlap] [--scenes NAME,NAME] [--only both|scenes|scenario|live] [--jobs N] [--port N] [--no-build] [OUT]
 #
+# TSAN_SCENARIO=NAME (kenshi-k16.2.205.12.110): the live scenario's server scenario (scenarios/NAME.kscen, default bar_lure; the Heft crowd: cage_prisoner with tests/tsan/heft.txt).
 # --only live (kenshi-k16.2.205.12.46): a third check, not part of `both`: ksim_server (scenarios/bar_lure.kscen, started by this script, killed by its own
 #   $!) plus the TSan kclient --simlink under client/tests/tsan/live.txt, so app.sim.active() is true and the idle hook polls the link (pumpLink)
 #   whenever a held render makes logic's 100 ms wait expire. The summary counts those polls. Needs client/build/cpp/OpenKenshi-server (target
@@ -143,7 +144,7 @@ fi
 rc_live=skip
 if [ "$only" = live ]
 then
-	say "live scenario (render.thread=$mode, ksim_server bar_lure on 127.0.0.1:$port)"
+	say "live scenario (render.thread=$mode, ksim_server ${TSAN_SCENARIO:-bar_lure} on 127.0.0.1:$port)"
 	pick_server "$tree" "$tree/client/build/cpp/OpenKenshi-server"	# 'server: shared PATH' / 'server: built (reason)'
 	server=$SERVER
 	nav=${KENSHI_NAVWORLD:-$HOME/git/kenshi/navworld}
@@ -151,7 +152,7 @@ then
 	[ -d "$nav" ] || { echo "kenshi tsan: no navworld bake $nav (KENSHI_NAVWORLD)" >&2; exit 1; }
 	sed -e "s#SHOTDIR#$out/shots#g" "${TSAN_LIVE_SCRIPT:-$here/live.txt}" > "$out/live.txt"	# TSAN_LIVE_SCRIPT: another script (tests/tsan/soak.txt)
 	# docs: a hand-started server dies with its own $!, never by a name match (other sessions' servers match too).
-	(cd "$tree" && exec "$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen "127.0.0.1:$port" --scenario-file "$tree/scenarios/bar_lure.kscen" --navworld "$nav" --bake "$nav") > "$out/server.log" 2>&1 &
+	(cd "$tree" && exec "$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen "127.0.0.1:$port" --scenario-file "$tree/scenarios/${TSAN_SCENARIO:-bar_lure}.kscen" --navworld "$nav" --bake "$nav") > "$out/server.log" 2>&1 &
 	spid=$!
 	trap 'kill $spid 2>/dev/null || true' EXIT
 	for _ in $(seq 240)

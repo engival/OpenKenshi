@@ -69,9 +69,10 @@ EXTRA_ENV="" run second "$FAKEPATH" CANCEL
 # 8. The data folder itself is accepted too.
 rm -rf "$T/cfg"; EXTRA_ENV="" run datafolder "$FAKEPATH" "$T/good/data"
 { [ $rc -eq 0 ] && [ "$out" = "data=$T/good/data" ]; } && ok "the data folder itself is accepted" || bad "data folder (rc=$rc out=$out)"
-# 9. Optional: the read-only real game path.
-G=/home/engival/files2/steam/steamapps/common/Kenshi
-if [ -d "$G" ]; then rm -rf "$T/cfg"; EXTRA_ENV="" run real "$FAKEPATH" "$T/bad" "$G"; { [ $rc -eq 0 ] && [ "$calls" -eq 2 ]; } && ok "real game path accepted ($out)" || bad "real game path (rc=$rc out=$out)"; fi
+# 9. Optional: the read-only real game path, from KENSHI_REAL_DATA (the install folder; skipped when unset or not a directory).
+G=${KENSHI_REAL_DATA:-}
+if [ -z "$G" ]; then echo "skip: real game path (set KENSHI_REAL_DATA to the Kenshi install folder)"; fi
+if [ -n "$G" ] && [ -d "$G" ]; then rm -rf "$T/cfg"; EXTRA_ENV="" run real "$FAKEPATH" "$T/bad" "$G"; { [ $rc -eq 0 ] && [ "$calls" -eq 2 ]; } && ok "real game path accepted ($out)" || bad "real game path (rc=$rc out=$out)"; fi
 
 [ $fail -eq 0 ] && echo "datapicker_check: all passed" || echo "datapicker_check: FAILED"
 exit $fail
