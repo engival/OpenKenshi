@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #include "ui/keys.hpp"
 #include "ui/ui.hpp"

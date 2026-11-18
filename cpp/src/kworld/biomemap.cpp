@@ -8,10 +8,14 @@
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
 // GCC false positive in stb's tRNS path (tc[3]: img_n is 1 or 3 there, checked just above it).
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
 #include <stb_image.h>
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
+#endif
 
 #include <algorithm>
 #include <cmath>

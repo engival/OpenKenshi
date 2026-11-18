@@ -578,7 +578,7 @@ void Water::render(const Terrain& terrain, const float mvp[16], const LightParam
 	fs.refl[0] = reflOn_ ? 1.0f : 0.0f;
 	fs.zinfo[0] = nearZ;
 	fs.zinfo[1] = farZ;
-#if defined(SOKOL_VULKAN)
+#if defined(SOKOL_VULKAN) || defined(SOKOL_METAL)	// z clip 0..1 (GL: -1..1)
 	fs.zinfo[2] = 1;
 #endif
 	fs.zinfo[3] = sceneDepth.id ? 1.0f : 0.0f;

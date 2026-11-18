@@ -1,0 +1,31 @@
+# macOS build of OpenKenshi on GitHub's Apple Silicon runner (kenshi-379.32). Build-only at first: nobody has run the result.
+name: macos
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - name: Dependencies
+        run: |
+          brew update
+          brew install cmake ninja pkg-config libvorbis libogg
+          brew install recastnavigation || echo "no Homebrew recastnavigation: cpp/cmake/recast.cmake fetches the engival fork pin ok-20260227-9f4ce64"
+      - name: sokol-shdc
+        run: client/tools/get_shdc.sh
+      - name: Configure
+        run: cmake -S client -B client/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKCLIENT_DEV_TOOLS=OFF -DKSIM_WERROR=OFF
+      - name: Build OpenKenshi
+        run: cmake --build client/build --target OpenKenshi -j4 -- -k 0
+      - name: Configure the sim tests
+        if: always()
+        run: cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKSIM_WERROR=OFF
+      - name: Build the sim tests
+        if: always()
+        run: cmake --build cpp/build -j4 -- -k 0
+      - name: ctest -LE slow
+        if: always()
+        run: ctest --test-dir cpp/build -LE slow --output-on-failure -j3

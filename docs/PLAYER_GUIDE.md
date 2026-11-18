@@ -803,12 +803,14 @@ These are development views. They exist only when the client runs with `--debug`
   The settings key `debug.light_probes` (experimental, off) draws the light probes of the nearest building with an interior as points, grey by how much
   sky reaches them and red inside walls; the first time it bakes that building on a background thread (seconds) and keeps the result in the cache.
 - **Scenes** — the scene bookmarks, as buttons. Offline only (no running game).
-- **Commands** — `Spawn bandit patrol` (with a running game and its towns loaded) and `Animations` (opens the animation
-  lab, 6.2). Below them the cheats, with a running game and a debug view: `Heal`, `Knock out`, `Wake` and `Kill` each act
-  on the character the status panel shows (none shown: the server's first player character) — heal every part and stand
+- **Windows** — the buttons that open a window: `Animations` (the animation lab, 6.2; enabled when the lab can load the game data),
+  `Lights`, `Trails window`, `Full map`, `Keys` and `Decisions` (below). **Actions** — `Spawn bandit patrol` (with a running game and its towns loaded), and
+  `Character...`, which opens a small toolbar under it with the cheats, with a running game, a debug view and a character in the status panel (otherwise the button is dim): `Heal`, `Knock out`, `Wake` and `Kill`. They stay open after a click
+  (heal several characters in a row) and close on `Escape` or a click outside; they each act
+  on the character the status panel shows — heal every part and stand
   up, drop it with a knock-out, clear the knock-out, or bleed it out. `Decisions` opens that character's DEBUG VIEW
   tree (6.4). `Lights` opens the LIGHTS window (`Shift+F7`), `Trails window` the trails window (`Shift+F6`), `Full map` the
-  full-screen world map (`Ctrl+M`), and `Keys` opens Options at its Keys tab: the key list lives in Options > Keys, not in this panel. The reply line under them says what the server answered (`ok`, or why it refused, e.g. `not down`).
+  full-screen world map (`Ctrl+M`), and `Keys` opens Options at its Keys tab: the key list lives in Options > Keys, not in this panel. The window buttons print no reply. The reply line under Actions says what the server answered to an action (`ok`, or why it refused, e.g. `not down`).
 - **Time** — `Dawn`, `Noon`, `Dusk`, `Midnight`, `+1h`, and beside them a round 24-hour dial: midnight at the bottom, noon
   at the top, the hours running clockwise (6 on the left, 18 on the right), daylight shaded gold, the hand at the game
   time. Click or drag on the dial to set that time (to the quarter hour, sent when you let go); its tooltip shows the

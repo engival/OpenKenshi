@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "kutil/executable.hpp"
 #include "sokol_app.h"
 #include "sokol_gfx.h"
 #include "sokol_gl.h"
@@ -1362,7 +1363,10 @@ void build()
 			{ "squads", "Squad overlay", true, "debug.squad_overlay" }, { "shadows", "Shadows", true, "debug.shadows" } };
 		demo.dbg.scenes = { "hub_bar", "squin_gate" };
 		demo.dbg.extra = "{DebugHeading}SQUADS\n{#e06060}# Dust bandits (6)\n{#60b0e0}# Traders (3)";
-		demo.dbg.commands = { { "bandits", "Spawn bandit patrol", true }, { "traders", "Spawn trader caravan", false } };	// our own stand-ins
+		using G = ui::DebugGroup;
+		demo.dbg.commands = { { "bandits", "Spawn bandit patrol", true }, { "traders", "Spawn trader caravan", false },	// our own stand-ins
+			{ "lights", "Lights", true, G::kWindow }, { "anims", "Animations", true, G::kWindow }, { "fullmap", "Full map", true, G::kWindow },
+			{ "heal", "Heal", true, G::kCharacter }, { "ko", "Knock out", true, G::kCharacter }, { "wake", "Wake", false, G::kCharacter }, { "kill", "Kill", true, G::kCharacter } };
 		demo.dbg.weathers = { "Clear sky", "Dust storm", "Acid rain", "Gas cloud", "Light rain", "Heavy rain", "Fog", "Ash fall", "Sand storm",
 			"Heat haze", "Overcast", "Spore drift", "Red fog", "Burning wind", "Drizzle", "Thunder", "Calm", "Cold front", "Hot wind", "Mist" };
 		for (int i = 0; i < 33; i++) { demo.dbg.weathers.push_back("Zone weather " + std::to_string(i + 1)); }	// 53, as live
@@ -1571,7 +1575,7 @@ void init()
 	sappClipboard();
 	{
 		std::error_code ec;	// client/data, found as kclient does: the executable (client/build/kui_demo) two levels up
-		const std::filesystem::path exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+		const std::filesystem::path exe = kutil::executablePath(ec);
 		demo.layoutDir = (exe.parent_path().parent_path() / "data").string();
 		ui::setLayoutDir(demo.layoutDir);
 	}
@@ -6345,7 +6349,7 @@ void script()
 		{
 			// The middle column: commands, the reply, time, weather.
 			demo.debugLog.clear();
-			check(dp.command(0) && dp.command(1) && !dp.command(2) && dp.command(0)->text == "Spawn bandit patrol" && dp.command(0)->enabled && !dp.command(1)->enabled,
+			check(dp.command(0) && dp.command(1) && dp.command(4) && !dp.command(5) && dp.command(0)->text == "Spawn bandit patrol" && dp.command(0)->enabled && !dp.command(1)->enabled,
 				"debug: a button per command, in order, the host's enabled");
 			check(clickOn(dp.command(0)) && demo.debugLog == "command bandits;", ("debug: a command button sends its id (" + demo.debugLog + ")").c_str());
 			demo.debugLog.clear();
@@ -6353,6 +6357,34 @@ void script()
 			check(demo.debugLog.empty(), "debug: a disabled command sends nothing");
 			check(dp.reply()->visible && dp.reply()->text == "spawned squad 41760" && dp.reply()->screen().y > dp.command(1)->screen().bottom(),
 				"debug: the host's reply under the commands");
+			{
+				// k16.2.364: WINDOWS apart from ACTIONS; the character actions in a popup toolbar.
+				ui::Button* win = dp.command(2);
+				check(win->text == "Lights" && dp.windowsBox()->shown() && win->screen().bottom() <= dp.command(0)->screen().y && dp.characterButton()->shown()
+					&& dp.characterButton()->screen().y >= dp.command(1)->screen().bottom() && dp.characterButton()->screen().bottom() <= dp.reply()->screen().y + 0.5f,
+					"debug: WINDOWS (Lights, Animations, Full map) above ACTIONS; Character... after the actions, above the reply");
+				demo.debugLog.clear();
+				check(clickOn(win) && demo.debugLog == "command lights;", ("debug: a window button sends its id (" + demo.debugLog + ")").c_str());
+				demo.debugLog.clear();
+				check(!dp.characterPopup() && clickOn(dp.characterButton()) && dp.characterPopup() && dp.characterCommand(3) && !dp.characterCommand(4),
+					"debug: Character... opens a toolbar of the four character commands");
+				const ui::Rect bar = dp.characterPopup()->screen(), cb = dp.characterButton()->screen();
+				check(bar.x >= cb.x - 1 && bar.y >= cb.bottom() && dp.characterCommand(0)->text == "Heal" && dp.characterCommand(3)->text == "Kill" && dp.characterCommand(0)->enabled
+					&& !dp.characterCommand(2)->enabled && dp.characterCommand(3)->screen().right() <= bar.right() && dp.characterCommand(1)->screen().x > dp.characterCommand(0)->screen().right(),
+					"debug: a row of buttons below the button, the disabled one (Wake) greyed");
+				check(clickOn(dp.characterCommand(0)) && clickOn(dp.characterCommand(1)) && demo.debugLog == "command heal;command ko;" && dp.characterPopup(),
+					("debug: a toolbar button sends its id and the toolbar stays open (" + demo.debugLog + ")").c_str());
+				demo.debugLog.clear();
+				clickOn(dp.characterCommand(2));
+				check(demo.debugLog.empty() && dp.characterPopup(), "debug: a disabled toolbar button sends nothing");
+				const ui::Rect tb = dp.timeButton(0)->screen();
+				click(tb.x + 4, tb.y + 4);
+				check(!dp.characterPopup(), "debug: a click outside closes the toolbar");
+				clickOn(dp.characterButton());
+				key(SAPP_KEYCODE_ESCAPE);
+				check(!dp.characterPopup(), "debug: Escape closes the toolbar");
+				demo.debugLog.clear();
+			}
 			check(dp.timeButton(0) && dp.timeButton(4) && !dp.timeButton(0)->enabled && !dp.timeButton(4)->enabled, "debug: the time buttons greyed until the host enables them");
 			clickOn(dp.timeButton(1));
 			ui::ClockDial* dial = dp.timeDial();
@@ -6474,6 +6506,11 @@ void script()
 		demo.debugLog.clear();
 		check(key(SAPP_KEYCODE_ESCAPE) && !dp.shown() && demo.debugLog == "close;", "debug: Escape closes it");
 		dp.show(true);
+	}
+	if (demo.frame == 123 && demo.showDebug)	// the screenshot at 125 shows the Character... toolbar open
+	{
+		clickOn(demo.debug->characterButton());
+		check(demo.debug->characterPopup(), "debug: the toolbar open for the screenshot");
 	}
 	if (demo.frame == 119 && demo.showProspect)
 	{

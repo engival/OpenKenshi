@@ -70,7 +70,7 @@ bool SunShafts::render(const Camera& c, const LightParams& light, const Shadow& 
 	}
 	p.zinfo[0] = c.nearZ;
 	p.zinfo[1] = c.farZ;
-#if defined(SOKOL_VULKAN)
+#if defined(SOKOL_VULKAN) || defined(SOKOL_METAL)	// z clip 0..1 (GL: -1..1)
 	p.zinfo[2] = 1;
 #endif
 	const float dens = scale > 0.0f ? scale : 1.0f;	// the lamp cones use the default haze when the sun's is off

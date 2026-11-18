@@ -292,7 +292,7 @@ void Hdr::composite(const Frame& f, bool toPost)
 	bd.samplers[SMP_dsmp] = point_;
 	bd.samplers[SMP_wsmp] = linear_;
 	drawstats::bindings(&bd);
-#if defined(SOKOL_VULKAN)
+#if defined(SOKOL_VULKAN) || defined(SOKOL_METAL)	// z clip 0..1 (GL: -1..1)
 	const bool clip01 = true;
 #else
 	const bool clip01 = false;

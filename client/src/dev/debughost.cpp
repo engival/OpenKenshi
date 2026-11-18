@@ -299,15 +299,14 @@ void debugCommand(const Context& cx, const std::string& id)
 		animationsCommand();
 		return;
 	}
-	if (id == "debug.lights") { cx.openLights(); debugReply = "LIGHTS window"; return; }
-	if (id == "debug.keys") { cx.openOptionsKeys(); debugReply = "Options: Keys"; return; }
+	if (id == "debug.lights") { cx.openLights(); return; }	// window buttons: the window is the answer, no reply text (k16.2.364)
+	if (id == "debug.keys") { cx.openOptionsKeys(); return; }
 	if (id == "debug.full_map") { cx.toggleFullMap(); return; }
 	if (id == "debug.trails_window") { toggleTrailsPanel(); return; }
 	if (id == "debug.decisions")	// the DEBUG VIEW tree of the status panel's character, its decisions readable (k16.2.99)
 	{
 		if (!cx.infoChar) { debugReply = "no character in the status panel"; return; }
 		cx.debugTreeOpen(1, cx.infoChar);
-		debugReply = "decisions of #" + std::to_string(cx.infoChar);
 		return;
 	}
 	// the cheat buttons (DEBUG_CHEAT 216): the status panel's character, 0 = the server's first player character
@@ -442,21 +441,22 @@ void debugPanelFrame(const Context& cx)
 		s.extra += buf;
 	}
 #ifdef KCLIENT_DEBUG_VIEW
+	using G = ui::DebugGroup;
 	s.commands.push_back({ "debug.spawn_bandits", "Spawn bandit patrol", cx.sim.active() && cx.townsReady });
-	s.commands.push_back({ "animations", "Animations", labAvailable() });	// the animation browser window
-	s.commands.push_back({ "debug.lights", "Lights", true });	// the LIGHTS window (Shift+F7)
-	s.commands.push_back({ "debug.keys", "Keys", true });	// Options at the Keys tab: the key list
-	s.commands.push_back({ "debug.full_map", "Full map", true });	// the full-screen world map (Ctrl+M)
-	s.commands.push_back({ "debug.trails_window", "Trails window", true });	// the trails window (Shift+F6)
-	// the cheats (kenshi-h2v.6.4): a running game with a debug view. Before DEBUG_INFO says so (it comes with the squad overlay's subscribe) they
-	// are enabled like the weather buttons, and a view that is off answers its refusal on the reply line.
-	const bool cheatOn = cx.sim.active() && (!cx.debugView.infoSeen || cx.debugView.enabled);
-	s.commands.push_back({ "debug.heal", "Heal", cheatOn });
-	s.commands.push_back({ "debug.knockout", "Knock out", cheatOn });
-	s.commands.push_back({ "debug.wake", "Wake", cheatOn });
-	s.commands.push_back({ "debug.kill", "Kill", cheatOn });
+	s.commands.push_back({ "animations", "Animations", labAvailable(), G::kWindow });	// the animation browser window
+	s.commands.push_back({ "debug.lights", "Lights", true, G::kWindow });	// the LIGHTS window (Shift+F7)
+	s.commands.push_back({ "debug.keys", "Keys", true, G::kWindow });	// Options at the Keys tab: the key list
+	s.commands.push_back({ "debug.full_map", "Full map", true, G::kWindow });	// the full-screen world map (Ctrl+M)
+	s.commands.push_back({ "debug.trails_window", "Trails window", true, G::kWindow });	// the trails window (Shift+F6)
 	// k16.2.99: the status panel's character's AI decisions (the DEBUG_QUERY kind 1 tree) in the DEBUG VIEW window
-	s.commands.push_back({ "debug.decisions", "Decisions", cx.sim.active() && cx.infoChar != 0 });
+	s.commands.push_back({ "debug.decisions", "Decisions", cx.sim.active() && cx.infoChar != 0, G::kWindow });
+	// the cheats (kenshi-h2v.6.4), in the Character... popup: act on the status panel's character (k16.2.364). A running game with a debug view
+	// and a character in the status panel; a view that is off answers its refusal on the reply line.
+	const bool cheatOn = cx.sim.active() && cx.infoChar != 0 && (!cx.debugView.infoSeen || cx.debugView.enabled);
+	s.commands.push_back({ "debug.heal", "Heal", cheatOn, G::kCharacter });
+	s.commands.push_back({ "debug.knockout", "Knock out", cheatOn, G::kCharacter });
+	s.commands.push_back({ "debug.wake", "Wake", cheatOn, G::kCharacter });
+	s.commands.push_back({ "debug.kill", "Kill", cheatOn, G::kCharacter });
 	if (cx.wx.ready())
 	{
 		for (const auto& [label, sid] : debugWeatherRows(cx)) { s.weathers.push_back(label); }	// sorted by the map

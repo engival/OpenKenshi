@@ -87,7 +87,11 @@ bool waitTaken(std::unique_lock<std::mutex>& lk, int slot)
 
 void logicLoop()
 {
+#if defined(__APPLE__)
+	pthread_setname_np("kclient-logic");	// macOS names only the calling thread
+#else
 	pthread_setname_np(pthread_self(), "kclient-logic");	// gdb, top -H, the crash report
+#endif
 	tLogic = true;
 	int slot = 0;	// slot 0 was the one-thread frames' slot; logic's first packet reuses it (nothing draws it any more until it is filled)
 	while (!gStop.load())

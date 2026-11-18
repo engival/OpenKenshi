@@ -40,6 +40,21 @@ cmake -S client -B client/build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build client/build --target OpenKenshi
 ```
 
+### macOS (CI-built, untested at runtime)
+
+GitHub Actions builds it on `macos-latest` (Apple Silicon, `.github/workflows/macos.yml`); nobody has run the result yet. Graphics is Metal
+(`KENSHI_GFX=metal`, the default on macOS), audio is CoreAudio, the window is Cocoa through sokol_app.
+
+```sh
+brew install cmake ninja pkg-config libvorbis libogg recastnavigation   # recastnavigation is fetched (v1.6.0) when brew lacks it
+client/tools/get_shdc.sh
+cmake -S client -B client/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build client/build --target OpenKenshi
+```
+
+Copy a Windows Kenshi install over and point the game at it, or use `~/Library/Application Support/Steam/steamapps/common/Kenshi`
+(searched by default).
+
 ## Run
 
 ```sh

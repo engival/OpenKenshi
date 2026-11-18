@@ -1,13 +1,19 @@
 #include "datadir.hpp"
 
 #include "datapicker.hpp"
+#include "steamvdf.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #endif
@@ -95,34 +101,44 @@ struct Place
 	std::string label, path;
 };
 
-// Every quoted string on a line of Steam's libraryfolders.vdf, in order.
-std::vector<std::string> quotedStrings(const std::string& line)
+std::string readFile(const std::string& path)
 {
-	std::vector<std::string> out;
-	for (std::size_t i = 0; i < line.size();)
-	{
-		if (line[i] != '"') { i++; continue; }
-		const std::size_t end = line.find('"', i + 1);
-		if (end == std::string::npos) { break; }
-		out.push_back(line.substr(i + 1, end - i - 1));
-		i = end + 1;
-	}
-	return out;
+	std::ifstream f(path, std::ios::binary);
+	return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
 
-// The Steam libraries a steamapps/libraryfolders.vdf lists ("path" "/x/y" in the current format, "1" "/x/y" in the old one).
+// The Steam libraries a Steam root lists: steamapps/libraryfolders.vdf and config/libraryfolders.vdf, parsed by nesting (steamvdf.hpp), deduped.
+// Kenshi's folder is the one steamapps/appmanifest_233860.acf names ("installdir", as ~/git/steaminfo does); the plain steamapps/common/Kenshi
+// stays as the fallback place when no manifest names it.
 void addSteamLibraries(std::vector<Place>& out, const std::string& steamRoot)
 {
-	std::ifstream f(steamRoot + "/steamapps/libraryfolders.vdf");
-	if (!f) { return; }
-	for (std::string line; std::getline(f, line);)
+	std::vector<std::string> libs;
+	for (const char* rel : { "/steamapps/libraryfolders.vdf", "/config/libraryfolders.vdf" })
 	{
-		const std::vector<std::string> q = quotedStrings(line);
-		if (q.size() < 2) { continue; }
-		if (q[0] != "path" && q[0].find_first_not_of("0123456789") != std::string::npos) { continue; }
-		out.push_back({ "Steam library " + q[1], q[1] + "/steamapps/common/Kenshi" });
+		for (const std::string& p : steamvdf::libraryPaths(readFile(steamRoot + rel)))
+		{
+			if (std::find(libs.begin(), libs.end(), p) == libs.end()) { libs.push_back(p); }
+		}
+	}
+	for (const std::string& lib : libs)
+	{
+		const std::string manifest = readFile(lib + "/steamapps/appmanifest_233860.acf");
+		const std::string dir = steamvdf::installDir(manifest);
+		if (!dir.empty()) { out.push_back({ "Steam library " + lib + " (appmanifest_233860)", lib + "/steamapps/common/" + dir }); }
+		else { out.push_back({ "Steam library " + lib, lib + "/steamapps/common/Kenshi" }); }
 	}
 }
+
+#if defined(_WIN32)
+// HKCU\Software\Valve\Steam SteamPath (compile-checked only by reading: no Windows build on ds).
+std::string steamPathFromRegistry()
+{
+	char buf[1024];
+	DWORD size = sizeof buf;
+	if (RegGetValueA(HKEY_CURRENT_USER, "Software\\Valve\\Steam", "SteamPath", RRF_RT_REG_SZ, nullptr, buf, &size) != ERROR_SUCCESS) { return std::string(); }
+	return std::string(buf);
+}
+#endif
 
 #if defined(__APPLE__)
 std::string exeDir()
@@ -152,14 +168,24 @@ std::vector<Place> defaultInstalls()
 		places.push_back({ "GOG Galaxy (" + pf + ")", pf + "\\GOG Galaxy\\Games\\Kenshi" });
 		addSteamLibraries(places, pf + "\\Steam");
 	}
+	if (const std::string sp = steamPathFromRegistry(); !sp.empty())
+	{
+		places.push_back({ "Steam (registry SteamPath)", sp + "/steamapps/common/Kenshi" });
+		addSteamLibraries(places, sp);
+	}
+	// Believed, not checked: GOG's installer default outside Galaxy.
+	places.push_back({ "GOG Games (believed)", "C:\\GOG Games\\Kenshi" });
 #elif defined(__APPLE__)
 	places.push_back({ "Steam", home + "/Library/Application Support/Steam/steamapps/common/Kenshi" });
+	addSteamLibraries(places, home + "/Library/Application Support/Steam");
 	if (const std::string here = exeDir(); !here.empty()) { places.push_back({ "a Kenshi folder beside the binary", here + "/Kenshi" }); }
 #else
 	places.push_back({ "Steam (~/.steam)", home + "/.steam/steam/steamapps/common/Kenshi" });
 	places.push_back({ "Steam (~/.local/share)", home + "/.local/share/Steam/steamapps/common/Kenshi" });
 	addSteamLibraries(places, home + "/.steam/steam");
 	addSteamLibraries(places, home + "/.local/share/Steam");
+	places.push_back({ "GOG (Heroic)", home + "/Games/Heroic/Kenshi" });
+	places.push_back({ "GOG (minigalaxy)", home + "/GOG Games/Kenshi" });
 #endif
 	return places;
 }

@@ -7847,6 +7847,10 @@ typedef struct {
     id<MTLBlitCommandEncoder> blit_cmd_encoder;
     id<CAMetalDrawable> cur_drawable;
     id<MTLBuffer> uniform_buffers[SG_NUM_INFLIGHT_FRAMES];
+    // Additional pages are retained per in-flight frame and reused when its command buffer has finished.
+    NSMutableArray<id<MTLBuffer>>* uniform_spill_pages[SG_NUM_INFLIGHT_FRAMES];
+    NSUInteger cur_ub_page;
+    NSUInteger cur_ub_capacity;
 } _sg_mtl_backend_t;
 
 #elif defined(SOKOL_WGPU)
@@ -17174,6 +17178,7 @@ _SOKOL_PRIVATE void _sg_mtl_discard_backend(void) {
     _SG_OBJC_RELEASE(_sg.mtl.device);
     _SG_OBJC_RELEASE(_sg.mtl.cmd_queue);
     for (int i = 0; i < SG_NUM_INFLIGHT_FRAMES; i++) {
+        _SG_OBJC_RELEASE(_sg.mtl.uniform_spill_pages[i]);
         _SG_OBJC_RELEASE(_sg.mtl.uniform_buffers[i]);
     }
     // NOTE: MTLCommandBuffer and command encoders are auto-released
@@ -18161,6 +18166,7 @@ _SOKOL_PRIVATE void _sg_mtl_begin_pass(const sg_pass* pass, const _sg_attachment
 
     // if this is first pass in frame, get uniform buffer base pointer
     if (0 == _sg.mtl.cur_ub_base_ptr) {
+        _sg.mtl.cur_ub_capacity = (NSUInteger)_sg.mtl.ub_size;
         _sg.mtl.cur_ub_base_ptr = (uint8_t*)[_sg.mtl.uniform_buffers[_sg.mtl.cur_frame_rotate_index] contents];
     }
 
@@ -18214,6 +18220,7 @@ _SOKOL_PRIVATE void _sg_mtl_commit(void) {
         _sg.mtl.cur_frame_rotate_index = 0;
     }
     _sg.mtl.cur_ub_offset = 0;
+    _sg.mtl.cur_ub_page = 0;
     _sg.mtl.cur_ub_base_ptr = 0;
     // NOTE: MTLCommandBuffer is autoreleased
     _sg.mtl.cmd_buffer = nil;
@@ -18531,7 +18538,33 @@ _SOKOL_PRIVATE bool _sg_mtl_apply_bindings(_sg_bindings_ptrs_t* bnd) {
 
 _SOKOL_PRIVATE void _sg_mtl_apply_uniforms(int ub_slot, const sg_range* data) {
     SOKOL_ASSERT((ub_slot >= 0) && (ub_slot < SG_MAX_UNIFORMBLOCK_BINDSLOTS));
-    SOKOL_ASSERT(((size_t)_sg.mtl.cur_ub_offset + data->size) <= (size_t)_sg.mtl.ub_size);
+    const uint32_t frame = _sg.mtl.cur_frame_rotate_index;
+    if (data->size > _sg.mtl.cur_ub_capacity || (NSUInteger)_sg.mtl.cur_ub_offset > _sg.mtl.cur_ub_capacity - data->size) {
+        if (!_sg.mtl.uniform_spill_pages[frame]) {
+            _sg.mtl.uniform_spill_pages[frame] = [[NSMutableArray alloc] init];
+        }
+        NSMutableArray<id<MTLBuffer>>* pages = _sg.mtl.uniform_spill_pages[frame];
+        const NSUInteger index = _sg.mtl.cur_ub_page;
+        id<MTLBuffer> page = index < pages.count ? [pages objectAtIndex:index] : nil;
+        if (!page || page.length < data->size) {
+            page = [_sg.mtl.device newBufferWithLength:MAX((NSUInteger)_sg.mtl.ub_size, data->size)
+                options:MTLResourceCPUCacheModeWriteCombined|MTLResourceStorageModeShared];
+            if (!page || !pages) {
+                _SG_OBJC_RELEASE(page);
+                _SG_ERROR(METAL_CREATE_BUFFER_FAILED);
+                _sg_skipdraw_set_ub(ub_slot);
+                return;
+            }
+            if (index == pages.count) { [pages addObject:page]; }
+            else { [pages replaceObjectAtIndex:index withObject:page]; }
+            _SG_OBJC_RELEASE(page);
+            page = [pages objectAtIndex:index];
+        }
+        _sg.mtl.cur_ub_page++;
+        _sg.mtl.cur_ub_offset = 0;
+        _sg.mtl.cur_ub_capacity = page.length;
+        _sg.mtl.cur_ub_base_ptr = (uint8_t*)page.contents;
+    }
     SOKOL_ASSERT((_sg.mtl.cur_ub_offset & (_SG_MTL_UB_ALIGN-1)) == 0);
     const _sg_pipeline_t* pip = _sg_pipeline_ref_ptr(&_sg.cur_pip);
     SOKOL_ASSERT(pip);
@@ -18544,17 +18577,23 @@ _SOKOL_PRIVATE void _sg_mtl_apply_uniforms(int ub_slot, const sg_range* data) {
     // copy to global uniform buffer, record offset into cmd encoder, and advance offset
     uint8_t* dst = &_sg.mtl.cur_ub_base_ptr[_sg.mtl.cur_ub_offset];
     memcpy(dst, data->ptr, data->size);
+    // The first page was bound at pass start. On spill, switch only the updated slot:
+    // other slots may still refer to valid uniforms from a previous page.
+    id<MTLBuffer> spill = _sg.mtl.cur_ub_page ? [_sg.mtl.uniform_spill_pages[frame] objectAtIndex:_sg.mtl.cur_ub_page - 1] : nil;
     if (stage == SG_SHADERSTAGE_VERTEX) {
         SOKOL_ASSERT(nil != _sg.mtl.render_cmd_encoder);
-        [_sg.mtl.render_cmd_encoder setVertexBufferOffset:(NSUInteger)_sg.mtl.cur_ub_offset atIndex:mtl_slot];
+        if (spill) { [_sg.mtl.render_cmd_encoder setVertexBuffer:spill offset:(NSUInteger)_sg.mtl.cur_ub_offset atIndex:mtl_slot]; }
+        else { [_sg.mtl.render_cmd_encoder setVertexBufferOffset:(NSUInteger)_sg.mtl.cur_ub_offset atIndex:mtl_slot]; }
         _sg_stats_inc(metal.uniforms.num_set_vertex_buffer_offset);
     } else if (stage == SG_SHADERSTAGE_FRAGMENT) {
         SOKOL_ASSERT(nil != _sg.mtl.render_cmd_encoder);
-        [_sg.mtl.render_cmd_encoder setFragmentBufferOffset:(NSUInteger)_sg.mtl.cur_ub_offset atIndex:mtl_slot];
+        if (spill) { [_sg.mtl.render_cmd_encoder setFragmentBuffer:spill offset:(NSUInteger)_sg.mtl.cur_ub_offset atIndex:mtl_slot]; }
+        else { [_sg.mtl.render_cmd_encoder setFragmentBufferOffset:(NSUInteger)_sg.mtl.cur_ub_offset atIndex:mtl_slot]; }
         _sg_stats_inc(metal.uniforms.num_set_fragment_buffer_offset);
     } else if (stage == SG_SHADERSTAGE_COMPUTE) {
         SOKOL_ASSERT(nil != _sg.mtl.compute_cmd_encoder);
-        [_sg.mtl.compute_cmd_encoder setBufferOffset:(NSUInteger)_sg.mtl.cur_ub_offset atIndex:mtl_slot];
+        if (spill) { [_sg.mtl.compute_cmd_encoder setBuffer:spill offset:(NSUInteger)_sg.mtl.cur_ub_offset atIndex:mtl_slot]; }
+        else { [_sg.mtl.compute_cmd_encoder setBufferOffset:(NSUInteger)_sg.mtl.cur_ub_offset atIndex:mtl_slot]; }
         _sg_stats_inc(metal.uniforms.num_set_compute_buffer_offset);
     } else {
         SOKOL_UNREACHABLE;

@@ -1175,7 +1175,7 @@ void animlab::Lab::frame(dev::LabFrame& f)
 	proj[0] = t * (float)texH_ / (float)texW_;	// the vertical FOV is 25 deg; the target's aspect widens the horizontal one
 	proj[5] = t;
 	proj[11] = -1;
-#if defined(SOKOL_VULKAN)
+#if defined(SOKOL_VULKAN) || defined(SOKOL_METAL)	// z clip 0..1 (GL: -1..1)
 	proj[10] = 400 / (0.1f - 400);
 	proj[14] = 400 * 0.1f / (0.1f - 400);
 #else

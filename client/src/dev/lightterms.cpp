@@ -77,6 +77,7 @@ std::vector<LightTerm> lightTerms()
 bool setLight(const std::string& name, bool on)
 {
 	State& s = st();
+	s.off &= ~bit(kLtMotesOwnLight);
 	if (const int i = findTerm(name); i >= 0) { s.off = on ? s.off & ~(1u << i) : s.off | (1u << i); return true; }
 	uint64_t id;
 	if (!findLamp(name, id)) { return false; }
@@ -87,10 +88,12 @@ bool setLight(const std::string& name, bool on)
 bool soloLight(const std::string& name)
 {
 	State& s = st();
+	s.off &= ~bit(kLtMotesOwnLight);
 	if (const int i = findTerm(name); i >= 0)
 	{
 		const uint32_t keep = (1u << i) | kDefs[i].needs;
 		s.off = ((1u << kLtCount) - 1) & ~keep;
+		if (i == kLtDust) { s.off |= bit(kLtMotesOwnLight); }	// the motes' light is light ON the motes: the scene stays dark, the shader reads this flag
 		s.lampsOff.clear();
 		return true;
 	}

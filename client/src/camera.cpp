@@ -20,7 +20,7 @@ void Camera::mvp(float out[16], float nearZ, float farZ) const
 	proj[0] = t / aspect;
 	proj[5] = t;
 	proj[11] = -1;
-#if defined(SOKOL_VULKAN)
+#if defined(SOKOL_VULKAN) || defined(SOKOL_METAL)	// z clip 0..1 (GL: -1..1)
 	proj[10] = farZ / (nearZ - farZ);	// clip z in 0..1
 	proj[14] = farZ * nearZ / (nearZ - farZ);
 #else

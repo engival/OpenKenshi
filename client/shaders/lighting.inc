@@ -46,6 +46,7 @@ float term_on(int b) { return term_off(b) ? 0.0 : 1.0; }
 #define LT_FOG_WEATHER 11
 #define LT_SKY 12
 #define LT_CUTBAND 13
+#define LT_MOTES_OWN 21	// set by `solo dust_motes`: the dust shader lights its motes by sun / lamps whatever those terms say (dev/lightterms.hpp kLtMotesOwnLight)
 float emissive_on() { return reflect_pass() ? 0.0 : term_on(LT_EMISSIVE); }
 
 float scale_fn(float c, float sd)
@@ -467,7 +468,7 @@ float lamp_vis(vec3 rel, int code)
 // light_points with the baked lamp visibility on the lights that carry a code; the others, and every light with the switch off, exactly as light_points.
 vec3 light_points_vol(vec3 albedo, vec3 n, vec3 rel, float gloss)
 {
-	if (reflect_pass()) { return vec3(0.0); }
+	if (reflect_pass() || term_off(LT_LAMPS)) { return vec3(0.0); }
 	vec3 v = -normalize(rel);
 	float alpha = (1.0 - gloss * 0.99) * (1.0 - gloss * 0.99);
 	float a2 = alpha * alpha, k2 = a2 * 0.25;

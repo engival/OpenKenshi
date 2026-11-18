@@ -4,7 +4,9 @@
 #include <csignal>
 #include <cstdio>
 #include <cstring>
+#if defined(__linux__)
 #include <sys/prctl.h>
+#endif
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -93,7 +95,9 @@ bool LocalServer::start(const std::string& exe, const std::vector<std::string>& 
 	pid_ = fork();
 	if (pid_ == 0)	// the child: only async-signal-safe calls until exec
 	{
+#if defined(__linux__)	// macOS has no PDEATHSIG: a crashed client can leave the server running (CI round 1; runtime untested)
 		prctl(PR_SET_PDEATHSIG, SIGTERM);	// the client gone (a crash too): the server goes
+#endif
 		if (getppid() != parent) { _exit(1); }
 		dup2(fds[1], STDOUT_FILENO);
 		close(fds[0]);

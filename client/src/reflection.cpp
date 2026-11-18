@@ -61,7 +61,7 @@ bool Reflection::setup(const Camera& cam)
 	proj[0] = t / cam_.aspect;
 	proj[5] = t;
 	proj[11] = -1;
-#if defined(SOKOL_VULKAN)
+#if defined(SOKOL_VULKAN) || defined(SOKOL_METAL)	// z clip 0..1 (GL: -1..1)
 	proj[10] = cam_.farZ / (cam_.nearZ - cam_.farZ);
 	proj[14] = cam_.farZ * cam_.nearZ / (cam_.nearZ - cam_.farZ);
 #else
@@ -74,7 +74,7 @@ bool Reflection::setup(const Camera& cam)
 	// the far corner of the frustum on the plane's side: the inverse projection of (sign x, sign y, 1, 1)
 	const double q[4] = { ((c[0] > 0) - (c[0] < 0)) / (double)proj[0], ((c[1] > 0) - (c[1] < 0)) / (double)proj[5], -1.0, (1.0 + proj[10]) / proj[14] };
 	const double cq = c[0] * q[0] + c[1] * q[1] + c[2] * q[2] + c[3] * q[3];
-#if defined(SOKOL_VULKAN)
+#if defined(SOKOL_VULKAN) || defined(SOKOL_METAL)	// z clip 0..1 (GL: -1..1)
 	const double s = 1.0 / cq;	// z 0..1: the third row is the plane itself
 	for (int k = 0; k < 4; k++) { proj[k * 4 + 2] = (float)(c[k] * s); }
 #else

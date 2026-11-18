@@ -20,10 +20,15 @@ namespace ui
 		bool operator==(const DebugToggle&) const = default;
 	};
 
+	// Where a command shows (k16.2.364): kWindow: a WINDOWS button (opens a window); kAction: an ACTIONS button; kCharacter: not a column
+	// button but one in the "Character..." popup toolbar (acts on the selection).
+	enum class DebugGroup { kAction, kWindow, kCharacter };
+
 	struct DebugCommand
 	{
 		std::string id, label;
 		bool enabled = true;
+		DebugGroup group = DebugGroup::kAction;
 		bool operator==(const DebugCommand&) const = default;
 	};
 
@@ -38,7 +43,7 @@ namespace ui
 		bool weatherEnabled = false, timeEnabled = false;	// off: the chooser / the time buttons and the dial greyed, no clicks
 		float hour = -1;	// the game clock, hours 0..24: the dial's hand; < 0 no hand
 		float sunrise = 6, sunset = 20;	// hours: the dial's daylight arc
-		std::string reply;	// the host's last answer, under the commands; "": hidden
+		std::string reply;	// the host's last answer, under the ACTIONS; "": hidden
 		bool operator==(const DebugState&) const = default;
 	};
 
@@ -89,7 +94,11 @@ namespace ui
 		Button* toggle(size_t i) const;	// a TickBox, checked = on
 		Button* scene(size_t i) const;
 		Widget* scenesBox() const;
-		Button* command(size_t i) const;
+		Button* command(size_t i) const;	// the WINDOWS buttons then the ACTIONS ones, in the commands' order (kCharacter ones are not here)
+		Widget* windowsBox() const { return windowsBox_; }	// the WINDOWS heading and buttons: hidden while no command is kWindow
+		Button* characterButton() const { return character_; }	// "Character...": hidden while no command is kCharacter
+		Widget* characterPopup() const;	// the open toolbar, else null
+		Button* characterCommand(size_t i) const;	// the open toolbar's i-th button (the kCharacter commands in order), else null
 		Button* weatherRow(size_t i) const;
 		ScrollView* weatherList() const { return weathers_; }	// 0: Auto, then the names; checked = current
 		Button* timeButton(size_t i) const;	// dawn, noon, dusk, midnight, +1h
@@ -101,6 +110,7 @@ namespace ui
 	private:
 		void rebuildSide();
 		void rebuildMid();	// the command buttons and the weather rows
+		void openCharacter();
 		void refreshMid();	// enabled / checked / the reply, from last_
 		CaptionWindow* win_ = nullptr;
 		void bind(Layout& l);	// the file's widgets, after each (re)build
@@ -110,7 +120,11 @@ namespace ui
 		Widget* extraBox_ = nullptr;
 		RichText* extra_ = nullptr;
 		std::vector<Button*> toggleButtons_, sceneButtons_, commandButtons_, weatherButtons_;
-		Widget* commands_ = nullptr;
+		Widget *commands_ = nullptr, *windows_ = nullptr, *windowsBox_ = nullptr;
+		Button* character_ = nullptr;
+		class CharBar;
+		CharBar* bar_ = nullptr;
+		std::vector<size_t> cmdOf_;	// commandButtons_[i] -> last_.commands index
 		ScrollView* weathers_ = nullptr;
 		Label* reply_ = nullptr;
 		Button* time_[5] = {};

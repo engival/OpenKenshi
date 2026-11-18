@@ -1,4 +1,5 @@
 #include <algorithm>
+#include "kutil/executable.hpp"
 #include "lightbake.hpp"
 #include "drawstats.hpp"
 #include "framestats.hpp"
@@ -1336,9 +1337,9 @@ static const ogre::Mesh* move_marker()
 // The original draws nothing under a selected character and no route (kinspect selection_marker.md): our ring and route line are debug aids
 const cfg::Bool kSelectionRing{ cfg::Group{ "Markers" }, "markers.selection_ring", false, "Debug: a ring under each selected character (the original draws none)" };
 const cfg::Bool kNavOverlay{ cfg::Group{ "Navmesh" }, "debug.navmesh", false, "Debug: the client's navmesh as glowing edges round the camera focus (rims and gaps bright, doors coloured)" };
-const cfg::Float kSunShafts{ cfg::Group{ "Indoor lighting (experimental)" }, "render.sun_shafts", 0.0, 0.0, 10.0, "Experimental (kenshi-jj3.7.1): visible sunbeams in the air inside buildings (a ray march against the sun's shadow map through the baked probe volumes of the nearest buildings); the value scales the haze density (0 = off, 1 = the default look)" };
+const cfg::Float kSunShafts{ cfg::Group{ "Indoor lighting (experimental)" }, "render.sun_shafts", 0.0, 0.0, 10.0, "Experimental (kenshi-jj3.7.1): visible sunbeams in the air inside buildings (a ray march against the sun's shadow map through the baked probe volumes of the nearest buildings); the value scales the haze density (0 = off, the default; 1 = the normal look)" };
 const cfg::Float kLampBeams{ cfg::Group{ "Indoor lighting (experimental)", "turns render.lamp_occlusion's baked lamp visibility on while above 0" }, "render.lamp_beams", 0.0, 0.0, 1.0, "Experimental, our own effect (kenshi-jj3.28.1; the original has no beams): a faint volumetric cone under each shaded hanging lamp (a spot light pointing down) in the air of the nearest baked buildings, in the lamp's colour, fading with distance and stopped at the lamp's own walls and floors by the baked lamp visibility (so it needs and switches on render.lamp_occlusion's bake). 1 is clearly fainter than render.sun_shafts 1; 0 = off" };
-const cfg::Float kDustMotes{ cfg::Group{ "Indoor lighting (experimental)", "works without render.sun_shafts" }, "render.dust_motes", 0.0, 0.0, 10.0, "Experimental (kenshi-jj3.8.1): drifting dust motes in the air of the nearest baked building that show only inside a sunbeam (the sun's shadow lookup of render.sun_shafts, no ambient); the value scales the mote count (0 = off, 1 = the default)" };
+const cfg::Float kDustMotes{ cfg::Group{ "Indoor lighting (experimental)", "works without render.sun_shafts" }, "render.dust_motes", 0.0, 0.0, 10.0, "Experimental (kenshi-jj3.8.1): drifting dust motes in the air of the nearest baked building that show only inside a sunbeam (the sun's shadow lookup of render.sun_shafts, no ambient); the value scales the mote count (0 = off, the default; 1 = the normal amount)" };
 #ifdef KCLIENT_DEV_TOOLS
 const cfg::Int kSunShaftsDebug{ cfg::Group{ "Light debug", "needs render.sun_shafts above 0", "Debug" }, "render.sun_shafts_debug", 0, 0, 8, "Debug (kenshi-jj3.7.3; needs render.sun_shafts > 0): 1 = the sun visibility the march reads, averaged over each view ray (white = lit air); 2 = the sun visibility at the scene surface (compare with the sunlit floor patch); 3 = the normal beams with the sun forced lit (the density check); 4 = the baked enclosure the indoor density follows, averaged over the ray; 5 = the volume weight (the probe box's edge ramp) along the ray; 6 = the indoor density gate x weight; 7 = the accumulated in-scatter x8; 8 = the density the march used x5 (a scale check)" };
 #endif
@@ -3404,14 +3405,14 @@ std::string client_data_dir()
 {
 	if (!kDataDir.get().empty()) { return kDataDir.get(); }
 	std::error_code ec;
-	return (std::filesystem::read_symlink("/proc/self/exe", ec).parent_path().parent_path() / "data").string();
+	return (kutil::executablePath(ec).parent_path().parent_path() / "data").string();
 }
 
 // The repo root, found from the executable (client/build/kclient -> the repo root, one more level): where playtests/ and .beads/ are.
 std::string repo_root()
 {
 	std::error_code ec;
-	return (std::filesystem::read_symlink("/proc/self/exe", ec).parent_path().parent_path().parent_path()).string();
+	return (kutil::executablePath(ec).parent_path().parent_path().parent_path()).string();
 }
 
 
@@ -4608,7 +4609,7 @@ void init()
 			if (app.opt.squads.empty())
 			{
 				std::error_code ec;
-				app.opt.squads = (std::filesystem::read_symlink("/proc/self/exe", ec).parent_path().parent_path().parent_path() / "cpp/build/default_world_squads.json").string();
+				app.opt.squads = (kutil::executablePath(ec).parent_path().parent_path().parent_path() / "cpp/build/default_world_squads.json").string();
 			}
 			app.squads.load(app.opt.squads, *app.hm);
 			app.squads.init();
@@ -7787,7 +7788,7 @@ static void start_local_server()
 	if (exe.empty())
 	{
 		std::error_code ec;
-		exe = (std::filesystem::read_symlink("/proc/self/exe", ec).parent_path() / "cpp/OpenKenshi-server").string();	// cpp/build has the pre-move data path (TESTING)
+		exe = (kutil::executablePath(ec).parent_path() / "cpp/OpenKenshi-server").string();	// cpp/build has the pre-move data path (TESTING)
 	}
 	std::vector<std::string> args;
 	std::istringstream words(kServerArgs.get());

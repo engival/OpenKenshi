@@ -1,5 +1,5 @@
 # The debug window's body (ui::DebugPanel in client/src/ui/dev/debugpanel.cpp; F8). The code fills "toggles", "extra"
-# (the host's rich text: the squad overlay's sources), "scenes", "commands" and "weathers", hides "scenesBox" while a sim is connected and "reply" while it is empty, and gives the
+# (the host's rich text: the squad overlay's sources), "scenes", "windows" (hidden while empty), "commands" (ACTIONS; "character" opens the popup toolbar, hidden while no command is kCharacter) and "weathers", hides "scenesBox" while a sim is connected and "reply" while it is empty, and gives the
 # time buttons ("dawn", "noon", "dusk", "midnight", "plus1h") their presets; the slot "clock" holds the 24 h dial (ui::ClockDial). Format: README.md here.
 
 row gap=16 pad=12
@@ -11,8 +11,12 @@ row gap=16 pad=12
 			label "SCENES" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
 			col id=scenes size=auto gap=2
 	col size=270 gap=4
-		label "COMMANDS" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
+		col id=windowsBox size=auto gap=4
+			label "WINDOWS" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
+			col id=windows size=auto gap=2
+		label "ACTIONS" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
 		col id=commands size=auto gap=2
+		button "Character..." id=character size=28 font=Kenshi_StandardFont_Medium
 		label id=reply wrap=on size=auto
 		label "TIME" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
 		row size=92 gap=6

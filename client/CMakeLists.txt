@@ -1,9 +1,22 @@
 cmake_minimum_required(VERSION 3.20)
 project(kclient LANGUAGES CXX)
+if(APPLE)
+	# sokol_app and the Metal backend are Objective-C: src/sokol_impl.mm (kenshi-379.32.1)
+	enable_language(OBJCXX)
+	set(CMAKE_OBJCXX_STANDARD 20)
+	set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+	string(APPEND CMAKE_OBJCXX_FLAGS " -fobjc-arc")
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Apple libc++ gates std::jthread (ksim/region.cpp) behind -fexperimental-library (compile and link) (kenshi-379.32.1).
+if(APPLE AND NOT CMAKE_CXX_FLAGS MATCHES "fexperimental-library")
+	string(APPEND CMAKE_CXX_FLAGS " -fexperimental-library")
+	string(APPEND CMAKE_EXE_LINKER_FLAGS " -fexperimental-library")
+endif()
 
 if(NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE Release)
@@ -25,8 +38,14 @@ if(KCLIENT_TSAN)
 	message(STATUS "KCLIENT_TSAN: ThreadSanitizer build (reports go to stderr or TSAN_OPTIONS' log_path)")
 endif()
 
-set(KENSHI_GFX "glcore" CACHE STRING "sokol backend: glcore | vulkan")
-set_property(CACHE KENSHI_GFX PROPERTY STRINGS glcore vulkan)
+# macOS stops at OpenGL 4.1 and the shaders are glsl430: Metal is the default there (kenshi-379.32.1); Linux keeps glcore.
+if(APPLE)
+	set(KENSHI_GFX_DEFAULT "metal")
+else()
+	set(KENSHI_GFX_DEFAULT "glcore")
+endif()
+set(KENSHI_GFX "${KENSHI_GFX_DEFAULT}" CACHE STRING "sokol backend: glcore | vulkan | metal (metal: macOS only)")
+set_property(CACHE KENSHI_GFX PROPERTY STRINGS glcore vulkan metal)
 set(KENSHI_SHDC "${CMAKE_CURRENT_SOURCE_DIR}/bin/sokol-shdc" CACHE FILEPATH "sokol-shdc binary (tools/get_shdc.sh)")
 if(NOT EXISTS "${KENSHI_SHDC}")
 	message(FATAL_ERROR "sokol-shdc not found at ${KENSHI_SHDC}; run client/tools/get_shdc.sh")
@@ -38,8 +57,14 @@ if(KENSHI_GFX STREQUAL "glcore")
 elseif(KENSHI_GFX STREQUAL "vulkan")
 	set(GFX_DEFINE SOKOL_VULKAN)
 	set(SHDC_SLANG glsl430:spirv_vk)
+elseif(KENSHI_GFX STREQUAL "metal")
+	if(NOT APPLE)
+		message(FATAL_ERROR "KENSHI_GFX=metal needs macOS")
+	endif()
+	set(GFX_DEFINE SOKOL_METAL)
+	set(SHDC_SLANG metal_macos)
 else()
-	message(FATAL_ERROR "KENSHI_GFX must be glcore or vulkan")
+	message(FATAL_ERROR "KENSHI_GFX must be glcore, vulkan or metal")
 endif()
 
 # Shaders: shaders/<name>.glsl -> ${build}/shaders/<name>.glsl.h
@@ -63,7 +88,9 @@ add_custom_target(kclient_shaders DEPENDS ${SHADER_HDRS})
 
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
-pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11 xi xcursor xrandr)
+if(NOT APPLE)
+	pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11 xi xcursor xrandr)
+endif()
 
 # Dev-only code (docs/CLIENT.md "Dev-only code is fenced", kenshi-k16.2.153): the playtest store and its host, the bd writer behind --bead,
 # scenario loading, and the dev tool executables below. ON by default; OFF builds the game without any of it (client/tools/dev_off_check.sh).
@@ -91,7 +118,17 @@ endforeach()
 set(CMAKE_CXX_STANDARD 20)	# Jolt.cmake sets its own directory to 17
 
 # Detour for the client navmesh (clientnav.cpp); imported targets found in cpp/ are not visible here
-find_package(recastnavigation REQUIRED)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cpp/cmake/recast.cmake)
+
+# The one sokol implementation unit: Objective-C++ on macOS. The window geometry memory: X11 on Linux, Cocoa on macOS (the macOS tester's
+# windowgeom_macos.mm, kenshi-379.32.13).
+if(APPLE)
+	set(KCLIENT_SOKOL_IMPL src/sokol_impl.mm)
+	set(KCLIENT_WINDOWGEOM src/windowgeom_macos.mm)
+else()
+	set(KCLIENT_SOKOL_IMPL src/sokol_impl.cpp)
+	set(KCLIENT_WINDOWGEOM src/windowgeom.cpp)
+endif()
 
 # The client sources, compiled once into this OBJECT library and shared by kclient and OpenKenshi (kenshi-379.6.2.1). Only the files that
 # depend on KENSHI_EMBED_SERVER (main.cpp, localserver.cpp; the only includers of localserver.hpp) compile per executable, below.
@@ -106,6 +143,7 @@ add_library(kclient_obj OBJECT
 	src/simlink.cpp
 	src/simview.cpp
 	src/datadir.cpp
+	src/steamvdf.cpp
 	src/datapicker.cpp
 	third_party/tinyfiledialogs/tinyfiledialogs.c
 	src/trails.cpp
@@ -166,10 +204,10 @@ add_library(kclient_obj OBJECT
 	src/worldbuildings.cpp
 	src/loadscreen.cpp
 	src/worldmap.cpp
-	src/sokol_impl.cpp
+	${KCLIENT_SOKOL_IMPL}
 	src/audiohook.cpp
 	src/config.cpp
-	src/windowgeom.cpp
+	${KCLIENT_WINDOWGEOM}
 	src/windowgate.cpp
 	src/serverrows.cpp
 	src/workpool.cpp
@@ -261,10 +299,15 @@ target_compile_options(kclient_obj PRIVATE -Wall -Wextra)
 if(WIN32)
 	target_link_libraries(kclient_obj PRIVATE comdlg32 ole32)	# tinyfiledialogs' native folder dialog
 endif()
-target_link_libraries(kclient_obj PRIVATE kworld knav kutil RecastNavigation::Detour kaudio kui Jolt PkgConfig::X11 Threads::Threads ${CMAKE_DL_LIBS} m)
+target_link_libraries(kclient_obj PRIVATE kworld knav kutil RecastNavigation::Detour kaudio kui Jolt Threads::Threads ${CMAKE_DL_LIBS} m)
+if(NOT APPLE)
+	target_link_libraries(kclient_obj PRIVATE PkgConfig::X11)
+endif()
 if(KENSHI_GFX STREQUAL "glcore")
 	find_package(OpenGL REQUIRED)
 	target_link_libraries(kclient_obj PRIVATE OpenGL::GL)
+elseif(KENSHI_GFX STREQUAL "metal")
+	target_link_libraries(kclient_obj PRIVATE "-framework Cocoa" "-framework QuartzCore" "-framework Metal" "-framework MetalKit")
 else()
 	find_package(Vulkan REQUIRED)
 	target_compile_definitions(kclient_obj PRIVATE VK_USE_PLATFORM_XLIB_KHR)
@@ -293,12 +336,18 @@ target_compile_options(kui PRIVATE -Wall -Wextra)
 # The dev tool executables (kenshi-k16.2.153): built only with KCLIENT_DEV_TOOLS, sources in src/dev/tools/.
 if(KCLIENT_DEV_TOOLS)
 	# Every widget on one screen (interactive, or --screenshot under tools/headless.sh).
-	add_executable(kui_demo src/dev/tools/kui_demo.cpp src/drawlist_gpu.cpp src/dds.cpp src/config.cpp src/serverrows.cpp src/sokol_impl.cpp src/stb_impl.cpp)
+	add_executable(kui_demo src/dev/tools/kui_demo.cpp src/drawlist_gpu.cpp src/dds.cpp src/config.cpp src/serverrows.cpp ${KCLIENT_SOKOL_IMPL} src/stb_impl.cpp)
 	target_compile_options(kui_demo PRIVATE -Wall -Wextra)
 	target_compile_definitions(kui_demo PRIVATE KENSHI_DATA="${KENSHI_DATA}")
-	target_link_libraries(kui_demo PRIVATE kui PkgConfig::X11 Threads::Threads ${CMAKE_DL_LIBS} m)
+	target_link_libraries(kui_demo PRIVATE kui Threads::Threads ${CMAKE_DL_LIBS} m)
+	target_include_directories(kui_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../cpp/include)	# kutil/executable.hpp (header only)
+	if(NOT APPLE)
+		target_link_libraries(kui_demo PRIVATE PkgConfig::X11)
+	endif()
 	if(KENSHI_GFX STREQUAL "glcore")
 		target_link_libraries(kui_demo PRIVATE OpenGL::GL)
+	elseif(KENSHI_GFX STREQUAL "metal")
+		target_link_libraries(kui_demo PRIVATE "-framework Cocoa" "-framework QuartzCore" "-framework Metal" "-framework MetalKit")
 	else()
 		target_compile_definitions(kui_demo PRIVATE VK_USE_PLATFORM_XLIB_KHR)
 		target_link_libraries(kui_demo PRIVATE Vulkan::Vulkan)
@@ -331,6 +380,13 @@ if(KCLIENT_DEV_TOOLS)
 	target_include_directories(kfloor_test PRIVATE src)
 	target_compile_options(kfloor_test PRIVATE -Wall -Wextra)
 
+	# The Steam VDF parsing behind the data-dir discovery (steamvdf.hpp): libraryfolders.vdf nesting, escapes, appmanifest installdir. ctest: kdatadir.
+	add_executable(kdatadir_test src/dev/tools/kdatadir_test.cpp src/steamvdf.cpp)
+	target_include_directories(kdatadir_test PRIVATE src)
+	target_compile_options(kdatadir_test PRIVATE -Wall -Wextra)
+	enable_testing()
+	add_test(NAME kdatadir COMMAND kdatadir_test)
+
 	# SIMLINK decoder test CLI (docs/formats/SIMLINK.md): decodes a recorded server stream, or --selftest.
 	add_executable(ksimlink_dump src/dev/tools/ksimlink_dump.cpp src/simlink.cpp)
 	target_include_directories(ksimlink_dump PRIVATE src)
@@ -339,7 +395,9 @@ endif()
 
 # Audio (src/audio/, docs/AUDIO_ENGINE.md): Wwise banks, Wwise Vorbis decoder (headers rebuilt on load) over system libvorbis, mixer, music player.
 pkg_check_modules(VORBIS REQUIRED IMPORTED_TARGET vorbis ogg)
-pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse-simple libpulse)	# sokol_audio's Linux backend
+if(NOT APPLE)
+	pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse-simple libpulse)	# sokol_audio's Linux backend (macOS: CoreAudio, below)
+endif()
 set(CODEBOOKS_BIN "${CMAKE_CURRENT_SOURCE_DIR}/third_party/wwise_codebooks/packed_codebooks_aoTuV_603.bin")
 set(CODEBOOKS_INC "${CMAKE_CURRENT_BINARY_DIR}/gen/wwise_codebooks.inc")
 add_custom_command(
@@ -352,7 +410,12 @@ add_library(kaudio STATIC src/audio/wwbank.cpp src/audio/wwvorbis.cpp src/audio/
 target_include_directories(kaudio PUBLIC src PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen)
 target_include_directories(kaudio SYSTEM PRIVATE third_party/sokol)
 target_compile_options(kaudio PRIVATE -Wall -Wextra)
-target_link_libraries(kaudio PUBLIC PkgConfig::VORBIS PRIVATE PkgConfig::PULSE Threads::Threads)
+target_link_libraries(kaudio PUBLIC PkgConfig::VORBIS PRIVATE Threads::Threads)
+if(APPLE)
+	target_link_libraries(kaudio PRIVATE "-framework AudioToolbox")
+else()
+	target_link_libraries(kaudio PRIVATE PkgConfig::PULSE)
+endif()
 
 if(KCLIENT_DEV_TOOLS)
 	# Audio test CLI: list / decode-check / wav-dump bank media, offline mixer renders, device playback.
@@ -384,6 +447,16 @@ foreach(tgt kclient OpenKenshi)
 	target_compile_options(${tgt} PRIVATE -Wall -Wextra)
 	target_link_libraries(${tgt} PRIVATE ${KENSHI_LIBS})
 endforeach()
+# A dev-off OpenKenshi runs its embedded server's sim data from simdata/ beside it (cpp/src/ksim/simdata.cpp), as ksim_server does in cpp/
+# (the macOS tester's patch, kenshi-379.32.13; same copy as cpp/CMakeLists.txt's ksim_server POST_BUILD).
+if(NOT KCLIENT_DEV_TOOLS)
+	add_custom_command(TARGET OpenKenshi POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E remove_directory $<TARGET_FILE_DIR:OpenKenshi>/simdata
+		COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:OpenKenshi>/simdata
+		COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/../cpp/data/behaviour $<TARGET_FILE_DIR:OpenKenshi>/simdata/behaviour
+		COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/../cpp/data/ksim_ai_behaviours.tsv $<TARGET_FILE_DIR:OpenKenshi>/simdata/
+		VERBATIM)
+endif()
 # The release client binary is OpenKenshi-client (kenshi-379.11.1); a dev build keeps the file name kclient (scripts use client/build/kclient).
 if(NOT KCLIENT_DEV_TOOLS)
 	set_target_properties(kclient PROPERTIES OUTPUT_NAME OpenKenshi-client)

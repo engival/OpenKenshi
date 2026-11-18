@@ -36,6 +36,8 @@
 #include <string>
 #include <vector>
 
+#include <unistd.h> // mkdtemp: macOS declares it here only
+
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
 #endif

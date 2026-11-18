@@ -1,4 +1,4 @@
-// X11 half of the window geometry memory (windowgeom.hpp). Compiled into kclient only (CMake: X11 and xrandr).
+// X11 half of the window geometry memory (windowgeom.hpp). Compiled into kclient only (CMake: X11 and xrandr); macOS builds src/windowgeom_macos.mm instead.
 #include "windowgeom.hpp"
 
 #include <chrono>

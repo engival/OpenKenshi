@@ -43,6 +43,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <cstddef>
 #include <functional>
 #include <iterator>

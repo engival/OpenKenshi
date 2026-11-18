@@ -410,7 +410,7 @@ void Post::dof()
 {
 	const Hdr::Target& src = set_.smaa ? aa_ : scene();
 	const int hw = (w_ + 1) / 2, hh = (h_ + 1) / 2;
-#if defined(SOKOL_VULKAN)
+#if defined(SOKOL_VULKAN) || defined(SOKOL_METAL)	// z clip 0..1 (GL: -1..1)
 	const float clip01 = 1;
 #else
 	const float clip01 = 0;
@@ -463,7 +463,7 @@ void Post::dof()
 void Post::stylize()
 {
 	const Hdr::Target& src = dofOn() ? dofOut_ : set_.smaa ? aa_ : scene();
-#if defined(SOKOL_VULKAN)
+#if defined(SOKOL_VULKAN) || defined(SOKOL_METAL)	// z clip 0..1 (GL: -1..1)
 	const float clip01 = 1;
 #else
 	const float clip01 = 0;

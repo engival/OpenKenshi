@@ -1,9 +1,20 @@
 cmake_minimum_required(VERSION 3.20)
+# CMake 3.29+: drop a static library repeated on a link line where the linker does not need it (Apple ld warned
+# "ignoring duplicate libraries: libDetour.a, libkworld.a", kenshi-379.32.19).
+if(POLICY CMP0156)
+	cmake_policy(SET CMP0156 NEW)
+endif()
 project(kdata LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Apple libc++ gates std::jthread (ksim/region.cpp) behind -fexperimental-library (compile and link) (kenshi-379.32.1).
+if(APPLE AND NOT CMAKE_CXX_FLAGS MATCHES "fexperimental-library")
+	string(APPEND CMAKE_CXX_FLAGS " -fexperimental-library")
+	string(APPEND CMAKE_EXE_LINKER_FLAGS " -fexperimental-library")
+endif()
 
 if(NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE Release)
@@ -46,6 +57,8 @@ if(DEFINED ENV{KENSHI_DATA})
 	set(KENSHI_DATA_DEFAULT "$ENV{KENSHI_DATA}")
 elseif(KENSHI_DATA_DEV)
 	set(KENSHI_DATA_DEFAULT "${KENSHI_DATA_DEV}")
+elseif(APPLE)
+	set(KENSHI_DATA_DEFAULT "$ENV{HOME}/Library/Application Support/Steam/steamapps/common/Kenshi/data")
 else()
 	set(KENSHI_DATA_DEFAULT "$ENV{HOME}/.steam/steam/steamapps/common/Kenshi/data")
 endif()
@@ -1648,7 +1661,7 @@ endforeach()
 
 # Separate from ksim: the bake needs kworld only, and the sim links just the
 # query half it needs. Recast/Detour 1.6.0 is installed system-wide.
-find_package(recastnavigation REQUIRED)
+include(cmake/recast.cmake)
 
 add_library(knav
 	src/knav/bake.cpp

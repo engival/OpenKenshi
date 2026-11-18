@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "kutil/executable.hpp"
 #include "logicthread.hpp"
 #include "characters.hpp"
 #include "config.hpp"
@@ -164,7 +165,7 @@ bool load_scenes(const std::string& path, std::vector<Scene>& out)
 std::string default_scene_file()
 {
 	std::error_code ec;
-	return (std::filesystem::read_symlink("/proc/self/exe", ec).parent_path().parent_path() / "scenes.txt").string();
+	return (kutil::executablePath(ec).parent_path().parent_path() / "scenes.txt").string();
 }
 
 void apply_scene(const Context& cx, const Scene& s)

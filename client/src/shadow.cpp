@@ -294,7 +294,7 @@ void Shadow::update(const double cam[3], const Camera& view, const float sunDir[
 			{
 				sc.lvp[k * 4 + 0] = (float)rows[0][k];
 				sc.lvp[k * 4 + 1] = (float)rows[1][k];
-#if defined(SOKOL_VULKAN)
+#if defined(SOKOL_VULKAN) || defined(SOKOL_METAL)	// z clip 0..1 (GL: -1..1)
 				sc.lvp[k * 4 + 2] = (float)rows[2][k];
 #else
 				sc.lvp[k * 4 + 2] = (float)(rows[2][k] * 2.0 - (k == 3 ? 1.0 : 0.0));

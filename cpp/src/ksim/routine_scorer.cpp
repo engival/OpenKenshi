@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstdlib>
 #include <numbers>
 #include <optional>
 #include <set>

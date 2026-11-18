@@ -1,6 +1,8 @@
 #include "ksim/simdata.hpp"
+#include "kutil/executable.hpp"
 
 #include <filesystem>
+#include <string>
 #include <mutex>
 
 namespace ksim {
@@ -13,7 +15,7 @@ std::string gExplicit;
 std::string exeSimData()
 {
 	std::error_code ec;
-	const std::filesystem::path exe = std::filesystem::read_symlink("/proc/self/exe", ec); // Linux; the other platforms: kenshi-379.19
+	const std::filesystem::path exe = kutil::executablePath(ec);
 	return ec ? std::string() : (exe.parent_path() / "simdata").string();
 }
 

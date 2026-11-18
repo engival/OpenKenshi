@@ -95,7 +95,7 @@ std::uint64_t nsSince(Clock::time_point& mark)
 
 } // namespace
 
-// N participants: the calling thread plus N-1 std::jthreads. Every run()
+// N participants: the calling thread plus N-1 worker threads. Every run()
 // releases both barriers; the work itself is distributed dynamically.
 class WorkerPool
 {
@@ -107,18 +107,25 @@ public:
 			return;
 		start_ = std::make_unique<std::barrier<>>(threads_);
 		end_ = std::make_unique<std::barrier<>>(threads_);
-		for (int index = 1; index < threads_; ++index)
-			workers_.emplace_back([this, index] { loop(index); });
+		workers_.reserve(threads_ - 1);
+		try
+		{
+			for (int index = 1; index < threads_; ++index)
+				workers_.emplace_back([this, index] { loop(index); });
+		} catch (...) {
+			// A thread that failed to start never arrives: drop its share of the start barrier, then stop the ones that did.
+			for (int missing = threads_ - 1 - static_cast<int>(workers_.size()); missing > 0; --missing)
+				start_->arrive_and_drop();
+			shutdown();
+			throw;
+		}
 	}
 
 	~WorkerPool()
 	{
 		if (threads_ < 2)
 			return;
-		stop_.store(true, std::memory_order_release);
-		// Release workers parked at the start barrier; they observe stop and
-		// return. Member order joins them before the barriers are destroyed.
-		start_->arrive_and_wait();
+		shutdown();
 	}
 
 	void run(const std::function<void(int)>& job)
@@ -135,6 +142,16 @@ public:
 	}
 
 private:
+	// Release the workers parked at the start barrier; they observe stop and return. std::thread, not std::jthread (Apple's
+	// libc++ has none), so they are joined here, before the barriers are destroyed.
+	void shutdown()
+	{
+		stop_.store(true, std::memory_order_release);
+		start_->arrive_and_wait();
+		for (std::thread& worker : workers_)
+			worker.join();
+	}
+
 	void loop(int index)
 	{
 		for (;;)
@@ -152,7 +169,7 @@ private:
 	std::unique_ptr<std::barrier<>> end_;
 	const std::function<void(int)>* job_ = nullptr;
 	std::atomic<bool> stop_{false};
-	std::vector<std::jthread> workers_;
+	std::vector<std::thread> workers_;
 };
 
 RegionEngine::RegionEngine(std::uint64_t seed, RegionConfig config)

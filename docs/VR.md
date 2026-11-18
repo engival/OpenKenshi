@@ -55,7 +55,7 @@ selecting by gaze. That needs a headset with eye tracking (Valve Index has none;
     **Check first:** how well SteamVR's OpenXR supports OpenGL sessions on Linux.
   - **Vulkan backend:** OpenXR wants to create (or approve) the Vulkan instance and device.
     `sg_setup` accepts an external device (`sg_vulkan_environment`), but `sokol_app` creates its own
-    for the window. At the vendored sokol (`third_party/sokol/VERSION`) there is no injection of
+    for the window. At the vendored sokol (`third_party/sokol/VERSION.txt`) there is no injection of
     external Vulkan images and no native image query, so the eye images can't be handed over without
     a sokol change or a newer upstream. Re-check when updating sokol.
 - **Full VR camera** (head-tracked eyes with the HMD's own projections): out of scope; the RTS camera

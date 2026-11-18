@@ -16,6 +16,27 @@ namespace ui
 		const char* const kTimePresets[5] = { "dawn", "noon", "dusk", "midnight", "+1h" };	// what DebugActions::time gets
 	}
 
+	// The Character... toolbar: a row of buttons on a small popup panel (Esc / a click outside close it, via the popup layer; a click on a button
+	// leaves it open).
+	class DebugPanel::CharBar : public Menu
+	{
+	public:
+		static constexpr float kBtnW = 84, kBtnH = 28, kGap = 4, kPad = 6;
+		std::function<void()> onGone;
+		std::vector<Button*> buttons;
+		explicit CharBar(size_t n) : Menu({})
+		{
+			padding = kPad;
+			n_ = n;
+		}
+		~CharBar() override { if (onGone) { onGone(); } }
+		Size preferred() const override { return { n_ * kBtnW + (n_ ? n_ - 1 : 0) * kGap + 2 * kPad, kBtnH + 2 * kPad }; }
+		void onClick(Btn) override {}	// the margins pick nothing and keep it open
+
+	private:
+		size_t n_;
+	};
+
 	DebugPanel::DebugPanel(DebugActions actions) : act_(std::move(actions))
 	{
 		win_ = &root().add<CaptionWindow>("DEBUG", [this]
@@ -38,6 +59,10 @@ namespace ui
 		scenesBox_ = &l.at<Flex>("scenesBox");
 		scenes_ = &l.at<Flex>("scenes");
 		commands_ = &l.at<Flex>("commands");
+		windows_ = &l.at<Flex>("windows");
+		windowsBox_ = &l.at<Flex>("windowsBox");
+		character_ = &l.at<Button>("character");
+		character_->onClicked = [this] { openCharacter(); };
 		reply_ = &l.at<Label>("reply");
 		reply_->colour = res::colour("Main");
 		reply_->rect.w = kMidW;	// wraps to the column (its height from the width)
@@ -80,6 +105,7 @@ namespace ui
 
 	DebugPanel::~DebugPanel()
 	{
+		if (bar_) { bar_->onGone = nullptr; closePopups(); }
 		layout_.reset();	// before its parent goes
 		if (ready() && win_) { root().remove(win_); }
 	}
@@ -121,17 +147,28 @@ namespace ui
 	void DebugPanel::rebuildMid()
 	{
 		commands_->clear();
+		windows_->clear();
 		commandButtons_.clear();
-		for (const DebugCommand& c : last_.commands)
+		cmdOf_.clear();
+		bool anyWindow = false, anyChar = false;
+		for (size_t i = 0; i < last_.commands.size(); i++)
 		{
-			Button& b = commands_->add<Button>(c.label, Look::kButton, "Kenshi_StandardFont_Medium");
+			const DebugCommand& c = last_.commands[i];
+			if (c.group == DebugGroup::kCharacter) { anyChar = true; continue; }
+			const bool win = c.group == DebugGroup::kWindow;
+			anyWindow = anyWindow || win;
+			Button& b = (win ? windows_ : commands_)->add<Button>(c.label, Look::kButton, "Kenshi_StandardFont_Medium");
 			b.rect = { 0, 0, kMidW, 28 };
 			b.onClicked = [this, id = c.id]
 			{
 				for (const DebugCommand& d : last_.commands) { if (d.id == id && d.enabled && act_.command) { act_.command(id); } }
 			};
 			commandButtons_.push_back(&b);
+			cmdOf_.push_back(i);
 		}
+		windowsBox_->visible = anyWindow;
+		character_->visible = anyChar;
+		if (!anyChar && bar_) { closePopups(); }
 		Widget& body = weathers_->body();
 		body.clear();
 		weatherButtons_.clear();
@@ -148,6 +185,31 @@ namespace ui
 		for (const std::string& w : last_.weathers) { row(w, w); }
 	}
 
+	void DebugPanel::openCharacter()
+	{
+		if (bar_) { closePopups(); return; }	// the button again closes it
+		std::vector<const DebugCommand*> cs;
+		for (const DebugCommand& c : last_.commands) { if (c.group == DebugGroup::kCharacter) { cs.push_back(&c); } }
+		if (cs.empty()) { return; }
+		auto bar = std::make_unique<CharBar>(cs.size());
+		CharBar* b = bar.get();
+		for (size_t i = 0; i < cs.size(); i++)
+		{
+			Button& bt = b->add<Button>(cs[i]->label, Look::kButton, "Kenshi_StandardFont_Medium");
+			bt.rect = { i * (CharBar::kBtnW + CharBar::kGap), 0, CharBar::kBtnW, CharBar::kBtnH };
+			bt.onClicked = [this, id = cs[i]->id]
+			{
+				for (const DebugCommand& d : last_.commands) { if (d.id == id && d.enabled && act_.command) { act_.command(id); } }
+			};
+			b->buttons.push_back(&bt);
+		}
+		const Rect r = character_->screen();
+		openMenu(std::move(bar), r.x, r.bottom() + 2 * scale());	// lays the buttons out
+		bar_ = b;
+		b->onGone = [this] { bar_ = nullptr; };
+		refreshMid();
+	}
+
 	void DebugPanel::refreshMid()
 	{
 		// Enabled: Main text, so it stands apart from the greyed (the look's ButtonText is nearly as dim; client coordinator 2026-11-06).
@@ -156,7 +218,18 @@ namespace ui
 			b.enabled = on;
 			b.textColour = on ? res::colour("Main") : Color{ 0, 0, 0, 0 };
 		};
-		for (size_t i = 0; i < commandButtons_.size() && i < last_.commands.size(); i++) { live(*commandButtons_[i], last_.commands[i].enabled); }
+		for (size_t i = 0; i < commandButtons_.size(); i++) { live(*commandButtons_[i], last_.commands[cmdOf_[i]].enabled); }
+		{	// "Character...": drawn like the other live buttons while a character action can run, dim and dead otherwise
+			bool any = false;
+			for (const DebugCommand& c : last_.commands) { any = any || (c.group == DebugGroup::kCharacter && c.enabled); }
+			live(*character_, any);
+			if (!any && bar_) { closePopups(); }
+		}
+		if (bar_)
+		{
+			size_t k = 0;
+			for (const DebugCommand& c : last_.commands) { if (c.group == DebugGroup::kCharacter && k < bar_->buttons.size()) { live(*bar_->buttons[k++], c.enabled); } }
+		}
 		const bool autoOn = last_.weather.empty() || last_.weather == "auto";
 		for (size_t i = 0; i < weatherButtons_.size(); i++)
 		{
@@ -180,11 +253,11 @@ namespace ui
 		const bool side = !built_ || s.toggles.size() != last_.toggles.size() || s.scenes != last_.scenes;
 		const bool newWeather = !built_ || s.weather != last_.weather;
 		const bool mid = !built_ || s.commands.size() != last_.commands.size() || s.weathers != last_.weathers
-			|| [&] { for (size_t i = 0; i < s.commands.size(); i++) { if (s.commands[i].id != last_.commands[i].id) { return true; } } return false; }();
+			|| [&] { for (size_t i = 0; i < s.commands.size(); i++) { if (s.commands[i].id != last_.commands[i].id || s.commands[i].group != last_.commands[i].group) { return true; } } return false; }();
 		last_ = s;
 		if (mid) { rebuildMid(); }
 		revealWeather_ = revealWeather_ || mid || newWeather;	// the current row scrolls into view only when it or the list changes
-		for (size_t i = 0; i < s.commands.size(); i++) { commandButtons_[i]->text = s.commands[i].label; }
+		for (size_t i = 0; i < commandButtons_.size(); i++) { commandButtons_[i]->text = s.commands[cmdOf_[i]].label; }
 		refreshMid();
 		if (side) { rebuildSide(); }
 		else
@@ -221,6 +294,8 @@ namespace ui
 	Widget* DebugPanel::scenesBox() const { return scenesBox_; }
 	Widget* DebugPanel::extra() const { return extra_; }
 	Button* DebugPanel::command(size_t i) const { return i < commandButtons_.size() ? commandButtons_[i] : nullptr; }
+	Widget* DebugPanel::characterPopup() const { return bar_; }
+	Button* DebugPanel::characterCommand(size_t i) const { return bar_ && i < bar_->buttons.size() ? bar_->buttons[i] : nullptr; }
 	Button* DebugPanel::weatherRow(size_t i) const { return i < weatherButtons_.size() ? weatherButtons_[i] : nullptr; }
 	Button* DebugPanel::timeButton(size_t i) const { return i < 5 ? time_[i] : nullptr; }
 

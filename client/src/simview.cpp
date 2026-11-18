@@ -18,6 +18,10 @@
 #include "eventlog.hpp"
 #include "kworld/loadorder.hpp"
 
+#ifndef MSG_NOSIGNAL	// macOS: no per-call flag (SO_NOSIGPIPE is set on the socket instead)
+#define MSG_NOSIGNAL 0
+#endif
+
 using namespace simlink;
 
 // kenshi-k16.2.237.10 (user 2026-11-18, A/B): drive.facing = travel turns the drawn body of the driven character to its direction of travel and plays the
@@ -89,6 +93,9 @@ bool SimView::open(const std::string& target, std::uint64_t dataHash, std::strin
 	}
 	freeaddrinfo(res);
 	if (fd_ < 0) { err = target + ": " + strerror(errno); return false; }
+#ifdef SO_NOSIGPIPE	// macOS has no MSG_NOSIGNAL
+	{ const int one = 1; setsockopt(fd_, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one); }
+#endif
 	fcntl(fd_, F_SETFL, fcntl(fd_, F_GETFL) | O_NONBLOCK);
 	mode_ = Live;
 	return true;

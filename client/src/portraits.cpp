@@ -243,7 +243,7 @@ void Portraits::update(Characters& chars, const std::vector<PortraitJob>& jobs)
 		proj[0] = t;
 		proj[5] = t;
 		proj[11] = -1;
-#if defined(SOKOL_VULKAN)
+#if defined(SOKOL_VULKAN) || defined(SOKOL_METAL)	// z clip 0..1 (GL: -1..1)
 		proj[10] = kFar / (kNear - kFar);
 		proj[14] = kFar * kNear / (kNear - kFar);
 #else

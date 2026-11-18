@@ -204,7 +204,7 @@ int FogVolumes::render(const Camera& c, const LightParams& light, float sunY, sg
 		}
 		p.zinfo[0] = c.nearZ;
 		p.zinfo[1] = c.farZ;
-#if defined(SOKOL_VULKAN)
+#if defined(SOKOL_VULKAN) || defined(SOKOL_METAL)	// z clip 0..1 (GL: -1..1)
 		p.zinfo[2] = 1;
 #endif
 		p.zinfo[3] = (float)v.type;

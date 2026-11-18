@@ -22,6 +22,10 @@
 #include <optional>
 #include <set>
 
+#ifndef MSG_NOSIGNAL	// macOS: no per-call flag (SO_NOSIGPIPE is set on the socket instead)
+#define MSG_NOSIGNAL 0
+#endif
+
 namespace ksim::simlink {
 
 namespace {
@@ -257,6 +261,9 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 			{
 				const int one = 1;
 				::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+#ifdef SO_NOSIGPIPE	// macOS has no MSG_NOSIGNAL
+				::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#endif
 				client.fd = fd;
 				client.lastFrame = client.rateWindow = Clock::now();
 				try

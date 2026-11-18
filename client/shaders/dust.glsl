@@ -14,10 +14,11 @@ layout(binding=0) uniform dust_vs_params
 	vec4 cam_f;	// xyz = camera forward, w = time (seconds)
 	vec4 cam_r;	// xyz = camera right, w = 1 / (tan(fovY / 2) x aspect)
 	vec4 cam_u;	// xyz = camera up, w = 1 / tan(fovY / 2)
-	vec4 box_o;	// xyz = the box's origin (camera relative), w = mote radius (world units)
-	vec4 box_x;	// xyz = the box's x edge, w = pixels per radian-ish: viewport height / tan(fovY / 2) / 2
+	vec4 box_o;	// xyz = the window centre (camera relative), w = mote radius (world units)
+	vec4 box_x;	// xyz = the window edges (world units), w = pixels per radian-ish: viewport height / tan(fovY / 2) / 2
 	vec4 box_y;	// xyz = y edge, w = brightness
-	vec4 box_z;	// xyz = z edge, w = near fade start
+	vec4 box_z;	// xyz = unused, w = near fade start
+	vec4 box_w;	// xyz = the window centre in lattice cells (fract)
 };
 
 out vec3 v_rel;
@@ -46,7 +47,7 @@ void main()
 	const float t = cam_f.w;
 	const float ph = seed.w * 6.2831853;
 	// every mote wanders on its own, and the room's air turns over gently; a function of the seed and the time only (the camera relative position must not enter it)
-	vec3 p = box_o.xyz + seed.x * box_x.xyz + seed.y * box_y.xyz + seed.z * box_z.xyz;
+	vec3 p = box_o.xyz + (fract(seed.xyz - box_w.xyz) - 0.5) * box_x.xyz;	// a world-anchored lattice window (kenshi-jj3.8.17)
 	p += 0.9 * vec3(sin(t * 0.33 + ph * 3.0), 0.5 * sin(t * 0.21 + ph * 5.0), cos(t * 0.27 + ph * 7.0));
 	p.xz += 0.5 * vec2(sin(seed.y * 9.0 + t * 0.15), cos(seed.y * 11.0 + t * 0.12));
 	const float vx = dot(p, cam_r.xyz), vy = dot(p, cam_u.xyz), vz = dot(p, cam_f.xyz);
@@ -56,7 +57,7 @@ void main()
 	v_uv = offscreen_uv(vec2(vx * cam_r.w, vy * cam_u.w) / max(vz, 1e-3) * 0.5 + 0.5);
 	// at least ~1 pixel wide, dimmed by the area it gained, so far motes do not flicker in and out
 	const float px = box_o.w * box_x.w / max(vz, 1e-3);
-	const float grown = max(px, 0.9);
+	const float grown = max(px, 1.8);
 	const float radius = box_o.w * grown / max(px, 1e-4);
 	// a tumbling flake glints: the brightness flickers slowly
 	const float glint = 0.55 + 0.45 * sin(t * (0.8 + seed.w * 1.7) + ph * 11.0);
@@ -131,7 +132,7 @@ void main()
 	const vec3 dir = normalize(v_rel);
 	vec3 lit = vec3(0.0);
 	// The sun beam (kenshi-jj3.8.11): the sun term of the light debugger gates it (sun_direct off = no sun on a mote), and a mote the shadow map does not light has nothing.
-	if (dinfo.x > 0.5 && term_on(LT_SUN) > 0.5)
+	if (dinfo.x > 0.5 && (term_on(LT_SUN) > 0.5 || term_off(LT_MOTES_OWN)))
 	{
 		// Only the core of a fairly bright beam lights a mote (kenshi-jj3.8.4): the sun lookup at the mote and at four taps a hand's breadth around it, perpendicular to the sun, the
 		// minimum of the five, through a threshold. A thin lit sliver (a shadow-map leak at a roof / wall join, a penumbra edge) is not a beam and shows no mote.
@@ -144,7 +145,7 @@ void main()
 		lit += sun_col.rgb * (nadir.w * fog_col.w * (kPi * phase_hg(dot(dir, ldir.xyz), zinfo.w) * sun));
 	}
 	// The lamps' cones (render.lamp_beams; the shafts' march, sunshafts.glsl): the spot lamps of the light list pointing down, cut by their building's walls (lamp_vis).
-	if (dinfo.y > 0.0 && !term_off(LT_LAMPS))
+	if (dinfo.y > 0.0 && (!term_off(LT_LAMPS) || term_off(LT_MOTES_OWN)))
 	{
 		const int pn = int(pl_head.x);
 		vec3 lc = vec3(0.0);

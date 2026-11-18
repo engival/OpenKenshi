@@ -122,7 +122,7 @@ void Ao::compute(const Camera& cam, sg_view depthTex, sg_view colourTex, float b
 		p.label = label;
 		sg_begin_pass(&p);
 	};
-#if defined(SOKOL_VULKAN)
+#if defined(SOKOL_VULKAN) || defined(SOKOL_METAL)	// z clip 0..1 (GL: -1..1)
 	const float clip01 = 1;
 #else
 	const float clip01 = 0;

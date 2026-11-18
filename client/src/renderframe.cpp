@@ -516,7 +516,7 @@ void render_frame(const FramePacket& pk, RenderState& rs)
 	{
 		GPU_BEGIN(rs.gpu, GpuTimer::Shafts);
 		sg_begin_pass(rs.hdr.fogPass());
-		rs.dust.render(cam, pk.sky.light, rs.shadow, pk.scene.dustMotes, lampScale, (float)pk.sky.sunDir[1], pk.scene.animTime, rs.hdr.sceneDepthTex());
+		rs.dust.render(cam, pk.sky.light, rs.shadow, pk.scene.dustMotes, dev::lightOff(pk.lightOff, dev::kLtMotesOwnLight) ? pk.scene.lampBeams : lampScale, (float)pk.sky.sunDir[1], pk.scene.animTime, rs.hdr.sceneDepthTex());
 		sg_end_pass();
 		GPU_END(rs.gpu);
 	}

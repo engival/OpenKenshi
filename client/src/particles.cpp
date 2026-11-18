@@ -1229,7 +1229,7 @@ void Particles::render(const FrameData& d, const Camera& c, sg_view depth, sg_vi
 		part_fs_params_t fp = {};
 		fp.zinfo[0] = c.nearZ;
 		fp.zinfo[1] = c.farZ;
-#if defined(SOKOL_VULKAN)
+#if defined(SOKOL_VULKAN) || defined(SOKOL_METAL)	// z clip 0..1 (GL: -1..1)
 		fp.zinfo[2] = 1;
 #endif
 		fp.zinfo[3] = b.soft > 0 ? 1.0f / b.soft : 0.0f;

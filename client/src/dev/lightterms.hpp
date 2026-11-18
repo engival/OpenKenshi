@@ -16,7 +16,10 @@ enum LightBit : uint32_t
 {
 	kLtSunDirect = 0, kLtSunShadows, kLtSkyAmbient, kLtAo, kLtIndirect, kLtSunBounce, kLtInterior, kLtEnvSpec, kLtLamps, kLtEmissive, kLtFogAtmos, kLtFogWeather, kLtSky, kLtCutBand,
 	kLtSunShafts, kLtDust, kLtFogVolumes, kLtBloom, kLtExposure, kLtGrade, kLtLampBeams,
-	kLtCount
+	kLtCount,
+	// Not a term (no switch, not in lightTerms): set by `solo dust_motes` only. The motes' own light: the sun beam and the lamps' cones light the motes as the dust shader
+	// samples them, though sun_direct / lamps / lamp_beams are off for the scene (kenshi-jj3.8.14). Any other op clears it.
+	kLtMotesOwnLight = 21
 };
 
 struct LightTerm

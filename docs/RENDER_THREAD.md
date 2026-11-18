@@ -238,7 +238,7 @@ faster, on this client.
 
 **What to do first, in order:** (1) k16.2.170 (uniform buffer sizing, draws skipped) and k16.2.37 (3D flipped) via the
 sokol clone flow (k16.2.247: `master` = upstream, one branch a fix, `up/` for what upstream would want, `ours/` for what
-only we need, vendored copy a straight copy of `kenshi`, `VERSION` records both hashes, commits with the GitHub noreply
+only we need, vendored copy a straight copy of `kenshi`, `VERSION.txt` records both hashes, commits with the GitHub noreply
 email); (2) the Heft frame on Vulkan vs GL, CPU and GPU, before and after 205.8's instancing (k16.2.246's acceptance);
 (3) then this design's split, which is backend-neutral — sokol_app owns the present on Vulkan too (`_sapp_vk_frame`), so
 (a) needs no Vulkan-specific patch; (4) (c) only if the Vulkan submit still binds after (a) and the instancing.

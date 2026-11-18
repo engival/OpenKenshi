@@ -22,7 +22,7 @@ Read as documentation only. No code was copied from them; our implementations ar
 | Library | Version | License | Where |
 |---|---|---|---|
 | sokol (Andre Weissflog) | see `client/third_party/sokol` | zlib | `client/third_party/sokol/` |
-| tinyfiledialogs (Guillaume Vareille) | see `client/third_party/tinyfiledialogs/VERSION` | zlib | `client/third_party/tinyfiledialogs/` |
+| tinyfiledialogs (Guillaume Vareille) | see `client/third_party/tinyfiledialogs/VERSION.txt` | zlib | `client/third_party/tinyfiledialogs/` |
 | stb (Sean Barrett) | see `client/third_party/STB_VERSION` | MIT / public domain | `client/third_party/`, `cpp/third_party/stb/` |
 | Jolt Physics (Jorrit Rouwe) | 5.6.0 | MIT | `client/third_party/JoltPhysics/` |
 | flecs (Sander Mertens) | 4.0.4 | MIT | `cpp/third_party/flecs/` |
