@@ -1,0 +1,71 @@
+# Windows build of OpenKenshi on GitHub's x64 runner (kenshi-379.31). Build-only at first: nobody has run the result.
+# Toolchain: MSYS2 UCRT64 (GCC + MinGW-w64), not MSVC / clang-cl: the client and the sim build with GCC-style flags (-Wall -Wextra -Werror,
+# -ffile-prefix-map, -ffp-contract=off), find libvorbis / libogg through pkg-config, and are cross-checked on Linux with the same compiler family
+# (x86_64-w64-mingw32-g++); MSVC would need every flag translated in client/ and cpp/ plus a second package manager.
+name: windows
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      # The runner's git checks out CRLF by default; the scripts, sim data and test fixtures are read byte for byte.
+      - name: LF line endings
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-libvorbis
+            mingw-w64-ucrt-x86_64-libogg
+      - name: sokol-shdc
+        run: client/tools/get_shdc.sh
+      - name: Configure
+        run: cmake -S client -B client/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKCLIENT_DEV_TOOLS=OFF -DKSIM_WERROR=OFF
+      - name: Build OpenKenshi
+        id: app
+        run: cmake --build client/build --target OpenKenshi -j4 -- -k 0
+      - name: Configure the sim tests
+        if: always()
+        run: cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKSIM_WERROR=OFF
+      # Every target of `all` but the ASan/UBSan ones (kdata_asan, kworld_asan and their *_malformed_asan tests): MinGW GCC ships no
+      # libasan / libubsan, so -fsanitize=address,undefined cannot link. ctest skips their tests (-E asan) for the same reason.
+      - name: Build the sim tests
+        if: always()
+        run: |
+          targets=$(ninja -C cpp/build -t query all | sed -n '/^  input: phony/,/^  outputs:/p' | sed -n 's/^    \(|* \)\{0,1\}//p' | grep -v -E '_asan(\.a|\.exe)?$')
+          echo "building $(echo $targets | wc -w) targets (ASan/UBSan ones left out)"
+          ninja -C cpp/build -j4 -k 0 $targets
+      - name: ctest -LE slow
+        if: always()
+        run: ctest --test-dir cpp/build -LE slow -E asan --output-on-failure -j3
+      # The user's check: download the exe GitHub built and run it under Proton (2026-11-18). Statically linked (client/CMakeLists.txt), so the
+      # artifact is OpenKenshi.exe and its simdata/; ldd lists what it still loads (Windows' own DLLs only, or this step fails).
+      - name: Runtime DLLs
+        if: always() && steps.app.outcome == 'success'
+        run: |
+          ldd client/build/OpenKenshi.exe | tee client/build/OpenKenshi.ldd.txt
+          ! grep -i -E '/(ucrt64|mingw64|usr)/' client/build/OpenKenshi.ldd.txt
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.app.outcome == 'success'
+        with:
+          name: OpenKenshi-windows-x64
+          path: |
+            client/build/OpenKenshi.exe
+            client/build/simdata/
+            client/build/OpenKenshi.ldd.txt
+          if-no-files-found: error

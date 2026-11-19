@@ -42,7 +42,7 @@ releases carry the bundled libraries' notices (`CREDITS.md`).
 
 ### Exe-derived tables
 
-The AI goal display names (`cpp/src/ksim/task_names.cpp`, the exe's table, kenshi-k16.6.205 / .206) ship in the
+The AI goal display names (`cpp/src/ksim/ai/task_names.cpp`, the exe's table, kenshi-k16.6.205 / .206) ship in the
 repo and in the release as they are: no rewording, not read from the exe at runtime (user 2026-11-14, kenshi-4m9b:
 "We're not going to cry over a string table. Ignore and ship it.").
 

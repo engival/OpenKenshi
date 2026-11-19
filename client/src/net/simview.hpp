@@ -13,6 +13,7 @@
 #include "characters/characters.hpp"
 #include "knav/walk.hpp"
 #include "net/simlink.hpp"
+#include "platform/socket.hpp"
 
 // The live sim link on screen (docs/formats/SIMLINK.md, docs/CLIENT.md "Live sim link"). Source: a recorded server stream (FILE.bin, replayed at the sim's
 // 20 ticks/s) or a server (HOST:PORT, TCP). Drives Characters: one character per sim character with an appearance, rebuilt when the set or an appearance
@@ -317,7 +318,7 @@ private:
 	simlink::SimLinkDecoder dec_;
 	std::vector<uint8_t> file_;
 	size_t fed_ = 0;
-	int fd_ = -1;
+	plat::Socket fd_ = plat::kNoSocket;
 	bool helloSent_ = false;
 	uint64_t focusSent_ = 0;
 	bool focusProducer_ = false;	// the focus is a producer's id: its BUILDING row is the focus row, not a player's building

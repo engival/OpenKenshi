@@ -275,8 +275,10 @@ struct Rig
 				f(id).building = building;
 		}
 	}
-	std::uint64_t steal(std::uint64_t who, const std::string& owner)
+	// `thievery` 100 is a sure take (steal chance 127%); 0 at the box is 30%, so the seed decides (ksim_steal_chance rolls it).
+	std::uint64_t steal(std::uint64_t who, const std::string& owner, double thievery = 100.0)
 	{
+		f(who).skills.thievery = thievery;
 		state::Container box;
 		box.recordSid = "box";
 		box.x = f(who).x;
@@ -1075,6 +1077,7 @@ void theft(const Data& w)
 			++spoken;
 	}
 	check(spoken > 0, "the guard would speak \"Law witness looting ally\" (13657), one of its first lines");
+	check(rig.count(cr::kEvThiefCaughtStealingFromMe) == 0, "a sure take (thievery 100) is never caught: no event 8");
 	// Step 7: the line bites. The guard arrests the thief (the melee branch) and the theft is committed as a 2500 bounty (CRIME_LIVE a).
 	bool arrested = false;
 	for (int i = 0; i < 20 * 20 && !arrested; ++i)
@@ -1085,6 +1088,32 @@ void theft(const Data& w)
 	const state::CrimeRecord* record = rig.sim->crimeRecord(thief);
 	const std::int32_t bounty = record != nullptr ? cr::bountyOf(*record, w.holy) : -1;
 	check(arrested && bounty == 2500, "the guard's line arrests the thief and the theft becomes a 2500 bounty (" + str(bounty) + ")");
+
+	// The other roll outcome (k16.6.327): thievery 0 at the box is a 30% take. On the first seed the roll catches, the take is aborted and the
+	// victim (the guard, the owner faction's nearest living character) gets EV 8 with the thief as target; the theft is recorded as crime 3.
+	bool found = false;
+	for (std::uint64_t seed = 1; seed <= 32 && !found; ++seed)
+	{
+		Rig caught(w, seed);
+		caught.placeTown();
+		const std::uint64_t victim = caught.add(w.guard, w.holy, cr::kClassLaw, w.townX, w.townZ, 0.0, false);
+		const std::uint64_t robber = caught.add("", w.nameless, 9, w.townX, w.townZ + 60.0, 3.14159265, true);
+		caught.sim->dialogue()->setInputs(victim, DialogueInputs{ kHonorable, false, false });
+		caught.tick(20 * 3);
+		const std::uint64_t box = caught.steal(robber, w.holy, 0.0);
+		caught.tick(1);
+		if (caught.count(cr::kEvThiefCaughtStealingFromMe) == 0)
+			continue;
+		found = true;
+		const std::vector<DialoguePick> picks = caught.picks(ev::ThiefCaughtStealingFromMe, victim);
+		check(picks.empty() || picks.front().event.target == robber, "the victim's event 8 names the thief as the target");
+		check(caught.count(cr::kEvThiefCaughtStealingFromMe) == 1, "one caught roll fires one event 8");
+		const state::CrimeRecord* r = caught.sim->crimeRecord(robber);
+		check(r != nullptr && r->crime == cr::kTheft, "a caught roll records theft (3)");
+		const state::Inventory* stock = caught.entity(box).get<state::Inventory>();
+		check(stock != nullptr && !stock->items.empty(), "a caught roll takes nothing: the box keeps its item");
+	}
+	check(found, "some seed of 32 is caught at thievery 0 (30%)");
 }
 
 void assault(const Data& w)

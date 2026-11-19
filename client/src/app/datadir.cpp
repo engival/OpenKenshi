@@ -2,6 +2,7 @@
 
 #include "app/datapicker.hpp"
 #include "app/steamvdf.hpp"
+#include "platform/installs.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -11,12 +12,6 @@
 #include <iterator>
 #include <string>
 #include <vector>
-#if defined(_WIN32)
-#include <windows.h>
-#endif
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
 
 namespace fs = std::filesystem;
 
@@ -26,15 +21,6 @@ std::string env(const char* name)
 {
 	const char* v = getenv(name);
 	return v != nullptr ? std::string(v) : std::string();
-}
-
-std::string homePath()
-{
-#if defined(_WIN32)
-	return env("USERPROFILE");
-#else
-	return env("HOME");
-#endif
 }
 
 // The one line of the setting: "data=PATH".
@@ -129,27 +115,6 @@ void addSteamLibraries(std::vector<Place>& out, const std::string& steamRoot)
 	}
 }
 
-#if defined(_WIN32)
-// HKCU\Software\Valve\Steam SteamPath (compile-checked only by reading: no Windows build on ds).
-std::string steamPathFromRegistry()
-{
-	char buf[1024];
-	DWORD size = sizeof buf;
-	if (RegGetValueA(HKEY_CURRENT_USER, "Software\\Valve\\Steam", "SteamPath", RRF_RT_REG_SZ, nullptr, buf, &size) != ERROR_SUCCESS) { return std::string(); }
-	return std::string(buf);
-}
-#endif
-
-#if defined(__APPLE__)
-std::string exeDir()
-{
-	char buf[4096];
-	uint32_t size = sizeof buf;
-	if (_NSGetExecutablePath(buf, &size) != 0) { return std::string(); }
-	return fs::path(buf).parent_path().string();
-}
-#endif
-
 // The installs the three desktop platforms have by default (the brief names them; kenshi-379.13).
 std::vector<Place> defaultInstalls()
 {
@@ -158,35 +123,11 @@ std::vector<Place> defaultInstalls()
 	// A dev build only (client/CMakeLists.txt): the developer's own install, so a checkout runs with no flags. Never in a release build.
 	places.push_back({ "build default (KENSHI_DATA)", KENSHI_DATA });
 #endif
-	const std::string home = homePath();
-#if defined(_WIN32)
-	for (const char* programFiles : { "ProgramFiles(x86)", "ProgramFiles" })
+	for (const plat::InstallPlace& p : plat::installPlaces())	// the OS's defaults (platform/<os>/installs.cpp)
 	{
-		const std::string pf = env(programFiles);
-		if (pf.empty()) { continue; }
-		places.push_back({ "Steam (" + pf + ")", pf + "\\Steam\\steamapps\\common\\Kenshi" });
-		places.push_back({ "GOG Galaxy (" + pf + ")", pf + "\\GOG Galaxy\\Games\\Kenshi" });
-		addSteamLibraries(places, pf + "\\Steam");
+		if (p.steamRoot) { addSteamLibraries(places, p.path); }
+		else { places.push_back({ p.label, p.path }); }
 	}
-	if (const std::string sp = steamPathFromRegistry(); !sp.empty())
-	{
-		places.push_back({ "Steam (registry SteamPath)", sp + "/steamapps/common/Kenshi" });
-		addSteamLibraries(places, sp);
-	}
-	// Believed, not checked: GOG's installer default outside Galaxy.
-	places.push_back({ "GOG Games (believed)", "C:\\GOG Games\\Kenshi" });
-#elif defined(__APPLE__)
-	places.push_back({ "Steam", home + "/Library/Application Support/Steam/steamapps/common/Kenshi" });
-	addSteamLibraries(places, home + "/Library/Application Support/Steam");
-	if (const std::string here = exeDir(); !here.empty()) { places.push_back({ "a Kenshi folder beside the binary", here + "/Kenshi" }); }
-#else
-	places.push_back({ "Steam (~/.steam)", home + "/.steam/steam/steamapps/common/Kenshi" });
-	places.push_back({ "Steam (~/.local/share)", home + "/.local/share/Steam/steamapps/common/Kenshi" });
-	addSteamLibraries(places, home + "/.steam/steam");
-	addSteamLibraries(places, home + "/.local/share/Steam");
-	places.push_back({ "GOG (Heroic)", home + "/Games/Heroic/Kenshi" });
-	places.push_back({ "GOG (minigalaxy)", home + "/GOG Games/Kenshi" });
-#endif
 	return places;
 }
 
@@ -197,24 +138,14 @@ std::string howToSet()
 	s += "  KENSHI_DATA=/path/to/Kenshi/data\n";
 	s += "  or the line \"data=/path/to/Kenshi/data\" in " + datadir::configFile() + "\n";
 	s += "DIR is the game's data folder, the one holding gamedata.base.\n";
-#if defined(__APPLE__)
-	s += "Kenshi has no macOS build: a copied Windows install works, point --data at its data folder.\n";
-#endif
+	s += plat::dataHint();
 	return s;
 }
 }
 
 std::string datadir::configFile()
 {
-#if defined(_WIN32)
-	const std::string base = env("APPDATA").empty() ? std::string(".") : env("APPDATA");
-	return base + "\\kenshi-client\\data.conf";
-#elif defined(__APPLE__)
-	return homePath() + "/Library/Application Support/kenshi-client/data.conf";
-#else
-	const std::string config = env("XDG_CONFIG_HOME").empty() ? homePath() + "/.config" : env("XDG_CONFIG_HOME");
-	return config + "/kenshi-client/data.conf";
-#endif
+	return (fs::path(plat::userConfigDir()) / "kenshi-client" / "data.conf").string();
 }
 
 bool datadir::resolve(const std::string& cli, std::string& out, std::string& message)

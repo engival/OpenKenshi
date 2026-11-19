@@ -1,3 +1,5 @@
 # Move-only commits: git blame --ignore-revs-file .git-blame-ignore-revs (or git config blame.ignoreRevsFile .git-blame-ignore-revs)
 # client/src subsystem dirs (kenshi-k16.2.369.1)
 8fbb4ebb4a65cfda0a9b99054614c666cc32fbb6
+# cpp/src/ksim + cpp/include/ksim subsystem dirs (kenshi-k16.6.387)
+952407ff59d6a1091a4ca0635307f607c558a0ac

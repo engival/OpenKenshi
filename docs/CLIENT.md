@@ -643,8 +643,9 @@ a new directory only for a new subsystem (put it in this table). Platform-specif
 | dir | holds |
 |---|---|
 | main.cpp | app, frame loop, load steps (`app.loadSteps`), camera, HUD, scenes/scripts (being split: kenshi-k16.2.369.2) |
+| host/ | the host: App state and the glue main.cpp hands out (orders, picking, HUD, UI wiring, logic frame); kenshi-k16.2.369.2 slices |
 | app/ | config, data-dir discovery and picker, load screen, embedded server, logic thread, work pool, event log, frame stats |
-| platform/ | sokol implementation unit, window geometry; `linux/`, `macos/` the per-OS halves |
+| platform/ | sokol implementation unit, window geometry, the simlink socket, the local server child, default game installs, the GL loader (`*.hpp`); `linux/`, `macos/`, `windows/` the per-OS halves, `posix/` the Linux + macOS one (kenshi-379.31.1) |
 | assets/ | DDS and Ogre mesh loaders, materials, resource paths, mods, stb |
 | render/ | terrain, sky, water, foliage/grass, shadows, HDR, post/AO, particles, draw lists, render frame/queue, GPU timers |
 | world/ | buildings (records and world pass), towns, world map, weather, nav, floor follow, squads |

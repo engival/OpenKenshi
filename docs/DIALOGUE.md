@@ -36,7 +36,7 @@ and needs no save.
 
 ## 1. Runtime data model
 
-### 1.1 Compiled book (`ksim/dialogue_book.hpp`, built from kdata, immutable, shared_ptr like FactionBook)
+### 1.1 Compiled book (`ksim/dialogue/dialogue_book.hpp`, built from kdata, immutable, shared_ptr like FactionBook)
 
 ```
 struct CondDef  { u8 kind; u8 who; u8 cmp; i32 value; i8 tag; }             // DC_* and the list kinds (§1.3)
@@ -123,7 +123,7 @@ load; not saved) and a `staticPass` bitset over the set's roots (§4).
   S's sight records", UNSURE); STRONGER_THAN_ME = `W.stat > 1.5 x S.stat` (toughness-like, Q7 open);
   LAST_SEEN uses a squad-memory timestamp (none = 9999 h).
 
-### 1.4 Implemented: `ksim/dialogue_book.hpp` (slice 1 steps 1-2, 2026-11-02)
+### 1.4 Implemented: `ksim/dialogue/dialogue_book.hpp` (slice 1 steps 1-2, 2026-11-02)
 
 `DialogueBook::build`, `packageSetFor` / `packageSetOf` (the event index), `staticPass`; tool `ksim_dialogue_coverage`
 (census, `--sets`, `--package`); tests `ksim_dialogue_book` and `ksim_dialogue_compare` (the sets and the static pass against
@@ -151,7 +151,7 @@ load; not saved) and a `staticPass` bitset over the set's roots (§4).
 - `once only` (bool on one DIALOGUE) compiles to `DR_ONCE_ONLY`; 3 folded HAS_TAG / PERSONALITY_TAG entries have a tag outside 0..31
   and are dropped (counted); 2 dead-kind actions on compiled lines become DA_NONE.
 
-**Steps 3-4 (events, gate, root selection; `ksim/dialogue_events.hpp`, `dialogue_events.cpp`, `dialogue_sim.cpp`; test `ksim_dialogue_events`, 2026-11-02).**
+**Steps 3-4 (events, gate, root selection; `ksim/dialogue/dialogue_events.hpp`, `dialogue_events.cpp`, `dialogue_sim.cpp`; test `ksim_dialogue_events`, 2026-11-02).**
 Off by default: `Simulation::enableDialogue(book)`. Producers push `DialogueEvent`s, `stepDialogue` (after `stepCrime`) sorts the queue
 (tick, speaker, event, target, seq), drops events older than 2 s, evaluates at most 64 per tick and logs a `DialoguePick` (root, first line,
 pool size) per event in `DialogueSystem::log()`. Nothing is spoken, saved or hashed; the package set and static pass of a speaker are derived

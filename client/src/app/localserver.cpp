@@ -1,14 +1,7 @@
 #include "app/localserver.hpp"
 
-#include <cerrno>
-#include <csignal>
 #include <cstdio>
 #include <cstring>
-#if defined(__linux__)
-#include <sys/prctl.h>
-#endif
-#include <sys/wait.h>
-#include <unistd.h>
 
 #ifdef KENSHI_EMBED_SERVER
 #include "ksim/server_main.hpp"
@@ -83,35 +76,10 @@ bool LocalServer::start(const std::string& exe, const std::vector<std::string>& 
 	});
 	return true;
 #else
-	int fds[2];
-	if (pipe(fds) != 0) { err = std::string("pipe: ") + strerror(errno); return false; }
 	std::vector<std::string> all = { exe, "--listen", "127.0.0.1:0" };
 	all.insert(all.end(), args.begin(), args.end());
-	std::vector<char*> argv;
-	for (std::string& a : all) { argv.push_back(a.data()); }
-	argv.push_back(nullptr);
-	if (access(exe.c_str(), X_OK) != 0) { close(fds[0]); close(fds[1]); err = exe + ": " + strerror(errno); return false; }
-	const pid_t parent = getpid();
-	pid_ = fork();
-	if (pid_ == 0)	// the child: only async-signal-safe calls until exec
-	{
-#if defined(__linux__)	// macOS has no PDEATHSIG: a crashed client can leave the server running (CI round 1; runtime untested)
-		prctl(PR_SET_PDEATHSIG, SIGTERM);	// the client gone (a crash too): the server goes
-#endif
-		if (getppid() != parent) { _exit(1); }
-		dup2(fds[1], STDOUT_FILENO);
-		close(fds[0]);
-		close(fds[1]);
-		execv(exe.c_str(), argv.data());
-		_exit(127);
-	}
-	close(fds[1]);
-	if (pid_ < 0)
-	{
-		close(fds[0]);
-		err = std::string("fork: ") + strerror(errno);
-		return false;
-	}
+	FILE* out = nullptr;
+	if (!plat::spawnPiped(all, child_, out, err)) { return false; }
 	{
 		std::lock_guard<std::mutex> lk(m_);
 		address_.clear();
@@ -119,21 +87,20 @@ bool LocalServer::start(const std::string& exe, const std::vector<std::string>& 
 	}
 	std::string line;
 	for (const std::string& a : all) { line += (line.empty() ? "" : " ") + a; }
-	printf("local server: pid %d: %s\n", (int)pid_, line.c_str());
-	thread_ = std::thread(&LocalServer::reader, this, fds[0]);
+	printf("local server: pid %lld: %s\n", child_.pid, line.c_str());
+	thread_ = std::thread(&LocalServer::reader, this, out);
 	return true;
 #endif
 }
 
 // The server's stdout, echoed with a prefix; the listen line gives the address.
-void LocalServer::reader(int fd)
+void LocalServer::reader(FILE* f)
 {
 #ifdef KENSHI_EMBED_SERVER
-	close(fd);	// no child pipe in the full build
+	(void)f;	// no child pipe in the full build
 	return;
 #else
-	FILE* f = fdopen(fd, "r");
-	if (!f) { close(fd); return; }
+	if (!f) { return; }
 	char buf[512];
 	while (fgets(buf, sizeof buf, f))
 	{
@@ -162,14 +129,13 @@ bool LocalServer::running()
 	printf("local server: %s\n", exited_.c_str());
 	return false;
 #else
-	if (pid_ < 0) { return false; }
-	int status = 0;
-	if (waitpid(pid_, &status, WNOHANG) != pid_) { return true; }
-	pid_ = -1;
+	if (child_.pid < 0) { return false; }
+	std::string how;
+	if (plat::childRunning(child_, how)) { return true; }
 	if (thread_.joinable()) { thread_.join(); }
 	std::lock_guard<std::mutex> lk(m_);
 	address_.clear();
-	exited_ = WIFEXITED(status) ? "exited with status " + std::to_string(WEXITSTATUS(status)) : WIFSIGNALED(status) ? std::string("killed by signal ") + strsignal(WTERMSIG(status)) : "stopped";
+	exited_ = how;
 	printf("local server: %s\n", exited_.c_str());
 	return false;
 #endif
@@ -192,26 +158,11 @@ void LocalServer::stop(bool graceful)
 		printf("local server: in-process server stopped (exit code %d)\n", code_.load());
 	}
 #endif
-	if (pid_ >= 0)
+	if (child_.pid >= 0)
 	{
-		bool reaped = false;
-		if (graceful)
-		{
-			kill(pid_, SIGTERM);
-			for (int i = 0; i < 200 && !reaped; ++i)	// 2 s in 10 ms steps
-			{
-				const pid_t r = waitpid(pid_, nullptr, WNOHANG);
-				reaped = r == pid_ || (r < 0 && errno != EINTR);	// reaped, or gone already
-				if (!reaped) { usleep(10000); }
-			}
-		}
-		if (!reaped)
-		{
-			kill(pid_, SIGKILL);
-			while (waitpid(pid_, nullptr, 0) < 0 && errno == EINTR) {}
-		}
-		printf("local server: pid %d stopped%s\n", (int)pid_, reaped ? "" : " (killed)");
-		pid_ = -1;
+		const long long pid = child_.pid;
+		const bool reaped = plat::stopChild(child_, graceful);
+		printf("local server: pid %lld stopped%s\n", pid, reaped ? "" : " (killed)");
 	}
 	if (thread_.joinable()) { thread_.join(); }
 	std::lock_guard<std::mutex> lk(m_);

@@ -748,7 +748,7 @@ struct CombatArena::Ctx
 		setTarget(m, 0);
 		f.chaseId = 0;
 		f.forwardSpeed = 0.0;
-		f.clearRoute();
+		f.clearRoute(Fighter::kClearGiveUp);
 	}
 
 	// A target within the approach reach that no walk reaches: the same give-up, decided without a chase.
@@ -3188,7 +3188,7 @@ struct CombatArena::Ctx
 		{
 			// A route with no navmesh (a save loaded without one): abandoned, counted.
 			++arena.routesBlocked_;
-			f.clearRoute();
+			f.clearRoute(4);
 			return;
 		}
 		if (f.state != CombatState::Hub && !crawl)
@@ -3296,7 +3296,7 @@ struct CombatArena::Ctx
 		{
 			f.offPath = 0.0;
 			const state::RoutePoint end = f.route.back();
-			if (replanWalk(m, end))
+			if (replanWalk(m, end, Fighter::kReplanOffPath))
 			{
 				++arena.offPathRepaths_;
 				f.swingProgress = computeSwingProgress(f);
@@ -3314,7 +3314,7 @@ struct CombatArena::Ctx
 			{
 				const bool moveOrder = f.routeSource == Fighter::PlanSource::Order; // a move order's walk, not an interact's (the use point is its stop)
 				f.routeSeq = 0; // an order's route that arrived is done (routeSeq is the live order: world_tasks.cpp freeMember)
-				f.clearRoute();
+				f.clearRoute(Fighter::kClearArrived);
 				f.forwardSpeed = 0.0;
 				f.swingProgress = computeSwingProgress(f);
 				if (f.playerControlled && moveOrder)
@@ -3333,7 +3333,7 @@ struct CombatArena::Ctx
 		{
 			++f.routeTries;
 			const state::RoutePoint end = f.route.back();
-			if (replanWalk(m, end))
+			if (replanWalk(m, end, Fighter::kReplanBlocked))
 			{
 				++arena.reroutes_;
 				f.swingProgress = computeSwingProgress(f);
@@ -3379,7 +3379,7 @@ struct CombatArena::Ctx
 				if (f.playerControlled && moveOrder)
 					settleSelf(m);
 			}
-			f.clearRoute(); // arrived, or the way is shut
+			f.clearRoute(blocked ? Fighter::kClearWayShut : Fighter::kClearArrived); // arrived, or the way is shut
 			f.forwardSpeed = 0.0;
 			f.walkStuck = 0.0;
 		}
@@ -3389,14 +3389,14 @@ struct CombatArena::Ctx
 	// A walk's re-request (off the route, or blocked) to its own goal. A failed one blocks that goal for kBlockedTarget (the exe's
 	// addBlockedTarget on a failed request): asks for it, or for one within kRequestDedup of it, return false without a search. The
 	// old corridor stays meanwhile. Each failed ask is two searches (kenshi-k16.6.262).
-	bool replanWalk(Member& m, const state::RoutePoint& end)
+	bool replanWalk(Member& m, const state::RoutePoint& end, std::uint8_t why)
 	{
 		const auto it = arena.replanFail_.find(m.id);
 		if (it != arena.replanFail_.end() && arena.time_ < it->second.until
 			&& std::hypot(end.x - it->second.x, end.z - it->second.z) <= kRequestDedup)
 			return false;
 		Fighter& f = m.fighter;
-		if (replan(f, end.x, end.z, false, f.routeApproach, end.y))
+		if (replan(f, end.x, end.z, false, f.routeApproach, end.y, why))
 		{
 			if (it != arena.replanFail_.end())
 				arena.replanFail_.erase(it);
@@ -3411,7 +3411,7 @@ struct CombatArena::Ctx
 	// `ty`: the end's height when known (an order's reroute keeps its route's end). Without it the end is
 	// snapped from f's own height, which on a slope can pick other ground 40 u off the planned end
 	// (ksim_nav_regions: a reroute on the ridge above the iron deposit ended on a rock top short of it).
-	bool replan(Fighter& f, double tx, double tz, bool chase, bool approach, std::optional<double> ty = std::nullopt)
+	bool replan(Fighter& f, double tx, double tz, bool chase, bool approach, std::optional<double> ty = std::nullopt, std::uint8_t why = Fighter::kReplanChase)
 	{
 		const MeshNavigator* n = nav();
 		if (n == nullptr)
@@ -3425,6 +3425,7 @@ struct CombatArena::Ctx
 		f.routeNext = 0;
 		f.offPath = 0.0;
 		++f.routeVersion;
+		f.clearWhy = why;
 		f.routeChase = chase;
 		f.routeApproach = approach;
 		if (chase)
@@ -3463,7 +3464,7 @@ struct CombatArena::Ctx
 				// The old route may still be walkable (the target moved); an exhausted one is no route at all.
 				if (f.routeChase && f.routeNext < f.route.size())
 					return true;
-				f.clearRoute();
+				f.clearRoute(Fighter::kClearGiveUp);
 				f.forwardSpeed = 0.0;
 				f.chaseCooldown = kChaseCooldown; // nothing usable: wait, then ask again
 				return !target;
@@ -3498,7 +3499,7 @@ struct CombatArena::Ctx
 		if (f.routeTries < kMaxReroutes)
 		{
 			++f.routeTries;
-			if (replan(f, tx, tz, true, true, ty))
+			if (replan(f, tx, tz, true, true, ty, Fighter::kReplanBlocked))
 			{
 				++arena.reroutes_;
 				f.chasePlanAge = 0.0;
@@ -3508,7 +3509,7 @@ struct CombatArena::Ctx
 			}
 		}
 		++arena.routesBlocked_;
-		f.clearRoute();
+		f.clearRoute(Fighter::kClearWayShut);
 		f.routeTries = 0;
 		f.forwardSpeed = 0.0;
 		f.chaseCooldown = kChaseCooldown;
@@ -3684,7 +3685,7 @@ struct CombatArena::Ctx
 		{
 			f.forwardSpeed = 0.0;
 			if (f.routeChase)
-				f.clearRoute();
+				f.clearRoute(Fighter::kClearWentDirect);
 			f.swingProgress = computeSwingProgress(f);
 			return;
 		}
@@ -3705,7 +3706,7 @@ struct CombatArena::Ctx
 			return;
 		}
 		if (f.routeChase)
-			f.clearRoute(); // direct again: the wire sees the clear
+			f.clearRoute(Fighter::kClearWentDirect); // direct again: the wire sees the clear
 		// Direct steering at the slot (mode 2, rwh110): move straight at the slot whatever the facing, the step clamped to
 		// sqrt(distance); facing := the velocity while it is above 0.1 u/s (no turn rate), frozen on a "stuck" frame
 		// (moved < 20 % of dt x the previous speed); the facing is never aimed at the slot.
@@ -3895,7 +3896,7 @@ struct CombatArena::Ctx
 			setTarget(m, 0);
 			clearAllSlots(f);
 			f.forwardSpeed = 0.0;
-			f.clearRoute();
+			f.clearRoute(Fighter::kClearIncapacitated);
 			f.drive = state::DriveMode::Stop;
 			f.driveStrafe = 0;
 			return;
@@ -4305,7 +4306,7 @@ struct CombatArena::Ctx
 			// the attacker stops where it is, no circling), or a hold stops it.
 			const bool chaseOver = f.hold || target == nullptr || !targetable(target->fighter);
 			if (f.routeChase && f.followTarget == 0 && chaseOver)
-				f.clearRoute();
+				f.clearRoute(Fighter::kClearWentDirect);
 			// The hub is a frame between two steers, not a stop: a chaser that is running down a freely running target (rwh.108) carries its speed
 			// through it, instead of standing dead at the band and re-ramping while the target leaves (k16.6.153).
 			if (!chaseOver && f.state == CombatState::Hub && m.leadHold >= kLeadHold)
@@ -4364,7 +4365,7 @@ struct CombatArena::Ctx
 			}
 		}
 		if (f.routeChase && f.followTarget == 0)
-			f.clearRoute(); // the chase went direct (or ended): the wire sees the clear
+			f.clearRoute(Fighter::kClearWentDirect); // the chase went direct (or ended): the wire sees the clear
 		double cap = steer.cap;
 		bool run = steer.run;
 		if (leading)

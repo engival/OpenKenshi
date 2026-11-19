@@ -48,7 +48,7 @@ fail()
 # _sg.features / the pool slot state, no backend call), and none runs on the logic thread. Per entry:
 #   colourmap.cpp 2   GroundColour::upload: sg_query_limits + image_state, a load step (before the logic thread starts, rule 7)
 #   detail.cpp 2      :272 prepare() on a std::async worker, reads sg_query_limits, a constant after sg_setup; :344 uploadPart, a load step
-#   worldbuildings 2  :247 init() in a load step; :920 the texture's finish(), inside a render-side rq job (frame or stream lane)
+#   wbload.cpp 2      (was worldbuildings.cpp) init() in a load step; uploadTexture's finish(), inside a render-side rq job (frame or stream lane)
 #   grass.cpp 1       makePipeline's sprite loop, a render-side rq job ("grass-pipeline")
 #   particles.cpp 1   makeTexture, a render-side rq job ("particle-texture")
 #   worldmap.cpp 1    WorldMap::init, a load step
@@ -57,7 +57,7 @@ fail()
 #   main.cpp 2        :4430 / :4489 in init() on the sapp (render) thread, before the logic thread exists; the logic half reads the value
 #                     portraitTable.setOrigin stored (logic asks sokol nothing)
 # Only image_state (a pool-slot read, racy against a concurrent make on another thread) matters, and no caller of it is on the logic thread.
-declare -A KNOWN=([client/src/render/colourmap.cpp]=2 [client/src/render/detail.cpp]=2 [client/src/world/worldbuildings.cpp]=2 [client/src/render/grass.cpp]=1
+declare -A KNOWN=([client/src/render/colourmap.cpp]=2 [client/src/render/detail.cpp]=2 [client/src/world/wbload.cpp]=2 [client/src/render/grass.cpp]=1
 	[client/src/render/particles.cpp]=1 [client/src/world/worldmap.cpp]=1 [client/src/assets/dds.cpp]=2 [client/src/main.cpp]=2)
 cd "$TREE" || exit 2
 BAD=0

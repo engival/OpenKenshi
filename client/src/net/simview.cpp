@@ -9,19 +9,11 @@
 #include <fstream>
 #include <iterator>
 
-#include <fcntl.h>
-#include <netdb.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
 #include "app/config.hpp"
 #include "app/cpustage.hpp"
 #include "app/eventlog.hpp"
 #include "kworld/loadorder.hpp"
-
-#ifndef MSG_NOSIGNAL	// macOS: no per-call flag (SO_NOSIGPIPE is set on the socket instead)
-#define MSG_NOSIGNAL 0
-#endif
+#include "platform/socket.hpp"
 
 using namespace simlink;
 
@@ -85,28 +77,16 @@ bool SimView::open(const std::string& target, std::uint64_t dataHash, std::strin
 	}
 	if (colon == std::string::npos) { err = target + ": no such file (or HOST:PORT)"; return false; }
 	dataHash_ = dataHash;
-	addrinfo hints = {}, *res = nullptr;
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
-	if (const int rc = getaddrinfo(target.substr(0, colon).c_str(), target.substr(colon + 1).c_str(), &hints, &res); rc != 0) { err = target + ": " + gai_strerror(rc); return false; }
-	for (addrinfo* a = res; a && fd_ < 0; a = a->ai_next)
-	{
-		fd_ = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
-		if (fd_ >= 0 && connect(fd_, a->ai_addr, a->ai_addrlen) != 0) { close(fd_); fd_ = -1; }
-	}
-	freeaddrinfo(res);
-	if (fd_ < 0) { err = target + ": " + strerror(errno); return false; }
-#ifdef SO_NOSIGPIPE	// macOS has no MSG_NOSIGNAL
-	{ const int one = 1; setsockopt(fd_, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one); }
-#endif
-	fcntl(fd_, F_SETFL, fcntl(fd_, F_GETFL) | O_NONBLOCK);
+	std::string why;
+	fd_ = plat::tcpConnect(target.substr(0, colon), target.substr(colon + 1), why);
+	if (fd_ == plat::kNoSocket) { err = target + ": " + why; return false; }
 	mode_ = Live;
 	return true;
 }
 
 void SimView::end()
 {
-	if (fd_ >= 0) { ::close(fd_); }
+	plat::tcpClose(fd_);
 	*this = SimView();
 }
 
@@ -125,7 +105,8 @@ void SimView::fail(const std::string& why)
 		evlog::add("link", tick_, 0, "%s", why.c_str());
 	}
 	error_ = why;
-	if (fd_ >= 0) { close(fd_); fd_ = -1; }
+	plat::tcpClose(fd_);
+	fd_ = plat::kNoSocket;
 }
 
 bool SimView::pump()
@@ -147,11 +128,14 @@ bool SimView::pump()
 	uint8_t buf[65536];
 	for (;;)
 	{
-		const ssize_t n = recv(fd_, buf, sizeof buf, 0);
-		if (n > 0) { if (!dec_.feed(buf, (size_t)n)) { fail(dec_.error()); return false; } continue; }
-		if (n == 0) { fail("server closed the connection"); return false; }
-		if (errno == EAGAIN || errno == EWOULDBLOCK) { break; }
-		if (errno != EINTR) { fail(std::string("recv: ") + strerror(errno)); return false; }
+		size_t n = 0;
+		std::string why;
+		const plat::Recv r = plat::tcpRecv(fd_, buf, sizeof buf, n, why);
+		if (r == plat::Recv::Data) { if (!dec_.feed(buf, n)) { fail(dec_.error()); return false; } continue; }
+		if (r == plat::Recv::Closed) { fail("server closed the connection"); return false; }
+		if (r == plat::Recv::WouldBlock) { break; }
+		fail("recv: " + why);
+		return false;
 	}
 	if (dec_.helloSeen() && !helloSent_)
 	{
@@ -1223,8 +1207,8 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		{
 			sl.nobodyState = (uint8_t)ds;
 			sl.nobodyLogTick = (uint64_t)tick_;
-			evlog::add("nobody", tick_, id, "no body drawn: %s (feet %.1f,%.1f,%.1f, character %d of %zu)", Characters::drawStateName(ds), p[0], p[1], p[2], sl.index,
-				chars.drawStates());
+			evlog::add("nobody", tick_, id, "no body drawn: %s (feet %.1f,%.1f,%.1f, character %d of %d)", Characters::drawStateName(ds), p[0], p[1], p[2], sl.index,
+				(int)chars.drawStates());	// %d: MinGW checks printf formats against msvcrt, which has no %zu
 		}
 		else if (ds == Characters::kBodyDrawn) { sl.nobodyState = (uint8_t)ds; sl.nobodyPendingCount = 0; }
 	}
@@ -1302,8 +1286,8 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 // Client frames are tiny (an order is < 2.1 KiB at 256 ids) next to the socket buffer, so a short write is treated as fatal rather than queued.
 bool SimView::send(const std::vector<uint8_t>& out, const char* what)
 {
-	if (fd_ < 0) { return false; }
-	if (::send(fd_, out.data(), out.size(), MSG_NOSIGNAL) != (ssize_t)out.size()) { fail(std::string("send ") + what + " failed"); return false; }
+	if (fd_ == plat::kNoSocket) { return false; }
+	if (!plat::tcpSend(fd_, out.data(), out.size())) { fail(std::string("send ") + what + " failed"); return false; }
 	lastSend_ = std::chrono::steady_clock::now();
 	return true;
 }
@@ -1563,7 +1547,7 @@ uint64_t SimView::pick(const double origin[3], const double dir[3], double* tOut
 
 void SimView::view(double x, double z)
 {
-	if (mode_ != Live || !helloSent_ || fd_ < 0) { return; }
+	if (mode_ != Live || !helloSent_ || fd_ == plat::kNoSocket) { return; }
 	std::vector<uint8_t> out;
 	if (!viewOnce_ || std::hypot(x - interestSent_[0], z - interestSent_[1]) > kInterestMove)
 	{
@@ -1617,11 +1601,11 @@ void SimView::predict(const Character& c, double p[3], float& yaw)
 	knav::StepResult target{ { s.pos[0], s.pos[1], s.pos[2] }, true, false, false };
 	for (; lead > 1e-9 && target.onMesh; lead -= 1.0 / kTickRate)
 	{
-		target = walker_->drive(target.at, (knav::Drive)s.drive, s.heading, gait, fwd, std::min(lead, 1.0 / kTickRate), knav::kGaitAcceleration, true, wireStrafe);
+		target = walker_->drive(target.at, (knav::Drive)s.drive, s.heading, gait, fwd, std::min(lead, 1.0 / kTickRate), knav::kGaitAcceleration, wireStrafe);
 	}
 	if (!target.onMesh) { local_.on = false; return; }
 	if (!local_.on) { for (int k = 0; k < 3; k++) { local_.pos[k] = p[k]; } local_.fwd = std::clamp((double)s.fwd, -gait, gait); local_.vel[0] = local_.vel[1] = 0; local_.on = true; }
-	knav::StepResult mine = walker_->drive({ local_.pos[0], local_.pos[1], local_.pos[2] }, (knav::Drive)local_.drive, local_.heading, gait, local_.fwd, dtSim_, knav::kGaitAcceleration, true, local_.strafe);
+	knav::StepResult mine = walker_->drive({ local_.pos[0], local_.pos[1], local_.pos[2] }, (knav::Drive)local_.drive, local_.heading, gait, local_.fwd, dtSim_, knav::kGaitAcceleration, local_.strafe);
 	if (!mine.onMesh) { mine.at = target.at; }
 	const double e = std::hypot(target.at.x - mine.at.x, target.at.z - mine.at.z);
 	const double pull = e > kSnap ? 1.0 : std::min(1.0, kPull * dtSim_);

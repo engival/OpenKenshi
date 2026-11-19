@@ -11,9 +11,7 @@
 #include "sokol_gfx.h"
 
 #if defined(SOKOL_GLCORE)
-#define GL_GLEXT_PROTOTYPES 1
-#include <GL/gl.h>
-#include <GL/glext.h>
+#include "platform/gl.hpp"
 #endif
 
 namespace lastframe

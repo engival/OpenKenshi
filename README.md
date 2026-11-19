@@ -55,6 +55,22 @@ cmake --build client/build --target OpenKenshi
 Copy a Windows Kenshi install over and point the game at it, or use `~/Library/Application Support/Steam/steamapps/common/Kenshi`
 (searched by default).
 
+### Windows (CI-built, untested at runtime)
+
+GitHub Actions builds it on `windows-latest` with MSYS2's UCRT64 toolchain (GCC + MinGW-w64, `.github/workflows/windows.yml`); nobody
+has run the result yet. MSVC is not supported. Graphics is OpenGL 4.3 (`KENSHI_GFX=glcore`), audio is WASAPI, the window is Win32
+through sokol_app. In an MSYS2 **UCRT64** shell:
+
+```sh
+pacman -S git mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,pkgconf,python,libvorbis,libogg}
+client/tools/get_shdc.sh        # fetches sokol-shdc.exe; recastnavigation is fetched by CMake
+cmake -S client -B client/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build client/build --target OpenKenshi
+```
+
+Clone with `git config --global core.autocrlf false` set first: the scripts and data files must keep LF line endings. The game finds
+Kenshi in Steam's default and registry-listed libraries and GOG's registry entry.
+
 ## Run
 
 ```sh

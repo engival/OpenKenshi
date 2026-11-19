@@ -356,7 +356,7 @@ Each phase is shippable on its own and ends at a measurable acceptance. All numb
 - **P3 — compute pool (b), only if the main side still binds** after 205.11 (pose cache, dirty props/buildings, reflection
   skip) lands. *Accept:* scene_test identical on a replay twice (determinism); main ≤6.5 ms at both places.
   First piece in (kenshi-k16.2.205.12.102, review .85 T22): `Characters::update`'s pose pass is a parallel-for over the
-  characters on a persistent `WorkPool` (`client/src/workpool.hpp`; `anim.pose_threads`, default 4 with the logic thread,
+  characters on a persistent `WorkPool` (`client/src/app/workpool.hpp`; `anim.pose_threads`, default 4 with the logic thread,
   1 = serial). Each pose writes only its own character; a carried body's `carryPlace` keeps the serial order's read of its
   carrier (posed this frame if earlier in `chars_`, the state before the loop if later), so the output is the serial
   loop's bit for bit. Heft overlap, Intel card: `chars.update` 2.6-3.2 ms serial -> 1.2-1.4 parallel at like load.
@@ -566,7 +566,7 @@ into it. Items already filed carry their id:
   (kenshi-k16.2.205.12.26), then the renderers the order lacked: shadow (cascade maths and the cache signature inputs
   in the packet; its slot comes when the `shadow.cpp` freeze lifts), blood decals, weather fog map / sky parameter
   block, portraits, arrows, world map, light volumes, labels and overlays (the last join hook 8's list);
-- alongside 7: `render_frame` in an `app`-free TU (kenshi-k16.2.205.12.27): `client/src/renderframe.cpp`, which cannot
+- alongside 7: `render_frame` in an `app`-free TU (kenshi-k16.2.205.12.27): `client/src/render/renderframe.cpp`, which cannot
   see `App`; the blocks that still read `app.` sat in main.cpp behind `RenderState::Legacy` and left it one renderer
   per sitting (what has moved and what is left: the top of `renderframe.hpp`; sitting 2, kenshi-k16.2.205.12.45: the
   sky pass and the fog volumes, from the packet's sky block `FramePacket::sky`, a `SkyFrame` that `Sky::frame()` takes
@@ -612,7 +612,7 @@ into it. Items already filed carry their id:
   screen, cursor at `scene.mouse`, sgl checks, `framestats::fillDraw`), its conditions in `FramePacket::overlay`; `RenderState` gets
   `loadScreen`, `cursors`, `trails` and the render-owned `sglShown`; sitting 11, kenshi-k16.2.205.12.57: the debug views (nav overlay,
   light probes, trails), the sim markers (with the labels when there is no UI) and the minimap / full map / HUD run in logic at the end of
-  `logic_frame` (`record_overlay`, under the old conditions) and record through `ovl::` (`client/src/overlaylist.hpp`: the sgl / debugtext
+  `logic_frame` (`record_overlay`, under the old conditions) and record through `ovl::` (`client/src/render/overlaylist.hpp`: the sgl / debugtext
   call stream, verbatim, bound per thread; unbound calls go to sokol at once, so the early paths' `draw_text` / `draw_panel` are unchanged)
   into `FramePacket::overlayLists`; `world_overlay` plays them at the same place (`ovl::play`; the trails' list into their own context,
   `Trails::submit`). The 3D marks are projected while recording with the packet's camera (`views[0]` at near 1, far 1000, main.cpp
@@ -628,7 +628,7 @@ into it. Items already filed carry their id:
   packet's logic ms + the draw's ms) and the fog count are FrameStats fields; and packet views as `Camera views[N]` +
   count (kenshi-k16.2.205.12.30);
 - 8: the UI command list, with glyph pages, icons and textures as list entries (kenshi-k16.2.205.12.28). The host half
-  is `client/src/drawlist.hpp` (the logic-side recorder: per sgl group the vertices, scissor, pipeline id, layer and a
+  is `client/src/render/drawlist.hpp` (the logic-side recorder: per sgl group the vertices, scissor, pipeline id, layer and a
   UI-side `dl::TexId`; uploads create / dirty rect / destroy ahead of the draws, a destroy taking effect at the next
   packet) and `drawlist_gpu.hpp` (render side: the id table, the uploads, the replay into sgl). The cursor's shape is
   in the packet (`FramePacket::cursor`) and it is drawn render side at the newest mouse position. The sgl error flags and
@@ -661,7 +661,7 @@ into it. Items already filed carry their id:
 ### 7.2 The resource job queue (kenshi-k16.2.205.12.22)
 
 Review 2.2 *[R2.2]* and §7.1 rule 2: a packet is a pure snapshot, so every create, free and one-shot GPU job travels
-beside it, in order, and is never dropped. `client/src/renderqueue.hpp` (namespace `rq`) is that queue. It is also the
+beside it, in order, and is never dropped. `client/src/render/renderqueue.hpp` (namespace `rq`) is that queue. It is also the
 base of the streaming design (kenshi-k16.2.258: per-frame budget, cheapest first, never wait).
 
 1. **Logic never calls `sg_make_*`, `sg_alloc_*`, `sg_init_*` or `sg_destroy_*`.** It owns the CPU data (decoded

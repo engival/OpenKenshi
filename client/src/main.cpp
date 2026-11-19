@@ -35,9 +35,7 @@
 #include "sokol_glue.h"
 #include "sokol_log.h"
 #if defined(SOKOL_GLCORE)
-#define GL_GLEXT_PROTOTYPES 1	// the frame-buffer calls the dev depth readback needs (animlab / idbuffer do the same)
-#include <GL/gl.h>
-#include <GL/glext.h>
+#include "platform/gl.hpp"	// the frame-buffer calls the dev depth readback needs (animlab / idbuffer do the same)
 #endif
 
 #include "world/buildings.hpp"
@@ -86,6 +84,7 @@
 #include "app/config.hpp"
 #include "app/datadir.hpp"
 #include "platform/windowgeom.hpp"
+#include "platform/process.hpp"	// plat::unsetEnv
 #include "app/windowgate.hpp"
 #include "render/readback.hpp"
 #include "render/renderqueue.hpp"
@@ -169,8 +168,10 @@
 #include "render/overlaylist.hpp"
 #include "world/worldbuildings.hpp"
 #include "world/worldmap.hpp"
+#include "host/app.hpp"
+#include "host/pick.hpp"
 
-namespace
+namespace host
 {
 
 static void debug_toggle(const std::string& id);
@@ -211,85 +212,12 @@ constexpr double kEyeHeight = 17.0;		// walk mode eye height above ground, world
 constexpr double kWalkSpeed = 15.0;		// world units / s
 constexpr double kFlySpeed = 400.0;		// world units / s
 constexpr double kFastFactor = 10.0;		// shift
-constexpr float kFogDistance = 60000.0f;
 constexpr int kScreenshotFrames = 3;		// --screenshot: frame at which the shot is taken
 constexpr double kStallMs = 250;	// a frame gap over this is an evlog `stall` (kenshi-k16.2.26: the loading screen froze the window)
 constexpr int kRecordsFrameMs = 16;	// the characters step's panel records per frame (kenshi-k16.2.26): the budget is the loading screen's own frame
 constexpr int kLoadsPerFrame = 24;
-// The camera's default position (kenshi-k16.2.112.1): the Hub's centre (the Hub scenarios' `source centre=`), never the world origin, which is the
-// Deadlands — the user's "loading into deadlands should be considered a spoiler" (2026-11-12). --pos / --at / --camera-pos still win.
-constexpr double kHubDefaultX = -50619.0, kHubDefaultZ = -1086.0;
 // A live session with no camera target this long falls back to the Hub default and says so (kenshi-k16.2.112.1, user 2026-11-12).
 constexpr double kCameraWaitSeconds = 10.0;
-
-struct Options
-{
-	std::string data;	// --data; resolved before use when empty (datadir.cpp: $KENSHI_DATA, the saved setting, the default installs)
-	std::string cmdline;		// as started (the screenshot sidecar)
-	std::string screenshot;
-	std::string loadShot;		// --loading-shot N,FILE: debug, interactive-style startup; screenshot the loading screen once N steps are done, then exit
-	int loadShotStep = 0;
-	std::string script;
-	std::string follow;		// --follow NAME|id=N: the character to follow once it streams in (a spectator session)
-	// (--view-mesh / --tex / --dist are dev flags: dev/viewmesh.cpp, dev/devhooks.hpp)
-	std::string matReport;	// --mat-report: write the odd-submesh-material mesh list here at exit
-	int offsetFrame = 0;		// --offset-frame 0|1: axis frame of part offsets and spin axes (1 = Z-up)
-	bool hideMarkers = false;	// --hide-markers: do not draw parts flagged "is for position marker" (default: drawn, un-offset)
-	bool adaptScripted = false;	// --adapt: scripted runs adapt at the real rate (1/60 s per frame) instead of jumping to the current luminance
-	double exposure = 0;		// --exposure auto|N: 0 = HDR auto exposure (GPU luminance chain), N > 0 = fixed multiplier
-	int bradius = 3;		// --bradius: building load radius in zone cells (0 = no buildings)
-	int fradius = 4;		// --fradius: foliage load radius in zone cells (4 = 18.4 km: landmarks fade past the fog; the last 20 % is the dithered fade)
-	double foliageRange = 6.0;	// --foliage-range: multiplier on the game's foliage draw distances (the game ships 1)
-	bool grass = true;		// --no-grass: skip the grass layers (GRASS records)
-	double grassRange = 2.0;	// --grass-range: multiplier on the game's per-class grass distances (500 / 1000 / 8000 units at 1); the dithered fade covers each one's last 20 %
-	bool grassPaint = false;	// --grass-map paint: density from the exe's noise paint instead of the overlay R byte as loaded
-	float grassDensity = 1.0f;	// --grass-density: multiplies every layer's blades per area (the game's `grass density` setting, default 1)
-	bool foliage = true;		// --no-foliage: skip the procedural foliage (trees, bushes, rocks; kworld::generateFoliage)
-	bool fogVolumes = true;	// --no-fog-volumes: skip the static fog volumes (fogfeatures.dat)
-	bool particles = true;	// --no-particles: skip the weather particle effects (rain, ash) and the placed world effects; particles.hpp
-	bool water = true;		// --no-water: skip the water plane (M4)
-	int shadowStagger = -1;		// --shadow-stagger 0|1: redraw the far shadow cascades only every few frames (default: on, off in scripted runs so shots are exact)
-	bool shadows = true;		// --no-shadows: start with the sun shadows off (F3 toggles)
-	bool waterFlat = false;		// --water-flat: debug, unlit water colour only
-	bool features = true;		// --no-features: skip the hand-placed features (rocks, formations; features.dat)
-	bool interiors = true;		// --no-interiors: no interior parts or layout furniture (the game's look with every interior unloaded)
-	double time = 12.0;		// --time HH.H: starting game hour
-	double timescale = 1.0;	// --timescale N: game speed (0 pauses, 1, 2, 5)
-	double simspeed = 0;		// --simspeed N (dev): the sim's game speed, sent as SET_SPEED once the session is live (kenshi-k16.2.205.7)
-	int day = 1;			// --day N: starting game day (the HUD's "Day"; the moons spin with the total game minutes)
-	double skyHours = 0;		// --sky-hours H: starting SkyX+0x7c (played game hours; the star scroll), to match a capture's uTime / 0.5
-	std::string weather;		// --weather NAME: pin a WEATHER record ("default" = the fixed default look); empty or "auto" = regional weather blended from the areasmap
-	float weatherBlur = 1.0f;	// --weather-blur KM: width (FWHM) of the camera blend of the regional weather
-	float frontBlur = 2.0f;		// --front-blur KM: sigma of the blur of the per-pixel weather map (softness of distant storm fronts; 0 = hard cell edges)
-	std::string simlink;		// --simlink FILE.bin | HOST:PORT: characters from the sim link (docs/formats/SIMLINK.md)
-	bool localServer = false;	// --local-server: the title and its own server in a scripted run too (start_local_server)
-	double simlinkTick = -1;	// --simlink-tick N: a replay starts at tick N
-	// (--scene-test / --scenes / --scene-file / --scene-hud / --scene-frames are dev flags: dev/scenetest.cpp, dev/devhooks.hpp)
-	bool debug = false;		// --debug: the development features (the F8 panel, the debug keys, the scenes, the debug script ops); release builds leave them out
-	std::vector<std::string> characters;	// --character SPEC (repeatable): test characters in a row in front of the start camera, add_characters()
-	std::string creator;	// --creator RACE[/female]: the character creator's preview in front of the start camera (open_creator)
-	std::vector<std::string> blood;	// --blood SPEC (repeatable): ground blood decals placed from the start camera, place_blood()
-	std::string squads;	// --squads FILE: sim snapshot (default: cpp/build/default_world_squads.json in the repo); missing = notice
-	std::string map;		// GUI_Map.dds override; empty = nicemap mod if found and enabled, else vanilla
-	std::string at;			// --at PLACE|x,z: a town name from the game data (case-insensitive prefix) or an x,z pair (k16.2.87)
-	double x = kHubDefaultX, z = kHubDefaultZ, alt = 800;	// the Hub, not the origin (k16.2.112.1)
-	bool explicitPos = false;	// --pos / --at / --camera-pos: the camera has a target before the session (k16.2.112.1)
-	double yaw = 0, pitch = -20;	// degrees; yaw 0 looks towards -z, 90 towards +x
-	// --camera-pos/-yaw/-pitch/-dist: the floating camera on first sim contact (a scenario's .kclient_args sidecar); degrees as yaw / pitch
-	bool camera = false;
-	double cameraPos[3] = {}, cameraYaw = 0, cameraPitch = -30, cameraDist = 150;
-	bool walk = false;
-	float fog = kFogDistance;
-	int width = 1280, height = 720;
-};
-
-struct Cmd
-{
-	int frame;
-	std::string op;			// key, mouse, scroll, set, screenshot, quit
-	std::vector<std::string> args;
-	bool done = false;
-};
 
 int g_sgErrors = 0;	// sokol-gfx errors and panics logged so far (a message-less [sg][error] means a pool ran out)
 int g_exitCode = 0;
@@ -306,453 +234,7 @@ void log_cb(const char* tag, uint32_t level, uint32_t item, const char* message,
 	slog_func(tag, level, item, message, line, file, user);
 }
 
-
-// A versioned inventory order waiting for its INVENTORY (kenshi-k16.20.14.2): one per inventory in flight, the rest queued. The item is remembered by
-// its record + ITEM_GRID section + cell (the index moves when an entry leaves) and re-resolved at send time.
-struct GearOrder
-{
-	uint8_t kind = 0;			// 63 machine put (by name), 64 moveItem, 65 arrange, 66 dropEntry, 67 equipEntry, 68 transferEntry
-	uint64_t inv = 0;			// the inventory whose version the order carries: the queue's key
-	uint64_t owner = 0;			// the order's `id`: the character (a body for its own pack), or the container for a 64 in it
-	uint64_t container = 0;		// the order's `container` (68) or the producer (63)
-	uint32_t record = 0;		// the item's strid, with section + x, y the re-resolution key
-	std::string name;			// the record's name (63 goes by name)
-	bool hasQuality = false;	// a graded entry (a weapon / armour): moveAll moves only entries of the same grade and level
-	uint8_t grade = 255;
-	float level = 0;
-	uint8_t section = 255;		// the entry's ITEM_GRID section where it was clicked
-	uint8_t x = 0, y = 0;		// its top-left cell
-	uint8_t toSection = 255;	// the destination (64 / 68; 255 autoplace)
-	uint8_t toX = 0, toY = 0;
-	uint16_t count = 1;			// units
-	bool take = false;			// 68: the container (or body) is the source
-	bool on = false;			// 67: equip
-	bool retried = false;		// its one stale retry was used
-	uint64_t group = 0;			// moveAll: its orders share one; a refusal drops the rest (0: not one)
-	bool byRecord = false;		// 68: the entry is found by its record (and grade, level) anywhere in the section, not by its cell: the follow-up of a chained move
-	bool autoCell = false;		// 64: the cell is picked when it is sent (the first free one in toSection that holds the item's footprint; the wire's 64 has no autoplace)
-	bool splitOnFull = false;	// a stack dropped at a cell: when the server answers no_room (more than the cell's cap) it is placed unit by unit (auto-split, k16.20.13.3)
-	std::shared_ptr<GearOrder> then;	// a box -> trader drag is a take into the user's pack and then this put (kenshi-k16.20.13.2): sent once the take is applied
-};
-
-struct GearQueue
-{
-	std::deque<GearOrder> wait;	// not sent yet, in click order
-	bool flight = false;		// one in flight: GearQueue::current
-	GearOrder current;
-	uint32_t seq = 0;			// its clientSeq (SimView::lastSentSeq at the send)
-	uint32_t version = 0;		// the INVENTORY version it carried
-	double sentAt = 0;			// steady seconds (gear_now), for the lost-reply timeout
-	bool awaitVersion = false;	// it was applied; the INVENTORY that carries the new version is not here yet (the next order must wait)
-	double answeredAt = 0;		// when the applied answer came (awaitVersion's watchdog)
-};
-
-// The camera a save was made from (kenshi-k16.2.134.1): a sidecar beside the client's other per-user files, written when the client issues a save
-// and applied back when that save's load brings its first snapshot. mode: 0 the free (debug) camera, 1 the game's floating (RTS) camera, 2 the
-// follow (hover / drive) camera the V key and a spectator's --follow use.
-struct CameraState
-{
-	int mode = 1;
-	bool valid = false;
-	double yaw = 0, pitch = 0;	// radians (the client's own convention: yaw 0 looks towards -z)
-	double pos[3] = {};		// the eye, as it stood
-	double focus[3] = {};		// the RTS pivot
-	double rtsDist = 400;
-	uint64_t centerId = 0;		// the RTS auto-center character, 0 none
-	uint64_t followId = 0;		// the followed character
-	double followDist = 60, followBase = 0, followOffset = 0;
-	int floorLevel = -1;		// the visible floor level 0..3 (WorldBuildings::level); -1 = an older sidecar without it: the start snaps
-};
-
-// A load's camera restore in flight: armed when the load's reset is seen (update_ui), applied on the load's first snapshot after it.
-struct CamRestore
-{
-	bool armed = false, applied = false;
-	uint32_t snapAt = 0;	// the decoder's snapSerial when armed; the first snapshot past it is the load's
-	std::string name;
-};
-
-struct App
-{
-	Options opt;
-	bool uiOn = false;	// ui::init succeeded (docs/UI.md); false: the world runs without the UI layer
-	std::unique_ptr<ui::Hud> hud;
-	ClientNav nav;	// the server's navmesh tiles (SIMLINK 12): invalidmove now, prediction next
-	std::unique_ptr<ui::Options> options;	// F10
-	std::unique_ptr<ui::ItemWindows> items;	// I: the character's grid inventory, a looted body's, the open boxes and a trader's (kenshi-k16.20.13.2)
-	std::unique_ptr<ui::Stats> stats;	// toggle_stats (C / the HUD's STA): the character stats window for the selected character (kenshi-k16.2.96)
-	uint64_t statsChar = 0;	// the character the stats window shows while open (the status panel's, unless the window is pinned)
-	std::unique_ptr<ui::BuildingWindow> machineWin;	// the window of the producer in machine (a left click on it)
-	uint64_t machine = 0;
-	// The focus panel's subject (k16.19.8.2): a producer's id while the bottom-left panel shows it, 0 while it shows the character focus / the selection.
-	// Kept apart from machine: the machine window's open state survives a character click, which moves the panel back to the character (the lead's 2026-11-12).
-	uint64_t panelProducer = 0;
-	uint64_t focusLogged = 0;	// the scripted `focus ...` line's last (id, kind); once per change
-	bool focusLoggedProducer = false;
-	uint64_t rowLoggedId = 0;	// the scripted `producer row ...` line's last row (id, version); once per change
-	uint32_t rowLoggedVersion = 0;
-	uint64_t gearChar = 0;	// the character the inventory window shows this frame (the dragging character of a machine output drop)
-	std::unique_ptr<ui::Overview> overview;	// the original's overview window (MAP / ... / SQUADS tabs); outlives squadsUi
-	std::unique_ptr<ui::Squads> squadsUi;	// U (MINE: the original's key for its SQUADS tab is not captured): PLAYER_SQUADS (SIMLINK 31) and orders 70-75
-	uint64_t activeSquad = 0;	// the HUD tab: the portrait bar shows its members (client-side, SIMLINK 31)
-	std::unique_ptr<ui::Creator> creatorUi;	// the creator screen over app.creator (--creator)
-	std::unique_ptr<ui::SavePanel> saves;	// LOAD / SAVE GAME of both menus; outlives them. Empty until the server's save orders (SIMLINK 80-83, planned)
-	std::unique_ptr<ui::MainMenu> mainMenu;	// the title screen: at startup (ui.title_at_start) and after EXIT GAME; hides the HUD
-	std::unique_ptr<ui::GameMenu> gameMenu;	// Escape in the game
-	std::unique_ptr<ui::AdvancedOptions> adv;	// the new game's ADVANCED OPTIONS (kinspect advopts.md / adv22_static.md); values host-side until the sim has the knobs
-	std::vector<ui::AdvOption> advRows;
-	std::unique_ptr<ui::NewGamePanel> newGame;	// NEW GAME of both menus: the starts; beginning one waits for the server's new_game
-	// The title click held while its server starts (kenshi-k16.2.210.4): 0 CONTINUE, 1 NEW GAME, 2 LOAD GAME, 3 IMPORT GAME; -1 none. frame_title runs it
-	// once title_status() clears (MainMenu::setPending draws its button pushed until then).
-	int menuPending = -1;
-	std::function<void()> menuPendingRun;
-#ifdef KCLIENT_DEV_TOOLS
-	int devServerHold = 0;	// script `serverhold N`: for N frames poll_local_server leaves the title's server unconnected, so a test can click while it starts
-#endif
-	std::unique_ptr<ui::Prospecting> prospect;	// PROSPECT: order 79 for one character; PROSPECT (35) opens it with the result (prospect_state)
-	std::string prospectRes = "5";	// the resource whose map shows (resIds as text: 5 Water, 6 Fertility, 2 Stone, 1 Iron, 3 Copper)
-	uint32_t prospectSeen = 0;	// the PROSPECT serial last opened
-	std::string prospectPainted;	// "<serial>/<res>" of the map image (repainted when either changes)
-	// The map image: render side (prospect_paint's job makes it and binds it under prospectTex, kenshi-k16.2.205.12.39). prospectTex is reserved at
-	// the first paint and kept; prospectShown: logic painted a map (none: the window shows no image)
-	sg_image prospectImg = {};
-	sg_view prospectView = {};
-	sg_sampler prospectSmp = {};
-	dl::TexId prospectTex = 0;
-	bool prospectShown = false;
-	// The build window's BUILDING records by stringID (init_characters; kinspect findings/build_menu.md): what its lists and stats read
-	struct BuildRec
-	{
-		std::string name, category, group, description, type;
-		int materials = 0, powerOut = 0, powerCap = 0, operators = 0;
-		float speedMult = 1;
-		std::vector<std::pair<std::string, int>> cost;	// construction: ITEM name, count
-		std::string produces;	// the first functionality's first produced ITEM
-		int function = -1;	// the first functionality's (-1: none)
-		float outputRate = 0;
-		int mining = 0;	// the functionality's `world resource mining` (1 iron, 2 stone, 3 copper, 4 oil, 5 water, 6 farming): the focus panel's quality row (k16.19.7.1)
-		std::string selectSound;	// the record's `select sound` as the Buildings_Click switch value (ui::BuildEntry::selectSound); empty = none
-	};
-	struct InteriorSound { int ambience = 0; float integrity = 0; bool cavernous = false; };	// BUILDING `interior ambience` / `interior integrity` / `cavernous` (Enter_Building)
-	std::unordered_map<std::string, InteriorSound> interiorSounds;	// by record name (WorldBuildings::recordOf)
-	std::unordered_map<std::string, BuildRec> buildRecs;
-	std::string buildCategory, buildGroup;	// the build window's picks (empty: none)
-	int buildStep = 0;	// the < > arrows' place in the group
-	// The RESEARCH page's records by stringID (init_characters; kinspect findings/research25_static.md): which are done is the sim's (UNLOCKS 36);
-	// the bench, the queue and progress wait on the sim
-	struct ResearchRec
-	{
-		std::string name, category, description;
-		int level = 1, time = 0;	// time: game hours at bench rate 1, before x 0.4 x 1.2^(level - 1) / research speed
-		bool blueprintOnly = false, levelUpgrade = false;
-		std::vector<std::string> needs;	// RESEARCH stringIDs
-		std::vector<std::pair<std::string, int>> cost;	// ITEM name, count
-		std::vector<ui::ResearchUnlock> unlocks;
-		std::vector<std::string> buildings;	// enable buildings' stringIDs (the listing's "enables something new" test)
-	};
-	std::unordered_map<std::string, ResearchRec> researchRecs;
-	// A door BUILDING's open pose (kinspect findings/door_pick.md: 140298d10 moves the leaf and its collision by the same offset): `door move dist`
-	// along `door axis` (0..2: the shape's local x y z, Z-up), after `door comes out` forwards out of the frame
-	using DoorSlide = dev::DoorSlide;
-	std::unordered_map<std::string, DoorSlide> doorSlides;
-	// Each door's pose this frame (update_doors), by kworld::DoorKey: its interactable, openness 0 closed .. 1 open, the offset of its leaf and collision
-	struct DoorPoseNow { uint64_t thing = 0; double open = 0, off[3] = {}; bool exact = true, seen = false; };
-	std::unordered_map<kworld::DoorKey, DoorPoseNow> doorPose;
-	std::shared_ptr<const std::vector<kworld::WorldShape>> doorShapes;	// the gather doorFirst indexes
-	std::unordered_map<kworld::DoorKey, size_t> doorFirst;	// a door's first collision shape (its frame)
-	std::unordered_map<std::string, int> townTypes;	// TOWN stringID -> `type` (the map icon, tier and discovery radius)
-	std::unordered_map<std::string, std::string> townUnexplored;	// TOWN stringID -> `unexplored name` (the name until visited; empty: the real one)
-	std::string researchCategory;	// the picked TYPES row (empty: the first)
-	std::unique_ptr<ui::Research> research;
-	std::unique_ptr<ui::Faction> faction;	// the FACTION page: the name only; relations and renaming wait for the sim
-	std::unique_ptr<ui::ProgressBars> progressBars;	// TASK_PROGRESS (39) bars and the event floating texts over the characters
-	std::unique_ptr<ui::NameLabels> nameLabels;	// the player characters' names over their heads
-	std::unique_ptr<ui::SpeechBubbles> speechBubbles;	// SIMLINK event 41 lines over the speakers
-	std::unordered_map<uint64_t, float> speechHead;	// a speaker's Bip01 Head height in its idle stance (Characters::headHeight), while it speaks
-	std::unique_ptr<ui::Dialogue> dialogue;	// the conversation screen over a REPLY_MENU (event 43)
-	std::unordered_map<uint64_t, uint32_t> lastLine;	// a speaker's newest line (text strid): the dialogue screen's NPC text outlives its bubble
-	std::unique_ptr<ui::Prompt> prompt;	// the modal answers (a refused faction rename)
-	std::unique_ptr<ui::Crafting> crafting;	// the CRAFTING page: empty until the sim has crafting benches
-	std::unique_ptr<ui::Build> build;	// toggle_build (B): the build window; its lists wait on which BUILDING records the original offers (kinspect asked), placement on the sim
-#ifdef KCLIENT_DEV_TOOLS
-	std::unique_ptr<ui::LightsPanel> lightsPanel;	// debug.lights_panel (Shift+F7): the light debugger, one row per dev::lightTerms term (kenshi-jj3.27.3)
-#endif
-	std::unique_ptr<ui::Tutorials> tutorials;	// HLP / toggle_help: the TUTORIALS browser. The original's are hard-coded in its exe (no records); ours: "Controls"
-	std::vector<ui::StartEntry> starts;	// NEW_GAME_STARTOFF records (init_characters), in the original's order: its hash-bucket walk rotated to Wanderer (k16.17.4.2)
-	// New game (SIMLINK 84, 111, 62): BEGIN sends new_world; its reset sends NEW_GAME for newGameStart; the answer's leader is followed once it shows.
-	std::string newGameStart;	// the start-off's stringID while new_world is pending
-	bool newGameSent = false;	// NEW_GAME sent, its answer pending
-	// The new game's character editor (STARTS members, kinspect charsel23_static.md): one entry per member of the start's squad, leader first
-	struct NewGameMember { simlink::OrderWriter::NewGameSpec wire; Characters::Spec look; std::string name; std::vector<std::string> wear, weapons; bool editable = false, visited = false, looked = false; };
-	std::vector<NewGameMember> ngMembers;	// empty: the creator is not making a squad
-	int ngIndex = 0;
-	std::string ngStart;	// the start-off's stringID while its editor is up
-	std::unordered_set<std::string> ngForce;	// the start's `force race` (RACE names); empty: any
-	std::vector<simlink::OrderWriter::NewGameSpec> newGameSpecs;	// sent with NEW_GAME after new_world's reset
-	std::unordered_map<std::string, std::string> creatorSids;	// "RACE:" / "ATTACHMENT:" / "COLOR_DATA:" + record name -> stringID (Spec strids)
-	std::unordered_map<std::string, std::string> raceNames;	// RACE stringID -> name
-	std::unordered_map<std::string, std::array<std::vector<std::string>, 2>> raceHeads;	// RACE name -> heads male / female stringIDs (Spec.head)
-	uint64_t newGameLeader = 0;
-	// The inspect focus (kinspect findings/inspect_focus.md): a left click on someone not ours shows them in the status and medical panels while
-	// orders stay on the selection; a new selection ends it. 0 = the selection's. Never range-checked: unloaded, the panels show empty frames.
-	uint64_t inspect = 0;
-	uint64_t jobsChar = 0;	// the character whose jobs list the HUD shows (the status panel's)
-	uint64_t infoChar = 0;	// the status panel's character this frame; 0 = none (the cheat panel's target, kenshi-h2v.6.4)
-	bool menuPaused = false;	// a menu paused the sim; it unpauses when the game comes back
-	bool menuUnpaused = false;	// the game menu just sent its unpause (EXIT GAME closes the menu, then pauses again before the clock shows it)
-	int quietPauseTo = -1;	// a menu sent this pause state (0 / 1): its clock flip plays no Pause_Game / Resume_Game (update_ui); -1 none
-	double creatorScene[3] = {};	// the editor scene's pivot origin (open_creator): the platform stands kCreatorPivot below it, the character kCreatorRoot
-	float creatorHead = 17;	// Bip01 Head above the preview's feet (Characters::headHeight; the FACE / HAIR pivot)
-	bool creatorWeatherAfter = false;	// the creator just closed: the next world frame logs the world's weather again (k16.17.6.1)
-	SkyWeather creatorWeatherSave;	// the world's weather while the creator's clear look stands in for it (a pinned weather is restored on close)
-	bool creatorWeatherHeld = false;
-	int creatorFrames = 0;	// frames the creator has been shown (its one-shot scene measurement, --debug)
-	std::optional<kworld::Heightmap> hm;
-	Terrain terrain;
-	Shadow shadow;
-	bool shadowFlip = false;	// F3 / the debug menu asked to flip shadow.enabled; logic_paths applies it where the frame's second half starts (kenshi-k16.2.205.12.95)
-	Water water;
-	double animTime = 0;		// seconds, advances with the frame step and stops while the game is paused (water, grass sway, spinning parts)
-	WorldMap wmap;
-	Squads squads;
-	double squadsLiveAt = -1;	// the live overlay's last rebuild (s since start; -1: showing the snapshot file)
-	Arrows arrows;	// the stealth detection arrows (DETECTED_BY 60): one arrow.mesh per observer while a player character sneaks (kenshi-h2v.27.2)
-#ifdef KCLIENT_DEBUG_VIEW
-	dbg::DebugView debugView;	// the sim's DEBUG VIEW (SIMLINK "DEBUG VIEW"): subscribed while the squad overlay is on
-	bool debugSubscribed = false;
-	std::unique_ptr<ui::DebugTree> debugTree;	// one DEBUG_TREE: a squad pillar clicked with the overlay on
-	uint8_t treeKind = 0;
-	uint64_t treeId = 0;
-	bool treeAuto = false;
-	double treeAskedAt = 0;	// steady seconds of the last DEBUG_QUERY (auto: every 2 s)
-#endif
-	Characters chars;
-	CreatorScene creatorScene3d;	// the creator's backdrop and fixed light (creatorscene.hpp)
-	Creator creator;	// the character creator (--creator; script `creator ...`)
-	SimView sim;
-#if KCLIENT_PROFILE
-	// The profiling overlay's Sim block (kenshi-k16.2.148): the PROFILE answers' tick means, one per answer, for the sparkline; simProfileSeen is the
-	// decoder's profileSerial already taken into the history.
-	std::array<float, 40> simTickHistory = {};
-	size_t simTickHistoryN = 0, simTickHistoryNext = 0;
-	uint32_t simProfileSeen = 0;
-#endif
-	Trails trails;	// debug trails (kenshi-k16.2.73; the newest 30 s drawn, k16.19.6.1): every drawn character's feet and its sim / drawn centres, debug.trails
-	uint32_t sglShown[2] = {};	// the sgl error flags last logged for the default and the trails contexts (k16.19.6.1): log once per change of state
-	Cursors cursors;	// the original's hover cursors, loaded with the sim link
-	CollisionPick collide;	// click ray vs building / foliage collision, started with the sim link
-	PhysicsWorld physics;	// ragdolls (docs/reference/PHYSICS.md): Jolt, started by the first body
-	StaticColliders statics{ physics };	// the building / terrain colliders posted round live bodies
-	Ragdolls ragdolls{ physics, statics };	// EVENT 48 -> Jolt ragdolls driving the lying bodies (P3; the .phs from the RACE record)
-	LocalServer server;	// single player: the server this client started (start_local_server)
-	bool local = false;	// the sim link goes to that server, once it listens
-	std::string serverErr;	// why the local server did not start or connect (kenshi-k16.3.12): the title's offline line; cleared by a fresh start
-	bool greeted = false;	// the server's HELLO is in: orders may go (sim_opened)
-	int progressLevelSent = -1;	// the TASK_PROGRESS level (order 98) the session has been told; -1 none yet (progress_level_sync)
-	bool session = false;	// a game has been on screen (the title closed into it; --simlink: from the start): CONTINUE resumes it
-	// The decoder serials handled so far: one connection's (a new SimView counts from 0 again; end_session clears them)
-	struct Seen
-	{
-		uint32_t discovered = 0, saves = 0, reset = 0, starts = 0, newGame = 0, squads = 0, seenBy = 0, detectedBy = 0;
-	} seen;
-	// Session loading screen (begin_session_load): up until the world round the squad has streamed in; its own sim pause, undone only by itself
-	bool sessionLoad = false, sessionPaused = false;
-	int sessionQuiet = 0, sessionPending = 0, sessionPeak = 0;
-	double sessionTime = 0;
-	bool settledChars = false;	// the scene's characters had settle=SECONDS: its JSON reports the idle fit (foot_idle)
-	float scriptBuild = -1;	// script `set playerbuild P`: every unbuilt player building draws at progress P (0..1) instead of the sim's; < 0 the sim's (the sim's sites do not advance in a scenario, k16.2.36.1)
-	bool scriptAnim = false;	// script `set animate 1`: characters animate on wall time (scripted runs otherwise freeze them for repeatable shots)
-	bool scriptRealDt = false;	// script `set framedt real`: a scripted run steps the world by the frame's real duration, not the fixed 1/60 s (a motion measurement, k16.2.181.1; kScriptDt keeps shots repeatable)
-	double particleScriptDt = 0;	// script `set particles N`: scripted runs step the particle sim by N seconds a frame (0 keeps the frozen shot)
-	bool simCamera = false;	// the camera was placed at the sim's focus character
-	// The first world frame (kenshi-k16.2.112.1): a live session with no explicit position draws and streams nothing until a target places the
-	// camera (the squad's placement, a new game or scenario, a load, --pos / --at), then logs `first_world_frame` with the reason.
-	bool worldTarget = true;	// the camera has a target: the world may stream and be drawn (true from the start in the offline / viewer modes)
-	const char* targetReason = "default";	// which target the first world frame drew from: default, option, squad, spectator, load, newgame, scenario, timeout
-	bool firstWorldFrame = false;	// the first_world_frame line is out (once a run)
-	double targetWait = 0;		// s a live session has waited for a target (the kCameraWaitSeconds fallback)
-	bool loadPending = false;	// the last reset was a load: its squad placement reads as the load's target in the log
-	bool screenshotOnWorld = false;	// --screenshot in a --simlink run with no --script: the shot waits for the first world frame (k16.2.124.1)
-	// Follow camera and direct drive (docs/CLIENT.md "Camera and control modes", SIMLINK 12): C follows the first selected character from behind,
-	// rotating with it; on a player character W / S drive it forward / back along the camera, A / D (or mouse look) steer, Q toggles autorun.
-	bool follow = false;
-	uint64_t followId = 0;
-	bool spectating = false;	// a session with no player faction (spectator): the HUD's squad bar is empty and the watch (the inspect focus) can be followed
-	bool worldChosen = false;	// the player asked for a world and got it: a NEW_GAME result, a scenario started (status 0) or a load's reset. A local (title-started) session's
-								// pre-game world is nobody's: spectator mode is decided only after this (kenshi-k16.2.95)
-	uint32_t cagesSeen = 0;	// the last CAGES frame logged (--debug)
-	uint64_t hoverThing = 0;	// the ground item, container or door under the cursor (hover_cursor), 0 = none
-	// The open item windows besides the character's (kenshi-k16.20.13.2): opencont.hpp holds the record, the dev `dump windows` op reads it too.
-	using OpenCont = ::OpenCont;
-	std::vector<OpenCont> conts;
-	// The box or body asked for by a click, not open yet: the selection walks there, the window opens once a selected player character is in reach.
-	// A box's is superseded by the next order of its walker (lead): `task` is lead's task (SimView::tasked, bumped as an order is sent) once the open's
-	// own order went out; a different one later is another order, and the open is dropped (kenshi-k16.2.304.1).
-	struct PendingOpen { uint64_t id = 0; bool body = false; uint32_t lootTask = 0; uint64_t lead = 0; uint32_t task = 0; } pending;
-	int splitQuiet = 0;	// no_room refusals the auto-split recovers from: their message is not shown
-	bool itemsShown = false;	// the character window (I)
-	bool charPinned = false;	// its pin
-	uint64_t itemTarget = 0;	// the marked window's owner (the target toggle): the quick right click goes there
-	// Trade (MINE_SELL_SLICE 3.2): the open TRADE's stock is a container window (no reach rule: the server refuses out-of-range moves); closing the
-	// window sends order 86 and waits for event 40 (tradeClosing) so the still-valid TRADE does not reopen it
-	uint64_t tradeStock = 0;
-	bool tradeClosing = false;
-	uint64_t gearPinned = 0;	// the inventory window's owner while its pin is on (outside a loot / container); 0 = it follows the selection
-	// The inventory order queues (kenshi-k16.20.14.2), one per inventory id: a rapid sell burst must not send an order before the INVENTORY that
-	// answers the last (the version the older clicks carried was refused stale). Items queued or in flight draw pending (dimmed, not clickable).
-	std::map<uint64_t, GearQueue> gearQueues;
-	std::vector<std::pair<GearOrder, double>> gearFollow;	// the second halves of chained moves (a take applied), waiting for the item to reach the user's pack
-	uint64_t gearGroup = 0;		// the last moveAll group's id
-	uint64_t clockTick = 0;	// the last sim CLOCK applied to sky.clock (live: the sim owns the time; the sky advances it between frames)
-	double followDist = 60, followBase = 0, followOffset = 0;	// camera distance; smoothed camera yaw behind the character; the user's orbit on top
-	double followPulled = 1e9, followHold = 0, followBoom = 0, rtsPulled = 1e9, rtsHold = 0, rtsBoom = 0;
-	bool rtsLog = false;	// script `rtsboom log`: update_rts prints its boom each frame	// the collision boom (update_follow): the length the world allows it (1e9: free), seconds left before it may ease out
-	// The game camera (docs/CLIENT.md "Camera modes"): floating over the ground at rtsDist from focus, on yaw / pitch; centerId != 0 = auto-center on
-	// that character. Off = the debug free camera; follow (the hover / drive camera) overrides both.
-	bool rts = false;
-	uint64_t centerId = 0;
-	bool centerOnStart = false;	// a session start: auto-center on the first selected character once there is one (user 2026-11-06)
-	double focus[3] = {}, rtsDist = 400;
-	const char* focusOn = "terrain";
-	CamRestore camRestore;	// the camera sidecar of the save being loaded (k16.2.134.1)
-	std::string camLoadName;	// the save name the client last asked to load; its reset arms camRestore
-	int camLoadFrame = 0;		// app.frames at that request (a load that never resets expires it)
-	bool navTrace = false;	// script `dump navdraw`: the next navmesh overlay draw prints its stair polygons	// what the floating camera's focus rests on (ground_under)
-	bool orbit = false;	// the middle button held: the mouse rotates the camera (controls.cfg mouse_rotate = Mouse3)
-	bool autorun = false;
-	uint8_t driveSent = 0;
-	int strafeSent = 0;	// the strafe of the last drive order (mouse look + A / D, kenshi-k16.2.237.4)
-	double lookDx = 0;	// mouse-look pixels since the last frame's log line (kenshi-k16.2.237.9)
-	double headingSent = 0, driveAge = 0;	// seconds since the last drive order
-	bool charsReady = false;	// init_characters() ran (game data loaded): scenes may place their char= specs
-	Mods mods;
-	std::future<TownSet> townFut;
-	TownSet towns;
-	bool townsReady = false;
-	std::future<BuildingSet> bldFut;
-	bool bldReady = false;
-	WorldBuildings buildings;
-	Foliage foliage;
-	bool foliageOn = false;		// initialised (foliage enabled)
-	Grass grass;
-	bool grassOn = false;		// initialised (needs the foliage context: --no-foliage also turns the grass off)
-	bool bldSet = false;		// WorldBuildings::setData done (an empty set when --bradius 0)
-	// The props list (containers / producers / ground items) and its dirty tracking (kenshi-k16.2.205.11): the sim sends an interactable only on
-	// first sight or a version change (SimLinkDecoder::thingsSerial), so the list is rebuilt on that and on a floor-cut change only; the frames
-	// between reuse it and skip WorldBuildings::setProps. propsLive: a player building is under construction (its progress moves every tick).
-	std::vector<WorldBuildings::Prop> props;
-	uint32_t propsSerial = 0;
-	uint32_t propsBuildSerial = 0;
-	uint64_t propsCut = 0;
-	bool propsValid = false;
-	bool propsLive = false;
-	GpuTimer gpu;
-	Hdr hdr;
-	Reflection refl;	// the water's planar reflection (drawn when the water was drawn last frame)
-	IdBuffer idbuf;	// the cursor ID pass: the building drawn under the cursor (update_peek)
-	// the id pass's last result lives in framestats (FrameStats::cursorHit, render hook 5)
-	Post post;
-	lightvol::Volumes lightVolumes;	// render.interior_light (kenshi-jj3.2.1): the baked buildings' sky transfer on the GPU
-	FogVolumes fogvol;
-	SunShafts sunShafts;	// render.sun_shafts (kenshi-jj3.7.1)
-	Dust dust;	// render.dust_motes (kenshi-jj3.8.1)
-	Particles particles;
-	ParticleWorld particleWorld;
-	WeatherInstances weatherInst;		// the weather's world-placed effects (types 2/3/7/8/9/10; the type 4/1/5/6 anchored ones live in Particles)
-	BeamField beams;			// Venge's sky beams from the sim's BEAMS schedule (the type 9 effects the sim owns, kenshi-h2v.14.2.1)
-	uint32_t beamsSeen = 0;			// the last BEAMS frame (decoder beamsSerial) given to beams
-	bool beamsOn = true;			// script `set beams on|off` (off: the sim's beams are not placed; an A/B shot for the beam test)
-	using Weff = ::Weff;				// weff.hpp holds the record, the dev `debug weff` op appends it too
-	std::vector<Weff> weff;				// `debug weff SCRIPT DX DZ`: weather-style systems pinned at the pivot + offset (a dev A/B aid, k16.2.11.3)
-	BloodDecals blood;
-	Portraits portraits;	// render thread: the atlas and its draw (RenderState::portraits)
-	PortraitTable portraitTable;	// logic thread: the cells, the queue, the uv the UI shows (kenshi-k16.2.205.12.56)
-	dl::TexId portraitsTex = 0;	// the portrait atlas's UI id, bound at Portraits::init (render hook 8's host half, kenshi-k16.2.205.12.39); 0: none
-	bool showPortraits = false;	// script `set portraits 1`: the atlas's first 4 cells drawn top-left at 2x (a check, until the HUD draws them)
-	float rainForce = -1, dustForce = -1, cloudsForce = -1;	// the scene's rain= / dust= / clouds= keys
-	double windForce = -1;	// the scene's wind= key (degrees), -1: the live wind
-	int particlesDrawn = 0;
-	sg_environment_defaults swapFormat = {};	// the swapchain's formats; the scene pipelines default to RGBA16F (init)
-	float hdrSceneLum = 0, hdrAdapted = 0;	// diagnostics of the last screenshot / scene shot (GL readback, scripted runs only)
-	double logicMs = 0;	// render.thread=lockstep: the world frame's logic half, smoothed (start_logic_thread; logic thread only). The draw half is framestats renderMs
-	Sky sky;
-	std::future<SkyConstants> skyFut;
-	std::future<SkyWeather> weatherFut;
-	WeatherMap wx;			// regional weather (areasmap -> BIOME_GROUP -> SEASON -> WEATHER): camera blend + per-pixel fog map
-	std::future<WeatherAtlas> atlasFut;
-	bool weatherAuto = true;	// regional weather drives sky.weather; a manual weather (scene, CLI, , and .) pins it off
-	uint32_t weatherSeen = 0;	// the last WEATHER frame (decoder weatherSerial) given to wx
-	std::string weatherMix;		// HUD text of the blend, e.g. "Clear 70% / Dust Storm 30%"
-	SkyRamp skyRamp;		// regional weather: the sky's eased cloud density and colour mult (sky.hpp)
-	int skyRampGroup = -1;		// the camera's weather group the ramp last aimed at
-	float skyRampTarget[4] = {};	// its record's clouds density and sky colour mult then
-	double skyRampXZ[2] = {};	// the camera's xz last frame (the jump snap)
-	bool skyReady = false;
-	double frameMs = 0;		// smoothed wall time per frame
-	double mouseX = 0, mouseY = 0;
-	double orderAt[3] = {}, orderAge = 1e9;	// the last move_to click (the overlay's fading ring), seconds since
-	std::string zone;	// the BIOME_GROUP name under the camera, for the zone banner
-	bool orderRejected = false;	// event 10 answered it (e.g. no_route): the ring flashes red
-	uint32_t orderSeq = 0;	// the clientSeq of that move_to, for the sim's route answer (the marker's walk target, k16.2.259)
-	bool orderRouted = false;	// the route with orderSeq has arrived: the marker sits at its end, logged once
-	int peekCand = -1;		// update_peek: the building the cursor would peek into, and for how long (seconds)
-	double peekFor = 0;
-	int floorShown = 0;	// the floor diamond's label: the last floor shown while it had a target
-	double rmbAt = -1;	// ui::now() of an RMB press on a target (character, item, door); held kHoldMenu without a drag: the order menu
-	double clickX = 0, clickY = 0, clickDrag = 0;	// right button: where it went down, and how far the mouse moved since (raw counts while locked)
-	double clickAt = 0, clickPend[2] = {};	// ui::now() of the press; mouse motion held back until the press turns into a look drag
-	// Box selection (kenshi-k16.2.230.1): an LMB press on the ground or a character waits for its release; moved past kBoxDrag it draws a rectangle
-	// and selects the player's characters inside, held still it is the click it always was (sim_click at the press).
-	bool boxDown = false, boxDrag = false, boxShift = false;
-	double boxX0 = 0, boxY0 = 0, boxX1 = 0, boxY1 = 0;	// framebuffer pixels: the press, the pointer now
-	bool lookDrag = false;	// the press became a look drag (kDragFar, or kDragNear after kClickTime): its release sends no order
-	double fps = 0;
-	double pos[3] = {};
-	double yaw = 0, pitch = 0;
-	double speedScale = 1;
-	bool walk = false;
-	bool look = false;		// mouse look active (right button held or Tab toggled)
-	bool keys[SAPP_MAX_KEYCODES] = {};
-	std::vector<uint64_t> bar;	// the HUD bar's characters this frame (select_N, character_next)
-	uint64_t lastSelect = 0;	// select_N: the last one picked and when (twice = focus)
-	double lastSelectAt = -1;
-	uint64_t lastRmbChar = 0;	// the last right click on an own character, and when: a second one within kDoubleClick is the direct drive (k16.2.238.1)
-	double lastRmbCharAt = -1;
-	int frames = 0;	// the frames drawn so far: logic's copy of FrameStats::frames, set at logic_frame's start (the render side counts them)
-	std::vector<Cmd> cmds;
-	std::string sceneName;
-	std::vector<SkyWeather> weathers;	// [0] = the default weather, then every WEATHER record by name; loaded on demand
-	std::future<std::vector<SkyWeather>> weathersFut;
-	int weatherIdx = 0;
-	int weatherCycle = 0;			// cycle steps waiting for the list
-	std::string wantWeather;		// scene weather waiting for the list
-	bool help = false;
-	bool hideUi = false;		// toggle_bar (F7): the interface hidden, the world only
-	bool shotPending = false;	// screenshot (F12): saved after this frame's draw
-	double shotAt = -1;	// screenshot_delayed: ui::now() it fires at (user 2026-11-05: to show a held key, as ALT's labels)
-	ResourceIndex res;
-	MaterialLib mats;
-	std::future<TerrainDetail::Prepared> detailFut;
-	std::future<kdata::GameData> charsFut;	// the characters step's CPU work (kworld::loadMergedGameData) on a worker: the step polls it (kenshi-k16.2.26)
-	std::future<uint64_t> hashFut;	// the sim link's data hash, on a worker (kenshi-k16.2.26: 24 ms on the main thread inside the characters step)
-	uint64_t dataHash = 0;
-	std::string hashErr;
-	std::unique_ptr<kdata::GameData> gdPending;	// the game data between the characters step's first frame and the records' last
-	std::future<void> gdFreeFut;	// the game data's destruction, on a worker (kenshi-k16.2.26) (the asset build, then the panel records)
-	int charsPhase = 0;
-	LoadScreen loadScreen;
-	std::vector<std::pair<const char*, std::function<bool()>>> loadSteps;	// startup steps (init); interactive runs run one per frame behind the loading screen
-	size_t loadIdx = 0;
-	bool loadShown = false;	// the loading screen has presented the current step's name
-	bool loading() const { return loadIdx < loadSteps.size(); }
-	bool scripted() const { return !opt.script.empty() || !opt.screenshot.empty() || dev::sceneTesting(); }
-	// Frame-gap measurement (kenshi-k16.2.26): the wall time between frame() calls, so a long load step shows as the frame it blocked; a gap over
-	// kStallMs is an evlog `stall` event named with the phase (the load step, the session load, or the world frame). The maxima are the report's table.
-	std::chrono::steady_clock::time_point frameStart{};
-	double frameGapMax = 0, startupFrameMax = 0, sessionFrameMax = 0;
-	const char* framePhase = "startup";	// what the current frame is doing: the load step's name, session load, world frame (the next gap's stall event)
-	bool startupFrames = true;	// until the first world frame: the startup maxima's window
-} app;
+App app;
 
 // _exit with no other cleanup, but the local server child ends first: left alive it holds the stdout/stderr pipes open and whatever waits on kclient hangs (kenshi-k16.2.271).
 [[noreturn]] static void exit_now(int code)
@@ -1074,7 +556,7 @@ static void dialogue_frame()
 
 // The world camera's near clip plane: the eye's height over the ground buys depth precision (frame_world's projection). The click ray starts here, not at
 // the eye, as the original's does (its getCameraToViewportRay unprojects z = -1: kenshi-rwh.142), so a surface the camera is against does not pick at the eye.
-static double camera_near()
+double camera_near()
 {
 	const double ground = app.hm ? app.hm->height(app.pos[0], app.pos[2]) : app.pos[1];
 	return std::fmax(0.5, std::fmin(300.0, (app.pos[1] - ground) * 0.05));
@@ -1099,7 +581,7 @@ bool ray_ground(const double origin[3], const double dir[3], double hit[3])
 
 // Not drawn where it is: inside the occluder fade's cone (mesh.glsl, where most of it is dithered away) or on a floor cut away (WorldBuildings::cutAway;
 // bottom: the hit shape's low face, so a shape counts by the floor it starts on). why (kenshi-k16.2.259): the reason, for the F12 pick report; "" drawn.
-bool see_through(const double p[3], double bottom = 1e30, std::string* why = nullptr)
+bool see_through(const double p[3], double bottom, std::string* why)
 {
 	const float* x = app.buildings.xray;
 	if (x[3] > 0)
@@ -1131,7 +613,7 @@ bool see_through(const double p[3], double bottom = 1e30, std::string* why = nul
 // wire's indoors bit clear: the wire's floor says nothing there, h2v.24.1 a) keeps the geometric test. Wired to the body, the tag and the label, so they
 // cannot disagree.
 // (The declaration is above name_labels_frame, which is the first user.)
-static bool cut_hidden(const double pos[3])
+bool cut_hidden(const double pos[3])
 {
 	if (!app.buildings.cutHides(pos)) { return false; }
 	const double up[3] = { pos[0], pos[1] + 2, pos[2] }, down[3] = { 0, -1, 0 };
@@ -1189,127 +671,8 @@ static bool char_cut_hidden(uint64_t id, const double pos[3])
 	return (int)it->second.cur.floor > (level >= 0 ? level : app.buildings.floorStatus().shown);
 }
 
-// A collision shape the click ray passed over and why (kenshi-k16.2.259): the F12 shot's pick report and `dump pick` name each.
-struct PickSkip { std::string name; double at[3]; std::string why; };
-
-// The first collision shape along the ray within far that the view draws (see_through: cut-away floors and roofs pass); building: it is a building's.
-// kenshi-k16.2.259 (user 2026-11-15, "pick only what is drawn"): eye (the camera's position, null off the pick) - a shape the ray starts inside is passed
-// when it is not drawn at the camera either, MINE: the original reports a shape the ray starts inside at distance 0 (kenshi-rwh.142). skipped: each shape
-// passed over and why, for the report.
-static bool ray_shapes(const double origin[3], const double dir[3], double far, double hit[3], bool* building = nullptr,
-	const double* eye = nullptr, std::vector<PickSkip>* skipped = nullptr, float* hitBox = nullptr)
-{
-	double from[3] = { origin[0], origin[1], origin[2] }, t;
-	float box[6], skippedBox[6] = {};	// a shape passed through is passed whole (its exit face too), told apart by its bounds
-	bool solid = false;
-	std::string name;
-	for (int n = 0; n < 16 && app.collide.ray(from, dir, far, t, box, {}, nullptr, &solid, building, skipped ? &name : nullptr); n++)
-	{
-		double at[3];
-		for (int k = 0; k < 3; k++) { at[k] = from[k] + dir[k] * t; }
-		const bool passed = std::equal(box, box + 6, skippedBox);
-		if (!passed)
-		{
-			std::string why;
-			const bool inside = eye && eye[0] >= box[0] && eye[0] <= box[3] && eye[1] >= box[1] && eye[1] <= box[4] && eye[2] >= box[2] && eye[2] <= box[5];
-			bool hidden = false;
-			if (inside && see_through(eye, 1e30, &why))	// MINE (kenshi-k16.2.259): the camera is inside it and it is not drawn there either
-			{
-				hidden = true;
-				why = "the camera is inside it, " + why;
-			}
-			else { hidden = see_through(at, solid ? box[1] : 1e30, &why); }	// a staircase counts by the floor it starts on (drawn whole); a wall by its height
-			if (!hidden)
-			{
-				std::copy(at, at + 3, hit);
-				if (hitBox) { std::copy(box, box + 6, hitBox); }
-				return true;
-			}
-			if (skipped) { skipped->push_back({ name.empty() ? "an unnamed shape" : name, { at[0], at[1], at[2] }, why }); }
-		}
-		std::copy(box, box + 6, skippedBox);
-		constexpr double kStep = 0.5;	// past the face just hit
-		for (int k = 0; k < 3; k++) { from[k] = at[k] + dir[k] * kStep; }
-		far -= t + kStep;
-	}
-	return false;
-}
-
-// A scripted run waits for the collision gather before every pick so its clicks are deterministic; the player never waits (the pick uses the shapes
-// it has, the worker swaps the new cell's in). Off, a script measures the pick as the player meets it (kenshi-k16.2.205.10: the wait was the whole 92-353 ms
-// of sim.peek+hover on a camera jump to a fresh zone cell, Hub 22k shapes ~170 ms).
 const cfg::Bool kStreamScripted{ cfg::Group{ "Scripted runs" }, "debug.stream_scripted", false, "Scripted runs: stream the buildings as a live run does (a frame's decodes under the per-frame count, the creates in the render queue's stream lane; kenshi-k16.2.205.12.35) instead of waiting for every mesh and texture each frame. For a walk across a streaming boundary; the scene test leaves it off" };
-const cfg::Bool kPickWait{ cfg::Group{ "Scripted runs" }, "debug.pick_wait", true, "Scripted runs: wait for the collision gather before each pick (deterministic clicks). Off: pick with the shapes at hand, as the player does" };
-
-// The click ray's world hit: the nearer of the terrain and the collision shapes round the camera (SIMLINK 13: the picker's bottom layer), passing
-// through the shapes where they are see_through (a click there is on what shows behind; user 2026-11-03). False: neither. building: the hit is a
-// building's shape. kenshi-k16.2.259: origin is the near-plane start of the pick ray, eye the camera's position (ray_shapes), skipped the report's shapes.
-bool ray_hit(const double origin[3], const double dir[3], double hit[3], bool* building, const double* eye = nullptr, std::vector<PickSkip>* skipped = nullptr, float* hitBox = nullptr)
-{
-	*building = false;
-	if (app.scripted() && kPickWait.get()) { app.collide.wait(); }
-	const bool ground = ray_ground(origin, dir, hit);
-	double far = 20000;
-	if (ground)
-	{
-		far = std::sqrt(std::pow(hit[0] - origin[0], 2) + std::pow(hit[1] - origin[1], 2) + std::pow(hit[2] - origin[2], 2));
-		// kenshi-k16.2.254.1: the terrain inside a carved interior is the dune a sunk building sits in — the interior mask clips it and it is not drawn
-		// (interiorclip.inc) — so it is not the click's ground: the floor is, the same rule the walkers draw by (kyat.2, WorldBuildings::insideInterior).
-		// The ray goes on to the drawn floor inside the hull, out to where it leaves the hull's box; an outdoor click ends on the terrain as before.
-		double exitT = 0;
-		if (app.buildings.insideInterior(hit, app.pos, dir, &exitT) && exitT > far) { far = exitT + 1.0; }
-	}
-	const bool prevCuts = app.buildings.levelCuts;
-	app.buildings.levelCuts = true;	// the click pick: buildings nobody is in are cut at the floor selector's level (WorldBuildings::levelCuts)
-	const bool shape = ray_shapes(origin, dir, far, hit, building, eye, skipped, hitBox);
-	app.buildings.levelCuts = prevCuts;
-	if (shape) { return true; }
-	*building = false;
-	return ground;
-}
-
-// The floating camera's ground at (x, z): the highest surface drawn there, a building floor or roof (cut-away ones pass) or a rock, else the
-// terrain (kinspect camera_rts.md 3: a roof or floor under the pivot, ray from +3000, holds its y). on: "floor" or "terrain".
-static double ground_under(double x, double z, const char** on)
-{
-	constexpr double kTop = 3000;
-	const double terrain = app.hm->height(x, z);
-	const double from[3] = { x, terrain + kTop, z }, down[3] = { 0, -1, 0 };
-	double hit[3];
-	app.buildings.peekPass = false;	// the camera rests on what stands there, not on what the cursor peeks through
-	const bool shape = ray_shapes(from, down, kTop, hit) && hit[1] > terrain;
-	app.buildings.peekPass = true;
-	*on = shape ? "floor" : "terrain";
-	return shape ? hit[1] : terrain;
-}
-
-// What the mouse ray hits first: Pick, and its doc, are in pick.hpp (kenshi-k16.2.294.2, step 0 of the control-hints design); pick_at below fills it.
 constexpr double kDoorMatch = 150;
-constexpr double kProducerMatch = 50;	// MINE: a collision hit within this (XZ) of a producer's placement picks it (deposit rocks, a mine's shell)
-constexpr double kPropBoxSlack = 0.5;	// how far past a container's drawn box a click still counts as the container (the sim's collision proxy for the piece sits a thousandth of a unit nearer than its mesh box, k16.2.239.1)
-
-// Ground item name labels (the original's DropItemLabels; kenshi-inspect picker.md): every item within kLabelRange shows one while ALT (the
-// original's `highlight` key) is held, otherwise only the hovered item's, which stays while the mouse is on the label itself. The box is the
-// hit area, edges included: kLabelHeight of the screen height high, the text plus kLabelPad wide, standing on the item position + 4 y, clamped
-// on screen. LMB on a label picks the item up (Shift queues), and the world pick under a label is skipped. With all labels shown, overlaps
-// are pushed apart as the original's 140163b70 does (spread_labels). Nearest item last, so it draws on top and is hit first.
-struct ItemLabel { uint64_t id; float x, y, w, h; std::string text; double dist; };
-constexpr float kLabelHeight = 0.0259f, kLabelPad = 6.0f;	// pad: pixels at 720p (Cup 27, Hemp 38, Wooden Bowl 80 wide)
-constexpr double kBedReach = 10, kBedLift = 3;	// a bed's pick sphere over its sleeping spot: MINE (a single bed is about 10 x 20 u)
-constexpr double kLabelRange = 707, kLabelLift = 4, kContainerLabelLift = 10, kProducerLabelLift = 20;	// producers: MINE	// containers: MINE (above a crate; the original's container label is not measured)
-
-// Label text: the UI style's tag font (ui::drawTag's default) when the UI is up, else the debug font
-const ui::Font* label_font() { return app.uiOn ? ui::fonts::get("Kenshi_StandardFont_Medium") : nullptr; }
-float label_text_width(const std::string& text)
-{
-	const ui::Font* f = label_font();
-	return f ? f->width(text) : 8.0f * text_scale() * text.size();
-}
-float label_height()
-{
-	const ui::Font* f = label_font();
-	return std::max(kLabelHeight * view::heightf(), (f ? f->lineHeight() : 8.0f * text_scale()) + 2.0f);
-}
 
 // A held action key (ui::keys); not while an edit box has the keyboard
 bool title_shown() { return app.mainMenu && app.mainMenu->shown(); }
@@ -1379,88 +742,6 @@ const cfg::Int kSessionLoadScreen{ cfg::Group{ "Single player" }, "session.loadi
 const cfg::Text kServerArgs{ cfg::Group{ "Single player" }, "session.server_args", "--scenario newgame", "Single player: the server's arguments, split at spaces (e.g. add --navworld DIR, --save-dir DIR)" };
 const cfg::Bool kCharacterLabels{ cfg::Group{ "HUD and labels" }, "ui.labels.characters", false, "Holding ALT also shows character names" };
 
-// The original's 140163b70 on whole-pixel boxes: sort by top then left, then up to 10 passes over every overlapping pair (edges count). Each
-// overlap is measured on both axes as |overlap| * 0.5 + 1. Both boxes move that far apart, away from each other, on the axis that needs less;
-// the sixth pass always moves sideways. A pass with no overlap ends it. Not re-clamped on screen, as in the original.
-void spread_labels(std::vector<ItemLabel>& labels)
-{
-	struct Box { int l, t, r, b; };
-	std::vector<Box> box;
-	for (const ItemLabel& l : labels) { box.push_back({ (int)l.x, (int)l.y, (int)(l.x + l.w), (int)(l.y + l.h) }); }
-	std::vector<size_t> order(labels.size());
-	for (size_t i = 0; i < order.size(); i++) { order[i] = i; }
-	std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return box[a].t != box[b].t ? box[a].t < box[b].t : box[a].l < box[b].l; });
-	for (int pass = 10; pass > 0; pass--)
-	{
-		bool moved = false;
-		for (const size_t i : order)
-		{
-			for (const size_t j : order)
-			{
-				Box& a = box[i];
-				Box& b = box[j];
-				if (i == j || b.l > a.r || a.l > b.r || b.t > a.b || a.t > b.b) { continue; }
-				const int dx = (int)(std::abs(std::min(a.r, b.r) - std::max(a.l, b.l)) * 0.5f + 1.0f);
-				const int dy = (int)(std::abs(std::min(a.b, b.b) - std::max(a.t, b.t)) * 0.5f + 1.0f);
-				if (dy < dx && pass != 5)
-				{
-					const int d = b.t < a.t ? -dy : dy;
-					a.t -= d; a.b -= d; b.t += d; b.b += d;
-				} else {
-					const int d = b.l < a.l ? -dx : dx;
-					a.l -= d; a.r -= d; b.l += d; b.r += d;
-				}
-				moved = true;
-			}
-		}
-		if (!moved) { break; }
-	}
-	for (size_t i = 0; i < labels.size(); i++) { labels[i].x = (float)box[i].l; labels[i].y = (float)box[i].t; }
-}
-
-std::vector<ItemLabel> item_labels(bool all, const float* cam = nullptr)	// cam: the mvp to project with (record_ui: the packet's); null: build_mvp
-{
-	std::vector<ItemLabel> out;
-	if (!app.sim.active()) { return out; }
-	float mvp[16];
-	if (cam) { std::copy(cam, cam + 16, mvp); }
-	else { build_mvp(mvp, 1.0f, 1000.0f); }
-	for (const auto& [id, th] : app.sim.things())
-	{
-		const bool producer = th.kind == simlink::Interactable::kProducer;	// labelled only while hovered (MINE)
-		if ((th.kind != simlink::Interactable::kItem && th.kind != simlink::Interactable::kContainer && !producer) || ((!all || producer) && id != app.hoverThing)) { continue; }
-		if (const double at[3] = { th.pos[0], th.pos[1], th.pos[2] }; cut_hidden(at)) { continue; }	// on a floor the cut hides
-		const double lift = producer ? kProducerLabelLift : th.kind == simlink::Interactable::kContainer ? kContainerLabelLift : kLabelLift;
-		const float p[3] = { (float)(th.pos[0] - app.pos[0]), (float)(th.pos[1] + lift - app.pos[1]), (float)(th.pos[2] - app.pos[2]) };
-		if (all && id != app.hoverThing && std::hypot(p[0], p[1], p[2]) > kLabelRange) { continue; }
-		float c[4];
-		for (int i = 0; i < 4; i++) { c[i] = mvp[i] * p[0] + mvp[4 + i] * p[1] + mvp[8 + i] * p[2] + mvp[12 + i]; }
-		if (c[3] < 1.0f) { continue; }
-		std::string text = app.sim.nameOf(producer ? th.output : th.record, app.chars);	// a producer: its output and fill, "Iron Ore 3/5" (MINE)
-		if (producer) { text += " " + std::to_string(th.count) + "/" + std::to_string(th.cap); }
-		else if (th.count > 1) { text += " (" + std::to_string(th.count) + ")"; }
-		const float w = label_text_width(text) + kLabelPad * view::heightf() / 720.0f, h = label_height();
-		const float sx = (c[0] / c[3] * 0.5f + 0.5f) * view::widthf(), sy = (0.5f - c[1] / c[3] * 0.5f) * view::heightf();
-		if (sx < 0 || sx > view::widthf() || sy < 0 || sy > view::heightf()) { continue; }	// the item is off screen: no label (the box alone is clamped)
-		const float x = std::clamp(sx - w * 0.5f, 0.0f, std::max(0.0f, view::widthf() - w)), y = std::clamp(sy - h, 0.0f, std::max(0.0f, view::heightf() - h));
-		out.push_back({ id, x, y, w, h, std::move(text), std::hypot(p[0], p[1], p[2]) });
-	}
-	if (all) { spread_labels(out); }
-	std::sort(out.begin(), out.end(), [](const ItemLabel& a, const ItemLabel& b) { return a.dist > b.dist; });
-	return out;
-}
-
-// The item whose shown label is under (mx, my); 0: none
-uint64_t label_at(double mx, double my)
-{
-	const std::vector<ItemLabel> labels = item_labels(labels_shown());
-	for (auto l = labels.rbegin(); l != labels.rend(); ++l)
-	{
-		if (mx >= l->x && mx <= l->x + l->w && my >= l->y && my <= l->y + l->h) { return l->id; }
-	}
-	return 0;
-}
-
 // Each door's pose for this frame, shared by the drawn leaf (WorldBuildings::setDoors) and the pick (pick_at): the wire's state sets the target
 // (open / broken: 1, closed / locked: 0) and the openness slides to it at `door move speed` per second (the Door_Shut cue's 1 / speed travel; the
 // original's own motion curve is not known: UNSURE, linear), a door seen for the first time stands at its target. The offset is doorpose.hpp's.
@@ -1527,280 +808,6 @@ void update_doors(double dt)
 	app.buildings.setDoors(draw);
 }
 
-// The click's position test (kenshi-k16.2.259), cheap enough for every thing along the ray: pos is not drawn — in a ghosted occluder, on a sliced
-// building's hidden floor or, with levelCuts set around a pick, on any building's floor above the level. WorldBuildings::cutAway is the one test the
-// renderer's own cut and fade use, so a click on a thing there passes to what shows behind it.
-static bool pick_hidden(const double pos[3], std::string* why = nullptr) { return app.buildings.cutAway(pos, 1e30, why); }
-
-// A thing's own pick box the cut hides goes in the report too (kenshi-k16.2.259: the water tank's prop box on floor 1 over a floor-0
-// click): the name from the wire's record, at the box's hit point, with the cut's reason.
-static void note_thing_skip(std::vector<PickSkip>* skipped, const char* kind, const simlink::Interactable& th, const double at[3], const std::string& why)
-{
-	if (!skipped) { return; }
-	const std::string n = app.sim.nameOf(th.record, app.chars);
-	skipped->push_back({ std::string(kind) + " \"" + (n.empty() ? "no record name" : n) + "\"", { at[0], at[1], at[2] }, why });
-}
-
-Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped = nullptr)
-{
-	Pick p;
-	double from[3];	// the ray starts at the near clip plane, as the original's does (kenshi-k16.2.259, camera_near)
-	for (int k = 0; k < 3; k++) { from[k] = app.pos[k] + dir[k] * camera_near(); }
-	const bool prevCuts = app.buildings.levelCuts;
-	app.buildings.levelCuts = true;	// every layer below skips what the cut hides, not only the world's shapes
-	double best = 1e30;
-	float worldBox[6] = {};	// the box of the collision shape the world hit is, when it is one (not the terrain)
-	if (ray_hit(from, dir, p.hit, &p.building, app.pos, skipped, worldBox))
-	{
-		p.kind = Pick::Ground;
-		best = std::sqrt(std::pow(p.hit[0] - from[0], 2) + std::pow(p.hit[1] - from[1], 2) + std::pow(p.hit[2] - from[2], 2));
-	}
-	const double world = best;
-	double t;
-	// doors: the pose update_doors keeps per door (the drawn leaf's own): the leaf shapes sit where the leaf is drawn, closed in the frame, open
-	// (or broken) slid aside, between them mid-travel; a door with no interactable has no pick
-	const auto leaf = [&](const kworld::WorldShape& s, double off[3])
-	{
-		const auto it = app.doorPose.find(s.door);
-		if (it == app.doorPose.end() || !it->second.thing) { return false; }
-		if (!it->second.exact && it->second.open > 0) { return false; }	// not a box: no leaf normal, left out while open
-		for (int k = 0; k < 3; k++) { off[k] = it->second.off[k]; }
-		return true;
-	};
-	if (kworld::DoorKey key; app.collide.ray(from, dir, world, t, nullptr, leaf, &key) && app.doorPose[key].thing)
-	{
-		const double at[3] = { from[0] + dir[0] * t, from[1] + dir[1] * t, from[2] + dir[2] * t };
-		if (!see_through(at))	// a hidden building's doors do not pick
-		{
-			p.kind = Pick::Door;
-			p.id = app.doorPose[key].thing;
-			best = t;
-			std::copy(at, at + 3, p.hit);
-		}
-	}
-	for (const auto& [id, th] : app.sim.things())	// producers: by their placement's mesh boxes (the original's hover covers the whole mine)
-	{
-		if (th.kind != simlink::Interactable::kProducer || !app.buildings.propRay(id, from, dir, t) || t > std::min(best, world)) { continue; }
-		const double at[3] = { from[0] + dir[0] * t, from[1] + dir[1] * t, from[2] + dir[2] * t };
-		std::string why;
-		if (pick_hidden(at, &why))	// a producer on a floor the cut hides is not drawn (k16.2.259)
-		{
-			note_thing_skip(skipped, "producer", th, at, why);
-			continue;
-		}
-		p.kind = Pick::Producer;
-		p.id = id;
-		best = t;
-		std::copy(at, at + 3, p.hit);
-	}
-	for (const auto& [id, b] : app.sim.decoder().buildings)	// the player's drawn buildings, like a world building's shape: Ground with `building` (k16.2.36.1)
-	{
-		if (app.buildings.propInstance(id) < 0 || !app.sim.playerBuilding(b)) { continue; }
-		if (app.buildings.propRay(id, from, dir, t) && t <= std::min(best, world))
-		{
-			const double at[3] = { from[0] + dir[0] * t, from[1] + dir[1] * t, from[2] + dir[2] * t };
-			if (pick_hidden(at)) { continue; }
-			p.kind = Pick::Ground;
-			p.building = true;
-			p.id = id;
-			std::copy(at, at + 3, p.hit);
-			best = t;
-		}
-	}
-	// no placement (a deposit is a foliage rock): the rock's own collision, a hit shape whose footprint holds the producer's origin, or else a hit within
-	// kProducerMatch of it
-	if (float box[6]; p.kind != Pick::Producer && app.collide.ray(from, dir, std::min(best, world) + 1, t, box))
-	{
-		const double at[3] = { from[0] + dir[0] * t, from[1] + dir[1] * t, from[2] + dir[2] * t };
-		double near = kProducerMatch * kProducerMatch;
-		if (!pick_hidden(at))
-		{
-			for (const auto& [id, th] : app.sim.things())
-			{
-				if (th.kind != simlink::Interactable::kProducer) { continue; }
-				const bool own = th.pos[0] >= box[0] && th.pos[0] <= box[3] && th.pos[2] >= box[2] && th.pos[2] <= box[5];
-				const double d2 = own ? 0.0 : std::pow(th.pos[0] - at[0], 2) + std::pow(th.pos[2] - at[2], 2);
-				if (d2 < near || (own && near > 0))
-				{
-					near = d2;
-					p.kind = Pick::Producer;
-					p.id = id;
-					best = t;
-					std::copy(at, at + 3, p.hit);
-				}
-			}
-		}
-	}
-	// the item sphere, or a drawn container's mesh box; a thing on a floor the cut hides is not drawn, so the ray goes through it (k16.2.259)
-	const auto thingHidden = [&](uint64_t id)
-	{
-		const simlink::Interactable* th = app.sim.thing(id);
-		if (!th) { return true; }
-		if (th->kind == simlink::Interactable::kContainer && app.buildings.hasMesh(id)) { return true; }	// a drawn container: its mesh box picks, below
-		const double at[3] = { th->pos[0], th->pos[1], th->pos[2] };
-		std::string why;
-		if (!pick_hidden(at, &why)) { return false; }
-		const bool box = th->kind == simlink::Interactable::kContainer;
-		const double reach = box ? SimView::kContainerReach : SimView::kItemReach;	// where the ray would have met it, its own hit point
-		const double c[3] = { at[0] - from[0], at[1] + (box ? SimView::kContainerLift : SimView::kItemLift) - from[1], at[2] - from[2] };
-		const double along = c[0] * dir[0] + c[1] * dir[1] + c[2] * dir[2];
-		const double d2 = c[0] * c[0] + c[1] * c[1] + c[2] * c[2] - along * along;
-		double t2 = std::max(0.0, along - std::sqrt(std::max(0.0, reach * reach - d2)));
-		const double hit[3] = { from[0] + dir[0] * t2, from[1] + dir[1] * t2, from[2] + dir[2] * t2 };
-		note_thing_skip(skipped, box ? "container" : "item", *th, hit, why);
-		return true;
-	};
-	if (const uint64_t id = app.sim.pickItem(from, dir, &t, thingHidden); id && t <= (best < world ? best : world + SimView::kContainerReach))	// a door or producer in front wins; the world only past the pick sphere (an item on a table sits in its collision box)
-	{
-		const simlink::Interactable* th = app.sim.thing(id);
-		p.kind = th && th->kind == simlink::Interactable::kContainer ? Pick::Container : Pick::Item;
-		p.id = id;
-		best = t;
-		for (int k = 0; k < 3; k++) { p.hit[k] = from[k] + dir[k] * t; }
-	}
-	int backed = 0;	// the world shape's drawn backing, tested on the first container behind it: 0 not yet, 1 none (undrawn proxy), 2 drawn
-	for (const auto& [id, th] : app.sim.things())	// drawn containers: by their mesh boxes (a container a layout piece draws: that piece's, any visible part of it)
-	{
-		if (th.kind != simlink::Interactable::kContainer) { continue; }
-		if (!app.buildings.propRay(id, from, dir, t, true))
-		{
-			// the ray misses the drawn triangles; a hidden container whose box it still crosses is named in the report, as before the refinement
-			double tb = 0;
-			if (app.buildings.propRay(id, from, dir, tb))
-			{
-				const double at[3] = { from[0] + dir[0] * tb, from[1] + dir[1] * tb, from[2] + dir[2] * tb };
-				std::string why;
-				if (pick_hidden(at, &why)) { note_thing_skip(skipped, "container", th, at, why); }
-			}
-			continue;
-		}
-		// the click is on the container's own drawn box while the collision proxy the sim bakes for the piece sits just outside it (a counter's
-		// face, k16.2.239.1): the box entry is a hair behind the world hit, so the container still picks; any other shape really in front (a wall,
-		// a floor edge) puts the hit point outside the box and keeps the click
-		double lo[3], hi[3];
-		const bool onProp = best == world && app.buildings.propBox(id, lo, hi, kPropBoxSlack) && p.hit[0] >= lo[0] && p.hit[0] <= hi[0] &&
-			p.hit[1] >= lo[1] && p.hit[1] <= hi[1] && p.hit[2] >= lo[2] && p.hit[2] <= hi[2];
-		// a building's collision shape in front of the container is an undrawn proxy volume unless something is drawn inside it along the ray (Storm House's
-		// staircase body: the barrel on the floor behind it lost its whole drawn body, k16.2.239.4.1): the shape holds the click only when a drawn surface backs it
-		if (t > best && !onProp && best == world && p.kind == Pick::Ground && p.building && !p.id)
-		{
-			if (!backed)
-			{
-				// the span of the ray inside the shape's box, up to the container's hit
-				double t0 = 0, t1 = 1e30;
-				const double blo[3] = { worldBox[0], worldBox[1], worldBox[2] }, bhi[3] = { worldBox[3], worldBox[4], worldBox[5] };
-				for (int a = 0; a < 3; a++)
-				{
-					const double lo2 = blo[a] - from[a], hi2 = bhi[a] - from[a];
-					if (std::abs(dir[a]) < 1e-12) { if (lo2 > 0 || hi2 < 0) { t1 = -1; } continue; }
-					t0 = std::max(t0, std::min(lo2 / dir[a], hi2 / dir[a]));
-					t1 = std::min(t1, std::max(lo2 / dir[a], hi2 / dir[a]));
-				}
-				double tb = 0;
-				bool drawn = t0 <= t1 && app.buildings.drawnHitIn(from, dir, blo, bhi, std::max(0.0, t0 - 1.0), std::min(t1 + 1.0, t), tb);
-				if (drawn)
-				{
-					const double bat[3] = { from[0] + dir[0] * tb, from[1] + dir[1] * tb, from[2] + dir[2] * tb };
-					drawn = !pick_hidden(bat);	// a surface the cut hides is not drawn
-				}
-				backed = drawn ? 2 : 1;
-			}
-			if (backed == 1) { best = 1e30; }	// no drawn surface inside the shape: it does not hide the container (nothing nearer held the click: best == world)
-		}
-		if (t > best && !onProp) { continue; }
-		const double at[3] = { from[0] + dir[0] * t, from[1] + dir[1] * t, from[2] + dir[2] * t };
-		std::string why;
-		if (pick_hidden(at, &why))	// the water tank's box on floor 1 over a floor-0 click (k16.2.259): not drawn, the ray goes through it
-		{
-			note_thing_skip(skipped, "container", th, at, why);
-			continue;
-		}
-		p.kind = Pick::Container;
-		p.id = id;
-		best = std::min(best, t);
-		std::copy(at, at + 3, p.hit);
-	}
-	// beds (INTERACTABLE kind 5): the bed's own placed shape, the layout furniture piece holding the sleeping spot (its mesh box, oriented: a click
-	// anywhere on the drawn bed picks it, not a sphere over the spot); a sphere only for a bed no drawn piece holds (MINE, k16.2.220)
-	double bedAt[3] = {};
-	{	// scope of the bed loop
-	CPUSTAGE_ACC("pa.beds");	// the bed loop's time (+pa.beds; kenshi-k16.2.205.12.109 found 0.55-0.65 ms at Heft, .111 memoizes bedRay's search)
-	for (const auto& [id, th] : app.sim.things())
-	{
-		if (th.kind != simlink::Interactable::kBed) { continue; }
-		const double at[3] = { th.pos[0], th.pos[1], th.pos[2] };
-		double entry = 0;
-		const int piece = app.buildings.bedRay(at, from, dir, entry);
-		bool hit = piece > 0;
-		if (piece < 0)	// no drawn piece holds the spot
-		{
-			const double c[3] = { th.pos[0] - from[0], th.pos[1] + kBedLift - from[1], th.pos[2] - from[2] };
-			const double along = c[0] * dir[0] + c[1] * dir[1] + c[2] * dir[2];
-			const double perp2 = c[0] * c[0] + c[1] * c[1] + c[2] * c[2] - along * along;
-			hit = along > 0 && perp2 < kBedReach * kBedReach;
-			entry = along - std::sqrt(std::max(0.0, kBedReach * kBedReach - perp2));
-		}
-		if (!hit || entry > std::min(best, world + 1)) { continue; }
-		// a bed on a floor the cut hides is not drawn: the ray goes through it (Storm House floor 0: the floor-1 beds sat over the stairs, k16.2.233.1).
-		// Tested only for a bed that would take the pick: cut_hidden casts a collide ray per bed, most of the loop's time at Heft once bedRay's search
-		// was memoized (kenshi-k16.2.205.12.111); a filter, so the pick is the same as testing it first.
-		if (cut_hidden(at) || pick_hidden(at)) { continue; }
-		p.kind = Pick::Bed;
-		p.id = id;
-		best = std::max(entry, 0.0);
-		for (int k = 0; k < 3; k++) { bedAt[k] = at[k]; p.hit[k] = from[k] + dir[k] * best; }
-	}
-	}
-	// a sleeper lies inside the bed's box, so it is behind the box's near face: the character wins over the bed it lies in. A character the floor cut
-	// hides is not drawn (Characters::culled): the ray goes through it (k16.2.259: the draw's own test, so a character that shows still picks).
-	const auto charHidden = [](uint64_t id)
-	{
-		double feet[3];
-		float hull[3];
-		return app.sim.placed(id, feet, hull) && cut_hidden(feet);
-	};
-	// a lying / asleep character is hit along its drawn skeleton (head - pelvis - both feet), not the sim's segment: the placed, animated body in the bed (k16.2.223)
-	const auto drawnBody = [](uint64_t id, double pts[][3])
-	{
-		const int index = app.sim.charIndex(id);
-		double head[3], pelvis[3], lf[3], rf[3];
-		if (index < 0 || !app.chars.boneWorld((size_t)index, "Bip01 Head", head) || !app.chars.boneWorld((size_t)index, "Bip01 Pelvis", pelvis) ||
-			!app.chars.boneWorld((size_t)index, "Bip01 L Foot", lf) || !app.chars.boneWorld((size_t)index, "Bip01 R Foot", rf)) { return 0; }
-		const double* seg[3][2] = { { head, pelvis }, { pelvis, lf }, { pelvis, rf } };
-		for (int j = 0; j < 3; j++) { for (int k = 0; k < 3; k++) { pts[2 * j][k] = seg[j][0][k]; pts[2 * j + 1][k] = seg[j][1][k]; } }
-		return 3;
-	};
-	if (const uint64_t id = app.sim.pick(from, dir, &t, charHidden, drawnBody); id)
-	{
-		bool inBed = false;	// the character lies in the picked bed: its sim position is on the sleeping spot
-		if (double cp[3]; p.kind == Pick::Bed && app.sim.simPos(id, cp)) { inBed = std::hypot(cp[0] - bedAt[0], cp[2] - bedAt[2]) < kBedReach && std::fabs(cp[1] - bedAt[1]) < 4; }
-		if (t <= (inBed ? std::max(best, world) + 2 * kBedReach : std::min(best, world + 3)))
-		{
-			p.kind = Pick::Character;
-			p.id = id;
-			for (int k = 0; k < 3; k++) { p.hit[k] = from[k] + dir[k] * t; }
-		}
-	}
-	app.buildings.levelCuts = prevCuts;
-	return p;
-}
-
-// What is under the screen point: an item label (while shown), else the world pick along the ray. skipped (the F12 report): the shapes the ray passed.
-Pick pick_screen(double mx, double my, std::vector<PickSkip>* skipped = nullptr)
-{
-	if (const int bar = app.post.letterboxBar(); my < bar || my >= view::height() - bar) { return {}; }	// the letterbox bars cover the world: nothing there to pick
-	if (const uint64_t id = label_at(mx, my))
-	{
-		Pick p;
-		const simlink::Interactable* th = app.sim.thing(id);
-		p.kind = !th ? Pick::Item : th->kind == simlink::Interactable::kContainer ? Pick::Container : th->kind == simlink::Interactable::kProducer ? Pick::Producer : Pick::Item;
-		p.id = id;
-		return p;
-	}
-	double dir[3];
-	mouse_ray(mx, my, dir);
-	return pick_at(dir, skipped);
-}
 
 // The control-hints resolution's inputs (controlhints.hpp, DESIGN 2): the host state a resolver reads, at the moment it resolves - the modifiers as
 // sokol reports them NOW, so the panel and the F12 sidecar see a held Shift or Alt. Step 0: nothing reads it but the stub resolver and the report.
@@ -1862,9 +869,6 @@ std::string job_text(const simlink::SimLinkDecoder::JobRow& row)
 // CharAct / kAttack / kFollow / sneak_actor / seen_by / locked_cage moved to pick.cpp unchanged (kenshi-k16.2.294.2, pick.hpp): the sim comes in
 // as an argument there.
 
-// The pick chance the hover tag shows: order 99 on the cage key asked once per (cage, acting character); its MENU_ENTRIES carries the chance.
-struct CageHover { uint64_t cage = 0, actor = 0; uint32_t seq = 0; float chance = -1; };
-CageHover cageHover;
 uint64_t hoverCage = 0;	// the cage under the cursor (hover_cursor), 0 = none
 
 // char_act moved to pick.cpp (kenshi-k16.2.294.2); the app state it reads goes in as arguments.
@@ -2112,9 +1116,6 @@ bool open_body(uint64_t id, bool queue)
 	return true;
 }
 
-// Hold RMB on a target: the original's action menu (FEATURES "RMB default action"). A title row names the target; actions the server
-// does not do yet are shown disabled. kHoldMenu: the original's, read live by kenshi-inspect.
-constexpr double kHoldMenu = 0.2;
 // Two right clicks on the same own character within this time: the second is the direct drive (kenshi-k16.2.238.1), as the cast row's double click.
 constexpr double kDoubleClick = 0.4;
 // Auto-split (kenshi-k16.20.13.3): a held stack dropped on a cell that holds fewer than it carries puts one unit at the cell and autoplaces the rest,
@@ -2127,254 +1128,6 @@ constexpr double kDragNear = 6, kDragFar = 60, kClickTime = 0.25;	// counts; sec
 // test, 1407f2c30; kenshi-rwh.134). Below it the release is the ordinary click.
 constexpr double kBoxDragPx = 4;
 const std::string kNewGameFaction = "Nameless";	// NEW_GAME's faction name: the original's player faction (MINE until the panel asks for one)
-
-// entries: the MENU_ENTRIES bitset the server sent for this target (bit 0 Talk To; kenshi-k16.2.121), -1 when there is none (a non-character
-// pick, or the query's answer did not come): then the rows are offered as before, Talk included.
-std::vector<ui::Menu::Item> menu_items(const Pick& p, int entries = -1)
-{
-	std::vector<ui::Menu::Item> it;
-	const auto order = [](const char* what, uint64_t id, const std::function<bool()>& send)
-	{
-		const bool sent = send();
-		printf("sim menu: %s %llu: %s\n", what, (unsigned long long)id, sent ? "sent" : "not sent");
-		order_sent(sent);
-	};
-	const auto title = [](const std::string& text) { return ui::Menu::Item{ text, nullptr, false, true }; };
-	const uint64_t id = p.id;
-	if (p.kind == Pick::Character)
-	{
-		const auto ch = app.sim.decoder().chars.find(id);
-		const bool down = ch != app.sim.decoder().chars.end() && (ch->second.cur.flags & (simlink::kKO | simlink::kDead));
-		const std::string name = ch != app.sim.decoder().chars.end() ? app.sim.decoder().str(ch->second.look.name) : "";
-		it.push_back(title(name.empty() ? "#" + std::to_string(id) : name));
-		// The original's rows (kinspect ctxmenu.md, ctx18_static.md): ours Trade / Follow / Bodyguard / Pick Up, others Follow / Bodyguard /
-		// Attack (ascending order id). A row whose order cannot be done is left out, never greyed; Trade waits for the server. Bodyguard is
-		// a job (76 type 45, plus its Stay close row: SIMLINK JOBS) for the selection but the target.
-		const ui::Menu::Item bodyguard{ "Bodyguard", [=] { order("bodyguard", id, [=] { return app.sim.jobAdd(45, id); }); } };
-		if (app.sim.isPlayer(id))
-		{
-			it.push_back({ "Follow", [=] { order("follow", id, [=] { return app.sim.follow(id); }); } });
-			if (!down) { it.push_back(bodyguard); }
-		}
-		else
-		{
-			if (!down)
-			{
-				// Talk To only when the server's gate passes (MENU_ENTRIES bit 0, the answer to order 99; SIMLINK MENU_ENTRIES)
-				if (entries < 0 || (entries & 1)) { it.push_back({ "Talk", [=] { order("talk", id, [=] { return app.sim.interact(id, 6); }); } }); }
-				it.push_back(bodyguard);
-			}
-			it.push_back({ "Attack", [=] { order("attack", id, [=] { return app.sim.attack(id); }); } });
-			// Stealth KO stays offered for every living, standing target while a selected character sneaks (user 2026-11-11: the 2_ shot lists
-			// ATTACK TARGET, ATTACK ALL, STEALTH KO 100%; we carry no chance, so no %). The row sends the KO whether or not the target has seen
-			// the actor (the server answers: an aware victim aborts, event 50 result 2), so the menu also reaches a target the red fist would not.
-			if (!down && sneak_actor(app.sim)) { it.push_back({ "Stealth KO", [=] { order("stealth ko", id, [=] { return app.sim.interact(id, 14); }); } }); }
-		}
-		if (down) { it.push_back({ "Loot", [=] { order("loot", id, [=] { return open_body(id, false); }); } }); }
-		// first aid (needs a kit in the medic's inventory; the server answers otherwise): anyone down, and our own when hurt
-		if (down || (app.sim.isPlayer(id) && app.sim.health(id, app.chars) < 1.0f)) { it.push_back({ "First aid", [=] { order("first aid", id, [=] { return app.sim.interact(id, 10); }); } }); }
-		// carrying (order 60 action 8 lifts a KO'd / dead character, 13 puts the carried one down; the server picks the carrier for 13)
-		const bool carried = ch != app.sim.decoder().chars.end() && ch->second.cur.carriedBy != 0;
-		if (carried) { it.push_back({ "Put down", [=] { order("put down", id, [=] { return app.sim.interact(id, 13); }); } }); }
-		else if (down) { it.push_back({ "Pick up", [=] { order("pick up", id, [=] { return app.sim.interact(id, 8); }); } }); }
-		// the carrier's menu puts its load down too (the carried body rides on the carrier, so a click on it picks the carrier)
-		for (const auto& [cid, cc] : app.sim.decoder().chars)
-		{
-			if (cc.cur.carriedBy != id || !app.sim.isPlayer(id)) { continue; }
-			it.push_back({ "Put down", [=] { order("put down", cid, [=] { return app.sim.interact(cid, 13); }); } });
-		}
-	}
-	else if (const simlink::Interactable* t = app.sim.thing(id))
-	{
-		std::string name = app.sim.nameOf(t->record, app.chars);
-		if (t->kind == simlink::Interactable::kItem && t->count > 1) { name += " (" + std::to_string(t->count) + ")"; }
-		if (t->kind == simlink::Interactable::kDoor && t->state == simlink::Interactable::kBroken) { name += " (broken)"; }
-		it.push_back(title(name));
-		if (t->kind == simlink::Interactable::kItem) { it.push_back({ "Pick up", [=] { order("pick up", id, [=] { return app.sim.interact(id, 7); }); } }); }
-		else if (t->kind == simlink::Interactable::kProducer)
-		{
-			it.push_back({ "Mine", [=] { order("use", id, [=] { return use_producer(id, false); }); } });	// MINE wording ("Operate" for a powered one later)
-			it.push_back({ "Open", [=] { order("open", id, [=] { return open_container(id, false); }); } });
-		}
-		else if (t->kind == simlink::Interactable::kContainer)
-		{
-			if (t->state == simlink::Interactable::kLocked)
-			{
-				// a locked box: the pick (order 60 action 3, SIMLINK's kind 3 lock); "Take all" stays so the sim answers the loot itself
-				it.push_back({ "Pick Lock", [=] { order("lockpick", id, [=] { return app.sim.interact(id, 3); }); } });
-				it.push_back({ "Take all", [=] { order("take all", id, [=] { return app.sim.interact(id, 5); }); } });
-			}
-			else
-			{
-				it.push_back({ "Open", [=] { order("open", id, [=] { return open_container(id, false); }); } });
-				it.push_back({ "Take all", [=] { order("take all", id, [=] { return app.sim.interact(id, 5); }); } });
-			}
-		}
-		else
-		{
-			ui::Menu::Item open{ "Open", [=] { order("open", id, [=] { return app.sim.interact(id, 1); }); } };
-			ui::Menu::Item close{ "Close", [=] { order("close", id, [=] { return app.sim.interact(id, 2); }); } };
-			// unlock: the server allows the door's owner faction only; bash: any shut door, until it breaks (state 3)
-			ui::Menu::Item unlock{ "Unlock", [=] { order("unlock", id, [=] { return app.sim.interact(id, 11); }); } };
-			ui::Menu::Item bash{ "Bash", [=] { order("bash", id, [=] { return app.sim.interact(id, 12); }); } };
-			ui::Menu::Item pick{ "Pick Lock", [=] { order("lockpick", id, [=] { return app.sim.interact(id, 3); }); } };
-			if (t->state == simlink::Interactable::kClosed) { it.push_back(open); }
-			if (t->state == simlink::Interactable::kOpen) { it.push_back(close); }
-			if (t->state == simlink::Interactable::kLocked) { it.push_back(unlock); it.push_back(pick); }
-			if (t->state == simlink::Interactable::kLocked || t->state == simlink::Interactable::kClosed) { it.push_back(bash); }
-		}
-	}
-	return it;
-}
-
-// Order 99 menu_query (SIMLINK MENU_ENTRIES, kenshi-k16.2.121): the context menu on a non-player, standing character asks the server which rows
-// its right-click gate allows (bit 0 Talk To) and opens when MENU_ENTRIES (61) answers, at most kMenuQueryWait later. A server too old to know
-// order 99 (the send fails), a refused query and a silence all open the menu as before, Talk offered, and say why on the log.
-constexpr double kMenuQueryWait = 0.5;	// MINE: about 10 ticks; the reply is one order round trip
-// The held right-click's menu: the character's answer (bit 0 Talk To) and, on a locked cage's prisoner, the cage's (order 99 on the cage key: bits 16 pick
-// lock, 17 use tools, 18 use strength and the pick chance) are both asked; it opens when everything asked is in or at the deadline.
-struct PendingMenu
-{
-	bool on = false;
-	Pick p;
-	double x = 0, y = 0, deadline = 0;
-	uint32_t seq = 0, cageSeq = 0;
-	uint64_t cage = 0;
-	std::string cageTitle;
-	bool charDone = true, cageDone = true;
-	int entries = -1, cageEntries = -1;	// -1: not answered (Talk offered; all three cage rows offered)
-	float chance = -1;
-};
-PendingMenu menuPending;	// the right-click whose menu is held for its MENU_ENTRIES (one at a time: a new one supersedes it)
-
-// The prisoner's menus side by side (kenshi-0qr shot 10): the cage's first, at the cursor, the character's beside it on the left (the second menu's
-// right edge is at x). No default order: every row is a choice. A cage with no row to offer opens the character's menu alone.
-void open_pick_menu(const PendingMenu& pm)
-{
-	std::vector<ui::Menu::Item> items = menu_items(pm.p, pm.entries);
-	std::vector<ui::ContextRow> cageRows;
-	std::vector<uint8_t> cageActions;
-	if (pm.cage)
-	{
-		const int e = pm.cageEntries;
-		if (e < 0 || (e & (1 << 16))) { cageRows.push_back({ "Pick Lock", pm.chance >= 0 ? (int)(std::floor(pm.chance * 1000.0f) * 0.1f) : -1 }); cageActions.push_back(18); }	// the original's int(chance x 1000) x 0.1
-		if (e < 0 || (e & (1 << 17))) { cageRows.push_back({ "Use Tools" }); cageActions.push_back(19); }
-		if (e < 0 || (e & (1 << 18))) { cageRows.push_back({ "Use Strength" }); cageActions.push_back(20); }
-	}
-	if (items.size() < 2 && cageRows.empty()) { return; }	// a title and no rows: no menu (the original opens none without an action)
-	app.look = false;
-	sappcmd::lockMouse(false);
-	app.mouseX = pm.x;
-	app.mouseY = pm.y;
-	pointer::set((float)pm.x, (float)pm.y);
-	// items[0] is the title row (menu_items); the rest become ContextRows, picked by index after the menu closes
-	std::vector<ui::ContextRow> rows;
-	std::vector<std::function<void()>> acts;
-	for (size_t i = 1; i < items.size(); i++) { rows.push_back({ items[i].text }); acts.push_back(items[i].action); }
-	if (!cageRows.empty())
-	{
-		const uint64_t key = pm.cage;
-		ui::openContextMenu((float)pm.x, (float)pm.y, pm.cageTitle, cageRows, [key, cageActions](int i)
-		{
-			if (i < 0 || i >= (int)cageActions.size()) { return; }
-			const bool sent = app.sim.interact(key, cageActions[i]);
-			printf("sim menu: cage %s %llu: %s\n", cageActions[i] == 18 ? "pick lock" : cageActions[i] == 19 ? "use tools" : "use strength", (unsigned long long)key, sent ? "sent" : "not sent");
-			order_sent(sent);
-		});
-	}
-	if (!rows.empty()) { ui::openContextMenu((float)pm.x, (float)pm.y, items[0].text, rows, [acts](int i) { if (i >= 0 && i < (int)acts.size() && acts[i]) { acts[i](); } }, !cageRows.empty()); }	// at the cursor (ctx18_static.md)
-	printf("sim menu: open at %.0f %.0f%s%s\n", pm.x, pm.y, pm.entries >= 0 ? (pm.entries & 1 ? " with Talk" : " without Talk") : "", cageRows.empty() ? "" : " with the cage's menu");
-}
-
-// The pending menu opens once everything it asked has answered
-void menu_open_if_ready()
-{
-	if (!menuPending.on || !menuPending.charDone || !menuPending.cageDone) { return; }
-	const PendingMenu pm = menuPending;
-	menuPending = {};
-	open_pick_menu(pm);
-}
-
-// Per frame, after the sim's update (so a MENU_ENTRIES of this frame is in the decoder): the held right-click's answer, refusal or timeout opens
-// its menu. A reply for another seq is a stale one (a second right-click superseded it): logged and dropped.
-void menu_query_frame()
-{
-	if (app.opt.debug && app.sim.decoder().cagesSerial != app.cagesSeen)	// the lead's live check of the wire (kenshi-k16.2.105.1)
-	{
-		app.cagesSeen = app.sim.decoder().cagesSerial;
-		std::string ids;
-		for (const auto& [id, c] : app.sim.decoder().cages) { ids += " " + std::to_string(id) + "->" + std::to_string(c.cage) + (c.locked ? " locked lvl " : " open lvl ") + std::to_string(c.level); }
-		printf("CAGES decoded: %zu%s\n", app.sim.decoder().cages.size(), ids.c_str());
-	}
-	for (const SimView::MenuEntries& m : app.sim.takeMenuEntries())
-	{
-		if (cageHover.seq && m.clientSeq == cageHover.seq)	// the hovered cage's pick chance (the cursor's tag)
-		{
-			cageHover.seq = 0;
-			cageHover.chance = m.pickChance;
-			printf("menu_entries: cage %llu entries %x chance %.3f (hover)\n", (unsigned long long)m.target, m.entries, m.pickChance);
-			continue;
-		}
-		const bool forChar = menuPending.on && menuPending.seq && m.clientSeq == menuPending.seq;
-		const bool forCage = menuPending.on && menuPending.cageSeq && m.clientSeq == menuPending.cageSeq;
-		printf("menu_entries: target %llu entries %x%s%s\n", (unsigned long long)m.target, m.entries, forCage ? " chance " : "", forChar || forCage ? "" : " (stale, dropped)");
-		if (forChar) { menuPending.charDone = true; menuPending.entries = (int)m.entries; }
-		if (forCage) { menuPending.cageDone = true; menuPending.cageEntries = (int)m.entries; menuPending.chance = m.pickChance; }
-		menu_open_if_ready();
-	}
-	for (const SimView::MenuAnswer& a : app.sim.takeMenuAnswers())
-	{
-		if (!menuPending.on) { continue; }
-		const bool forChar = menuPending.seq && a.seq == menuPending.seq, forCage = menuPending.cageSeq && a.seq == menuPending.cageSeq;
-		if (!forChar && !forCage) { continue; }
-		printf("menu_entries: none (refused: %s), %s offered\n", a.applied ? "applied, no frame" : a.reason.c_str(), forCage ? "all cage rows" : "Talk");
-		(forChar ? menuPending.charDone : menuPending.cageDone) = true;
-		menu_open_if_ready();
-	}
-	if (menuPending.on && ui::now() >= menuPending.deadline)
-	{
-		printf("menu_entries: none (timeout), Talk offered\n");
-		menuPending.charDone = menuPending.cageDone = true;
-		menu_open_if_ready();
-	}
-}
-
-// Per frame: RMB held still on a target long enough opens the menu where it went down; the release then picks (ui held mode).
-void rmb_hold_menu()
-{
-	if (app.rmbAt < 0 || !app.look) { app.rmbAt = -1; return; }
-	if (app.clickDrag >= 6) { app.rmbAt = -1; return; }	// a look drag
-	if (ui::now() - app.rmbAt < kHoldMenu) { return; }
-	app.rmbAt = -1;
-	const Pick p = pick_screen(app.clickX, app.clickY);
-	if (p.kind != Pick::Character && p.kind != Pick::Item && p.kind != Pick::Door && p.kind != Pick::Container && p.kind != Pick::Producer) { return; }
-	PendingMenu pm;
-	pm.p = p;
-	pm.x = app.clickX;
-	pm.y = app.clickY;
-	pm.deadline = ui::now() + kMenuQueryWait;
-	if (p.kind == Pick::Character && !app.sim.isPlayer(p.id))
-	{
-		const auto ch = app.sim.decoder().chars.find(p.id);
-		const bool down = ch != app.sim.decoder().chars.end() && (ch->second.cur.flags & (simlink::kKO | simlink::kDead));
-		if (!down)	// a standing non-player: the server's gate decides Talk To (the menu opens on its answer)
-		{
-			pm.seq = app.sim.menuQuery(p.id);
-			if (!pm.seq) { printf("menu_entries: none (not sent), Talk offered\n"); }
-		}
-	}
-	if (const simlink::SimLinkDecoder::Cage* cg = p.kind == Pick::Character ? locked_cage(app.sim, p.id) : nullptr)	// a prisoner: its cage's menu beside its own (kenshi-k16.2.105.1)
-	{
-		pm.cage = cg->cage;
-		pm.cageTitle = "Prisoner Cage";	// the original's title (kenshi-0qr shot 10); CAGES' record names the building the cage stands in (Longhouse), not the cage
-			pm.cageSeq = app.sim.menuQuery(cg->cage);
-		if (!pm.cageSeq) { printf("menu_entries: none (not sent), all cage rows offered\n"); }
-	}
-	pm.charDone = !pm.seq;
-	pm.cageDone = !pm.cageSeq;
-	if (pm.seq || pm.cageSeq) { pm.on = true; menuPending = pm; return; }
-	open_pick_menu(pm);
-}
 
 // container_locked moved to pick.cpp (kenshi-k16.2.294.2): it takes the sim (pick.hpp).
 
@@ -3282,18 +2035,18 @@ void camera_sidecar_save(const std::string& name)
 			<< "follow_id=" << (unsigned long long)s.followId << "\nfollow_dist=" << s.followDist << "\n"
 			<< "follow_base=" << s.followBase * d << "\nfollow_offset=" << s.followOffset * d << "\n"
 			<< "floor_level=" << s.floorLevel << "\n";
-		if (!out) { fprintf(stderr, "kclient: camera sidecar: cannot write %s\n", tmp.c_str()); return; }
+		if (!out) { fprintf(stderr, "kclient: camera sidecar: cannot write %s\n", tmp.string().c_str()); return; }
 	}
 	std::filesystem::rename(tmp, path, ec);
-	if (ec) { fprintf(stderr, "kclient: camera sidecar: cannot rename %s\n", path.c_str()); return; }
-	printf("camera sidecar: saved \"%s\": %s (%s)\n", name.c_str(), camera_state_line(s).c_str(), path.c_str());
+	if (ec) { fprintf(stderr, "kclient: camera sidecar: cannot rename %s\n", path.string().c_str()); return; }
+	printf("camera sidecar: saved \"%s\": %s (%s)\n", name.c_str(), camera_state_line(s).c_str(), path.string().c_str());
 }
 
 bool camera_sidecar_read(const std::string& name, CameraState& s)
 {
 	const std::filesystem::path path = camera_sidecar_dir() / camera_sidecar_file(name);
 	std::ifstream in(path);
-	if (!in) { printf("camera sidecar: none for \"%s\" (%s)\n", name.c_str(), path.c_str()); return false; }
+	if (!in) { printf("camera sidecar: none for \"%s\" (%s)\n", name.c_str(), path.string().c_str()); return false; }
 	std::map<std::string, std::string> kv;
 	std::string line;
 	while (std::getline(in, line))
@@ -3309,7 +2062,7 @@ bool camera_sidecar_read(const std::string& name, CameraState& s)
 	s.mode = mode == "free" ? 0 : mode == "follow" ? 2 : mode == "rts" ? 1 : -1;
 	if (s.mode < 0 || !pair3("pos", s.pos) || !pair3("focus", s.focus))
 	{
-		printf("camera sidecar: \"%s\" is unreadable (%s); the camera is not moved\n", name.c_str(), path.c_str());
+		printf("camera sidecar: \"%s\" is unreadable (%s); the camera is not moved\n", name.c_str(), path.string().c_str());
 		return false;
 	}
 	const double r = M_PI / 180.0;
@@ -3330,7 +2083,7 @@ void camera_sidecar_delete(const std::string& name)
 {
 	const std::filesystem::path path = camera_sidecar_dir() / camera_sidecar_file(name);
 	std::error_code ec;
-	if (std::filesystem::remove(path, ec) && !ec) { printf("camera sidecar: deleted with save \"%s\" (%s)\n", name.c_str(), path.c_str()); }
+	if (std::filesystem::remove(path, ec) && !ec) { printf("camera sidecar: deleted with save \"%s\" (%s)\n", name.c_str(), path.string().c_str()); }
 }
 
 static uint64_t camera_subject();
@@ -3562,7 +2315,6 @@ static std::string keys_held()
 // The control-hints block for a pick the sidecar already made (the `hints:` lines; the same text `hints at X Y` prints for that point).
 static std::string hints_for_pick(const Pick& p) { return hints::format_hover(hints::hints_for(p, hints_context())); }
 
-static std::string pick_owner_report(const Pick& p, double mx, double my, const std::vector<dev::PickSkip>& skipped);	// the F12 sidecar's owner / primitive / rule lines (below)
 const char* compass(double deg);	// "N" / "NE" / ... for a heading in degrees (below)
 
 // The shared context of the dev debug ops (dev/debughost.hpp): the subsystems they read, filled once here, the host side.
@@ -5546,7 +4298,7 @@ void frame_loading(FramePacket& pk)
 		if (sscanf(r, "%d,%d,%d", &step, &w, &h) != 3 || (int)app.loadIdx >= step)
 		{
 			if (step > 0) { windowgeom::resizeWindow(w, h); }
-			unsetenv("KCLIENT_LOADING_RESIZE");	// once, not every frame
+			plat::unsetEnv("KCLIENT_LOADING_RESIZE");	// once, not every frame
 		}
 	}
 #endif
@@ -5916,140 +4668,6 @@ static void draw_sim_markers(const FramePacket& pk)
 	}
 	// labels: with the UI the packet's labels list (record_ui built it; world_overlay replays it after this list); without it the debug panel and font, here
 	if (!app.uiOn) { world_labels(mvp); }
-}
-
-// The F12 shot's pick report (kenshi-k16.2.234.1): who owns the cursor shape, which pick primitive was hit and which rule chose the shape. Three lines,
-// "owner:", "primitive:" and "rule:", never an empty name (a thing with no record name says why). kenshi-k16.2.259 adds "skipped shape:" lines: each
-// collision shape the click ray passed and why (above the floor cut, the camera inside it, faded). Report only: it re-reads the pick's inputs (the same
-// rays and records pick_at uses) and never changes a decision.
-static std::string pick_owner_report(const Pick& p, double mx, double my, const std::vector<dev::PickSkip>& skipped)
-{
-	char b[512];
-	std::string owner, prim;
-	const auto fmt = [&](const char* f, auto... args) { snprintf(b, sizeof b, f, args...); return std::string(b); };
-	double dir[3];
-	mouse_ray(mx, my, dir);
-	const auto thingName = [&](const simlink::Interactable* t)
-	{
-		const std::string n = app.sim.nameOf(t->record, app.chars);
-		return n.empty() ? fmt("no record name (record strid %u)", t->record) : n;
-	};
-	const auto instanceOf = [&](uint64_t id) { return app.buildings.propInstance(id); };
-	static const char* const kThing[] = { "?", "door", "item", "container", "producer", "bed" };
-	if (p.kind == Pick::None)
-	{
-		owner = "nothing (the pointer is on a letterbox bar, or no ray hit anything)";
-		prim = "none";
-	}
-	else if (p.kind == Pick::Character)
-	{
-		const auto ch = app.sim.decoder().chars.find(p.id);
-		std::string name = ch != app.sim.decoder().chars.end() ? app.sim.decoder().str(ch->second.look.name) : "";
-		if (name.empty()) { name = "no display name (unnamed character)"; }
-		double sp[3] = {}, feet[3] = {};
-		float hull[3] = {};
-		const bool has = app.sim.simPos(p.id, sp);
-		const bool placed = app.sim.placed(p.id, feet, hull);
-		owner = fmt("character \"%s\" id %llu %s at %.1f %.1f %.1f flags 0x%x", name.c_str(), (unsigned long long)p.id, app.sim.isPlayer(p.id) ? "(ours)" : "(not ours)",
-			has ? sp[0] : 0.0, has ? sp[1] : 0.0, has ? sp[2] : 0.0, ch != app.sim.decoder().chars.end() ? (unsigned)ch->second.cur.flags : 0u);
-		prim = placed ? fmt("sim character pick (SimView::pick: the character's hull) feet %.1f %.1f %.1f hull %.1f %.1f %.1f", feet[0], feet[1], feet[2], hull[0], hull[1], hull[2])
-			: "sim character pick (SimView::pick); the character has no placed pose";
-	}
-	else if (const simlink::Interactable* t = p.kind != Pick::Ground ? app.sim.thing(p.id) : nullptr)
-	{
-		const char* kind = t->kind < 6 ? kThing[t->kind] : "?";
-		owner = fmt("%s \"%s\" id %llu at %.1f %.1f %.1f state %d faction %u%s", kind, thingName(t).c_str(), (unsigned long long)p.id, t->pos[0], t->pos[1], t->pos[2], (int)t->state, t->owner,
-			p.kind == Pick::Container || p.kind == Pick::Item ? (app.sim.foreign(p.id) ? " (foreign)" : " (ours / nobody's)") : "");
-		if (p.kind == Pick::Bed)
-		{
-			const double at[3] = { t->pos[0], t->pos[1], t->pos[2] };
-			const int piece = app.buildings.bedPiece(at);
-			owner += fmt(" occupant %llu furniture record %u", (unsigned long long)t->occupant, t->furniture);
-			prim = piece >= 0 ? "layout furniture piece, oriented mesh box (WorldBuildings::bedRay): " + app.buildings.describeInstance(piece)
-				: fmt("sphere radius %.0f over the sleeping spot lifted %.0f (no drawn layout piece holds the spot)", kBedReach, kBedLift);
-		}
-		else if (p.kind == Pick::Door)
-		{
-			std::string leaf = "door leaf collision shape";
-			double t2;
-			float box[6];
-			std::string hn;
-			kworld::DoorKey key;
-			const auto off = [&](const kworld::WorldShape& s, double o[3])
-			{
-				const auto it = app.doorPose.find(s.door);
-				if (it == app.doorPose.end() || !it->second.thing || (!it->second.exact && it->second.open > 0)) { return false; }
-				for (int k = 0; k < 3; k++) { o[k] = it->second.off[k]; }
-				return true;
-			};
-			if (app.collide.ray(app.pos, dir, 20000, t2, box, off, &key, nullptr, nullptr, &hn)) { leaf = fmt("door leaf collision shape %s box %.0f %.0f %.0f - %.0f %.0f %.0f (leaf pose offset applied)", hn.c_str(), box[0], box[1], box[2], box[3], box[4], box[5]); }
-			prim = leaf;
-		}
-		else if (p.kind == Pick::Item)
-		{
-			double ti;
-			app.sim.pickItem(app.pos, dir, &ti);
-			prim = fmt("item pick sphere (SimView::pickItem) at the item position, ray t %.1f", ti);
-		}
-		else
-		{
-			double tt = 0;
-			const int inst = instanceOf(p.id);
-			if (inst >= 0 && app.buildings.propRay(p.id, app.pos, dir, tt)) { prim = fmt("prop mesh box, ray t %.1f: ", tt) + app.buildings.describeInstance(inst); }
-			else { prim = "no drawn prop mesh: the rock's own collision shape, or a pick label (item label under the pointer)"; }
-		}
-	}
-	else if (p.kind == Pick::Ground && p.building && p.id)
-	{
-		const simlink::SimLinkDecoder::Building* pb = app.sim.building(p.id);
-		const int inst = instanceOf(p.id);
-		std::string name = inst >= 0 ? app.buildings.nameOfInstance(inst) : "";
-		if (name.empty()) { name = pb ? app.sim.nameOf(pb->record, app.chars) : ""; }
-		if (name.empty()) { name = "no record name: player building"; }
-		owner = fmt("player building \"%s\" id %llu at %.1f %.1f %.1f%s", name.c_str(), (unsigned long long)p.id, p.hit[0], p.hit[1], p.hit[2], pb && (pb->flags & simlink::SimLinkDecoder::Building::kBuilt) ? " built" : " not built");
-		prim = inst >= 0 ? "prop mesh box: " + app.buildings.describeInstance(inst) : "building shape";
-	}
-	else if (p.kind == Pick::Ground)
-	{
-		// the nearest drawn world shape at the hit point (the pick's own walk over the ray), else the terrain
-		double from[3] = { app.pos[0], app.pos[1], app.pos[2] }, t2;
-		float box[6];
-		bool solid = false, bld = false, found = false;
-		std::string hn;
-		for (int n = 0; n < 16 && !found && app.collide.ray(from, dir, 20000, t2, box, {}, nullptr, &solid, &bld, &hn); n++)
-		{
-			double at[3];
-			for (int k = 0; k < 3; k++) { at[k] = from[k] + dir[k] * t2; from[k] = at[k] + dir[k] * 0.5; }
-			if (std::hypot(std::hypot(at[0] - p.hit[0], at[1] - p.hit[1]), at[2] - p.hit[2]) < 1.0) { found = true; }
-		}
-		if (found)
-		{
-			owner = fmt("world %s \"%s\" at %.1f %.1f %.1f (no sim id: static scenery%s)", bld ? "building shape" : "foliage / rock", hn.empty() ? "no record name: unnamed collision shape" : hn.c_str(), p.hit[0], p.hit[1], p.hit[2], bld ? ", a layout or building placement" : "");
-			prim = fmt("collision shape box %.0f %.0f %.0f - %.0f %.0f %.0f%s", box[0], box[1], box[2], box[3], box[4], box[5], solid ? " (solid: stairs / gateway body)" : "");
-		}
-		else
-		{
-			owner = fmt("terrain at %.1f %.1f %.1f (no sim id: the heightmap)", p.hit[0], p.hit[1], p.hit[2]);
-			prim = fmt("terrain heightmap ray hit, ground y %.1f", app.hm ? app.hm->height(p.hit[0], p.hit[2]) : 0.0);
-		}
-	}
-	else { owner = "unknown pick (no thing with that id)"; prim = "unknown"; }
-	// beds the ray also crosses that did not take the pick (hidden by the floor cut, or behind the hit): the stairs case of k16.2.233, a bed's box over the treads
-	std::string also;
-	for (const auto& [id, th] : app.sim.things())
-	{
-		if (th.kind != simlink::Interactable::kBed || (p.kind == Pick::Bed && p.id == id)) { continue; }
-		const double at[3] = { th.pos[0], th.pos[1], th.pos[2] };
-		double entry = 0;
-		const int piece = app.buildings.bedRay(at, app.pos, dir, entry);
-		if (piece != 1) { continue; }
-		also += fmt("%sbed id %llu at %.1f %.1f %.1f, box entered at t %.1f: %s", also.empty() ? "" : "; ", (unsigned long long)id, th.pos[0], th.pos[1], th.pos[2], entry,
-			cut_hidden(at) ? "not picked, hidden by the floor cut" : "not picked, behind the hit or nearer shape wins");
-	}
-	if (!also.empty()) { prim += "\nalso under the ray: " + also; }
-	std::string passed;	// kenshi-k16.2.259: what the ray passed, so a click that lands somewhere odd says which shape it went through and why
-	for (const dev::PickSkip& s : skipped) { passed += "\nskipped shape: \"" + s.name + "\" at " + fmt("%.1f %.1f %.1f", s.at[0], s.at[1], s.at[2]) + ": " + s.why; }
-	return "owner: " + owner + "\nprimitive: " + prim + passed + "\nrule: " + (hoverRule.empty() ? "no hover decision made yet this run" : hoverRule) + " (cursor " + app.cursors.current() + ")\n";
 }
 
 #if KCLIENT_PROFILE
@@ -6769,7 +5387,7 @@ static void logic_paths(FramePacket& pk)
 		{
 			app.clockTick = c.tick;
 			app.sky.clock.setHours(c.hour);
-			app.sky.clock.day = std::max(0, (int)c.day - 1);	// CLOCK day is the game's "Day N" (ksim/clock.hpp); the sky clock counts from 0 like --day
+			app.sky.clock.day = std::max(0, (int)c.day - 1);	// CLOCK day is the game's "Day N" (ksim/core/clock.hpp); the sky clock counts from 0 like --day
 		}
 	}
 	app.sky.skyAmbient = Post::skyAmbient();
@@ -10362,7 +8980,7 @@ void update_ui(double dt)
 		if (!infoId && !bar.empty()) { infoId = bar.front(); }
 		st.jobsValid = infoId != 0;	// the status panel's character's (SIMLINK JOBS); no entry: none (the list shows "[No jobs assigned]")
 		st.toggleEnabled[(int)ui::HudToggle::kJobs] = true;
-		st.toggleEnabled[(int)ui::HudToggle::kHold] = true;
+		st.toggleEnabled[(int)ui::HudToggle::kHold] = true;	// order 10 which 6 / 7 (ksim 44025812, master 90b7d0eb; kenshi-k16.2.295.1)
 		st.toggleEnabled[(int)ui::HudToggle::kPassive] = true;
 		st.medicEnabled = true;
 		app.jobsChar = infoId;
@@ -11335,6 +9953,7 @@ static void shot_pending_frame()
 }
 
 }
+using namespace host;	// sokol_main and the global-scope code below see the host names unqualified, as they saw the anonymous namespace's (kenshi-k16.2.369.3)
 
 sapp_desc sokol_main(int argc, char* argv[])
 {

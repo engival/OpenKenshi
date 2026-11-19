@@ -4,7 +4,7 @@ Which part of the tick costs what, measured in the sim, for headless runs and (l
 
 ## Build
 
-`cmake -DKSIM_PROFILE=ON` (default OFF; a dev box uses a second build dir, `cpp/build-prof`). OFF: `ksim/profile.hpp` defines the macros as nothing, so `Simulation::tick`, `Session::sendTick` and `Simulation::save` hold no profile code, `Simulation` has no `profiler()` and `profile.cpp` is an empty object. Check an OFF build: `nm -C cpp/build/CMakeFiles/ksim.dir/src/ksim/{simulation,simlink,soak,profile}.cpp.o | rg -i profil` prints nothing, and `strings -a .../simulation.cpp.o | rg 'Profiler|section_mean_us'` prints nothing.
+`cmake -DKSIM_PROFILE=ON` (default OFF; a dev box uses a second build dir, `cpp/build-prof`). OFF: `ksim/core/profile.hpp` defines the macros as nothing, so `Simulation::tick`, `Session::sendTick` and `Simulation::save` hold no profile code, `Simulation` has no `profiler()` and `profile.cpp` is an empty object. Check an OFF build: `nm -C cpp/build/CMakeFiles/ksim.dir/src/ksim/{simulation,simlink,soak,profile}.cpp.o | rg -i profil` prints nothing, and `strings -a .../simulation.cpp.o | rg 'Profiler|section_mean_us'` prints nothing.
 
 ## What is timed
 
@@ -284,7 +284,7 @@ The tunables alone (mirror 0.8, prelude 0.3, fight goals up to 1, queries and en
 
 All three pairs agree: mean -8 to -14% (about -1.0 ms), p99 -2 to -15%, 9% more ticks done in the same wall time. **Stack samples** (gdb, 300 stacks, after): flecs query iteration **26.7%** (was 29%); by caller `sensorContext` 6.3% (the faction map rebuilt per call by the routine scorer), `stepDoorSteps` 2.7%, `characterSquads` 2.7% (already a cached query; the cost is the 300-fighter walk and the map), `shopSquad` 2.0%, `playerSquads` 2.0%, `sendTick` 1.7%, `playerBuildings` 1.3%. **Cached:** `sensorContext` is kept per tick and faction count (one build instead of one per member); `stepDoorSteps` no longer copies every shut `state::Door` each tick. One run on that build, load 16-20: mean 7,214 / p99 25,471, 16,859 ticks (not paired). Not cached, named: `characterSquads` (2.7%, a content map callers may expect fresh), `shopSquad` (2.0%, a lambda over `TraderStock`), `playerSquads` (2.0%). The quick suite passes (199/199).
 
-**Squad caches and the quiet-box re-measure (kenshi-k16.6.279; branch ds/squad-caches, d41cca73 on ksim e7964065).** `characterSquads`, `playerSquads` and `shopSquad` are now cached in `SquadCaches` (`include/ksim/squad_caches.hpp`); flecs observers registered in the `Simulation` constructor (`registerSquadCaches`, player_squads.cpp) set the dirty flags, so the cache is exact, not per tick. `characterSquads` returns a const reference (simlink holds a pointer, `squadIdOf`).
+**Squad caches and the quiet-box re-measure (kenshi-k16.6.279; branch ds/squad-caches, d41cca73 on ksim e7964065).** `characterSquads`, `playerSquads` and `shopSquad` are now cached in `SquadCaches` (`include/ksim/world/squad_caches.hpp`); flecs observers registered in the `Simulation` constructor (`registerSquadCaches`, player_squads.cpp) set the dirty flags, so the cache is exact, not per tick. `characterSquads` returns a const reference (simlink holds a pointer, `squadIdOf`).
 
 | cache | dirty after | writers (all of them) |
 |---|---|---|

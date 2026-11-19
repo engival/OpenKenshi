@@ -1104,15 +1104,21 @@ void Simulation::stepSlaveTrade()
 
 	// 67 "Running": a route to the plan's position, installed only when the member is not already walking (the scorer's own walk is
 	// the same route). No navmesh or no route: it stands and the step waits, bounded by the give-up.
+	// True: the route ends where the member already stands - the mesh holds no closer ground to the goal (the body lies on a prop's
+	// edge or beyond the walkable rim, kenshi-k16.6.350) - so no walk is installed (a one-point-behind route never moves: the corner
+	// brake reads 0) and the step may count the member as arrived.
+	constexpr double kNoCloser = 1.0;
 	const auto runTo = [&](std::uint64_t id, double tx, double tz)
 	{
 		state::Fighter& f = *combat_->find(id);
 		if (f.walking() || navigation_ == nullptr)
-			return;
+			return false;
 		f.clearRoute();
 		const Route route = routeRetry(id, f, tx, tz, std::nullopt, true);
 		if (!route.found || route.points.empty())
-			return;
+			return false;
+		if (std::hypot(route.points.back().x - f.x, route.points.back().z - f.z) <= kNoCloser)
+			return true;
 		for (std::size_t p = 0; p < route.points.size(); ++p)
 			f.route.push_back({route.points[p].x, p < route.heights.size() ? route.heights[p] : f.y, route.points[p].z});
 		f.routeNext = 0;
@@ -1122,6 +1128,7 @@ void Simulation::stepSlaveTrade()
 		f.routeApproach = route.approach;
 		f.routeTries = 0;
 		mirrorFighter(id);
+		return false;
 	};
 
 	// 64 MAKE_TARGET_STAND_STILL (rwh.89 6): while the cuff runs the whole squad leaves the body alone - a captive that wakes during the bar is held,
@@ -1289,7 +1296,13 @@ void Simulation::stepSlaveTrade()
 				// The walk counts against the give-up like the other steps (a walker that can never arrive is let go, not left for ever).
 				r.chainElapsed = r.chainElapsed < 0.0 ? 0.0 : r.chainElapsed + kTickSeconds;
 				changed = true;
-				runTo(id, tx, tz);
+				// Standing at the end of the only route there is, within a conscious body's stand-off of the body: arrived (the mesh gives no closer).
+				if (runTo(id, tx, tz) && !toCage && std::hypot(f.x - tx, f.z - tz) <= kAwakeBodyReach)
+				{
+					++r.step;
+					changed = true;
+					continue;
+				}
 				break; // walking, or standing until the next tick
 			}
 			if (task == goap::kStripWeapons)

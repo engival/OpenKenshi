@@ -3446,6 +3446,33 @@ void Session::writeDetectedBy(RecordWriter& out, std::uint64_t tick, const Detec
 	out.end();
 }
 
+Session::RouteDiag Session::routeDiag(const CombatArena::Member& m) const
+{
+	const state::Fighter& fighter = m.fighter;
+	RouteDiag d;
+	if (const state::DoorStep* step = sim_.doorStep(m.id))
+	{
+		d.status = 4; // the route is stashed in the step; the Fighter's own is clear
+		d.blocker = 1;
+		d.blockerId = step->door;
+	} else if (fighter.routeNext < fighter.route.size()) {
+		if (fighter.walkStuck > 0.0)
+		{
+			d.status = 3;
+			d.blocker = 3;
+			d.reason = state::Fighter::kReplanBlocked;
+		} else {
+			d.status = 1;
+		}
+	} else if (fighter.clearWhy == state::Fighter::kClearWayShut || fighter.clearWhy == state::Fighter::kClearGiveUp
+		|| (fighter.clearWhy >= 4 && fighter.clearWhy <= 11)) {
+		d.status = 5; // abandoned by a failure, until the next route or a clear for another reason
+		d.blocker = 3;
+		d.reason = fighter.clearWhy;
+	}
+	return d;
+}
+
 void Session::writeRoute(RecordWriter& out, std::uint64_t tick, const CombatArena::Member& m, std::uint32_t seq)
 {
 	const state::Fighter& fighter = m.fighter;
@@ -3456,7 +3483,7 @@ void Session::writeRoute(RecordWriter& out, std::uint64_t tick, const CombatAren
 	out.u64("id", m.id);
 	out.u32("clientSeq", seq);
 	out.u32("routeVersion", fighter.routeVersion);
-	out.u8("flags", (n < left ? kRouteTruncated : 0) | (fighter.routeApproach ? kRouteApproach : 0));
+	out.u8("flags", (n < left ? kRouteTruncated : 0) | (fighter.routeApproach ? kRouteApproach : 0) | kRouteDiag);
 	out.list("points", n, 16);
 	for (std::size_t i = 0; i < n; ++i)
 	{
@@ -3467,6 +3494,22 @@ void Session::writeRoute(RecordWriter& out, std::uint64_t tick, const CombatAren
 		out.f32("z", f(p.z));
 	}
 	out.listEnd();
+	// The diag tail (SIMLINK.md section 6): a walk held in a door step reports the stashed route's end, else the live route's real end
+	// (not the 256th point of a truncated one); a clear with nothing stashed reports 0.
+	const RouteDiag diag = routeDiag(m);
+	const state::DoorStep* step = diag.status == 4 ? sim_.doorStep(m.id) : nullptr;
+	const std::vector<state::RoutePoint>& whole = step != nullptr ? step->route : fighter.route;
+	const state::RoutePoint goal = whole.empty() ? state::RoutePoint{0.0, 0.0, 0.0} : whole.back();
+	out.u8("status", diag.status);
+	out.u8("blocker", diag.blocker);
+	out.u8("reason", diag.reason);
+	out.u64("blockerId", diag.blockerId);
+	out.f32("goalX", f(goal.x));
+	out.f32("goalY", f(goal.y));
+	out.f32("goalZ", f(goal.z));
+	out.f32("stuckSecs", f(fighter.walkStuck));
+	out.u16("replans", static_cast<std::uint16_t>(std::min<std::uint32_t>(fighter.routeTries, 0xffff)));
+	out.u8("clearedWhy", fighter.clearWhy);
 	out.end();
 }
 
@@ -4043,10 +4086,14 @@ void Session::sendTick(RecordWriter& out, bool initial)
 			// seq the client last heard is kept here.
 			bool route = false;
 			std::uint32_t routeSeq = 0;
-			if (m.fighter.routeVersion != it->second.routeSent && (m.fighter.playerControlled || ctx_.sendAiRoutes))
+			// The diag tail's status / blocker / blockerId / reason also send it (stuckSecs and replans do not).
+			const RouteDiag diag = routeDiag(m);
+			const bool diagChanged = !(diag == it->second.diagSent);
+			if ((m.fighter.routeVersion != it->second.routeSent || diagChanged) && (m.fighter.playerControlled || ctx_.sendAiRoutes))
 			{
-				route = !m.fighter.route.empty() || it->second.routeSent != 0;
+				route = !m.fighter.route.empty() || it->second.routeSent != 0 || diag.status != 0;
 				it->second.routeSent = m.fighter.routeVersion;
+				it->second.diagSent = diag;
 				if (!m.fighter.route.empty())
 				{
 					routeSeq = m.fighter.routeSeq;

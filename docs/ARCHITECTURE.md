@@ -132,6 +132,29 @@ come in gradually on top of that.
   ON, like `KSIM_DEBUG_VIEW`), reached from the sim through thin hooks. An OFF build drops it, compiles, and its server
   runs a new game; tests that need it skip themselves (77) when it is OFF. New dev code goes there from now on; what
   already sits outside is moved under kenshi-379.9.
+- **Source layout (decided 2026-11-18, user via kenshi-k16.6.387; shared-code terms agreed by the sim and client leads
+  on that item).**
+  - Libraries and their layering are CMake deps, lowest first: `kutil` <- `kdata` <- `kworld` <- `knav` <- `ksim`. A
+    library includes only those below it; the client links on top. Include root: `cpp/include`.
+  - `kdata`, `kworld`, `knav`, `kutil` stay flat (`<lib>/<file>.hpp`).
+  - `ksim` is split by subsystem, header and source at matching paths: `cpp/include/ksim/<subsys>/x.hpp` and
+    `cpp/src/ksim/<subsys>/x.cpp`. The subsystems: `core` (Simulation, state, clock, rng, script, simdata), `ai`
+    (goal selection, GOAP, routines, behaviours, perception), `combat` (arena, fighters, medical, carry), `law` (crime,
+    arrest, slaves), `nav` (navigator, doors, placement, LOS), `world` (world state and tasks, regions, residents,
+    factions, buildings, interaction), `economy` (trade, shops, producers, inventory), `dialogue`, `save` (save, import,
+    new game, scenarios), `net` (SIMLINK and the server). A new file goes in the subsystem it serves; a new subsystem
+    is a lead's call, recorded here.
+  - The top of `include/ksim/` is the embedding API the client uses: `server_main.hpp` and `debugview/enums.hpp` keep
+    their paths. `dev/` (the fence above), `debugview/` and `src/ksim/retired/` stay.
+  - Private headers sit beside their sources and are included as `"<subsys>/x.hpp"` (`src/ksim` is a private include
+    dir of `ksim`); one private header including another uses a file-relative path, since tests include them by path.
+  - Platform code: shared non-graphics OS code (executable path, crash log, sockets, threads, file mapping) lives once
+    in `kutil`, with implementations in `cpp/src/kutil/platform/<os>/` chosen by CMake; neither the sim nor the client
+    keeps its own copy. Graphics / windowing platform code is the client's.
+  - The data-dir lookup (`datadir`, the Steam library scan, the macOS bundle path) moves to `kdata`; the client keeps
+    the picker UI, the API returns the candidates and why none was found (kenshi-k16.6.388).
+  - A later move of a shared path is announced on the leads' items first and lands in the same master batch. Move
+    commits are move-only (renames plus include / build paths) and are listed in `.git-blame-ignore-revs`.
 
 ## Layering (decided)
 
@@ -423,7 +446,7 @@ gate is a spawn point, and the NPCs' script ended there with nothing next.
 - **Stuck detection is an input to the AI, not just a debug metric.** A lack of
   progress towards a goal feeds back into goal selection.
 
-**First slice (2026-10-31; code in `cpp/include/ksim/ai.hpp`, `behaviours.hpp`).**
+**First slice (2026-10-31; code in `cpp/include/ksim/ai/ai.hpp`, `behaviours.hpp`).**
 Provisional unless marked; the numbers are guesses (STATUS.md lists them).
 
 - **Behaviour registry (the mapping is data).** `cpp/data/ksim_ai_behaviours.tsv`
@@ -541,7 +564,7 @@ PROVISIONAL unless marked; code `cpp/include/ksim/{placement,ai}.hpp`.
       is not "down"; (5) on intact -> not intact the exe removes the squad from its home town / nest group (`140796b30`): not modelled,
       our nest resident budgets are not adopted (WILDERNESS_SPAWNS.md); (6) the per-sector cap is per sector in the exe, per slot here.
   - **Corpses (default decided by b0 2026-11-02, deferred and playtest-able; kinspect BQ15 `bq15_corpse_cleanup.md` a, `s79_static.md` 1;
-    `Simulation::stepCorpses` in `src/ksim/corpses.cpp`, constants in `include/ksim/corpses.hpp`; `state::CorpseDecay`, save v54).**
+    `Simulation::stepCorpses` in `src/ksim/combat/corpses.cpp`, constants in `include/ksim/combat/corpses.hpp`; `state::CorpseDecay`, save v54).**
     What the exe does (`Character::vf29`, `1405ccd90`, dead branch): death sets nothing; the **first evaluation after death stamps the
     time** (game hours, `char+0xd0`, saved as `decay`); later evaluations destroy the corpse when `now - stamp > 12` game hours ("corpse
     decayed", strict). While the corpse is **carried** (or in a building slot) the stamp is clamped to `>= now - 6`: its age freezes at 6 h
@@ -631,7 +654,7 @@ PROVISIONAL unless marked; code `cpp/include/ksim/{placement,ai}.hpp`.
     player should instead get token movement (UnloadedPlatoon) stays OPEN.
 
 **Faction layer, first slice (2026-10-31): campaigns as raids.** PROVISIONAL
-unless marked; code `cpp/include/ksim/factions.hpp`, data and exe notes in
+unless marked; code `cpp/include/ksim/world/factions.hpp`, data and exe notes in
 `docs/reference/FACTIONS.md`, test `ksim_faction`. Save v5, v7 after the exe update.
 
 **Exe-grounded now (2026-10-31, FACTIONS.md 2.1, 2.2, 3.1, section 4) vs still
@@ -752,7 +775,7 @@ and change faction. Interesting, but it needs major design decisions; not V1.
   `UNIQUE_SQUAD_TEMPLATE` squads (`replacement time`).
 
 **Town gates, first slice (2026-10-31): who may pass.** PROVISIONAL unless marked;
-code `cpp/include/ksim/doors.hpp`, data and exe notes in `docs/reference/DOORS.md`, test
+code `cpp/include/ksim/nav/doors.hpp`, data and exe notes in `docs/reference/DOORS.md`, test
 `ksim_doors`. Save v6.
 
 - **What the data gives.** Doors are child BUILDINGs; `always locks` (gate doors), `is wall gate` /
@@ -765,7 +788,7 @@ code `cpp/include/ksim/doors.hpp`, data and exe notes in `docs/reference/DOORS.m
   since, hold, alert count; on a town only once it left Open) and `state::DoorOverrides` (the
   `SetDoorState` command: one door Open / Closed / Locked). Everything else is derived and
   rebuilt after a load: the gate-to-town binding (nearest town centre by xz, no cutoff as the exe,
-  `docs/reference/GATE_CREWS_LIVE.md` 3; one function, `ksim/gatebind.hpp`, used by the spawn rule and `DoorSystem::bind`; a crew's own binding, `GateCrew::gate` / `home`, is saved and rebinds through `resolveGate` in the same header: own gate, home gate, town's nearest free gateway, else the crew stands down; `GATE_CREWS_LIVE.md` 5), the book, the navigator's door view.
+  `docs/reference/GATE_CREWS_LIVE.md` 3; one function, `ksim/ai/gatebind.hpp`, used by the spawn rule and `DoorSystem::bind`; a crew's own binding, `GateCrew::gate` / `home`, is saved and rebinds through `resolveGate` in the same header: own gate, home gate, town's nearest free gateway, else the crew stands down; `GATE_CREWS_LIVE.md` 5), the book, the navigator's door view.
   House doors are not operated (open to all, as baked).
 - **Rules.** Default Open. A town with `is public` false (36 records) refuses neutral and
   hostile travellers always. **Alert** = the owner's intent is Defend, or a hostile raid of
@@ -871,7 +894,7 @@ respawn, gate rules, town life, later the parked "living world"); mods override 
   temperament scoring (Raid / Defend / Mourn / Consolidate, alarm, grief, confidence) is a default
   script, `cpp/data/behaviour/default/faction_intent.lua`; the exe-grounded campaign roll, the
   lifecycle and the relation-reason table stay in C++. What the slice fixes:
-  - *Host* (`ksim/script.hpp`): Lua 5.5.0 as a static C library (no `lua.c`; io, os, debug,
+  - *Host* (`ksim/core/script.hpp`): Lua 5.5.0 as a static C library (no `lua.c`; io, os, debug,
     package and coroutine not even compiled), `lua_newstate` with our allocator (memory budget,
     4 MiB) and the fixed seed, a count-hook instruction budget (50,000; sticky, so `pcall` cannot
     swallow it), a whitelisted environment per script (base without load/require/getmetatable/print,
@@ -939,7 +962,7 @@ Modders could have a field day with 'planted evidence' type of data."
 - The rolls come from seeded per-group streams, so a save, load and continue is identical; the original uses the CRT rand.
 - Gameplay reads the region at a character's position (perception sight, later weather damage). The client gets every group's state (SIMLINK WEATHER 41) and blends by camera itself.
 - The two original bugs are not copied (FEATURES "Original bug" rows).
-- Built (2026-11-01): `ksim/weather.hpp`, save v33 (`formats/RUNTIME_SAVE.md`), SIMLINK 41 sent; what differs and what is UNSURE: `reference/WEATHER_CYCLE_LIVE.md` "Implemented".
+- Built (2026-11-01): `ksim/world/weather.hpp`, save v33 (`formats/RUNTIME_SAVE.md`), SIMLINK 41 sent; what differs and what is UNSURE: `reference/WEATHER_CYCLE_LIVE.md` "Implemented".
 
 ## Living towns (intended)
 
@@ -1072,7 +1095,7 @@ The job board above comes later, behind the same executors. Wire: SIMLINK JOBS (
   - These four use behaviours the sim already has: first aid, combat, follow.
   - Hauling to (124), Find and rescue / Find and put in bed (148 / 106) and Corpse disposal (137 / 138) come next, on carry and containers.
   - Operating machine, Engineer, Training and Turret wait for machines, building, dummies and turrets.
-- **Implemented (2026-11-01, kenshi-b0 sim worker; save v38).** Code: `cpp/include/ksim/jobs.hpp`, `cpp/src/ksim/jobs.cpp`, test `ksim_jobs`.
+- **Implemented (2026-11-01, kenshi-b0 sim worker; save v38).** Code: `cpp/include/ksim/ai/jobs.hpp`, `cpp/src/ksim/ai/jobs.cpp`, test `ksim_jobs`.
   - Data, adding (replacement, dedup, companions, `enabled` on), the drag rule and remove are pure functions (`addJob`, `moveJob`, `removeJob`) over `state::Jobs`, which is saved in order.
   - The orders are the logged command `JobOrder` (CommandType 22), checked when given and again when applied.
   - The four executors of the first slice run in `Simulation::stepJobs` (every 10 ticks, after the order queues), reusing the first aid interact, the attack order and the follow task.

@@ -908,6 +908,7 @@ int main(int argc, char** argv)
 			}
 			test::require(std::none_of(r.events.begin(), r.events.end(), [&](const Ev& e) { return e.kind == 14 && e.b == id; }), d.name + ": no theft from a wild deposit");
 			const std::uint32_t carriedBefore = r.carried(p1, item);
+			r.fighter(p1).skills.thievery = 100.0; // a sure take from the owned store (steal chance 127%, never caught): ksim_steal_chance rolls it
 			r.producerMut(id)->ownerSid = "1-owner.test";
 			test::require(r.transfer68(p1, id, r.inv.at(id).version, 0, d.spec->cap - 2, true).empty(), d.name + ": order 68 take accepted");
 			r.tick(3);

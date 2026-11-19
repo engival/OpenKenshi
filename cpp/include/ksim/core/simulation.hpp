@@ -2090,6 +2090,8 @@ public:
 	void setSpeechObserver(std::function<void(const SpeechEvent&)> observer) { speechObserver_ = std::move(observer); }
 	// The character's open conversation, null = none (or not in the arena).
 	const state::Conversation* conversation(std::uint64_t id) const;
+	// The door step the character is in (state::DoorStep), or nullptr: the CHAR_ROUTE diag tail reports it (status 4).
+	const state::DoorStep* doorStep(std::uint64_t id) const;
 	// The character's dialogue lock map (step 6), null when nothing was locked or unlocked for it.
 	const state::DialogueMemory* dialogueMemory(std::uint64_t id) const;
 

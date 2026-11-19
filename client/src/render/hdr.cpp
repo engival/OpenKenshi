@@ -9,7 +9,7 @@
 #include "hdr.glsl.h"
 #include "sokol_app.h"
 #if defined(SOKOL_GLCORE)
-#include <GL/gl.h>
+#include "platform/gl.hpp"
 #endif
 
 constexpr int Hdr::kSize[Hdr::kLevels];

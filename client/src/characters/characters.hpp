@@ -647,6 +647,8 @@ private:
 		float hull[3] = { 5, 20, 5 };
 		float portrait[4] = { 10, 0, 0.5f, 0 };	// `portrait distance`, `portrait offset x / y / z` (the Human values)
 		std::unordered_map<std::string, float> partMax;	// LOCATIONAL_DAMAGE name -> `combat anatomy` v1
+		std::vector<const AnimInfo*> animalAnims;	// an animal: its ANIMAL_CHARACTER's ANIMAL_ANIMATION records (`animations`, `turning anim`); empty = a humanoid (the ANIMATION list)
+		const AnimInfo* animalStrafe = nullptr;	// `strafe anim`
 		std::string stump[4][2];	// `limb replacement`: per limb slot, male / female mesh
 	};
 	struct ArmourInfo { std::string mesh[2], vestTex[2], vestNrm[2], vestCmap[2], matTex, matNrm, matCmap; float glossMult = 1; bool hideHair = false, colorise = true; int slot = -1, hideParts = 0, armourClass = 0; std::string colour; };
@@ -762,6 +764,7 @@ private:
 	std::vector<std::pair<std::string, std::vector<std::string>>> raceGroups_;
 	std::vector<std::string> idleStances_;	// RACE_GROUP name -> `races` names, data order
 	std::unordered_map<std::string, AnimInfo> anims_;
+	std::vector<std::unique_ptr<AnimInfo>> animalAnims_;	// the ANIMAL_ANIMATION records (RaceInfo::animalAnims points in)
 	std::vector<const AnimInfo*> animOrder_;	// data order (the idle chooser keeps the first of equals)
 	struct TechniqueInfo { std::string clip; float mult = 1; bool block = false; std::vector<Note> notes; };	// block: `is block` and not `is dodge`
 	std::unordered_map<std::string, TechniqueInfo> techniques_;	// COMBAT_TECHNIQUE, lower-case name

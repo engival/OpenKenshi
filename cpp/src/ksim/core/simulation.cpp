@@ -2372,6 +2372,8 @@ void Simulation::apply(const Command& command)
 			std::vector<state::RoutePoint> route;
 			for (std::size_t i = 0; i < command.points.size(); ++i)
 				route.push_back({command.points[i].x, command.heights[i], command.points[i].z});
+			if (!f->route.empty())
+				f->clearWhy = state::Fighter::kClearNewOrder; // the order replaces a live route
 			f->route = std::move(route);
 			f->routeNext = 0;
 			++f->routeVersion;
@@ -2397,12 +2399,12 @@ void Simulation::apply(const Command& command)
 			if (target->team == f->team)
 				combat_->markHostile(command.object, command.subject);
 			f->orderTarget = command.object;
-			f->clearRoute();
+			f->clearRoute(state::Fighter::kClearNewOrder);
 			f->drive = state::DriveMode::Stop;
 			f->driveStrafe = 0;
 			f->hold = false;
 		} else if (command.type == CommandType::FighterStop) {
-			f->clearRoute();
+			f->clearRoute(state::Fighter::kClearNewOrder);
 			f->drive = state::DriveMode::Stop;
 			f->driveStrafe = 0;
 			f->orderTarget = 0;
@@ -2417,7 +2419,7 @@ void Simulation::apply(const Command& command)
 			f->driveSeq = static_cast<std::uint32_t>(command.object);
 			f->driveBlocked = false;
 			f->driveTurn = !f->driving() && f->hold; // a stop in the drive hold turns in place (SIMLINK.md section 12)
-			f->clearRoute();
+			f->clearRoute(state::Fighter::kClearNewOrder);
 			if (f->driving())
 			{
 				f->orderTarget = 0;
@@ -2430,7 +2432,7 @@ void Simulation::apply(const Command& command)
 				|| combat_->followLoops(command.subject, command.object))
 				break;
 			combat_->endFollow(*f);
-			f->clearRoute();
+			f->clearRoute(state::Fighter::kClearNewOrder);
 			f->drive = state::DriveMode::Stop;
 			f->driveStrafe = 0;
 			f->orderTarget = 0;

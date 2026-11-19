@@ -1,6 +1,6 @@
 # Town routine data: where the sites live (TQ23)
 
-Verified 2026-11-01 on the merged `gamedata.base` + `Newwworld.mod` + `Dialogue.mod` + `rebirth.mod` and the four `newland/leveldata/**/interiors.level` files. Code: `cpp/include/ksim/routines.hpp` (`classifyPiece`, `LayoutLibrary`), test `ksim_town_goals`. Design: `docs/reference/TOWN_LIFE_SLICE.md` section 5.4.
+Verified 2026-11-01 on the merged `gamedata.base` + `Newwworld.mod` + `Dialogue.mod` + `rebirth.mod` and the four `newland/leveldata/**/interiors.level` files. Code: `cpp/include/ksim/ai/routines.hpp` (`classifyPiece`, `LayoutLibrary`), test `ksim_town_goals`. Design: `docs/reference/TOWN_LIFE_SLICE.md` section 5.4.
 
 ## BUILDING_FUNCTIONALITY `function` (86 records)
 

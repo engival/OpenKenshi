@@ -4,9 +4,7 @@
 #include <cstdio>
 
 #if defined(SOKOL_GLCORE)
-#define GL_GLEXT_PROTOTYPES 1
-#include <GL/gl.h>
-#include <GL/glext.h>
+#include "platform/gl.hpp"
 #endif
 
 void IdBuffer::shutdown()

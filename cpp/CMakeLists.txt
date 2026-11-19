@@ -3912,11 +3912,9 @@ endif()
 #  - ksim_nav_regions: the bake's streaming region coverage (knav_graph / NavMesh over all 256 region files);
 #  - knav_interior_walk, ksim_route_soak: walk the bake's interiors / its world_sample, not the shipped tiles;
 #  - ksim_prop_clip_bake: the same check as ksim_prop_clip, on the bake (both meshes stay covered);
-#  - ksim_manhunter_hunt: fails on the runtime mesh (the manhunter downs the player but the chain never cuffs: slave state 1 expected not reached), a real gap
-#    for a new item (kenshi-k16.6.252 report); parked on the bake meanwhile;
 #  - the soak (tools/ksim_soak, RUNBOOK): 256 regions and the AI's knav_graph .kgraph come from the world bake; it is no ctest.
 # (The knav_* tests that take no KSIM_NAVWORLD bake their own small fixtures and never open a world navigator.)
-list(APPEND KSIM_BAKE_TESTS ksim_nav_regions knav_interior_walk ksim_route_soak ksim_manhunter_hunt)
+list(APPEND KSIM_BAKE_TESTS ksim_nav_regions knav_interior_walk ksim_route_soak)
 foreach(bake_test IN LISTS KSIM_BAKE_TESTS)
 	if(TEST ${bake_test})
 		set_property(TEST ${bake_test} APPEND PROPERTY ENVIRONMENT KSIM_NAVWORLD_BAKE=1)

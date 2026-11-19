@@ -1,7 +1,7 @@
 # Client audio engine (kaudio)
 
 Merged into master (the `audio` branch and worktree are retired). Code: `client/src/audio/`, test CLI `client/src/kaudio_dump.cpp`, CMake target `kaudio` (static lib).
-kclient: `client/src/audiohook.cpp`, four calls in `main.cpp` (init in the "sky and weather" step, update after `sky.update`, shutdown first in `cleanup()`). `main.cpp` belongs to the client session; message it before touching it.
+kclient: `client/src/audio/audiohook.cpp`, four calls in `main.cpp` (init in the "sky and weather" step, update after `sky.update`, shutdown first in `cleanup()`). `main.cpp` belongs to the client session; message it before touching it.
 Format research: `docs/reference/AUDIO.md`, `docs/reference/audio/MUSIC.md` (bank trees), `audio/AUDIO_EXE.md` (game-side calls).
 
 ## Pieces

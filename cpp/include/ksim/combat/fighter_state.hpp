@@ -977,11 +977,32 @@ struct Fighter
 
 	// A move order walks its route; a chase route is followed by the steering.
 	bool walking() const noexcept { return routeNext < route.size() && !routeChase; }
-	// Drops the route, bumping routeVersion only if there was one (the wire sends the clear).
-	void clearRoute() noexcept
+	// Why the route was last cleared or replanned (CHAR_ROUTE diag tail `clearedWhy`, SIMLINK.md section 6). Transient, not saved. 0 = none yet.
+	// 16..26 are route-lifecycle events; a failure's own code (AiReason numbers 4..11) may also land here. Held until the next event.
+	enum RouteWhy : std::uint8_t
+	{
+		kReplanOffPath = 16,
+		kReplanBlocked = 17,
+		kReplanChase = 18,
+		kClearArrived = 19,
+		kClearWayShut = 20,
+		kClearGiveUp = 21,
+		kClearNewOrder = 22,
+		kClearDoorStep = 23,
+		kClearTaskEnded = 24, // the default for a clearRoute() with no reason
+		kClearIncapacitated = 25,
+		kClearWentDirect = 26,
+	};
+	std::uint8_t clearWhy = 0;
+	// Drops the route, bumping routeVersion only if there was one (the wire sends the clear). `why` is kept only for a real clear (an
+	// empty route being cleared again must not overwrite the event that emptied it).
+	void clearRoute(std::uint8_t why = kClearTaskEnded) noexcept
 	{
 		if (!route.empty())
+		{
 			++routeVersion;
+			clearWhy = why;
+		}
 		route.clear();
 		routeNext = 0;
 		offPath = 0.0;

@@ -189,6 +189,14 @@ struct RouteRecord
 	std::uint32_t version = 0;
 	std::uint8_t flags = 0;
 	std::vector<std::array<float, 3>> points;
+	// The diag tail (flags bit 2; SIMLINK.md section 6): 30 bytes after the waypoints. tailLength 0 = the record had none.
+	std::size_t tailLength = 0;
+	std::uint8_t status = 0, blocker = 0, reason = 0, clearedWhy = 0;
+	std::uint64_t blockerId = 0;
+	float goal[3] = {0, 0, 0};
+	float stuckSecs = 0;
+	std::uint16_t replans = 0;
+	std::size_t oldReaderLength = 0; // what the pre-tail decoder (27 + 12 n) read: the record's own prefix, the tail ignored
 };
 
 struct Extras
@@ -588,9 +596,25 @@ bool intercept(std::uint16_t type, const std::uint8_t* p, std::size_t n, Extras&
 		r.version = readAt<std::uint32_t>(p, 20);
 		r.flags = p[24];
 		const std::uint16_t count = readAt<std::uint16_t>(p, 25);
-		test::require(n == 27 + 12u * count, "CHAR_ROUTE length does not match its count");
+		test::require(n >= 27 + 12u * count, "CHAR_ROUTE length does not match its count");
 		for (std::uint16_t i = 0; i < count; ++i)
 			r.points.push_back({readAt<float>(p, 27 + 12u * i), readAt<float>(p, 31 + 12u * i), readAt<float>(p, 35 + 12u * i)});
+		r.oldReaderLength = 27 + 12u * count; // the pre-tail decoder stopped here and ignored the rest (SIMLINK rule 2)
+		const std::size_t tail = r.oldReaderLength;
+		test::require((r.flags & 4) == 0 || n == tail + 30, "CHAR_ROUTE diag tail is not 30 bytes");
+		if ((r.flags & 4) != 0)
+		{
+			r.tailLength = n - tail;
+			r.status = p[tail];
+			r.blocker = p[tail + 1];
+			r.reason = p[tail + 2];
+			r.blockerId = readAt<std::uint64_t>(p, tail + 3);
+			for (std::size_t k = 0; k < 3; ++k)
+				r.goal[k] = readAt<float>(p, tail + 11 + 4 * k);
+			r.stuckSecs = readAt<float>(p, tail + 23);
+			r.replans = readAt<std::uint16_t>(p, tail + 27);
+			r.clearedWhy = p[tail + 29];
+		}
 		extras.routes.push_back(std::move(r));
 	}
 	if (type == simlink::kAppearance)
@@ -1532,6 +1556,136 @@ int main()
 			test::require(c.pump([&]() { return c.extras.medical.count(id) != 0; }, 5000), "no CHAR_MEDICAL for the portrait bits");
 			test::require(c.extras.medical[id].flags == 4u, "the CHAR_MEDICAL flags are not hurt alone");
 			std::cout << "CHAR_MEDICAL hurt / putIn bits: hold 15 s, KO and cage clear, bed vs floor sleeper\n";
+		}
+
+		// ---- CHAR_ROUTE diag tail (kenshi-k16.6.348; SIMLINK.md section 6) ----
+		// The sim runs; each case sets the fighter's state on the server thread and waits for the record carrying it.
+		{
+			World dw = makeWorld(order, data, gd, nav);
+			const std::uint64_t who = dw.duel.player;
+			std::promise<int> dPort;
+			ks::ServerOptions dOptions;
+			dOptions.onListening = [&dPort](int listening) { dPort.set_value(listening); };
+			ks::SimLinkServer dServer(*dw.sim, dw.context, dOptions);
+			dServer.listen();
+			const int diagPort = dPort.get_future().get();
+			std::atomic<bool> dStop{false};
+			std::thread dThread([&]() { dServer.run(dStop); });
+			const struct DiagJoiner
+			{
+				std::atomic<bool>& stop;
+				std::thread& thread;
+				~DiagJoiner()
+				{
+					stop.store(true);
+					if (thread.joinable())
+						thread.join();
+				}
+			} diagJoiner{dStop, dThread};
+			Client c(diagPort);
+			c.send(helloFrame(dw.context.dataHash));
+			test::require(c.pump([&]() { return c.extras.medical.count(who) != 0; }, 5000), "diag tail: no snapshot");
+			ksim::state::Fighter& body = *const_cast<ksim::CombatArena*>(dw.sim->combat())->find(who);
+			// The first record about the player after `from` that `match` takes (the sim runs on: a later tick may already have moved on).
+			std::size_t from = 0;
+			const auto find = [&](auto&& match) -> const RouteRecord*
+			{
+				for (std::size_t i = from; i < c.extras.routes.size(); ++i)
+				{
+					if (c.extras.routes[i].id == who && match(c.extras.routes[i]))
+						return &c.extras.routes[i];
+				}
+				return nullptr;
+			};
+			const auto line = [&](std::size_t count, double step)
+			{
+				std::vector<ksim::state::RoutePoint> route;
+				for (std::size_t i = 0; i < count; ++i)
+					route.push_back({body.x + step * static_cast<double>(i + 1), body.y, body.z});
+				return route;
+			};
+			const auto waitFor = [&](auto&& match, const char* what)
+			{
+				if (!c.pump([&]() { return find(match) != nullptr; }, 8000))
+				{
+					for (std::size_t i = from; i < c.extras.routes.size(); ++i)
+					{
+						const RouteRecord& r = c.extras.routes[i];
+						if (r.id == who)
+							std::cout << "  seen: n=" << r.points.size() << " flags=" << int(r.flags) << " tail=" << r.tailLength << " status=" << int(r.status)
+								<< " clearedWhy=" << int(r.clearedWhy) << "\n";
+					}
+					test::require(false, what);
+				}
+				return *find(match);
+			};
+
+			// Walking: a short route, status 1, the goal its last point, the tail 30 bytes at offset 27 + 12 n.
+			ksim::state::RoutePoint walkEnd{};
+			from = c.extras.routes.size();
+			dServer.call([&]()
+			{
+				body.route = line(5, 2.0);
+				walkEnd = body.route.back();
+				body.routeNext = 0;
+				body.routeSeq = 4242;
+				++body.routeVersion;
+			});
+			const RouteRecord walking = waitFor([](const RouteRecord& r) { return !r.points.empty() && r.tailLength != 0; }, "diag tail: no walking record");
+			test::require(walking.tailLength == 30 && (walking.flags & 4) != 0, "diag tail: walking record is not 30 bytes with bit 2");
+			test::require((walking.status == 1 || walking.status == 3) && walking.blockerId == 0, "diag tail: walking status");
+			test::require(std::fabs(walking.goal[0] - static_cast<float>(walkEnd.x)) < 0.01f && std::fabs(walking.goal[2] - static_cast<float>(walkEnd.z)) < 0.01f,
+				"diag tail: walking goal is the route's last point");
+			test::require(walking.oldReaderLength == 27 + 12u * walking.points.size(), "diag tail: the pre-tail decoder reads the record's prefix unchanged");
+
+			// A truncated route: the goal is the real end, not point 256.
+			ksim::state::RoutePoint longEnd{};
+			from = c.extras.routes.size();
+			dServer.call([&]()
+			{
+				body.route = line(300, 1.0);
+				longEnd = body.route.back();
+				body.routeNext = 0;
+				++body.routeVersion;
+			});
+			const RouteRecord truncated = waitFor([](const RouteRecord& r) { return (r.flags & 1) != 0; }, "diag tail: no truncated record");
+			test::require(truncated.points.size() == 256 && truncated.tailLength == 30, "diag tail: truncated record has 256 points and the tail");
+			test::require(std::fabs(truncated.goal[0] - static_cast<float>(longEnd.x)) < 0.01f && truncated.goal[0] > truncated.points.back()[0] + 10.0f,
+				"diag tail: truncated goal is the real end, not point 256");
+
+			// A door step: the route is stashed, the Fighter's own cleared (what interact.cpp does): status 4, blocker 1, the door, the stashed end.
+			ksim::state::DoorStep step;
+			step.door = 0x5eed;
+			step.phase = 4;
+			step.route = line(7, 3.0);
+			flecs::world& ecs = const_cast<flecs::world&>(dw.sim->world().ecs());
+			flecs::entity entity;
+			ecs.each([&](flecs::entity e, const ksim::state::Id& idOf) { if (idOf.value == who) entity = e; });
+			test::require(entity.is_valid(), "diag tail: the player has no entity");
+			from = c.extras.routes.size();
+			dServer.call([&]()
+			{
+				// A real locked door, so the step runs on (an unknown door ends the step in its first tick).
+				ksim::state::Door lockedDoor;
+				lockedDoor.state = 2;
+				lockedDoor.x = body.x + 40.0;
+				lockedDoor.y = body.y;
+				lockedDoor.z = body.z;
+				ecs.entity().set<ksim::state::Id>({step.door}).set<ksim::state::Door>(lockedDoor);
+				body.clearRoute(ksim::state::Fighter::kClearDoorStep);
+				entity.set<ksim::state::DoorStep>(step);
+			});
+			const RouteRecord door = waitFor([](const RouteRecord& r) { return r.status == 4; }, "diag tail: no door step record");
+			test::require(door.points.empty() && door.tailLength == 30, "diag tail: the door step's clear carries the tail");
+			test::require(door.blocker == 1 && door.blockerId == 0x5eed && door.clearedWhy == 23, "diag tail: door step blocker, id and clearedWhy");
+			test::require(std::fabs(door.goal[0] - static_cast<float>(step.route.back().x)) < 0.01f, "diag tail: the door step's goal is the stashed route's end");
+
+			// The step ends: status 0 again, the clear reason held.
+			from = c.extras.routes.size();
+			dServer.call([&]() { entity.remove<ksim::state::DoorStep>(); body.clearRoute(); });
+			const RouteRecord after = waitFor([](const RouteRecord& r) { return r.status == 0; }, "diag tail: no record after the door step");
+			test::require(after.clearedWhy == 23 && after.blocker == 0, "diag tail: clearedWhy is held after the door step");
+			std::cout << "CHAR_ROUTE diag tail: walking, truncated goal, door step, held clearedWhy\n";
 		}
 
 		// ---- EVENT 48, the ragdoll start (task BG; PHYSICS.md 2-3), and CHAR_DYNAMIC's rest tail ----
@@ -2762,6 +2916,15 @@ int main()
 			const auto& end = first->points.back();
 			test::require(std::hypot(end[0] - targetX, end[2] - targetZ) < 45.0, "route ends near the target (within the 40 unit snap)");
 			test::require(last == first || last->version > first->version, "the clear bumps routeVersion");
+			test::require(first->tailLength == 30, "the diag tail on a walking route: 30 bytes");
+			test::require(first->status == 1 || first->status == 3, "the diag tail on a walking route: status 1 (or 3 blocked), got " + std::to_string(first->status));
+			// At speed 16 the clear can share a snapshot with the next route and never go out alone (last == first); the clear's tail is read
+			// when it did (the 8-tick batching of SIMLINK "Cadence").
+			if (last != first && last->points.empty())
+			{
+				test::require(last->tailLength == 30 && last->status == 0, "the diag tail on the arrival clear: 30 bytes, status 0");
+				test::require(last->clearedWhy == 19, "the arrival clear's clearedWhy is 19, got " + std::to_string(last->clearedWhy));
+			}
 			const simlink::Dynamic& d = c.dec.chars.at(player).cur;
 			test::require((d.flags & simlink::kYValid) != 0 && d.pos[1] > 1.0f, "y is valid and set in CHAR_DYNAMIC");
 		}

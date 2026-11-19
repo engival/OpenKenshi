@@ -176,6 +176,7 @@ enum RouteFlag : std::uint8_t
 {
 	kRouteTruncated = 1u << 0,
 	kRouteApproach = 1u << 1, // the destination is an approach point, not the clicked spot
+	kRouteDiag = 1u << 2, // the diag tail follows the waypoints (30 bytes, SIMLINK.md section 6); written on every CHAR_ROUTE
 };
 
 // SIMLINK.md section 2; lives in kworld so the client (which links kworld, not ksim) shares it.
@@ -484,12 +485,22 @@ public:
 	bool debugPeer() const noexcept { return debugPeer_; }
 
 private:
+	// The CHAR_ROUTE diag tail's status / blocker / reason / blockerId (v1: blocker 3 only, 1 for a door step).
+	struct RouteDiag
+	{
+		std::uint8_t status = 0;
+		std::uint8_t blocker = 0;
+		std::uint8_t reason = 0;
+		std::uint64_t blockerId = 0;
+		bool operator==(const RouteDiag&) const = default;
+	};
 	struct Known
 	{
 		std::uint32_t version = 0;
 		bool unconscious = false;
 		std::uint32_t routeSent = 0; // the routeVersion the client last heard of
 		std::uint32_t routeSeqSent = 0; // the seq of the route the client last heard of (the clear carries it)
+		RouteDiag diagSent; // the diag the client last heard: a change re-sends the CHAR_ROUTE
 	};
 	struct Look
 	{
@@ -641,6 +652,7 @@ private:
 	void writeDynamic(RecordWriter& out, std::uint64_t tick, const CombatArena::Member& m, std::uint32_t version,
 		const std::set<std::int32_t>& playerTeams);
 	void writeRoute(RecordWriter& out, std::uint64_t tick, const CombatArena::Member& m, std::uint32_t seq);
+	RouteDiag routeDiag(const CombatArena::Member& m) const;
 	void writeMedical(RecordWriter& out, std::uint64_t tick, const CombatArena::Member& m);
 	struct DetectRecord;
 	void writeDetect(RecordWriter& out, std::uint64_t tick, const DetectRecord& d);

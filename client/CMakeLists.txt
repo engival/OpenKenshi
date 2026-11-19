@@ -12,7 +12,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Apple libc++ gates std::jthread (ksim/region.cpp) behind -fexperimental-library (compile and link) (kenshi-379.32.1).
+# Apple libc++ gates std::jthread (ksim/world/region.cpp) behind -fexperimental-library (compile and link) (kenshi-379.32.1).
 if(APPLE AND NOT CMAKE_CXX_FLAGS MATCHES "fexperimental-library")
 	string(APPEND CMAKE_CXX_FLAGS " -fexperimental-library")
 	string(APPEND CMAKE_EXE_LINKER_FLAGS " -fexperimental-library")
@@ -46,7 +46,10 @@ else()
 endif()
 set(KENSHI_GFX "${KENSHI_GFX_DEFAULT}" CACHE STRING "sokol backend: glcore | vulkan | metal (metal: macOS only)")
 set_property(CACHE KENSHI_GFX PROPERTY STRINGS glcore vulkan metal)
-set(KENSHI_SHDC "${CMAKE_CURRENT_SOURCE_DIR}/bin/sokol-shdc" CACHE FILEPATH "sokol-shdc binary (tools/get_shdc.sh)")
+if(CMAKE_HOST_WIN32)
+	set(KENSHI_SHDC_EXE ".exe")	# get_shdc.sh fetches the Windows build as sokol-shdc.exe (kenshi-379.31.1)
+endif()
+set(KENSHI_SHDC "${CMAKE_CURRENT_SOURCE_DIR}/bin/sokol-shdc${KENSHI_SHDC_EXE}" CACHE FILEPATH "sokol-shdc binary (tools/get_shdc.sh)")
 if(NOT EXISTS "${KENSHI_SHDC}")
 	message(FATAL_ERROR "sokol-shdc not found at ${KENSHI_SHDC}; run client/tools/get_shdc.sh")
 endif()
@@ -86,9 +89,20 @@ foreach(src ${SHADER_SRCS})
 endforeach()
 add_custom_target(kclient_shaders DEPENDS ${SHADER_HDRS})
 
+# Windows (kenshi-379.31.1): M_PI and friends are hidden by the strict -std=c++20 unless _USE_MATH_DEFINES (MinGW and MSVC alike); windows.h's
+# min / max macros would break std::min / std::max. Directory-wide, before cpp/ is added, so the sim's sources in this build get them too.
+if(WIN32)
+	add_compile_definitions(_USE_MATH_DEFINES NOMINMAX)
+endif()
+# MinGW: link the GCC runtime (libstdc++, libgcc, winpthread) and the pkg-config libraries (vorbis, ogg) statically, so OpenKenshi.exe runs
+# beside its simdata/ with only Windows' own DLLs (the CI artifact the user runs under Proton, kenshi-379.31.1).
+if(MINGW)
+	add_link_options(-static)
+endif()
+
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
-if(NOT APPLE)
+if(UNIX AND NOT APPLE)
 	pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11 xi xcursor xrandr)
 endif()
 
@@ -119,15 +133,38 @@ set(CMAKE_CXX_STANDARD 20)	# Jolt.cmake sets its own directory to 17
 
 # Detour for the client navmesh (clientnav.cpp); imported targets found in cpp/ are not visible here
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cpp/cmake/recast.cmake)
+# Recast builds as C++98, where MinGW's <stdint.h> hides INTPTR_MAX (RecastAlloc.h's RC_SIZE_MAX) unless __STDC_LIMIT_MACROS. Its home is the fork
+# pin or cpp/cmake/recast.cmake (kenshi-379.31.1's report lists it for ksim); until then the client build sets it on the fetched target.
+if(MINGW AND TARGET Recast)
+	target_compile_definitions(Recast PRIVATE __STDC_LIMIT_MACROS)
+endif()
 
 # The one sokol implementation unit: Objective-C++ on macOS. The window geometry memory: X11 on Linux, Cocoa on macOS (the macOS tester's
-# windowgeom_macos.mm, kenshi-379.32.13).
+# windowgeom_macos.mm, kenshi-379.32.13), Win32 on Windows (kenshi-379.31.1).
 if(APPLE)
 	set(KCLIENT_SOKOL_IMPL src/platform/macos/sokol_impl.mm)
 	set(KCLIENT_WINDOWGEOM src/platform/macos/windowgeom.mm)
+elseif(WIN32)
+	set(KCLIENT_SOKOL_IMPL src/platform/sokol_impl.cpp)
+	set(KCLIENT_WINDOWGEOM src/platform/windows/windowgeom.cpp)
 else()
 	set(KCLIENT_SOKOL_IMPL src/platform/sokol_impl.cpp)
 	set(KCLIENT_WINDOWGEOM src/platform/linux/windowgeom.cpp)
+endif()
+# KCLIENT_PLATFORM: the rest of the OS layer (src/platform/*.hpp): the simlink socket and the local server child (POSIX on Linux and macOS,
+# Winsock / CreateProcess on Windows), the default game installs (installs.hpp, one per OS) and, on Windows, the GL loader (gl.hpp).
+if(WIN32)
+	set(KCLIENT_PLATFORM src/platform/windows/socket.cpp src/platform/windows/process.cpp src/platform/windows/installs.cpp
+		src/platform/windows/gl.cpp)	# gl.cpp: the GL entry points past 1.1 (platform/gl.hpp)
+	# sokol_app / sokol_gfx (GL) / sokol_audio (WASAPI) system libraries: MSVC takes them from the headers' #pragma comment, MinGW needs them
+	# listed (sokol_app.h "with MINGW/MSYS2 gcc"); ws2_32: the simlink socket; advapi32: the registry (installs.cpp).
+	set(KCLIENT_WIN32_LIBS kernel32 user32 shell32 gdi32 ole32 advapi32 ws2_32)
+elseif(APPLE)
+	set(KCLIENT_PLATFORM src/platform/posix/socket.cpp src/platform/posix/process.cpp src/platform/macos/installs.cpp)
+	set(KCLIENT_WIN32_LIBS)
+else()
+	set(KCLIENT_PLATFORM src/platform/posix/socket.cpp src/platform/posix/process.cpp src/platform/linux/installs.cpp)
+	set(KCLIENT_WIN32_LIBS)
 endif()
 
 # The client sources, compiled once into this OBJECT library and shared by kclient and OpenKenshi (kenshi-379.6.2.1). Only the files that
@@ -138,6 +175,9 @@ add_library(kclient_obj OBJECT
 	src/world/buildings.cpp
 	src/render/camera.cpp
 	src/characters/characters.cpp
+	src/characters/charload.cpp
+	src/characters/charanim.cpp
+	src/characters/chardraw.cpp
 	src/characters/creator.cpp
 	src/app/eventlog.cpp
 	src/net/simlink.cpp
@@ -202,12 +242,17 @@ add_library(kclient_obj OBJECT
 	src/render/water.cpp
 	src/render/lightbake.cpp
 	src/world/worldbuildings.cpp
+	src/world/wbload.cpp
+	src/world/wbfloors.cpp
+	src/world/wbdraw.cpp
 	src/app/loadscreen.cpp
+	src/host/pick.cpp
 	src/world/worldmap.cpp
 	${KCLIENT_SOKOL_IMPL}
 	src/audio/audiohook.cpp
 	src/app/config.cpp
 	${KCLIENT_WINDOWGEOM}
+	${KCLIENT_PLATFORM}
 	src/app/windowgate.cpp
 	src/app/serverrows.cpp
 	src/app/workpool.cpp
@@ -297,10 +342,10 @@ if(KCLIENT_DEV_TOOLS)
 endif()
 target_compile_options(kclient_obj PRIVATE -Wall -Wextra)
 if(WIN32)
-	target_link_libraries(kclient_obj PRIVATE comdlg32 ole32)	# tinyfiledialogs' native folder dialog
+	target_link_libraries(kclient_obj PRIVATE comdlg32 ole32 ${KCLIENT_WIN32_LIBS})	# comdlg32: tinyfiledialogs' native folder dialog
 endif()
 target_link_libraries(kclient_obj PRIVATE kworld knav kutil RecastNavigation::Detour kaudio kui Jolt Threads::Threads ${CMAKE_DL_LIBS} m)
-if(NOT APPLE)
+if(UNIX AND NOT APPLE)
 	target_link_libraries(kclient_obj PRIVATE PkgConfig::X11)
 endif()
 if(KENSHI_GFX STREQUAL "glcore")
@@ -341,9 +386,10 @@ if(KCLIENT_DEV_TOOLS)
 	target_compile_definitions(kui_demo PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 	target_link_libraries(kui_demo PRIVATE kui Threads::Threads ${CMAKE_DL_LIBS} m)
 	target_include_directories(kui_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../cpp/include)	# kutil/executable.hpp (header only)
-	if(NOT APPLE)
+	if(UNIX AND NOT APPLE)
 		target_link_libraries(kui_demo PRIVATE PkgConfig::X11)
 	endif()
+	target_link_libraries(kui_demo PRIVATE ${KCLIENT_WIN32_LIBS})
 	if(KENSHI_GFX STREQUAL "glcore")
 		target_link_libraries(kui_demo PRIVATE OpenGL::GL)
 	elseif(KENSHI_GFX STREQUAL "metal")
@@ -395,7 +441,7 @@ endif()
 
 # Audio (src/audio/, docs/AUDIO_ENGINE.md): Wwise banks, Wwise Vorbis decoder (headers rebuilt on load) over system libvorbis, mixer, music player.
 pkg_check_modules(VORBIS REQUIRED IMPORTED_TARGET vorbis ogg)
-if(NOT APPLE)
+if(UNIX AND NOT APPLE)
 	pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse-simple libpulse)	# sokol_audio's Linux backend (macOS: CoreAudio, below)
 endif()
 set(CODEBOOKS_BIN "${CMAKE_CURRENT_SOURCE_DIR}/third_party/wwise_codebooks/packed_codebooks_aoTuV_603.bin")
@@ -413,6 +459,8 @@ target_compile_options(kaudio PRIVATE -Wall -Wextra)
 target_link_libraries(kaudio PUBLIC PkgConfig::VORBIS PRIVATE Threads::Threads)
 if(APPLE)
 	target_link_libraries(kaudio PRIVATE "-framework AudioToolbox")
+elseif(WIN32)
+	target_link_libraries(kaudio PRIVATE ole32)	# sokol_audio's WASAPI backend (CoInitializeEx)
 else()
 	target_link_libraries(kaudio PRIVATE PkgConfig::PULSE)
 endif()
@@ -447,7 +495,7 @@ foreach(tgt kclient OpenKenshi)
 	target_compile_options(${tgt} PRIVATE -Wall -Wextra)
 	target_link_libraries(${tgt} PRIVATE ${KENSHI_LIBS})
 endforeach()
-# A dev-off OpenKenshi runs its embedded server's sim data from simdata/ beside it (cpp/src/ksim/simdata.cpp), as ksim_server does in cpp/
+# A dev-off OpenKenshi runs its embedded server's sim data from simdata/ beside it (cpp/src/ksim/core/simdata.cpp), as ksim_server does in cpp/
 # (the macOS tester's patch, kenshi-379.32.13; same copy as cpp/CMakeLists.txt's ksim_server POST_BUILD).
 if(NOT KCLIENT_DEV_TOOLS)
 	add_custom_command(TARGET OpenKenshi POST_BUILD

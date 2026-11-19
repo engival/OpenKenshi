@@ -2249,7 +2249,7 @@ void Simulation::stepDoorSteps()
 			step.routeNext = fighter.routeNext;
 			step.routeSeq = fighter.routeSeq;
 			step.routeApproach = fighter.routeApproach;
-			fighter.clearRoute();
+			fighter.clearRoute(state::Fighter::kClearDoorStep);
 			actor.set<state::DoorStep>(std::move(step));
 			break;
 		}
@@ -2729,6 +2729,11 @@ double Simulation::cageLockHardness(std::uint64_t cageBuilding) const
 	const BuildingSite* site = world_.buildingSite(cageBuilding);
 	const kdata::Record* record = site != nullptr && gameData_ != nullptr ? gameData_->find(site->buildingSid) : nullptr;
 	return record != nullptr ? static_cast<double>(record->intOr("hardness", 30)) : 30.0; // BUILDING `hardness` 15..90 (DOORS.md), 30 where unset
+}
+
+const state::DoorStep* Simulation::doorStep(std::uint64_t id) const
+{
+	return combat_ != nullptr && combat_->find(id) != nullptr ? fighterEntity(id).get<state::DoorStep>() : nullptr;
 }
 
 } // namespace ksim
