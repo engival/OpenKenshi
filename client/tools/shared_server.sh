@@ -13,8 +13,8 @@
 # of that tree> is looked up from any branch or base (the coordinator's deploy hard-links one per master deploy; a client
 # build of a clean tree is cached there by --cache, below). The entry handed out is `touch -h`ed: the coordinator prunes
 # OpenKenshi-server-cpp-* untouched for 3 days, so trees in use stay. Rule 2 (the merge-base lookup below) is kept for
-# one case rule 1 misses: deploys made before the cpp- links existed (OpenKenshi-server-<hash8> only). A wire-number
-# fallback (kenshi-k16.2.306.5.1) goes after rule 1, at the marked hook.
+# one case rule 1 misses: deploys made before the cpp- links existed (OpenKenshi-server-<hash8> only). The wire-number rule
+# (kenshi-k16.2.306.5.1, rule 3 below) sits between rule 2's cpp/ check (a) and its merge-base lookup (b).
 #
 # --cache BIN: copies BIN to OpenKenshi-server-cpp-<tree12> when cpp/ is clean by the same test and the name does not exist
 # yet: a unique .tmp name in that dir, chmod 755, mv into place (atomic; concurrent workers race safely, the loser's tmp is
@@ -102,7 +102,6 @@ then
 else
 	say "rule 1: cpp/ not clean (${dirty:-no git}), no tree key"
 fi
-# HOOK (kenshi-k16.2.306.5.1): the wire-number fallback goes here, after the exact tree hit and before rule 2.
 
 # The newest master this clone has: local master and every <remote>/master, by commit time (ties keep the earlier name).
 master= masterref= mastertime=
@@ -136,6 +135,36 @@ do
 	esac
 done < <(git -C "$root" diff --name-only "$mb" --; git -C "$root" ls-files --others --exclude-standard 2>/dev/null)
 
+# Rule 3 (kenshi-k16.2.306.5.1), the wire number: N = kProtocol read from this branch's client/src/net/simlink.hpp. The newest (by
+# mtime) executable $HOME/git/kenshi/bin/OpenKenshi-server-w<N>-* wins; a binary that answers `--wire-version` must answer N (one
+# that does not understand the flag is taken on its name). Only reached when (a) held: a branch whose commits since the merge base
+# touch cpp/ builds its own server, because additive wire changes are only safe newer-server / older-client, never the reverse.
+wire=$(sed -n 's/^[[:space:]]*constexpr[[:space:]]\+uint16_t[[:space:]]\+kProtocol[[:space:]]*=[[:space:]]*\([0-9]\+\).*/\1/p' "$root/client/src/net/simlink.hpp" 2>/dev/null | head -n 1)
+if [ -n "$wire" ]
+then
+	say "rule 3: wire number $wire"
+	while IFS= read -r c
+	do
+		[ -x "$c" ] || continue
+		got=$("$c" --wire-version 2>/dev/null </dev/null | head -n 1)
+		if [ -n "$got" ] && [ "$got" != "$wire" ]
+		then
+			say "skip $c (--wire-version $got, want $wire)"
+			continue
+		fi
+		touch -h "$c" 2>/dev/null
+		if [ "$explain" = 1 ]
+		then
+			printf 'shared %s (w%s: cpp/ unchanged since the merge base, newest server with the same kProtocol)\n' "$c" "$wire"
+			exit 0
+		fi
+		shared "$c"
+	done < <(ls -t "$bins"/OpenKenshi-server-w"$wire"-* 2>/dev/null)
+	say "no OpenKenshi-server-w$wire-* binary"
+else
+	say "rule 3: no kProtocol in client/src/net/simlink.hpp"
+fi
+
 # (b) the deploy for that commit
 bin=$bins/OpenKenshi-server-${mb:0:8}
 if [ -x "$bin" ]
@@ -143,4 +172,4 @@ then
 	shared "$bin"
 fi
 say "no $bin"
-built "no shared binary for ${mb:0:8}"
+built "no w${wire:-?} binary, no shared binary for ${mb:0:8}"

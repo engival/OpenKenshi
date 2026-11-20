@@ -67,7 +67,9 @@ bool SimLinkDecoder::frame(uint16_t type, const uint8_t* p, size_t n)
 		const uint8_t role = r.u8();
 		dataHash_ = r.u64();
 		serverName_ = r.str();
-		if (magic != kMagic || proto != kProtocol || role != 1) { error_ = "bad HELLO (magic, protocol " + std::to_string(proto) + " or role)"; return false; }
+		if (magic != kMagic) { error_ = "bad HELLO (not a Kenshi game server)"; return false; }
+		if (proto != kProtocol) { error_ = "This game server speaks protocol " + std::to_string(proto) + "; this client speaks " + std::to_string(kProtocol) + ". Use matching builds."; return false; }
+		if (role != 1) { error_ = "bad HELLO (the peer is not a server)"; return false; }
 		hello_ = true;
 		break;
 	}
@@ -1166,6 +1168,19 @@ bool SimLinkDecoder::frame(uint16_t type, const uint8_t* p, size_t n)
 			e.b = r.u64();
 			e.result = r.u8();
 			e.amount = r.f32();
+			break;
+		case 51:	// caught_stealing: a = the thief, b = the witness (0: the failed steal roll), result = cause (0 roll failed, 1 take witnessed, 2 lockpick / break witnessed), c = the container / door (0 none)
+			e.a = r.u64();
+			e.b = r.u64();
+			e.result = r.u8();
+			e.c = r.u64();
+			break;
+		case 52:	// alarm_raised: a = the raiser, b = the criminal, result = the CrimeEnum id, str = the raiser's FACTION, pos = the alarm's point
+			e.a = r.u64();
+			e.b = r.u64();
+			e.result = r.u8();
+			e.str = r.u32();
+			for (float& v : e.pos) { v = r.f32(); }
 			break;
 		case 15:	// noticed: a = observer, b = target
 			e.a = r.u64();

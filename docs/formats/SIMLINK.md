@@ -1,11 +1,21 @@
 # SIMLINK: the live sim <-> client protocol
 
-Status: **protocol version 5 (2026-11-01)**; version 5 = CHAR_APPEARANCE gains a trailing `portraitSerial u32`; version 4 = CHAR_APPEARANCE gains a trailing `name strid`, CHAR_DYNAMIC `flags` bit 12
+Status: **protocol version 6 (2026-11-17)**; version 6 = STARTS 33 entries grew mid-array (the squad `members` block, 2026-11-01; the Member outfit, 2026-11-12; section 6 STARTS) and WEATHER 41 entries grew `fogBlend, skyBlend, strength` (2026-11-01), which an older per-entry decoder misparses; version 5 = CHAR_APPEARANCE gains a trailing `portraitSerial u32`; version 4 = CHAR_APPEARANCE gains a trailing `name strid`, CHAR_DYNAMIC `flags` bit 12
 (run), the INVENTORY record (type 25), order 61 `drop`, toggle `which` 2 (run), event 6 sent (all in section 6, 7, 13); version 3 = the `move_to` body of section 7 (click height `y` and a `flags` byte
 replacing `queue`); version 2 = CHAR_DYNAMIC `driveSeq`, `y` with `yValid`, CHAR_ROUTE
 (type 23), event 12, the order 20 body. The client wishlist is kenshi-0f's. The sim
 side is kenshi-b0's. Server = ksim (later the region-threaded server), client = kclient
 (`client/src/simlink.*`, owned by the client session).
+
+**Protocol version (rule, user 2026-11-17: "manual bump sounds less error prone"; audit kenshi-k16.2.306.4.1).** `simlink::kProtocol`
+(`cpp/include/ksim/simlink.hpp`, with the client's copy in `client/src/simlink.hpp`) is sent in HELLO; a mismatch is an ERROR. A change is
+**compatible** (no bump) when an older client decoding a newer server's output still works: a tail appended to the end of a record or frame
+(an older client skips it by the frame length), a new record / frame / event / order kind (an older client logs and skips it), a new value
+in an existing enum, or a doc-only change. **Everything else bumps `kProtocol` in the same commit, server and client side together:** a
+field inserted before the end of a record, a size or meaning change, a field added to a repeated element (entries are packed back to back,
+so a tail inside one cannot be skipped), a renumbered kind, a frame an older peer kicks on, a change to the snapshot layout, and a change
+to the server command line the client passes (`session.server_args`, `--data`, ...). Extend the Status line with one clause for the new
+version. `OpenKenshi-server --wire-version` prints the number and exits 0, for the deploy script that pairs a server binary with a client.
 
 **First playable cut:** hello, string table, character appearance (race, sex, head, equipment),
 character dynamic (pos, yaw, speeds, flags, action), clock, and the orders `move_to`, `attack`
@@ -53,7 +63,7 @@ The first frame each way is `HELLO` (type 1):
 | Field | Type | Notes |
 |---|---|---|
 | magic | u32 | `'KSIM'` = 0x4D49534B |
-| protocol | u16 | 5 (4 had no CHAR_APPEARANCE `portraitSerial`; 3 had no CHAR_APPEARANCE `name`, no flag bit 12, no type 25; 2 had the old move_to body `x, z, queue u8` (no click height); 1 was the first cut: no `driveSeq` in CHAR_DYNAMIC, no CHAR_ROUTE, no event 12, y always 0, order 20 with a `tick` field) |
+| protocol | u16 | 6 (5 had the shorter STARTS and WEATHER entries; 5: 4 had no CHAR_APPEARANCE `portraitSerial`; 3 had no CHAR_APPEARANCE `name`, no flag bit 12, no type 25; 2 had the old move_to body `x, z, queue u8` (no click height); 1 was the first cut: no `driveSeq` in CHAR_DYNAMIC, no CHAR_ROUTE, no event 12, y always 0, order 20 with a `tick` field) |
 | role | u8 | 0 client, 1 server |
 | dataHash | u64 | hash over the merged load order, defined exactly: FNV-1a 64 (offset 14695981039346656037, prime 1099511628211) over, for each file in load order, its file name bytes, one 0 byte, the file size as u64 LE, and the FNV-1a 64 of the file content as u64 LE (`simlink::dataHash`, ksim) |
 | name | str | build / version text, for logs |

@@ -48,6 +48,7 @@ public:
 	// The first player-controlled character's position, else any character's; false when none has been seen yet.
 	bool focus(double out[3]) const;
 	std::string status() const;	// one HUD line
+	const std::string& error() const { return error_; }	// the link's failure text once it failed (kenshi-k16.2.380)
 	const simlink::SimLinkDecoder& decoder() const { return dec_; }
 	// DEBUG VIEW (client/src/debug/): the sink for frames 200-219, and a control frame to the server (live only)
 	void setDebugSink(std::function<void(uint16_t, const uint8_t*, size_t)> sink) { dec_.debugFrames = std::move(sink); }
@@ -64,6 +65,9 @@ public:
 	bool catchVelocity(uint64_t id, double out[2]) const { const auto s = slots_.find(id); if (s == slots_.end()) { return false; } out[0] = s->second.catchV[0]; out[1] = s->second.catchV[1]; return true; }
 	// where the sim puts id this frame (the interpolated wire position, with no display offset; kenshi-k16.2.73 trails); false: not drawn
 	bool simPos(uint64_t id, double pos[3]) const;
+	// The wire y the standing ray last cast from for id (the sim's interpolated y minus the prediction offset; simPos's y is the drawn y after the ray, the
+	// height probe needs the input); false: no such drawn character or no cast yet (no ray result, a seated / asleep character, the ray off)
+	bool wireY(uint64_t id, double& y) const;
 	// id's wire state (flags, building, floor) at the render tick, the sample simPos interpolates from -- not `cur`, the newest snapshot: the render clock
 	// sits behind it by design and further after a stall, so the newest floor / indoors bits can belong to a later position (the floor view read them
 	// there and flapped 0/1/0/1 as a climb boarded its flight, kenshi-k16.2.236.17); false: no such character
@@ -139,6 +143,7 @@ public:
 	// taking from it is theft: its owner (the INTERACTABLE tail) is set and not ours, or (an older server) a theft event named it
 	bool foreign(uint64_t thing) const;
 	uint32_t ownFaction() const;	// our faction's FACTION strid: SQUADS `faction` of a squad PLAYER_SQUADS lists; 0 before both arrived
+	std::vector<uint16_t> takeCrimeLog() { return std::exchange(crimeLog_, {}); }	// event kinds 51 (caught_stealing) / 52 (alarm_raised) since the last take: HUD message-bar lines
 	std::vector<uint32_t> takeDiscovered() { return std::exchange(discovered_, {}); }	// TOWN strids of event 19 (discovered) since the last take: the log line
 	// Floating texts from events (the game's ScreenLabel, kinspect floating_text.md): event 1 hit (landed; other = the attacker, damage cut / blunt /
 	// pierce / stun, part its strid) and 20 lock_roll. pos: the character's feet when it came (the label follows the character while it is drawn); dropped 12 sim-s after
@@ -219,7 +224,14 @@ public:
 	void setDepenetrate(Depenetrate d) { depen_ = std::move(d); }
 	struct NudgeStats { uint64_t frames = 0, nudgedSum = 0; int frameNudged = 0, maxFrameNudged = 0; double maxOffset = 0, frameMax = 0, msSum = 0, frameMs = 0, maxFrameMs = 0; };
 	const NudgeStats& nudgeStats() const { return nudge_; }
+	std::function<double(double, double)> ylogAlt;	// KYLOG only (k16.2.382.1): the other terrain sampler, logged beside the one in use
 	void setGroundRay(GroundRay r, std::function<const void*()> gen) { groundRay_ = std::move(r); groundGen_ = std::move(gen); }
+	// The standing ray's window around the wire y (kenshi-k16.2.344): up above, down below. The navmesh floats 0.45-0.71 u over the plank floor and up to ~4 u off on slopes (k16.7.36, k16.6.271).
+	static constexpr double kRayUp = 1.5, kRayDown = 4.5;
+	// One uncached stand-ray cast with update()'s rule (the ray, then standTerrain: net/simview.cpp), for the height probe (dev/heightprobe.cpp): terrain is the
+	// drawn triangle height update() gets. Returns the result as update() sees it (-1 collision not loaded, 0 miss, 1 hit, 2 drawn-face hit); y is set for >= 1.
+	// kind: what decided it ("collision", "drawn", "terrain", "open ground (terrain)", or why it missed).
+	int standRayAt(double x, double z, double wireY, double terrain, double& y, const char** kind = nullptr) const;
 	struct RayStats { uint64_t faces = 0, casts = 0, cached = 0, hits = 0, misses = 0, unloaded = 0; double ms = 0, maxFrameMs = 0; int frameCasts = 0, maxFrameCasts = 0; double frameMs = 0; double maxShift = 0, sumShift = 0; };
 	const RayStats& rayStats() const { return rayStats_; }	// totals since the start; a dev counter (dump / the evlog standray line)
 	void setWalker(const knav::Walker* w) { walker_ = w; }	// ClientNav's, for drive prediction (each frame; null: none)
@@ -384,6 +396,7 @@ private:
 	std::chrono::steady_clock::time_point profileAt_{};	// the last profile_query sent (epoch: none yet)
 	std::string profileStatus_;	// the refusal word (not_allowed / unsupported) once the server said no: set, no more queries are sent
 	std::vector<uint32_t> discovered_;
+	std::vector<uint16_t> crimeLog_;	// event kinds 51 / 52 since the last take
 	std::deque<Popup> popups_;
 	std::unordered_map<uint64_t, Speech> speech_;
 	std::unordered_set<uint64_t> foreign_;	// containers a theft event named

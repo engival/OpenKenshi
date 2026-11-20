@@ -728,6 +728,8 @@ void Simulation::stepIntruders()
 	// whose arrival hook drops it (dt24_223 section 3).
 	const auto installRoute = [&](std::uint64_t id, state::Fighter& f, double tx, double ty, double tz, std::uint8_t mode = 0) -> bool
 	{
+		if (navigation_ != nullptr && pathRetries_.askedRecently(id, tx, tz, now, kSquadIntervalTicks))
+			return true; // asked this second already: the walker stands, no new search per tick
 		f.clearRoute();
 		if (navigation_ == nullptr)
 			return false;
@@ -1113,6 +1115,8 @@ void Simulation::stepSlaveTrade()
 		state::Fighter& f = *combat_->find(id);
 		if (f.walking() || navigation_ == nullptr)
 			return false;
+		if (pathRetries_.askedRecently(id, tx, tz, clockTick(), kSquadIntervalTicks))
+			return false; // asked this second already (a standing walker is not re-planned every tick)
 		f.clearRoute();
 		const Route route = routeRetry(id, f, tx, tz, std::nullopt, true);
 		if (!route.found || route.points.empty())

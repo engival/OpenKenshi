@@ -54,11 +54,11 @@ fail()
 #   worldmap.cpp 1    WorldMap::init, a load step
 #   dds.cpp 2         :76 sg_query_limits (a constant) in dds_levels, called from render-side jobs / load steps / workers;
 #                     :168 inside the dds_queue_image render-side job
-#   main.cpp 2        :4430 / :4489 in init() on the sapp (render) thread, before the logic thread exists; the logic half reads the value
+#   host/session.cpp 2 :219 / :278 in init() on the sapp (render) thread (moved from main.cpp, kenshi-k16.2.369.7), before the logic thread exists; the logic half reads the value
 #                     portraitTable.setOrigin stored (logic asks sokol nothing)
 # Only image_state (a pool-slot read, racy against a concurrent make on another thread) matters, and no caller of it is on the logic thread.
 declare -A KNOWN=([client/src/render/colourmap.cpp]=2 [client/src/render/detail.cpp]=2 [client/src/world/wbload.cpp]=2 [client/src/render/grass.cpp]=1
-	[client/src/render/particles.cpp]=1 [client/src/world/worldmap.cpp]=1 [client/src/assets/dds.cpp]=2 [client/src/main.cpp]=2)
+	[client/src/render/particles.cpp]=1 [client/src/world/worldmap.cpp]=1 [client/src/assets/dds.cpp]=2 [client/src/host/session.cpp]=2)
 cd "$TREE" || exit 2
 BAD=0
 while read -r f n

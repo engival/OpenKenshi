@@ -150,6 +150,15 @@ namespace dev
 	// The `probe depth` op (dev/probe.cpp) and the `log gait` / `log pos` dispatch (dev/scriptlog.cpp).
 	void probeOp(const Context& cx, const std::vector<std::string>& args);
 	bool logOp(const Context& cx, const std::vector<std::string>& args);	// false when args is not gait / pos or their argument is bad
+	// The vertical height probe (dev/heightprobe.cpp, kenshi-k16.2.384.1): every surface the world-Y line through a point crosses, and the stand ray's window and pick.
+	bool heightProbeMode();	// probe mode (Ctrl+F10, --debug): a left click on the world sets the probe instead of acting
+	void heightProbeToggle();
+	void heightProbeSet(const Context& cx, double x, double z, bool print);	// probe at x, z (print: the listing to stdout, the script op)
+	void heightProbeFrame(const Context& cx);	// every logic frame: the probe's character part (and the drawn meshes' late loads) refreshed
+	std::vector<std::string> heightProbeLines();	// the chart, for the debug text (empty with no probe)
+	std::string heightProbeReport();	// the same lines for the F12 sidecar ("probe: ..." each)
+	void heightProbeDraw(const float mvp[16], const double camPos[3], float width, float height);	// the line and a tick per crossing, through ovl::
+	bool heightProbeOp(const Context& cx, const std::vector<std::string>& args);	// `probe height X Z`
 #else
 	inline bool parseArg(int, char**, int&, std::vector<std::string>&) { return false; }
 	inline void sgOwnerInstall() {}
@@ -225,5 +234,13 @@ namespace dev
 	inline void viewScroll(double) {}
 	inline void probeOp(const Context&, const std::vector<std::string>&) { fprintf(stderr, "kclient: script: probe depth needs a GL dev build (KCLIENT_DEV_TOOLS + SOKOL_GLCORE)\n"); }
 	inline bool logOp(const Context&, const std::vector<std::string>&) { return false; }
+	inline bool heightProbeMode() { return false; }
+	inline void heightProbeToggle() {}
+	inline void heightProbeSet(const Context&, double, double, bool) {}
+	inline void heightProbeFrame(const Context&) {}
+	inline std::vector<std::string> heightProbeLines() { return {}; }
+	inline std::string heightProbeReport() { return {}; }
+	inline void heightProbeDraw(const float[16], const double[3], float, float) {}
+	inline bool heightProbeOp(const Context&, const std::vector<std::string>&) { return false; }
 #endif
 }

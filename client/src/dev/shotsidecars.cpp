@@ -147,6 +147,7 @@ void shot_meta_file(const Context& cx, const std::string& path)
 			fl.leadFloor < 0 ? "no lead" : fl.following ? "following" : "not following");
 	}
 	if (cx.sim.active()) { fprintf(f, "sim: %s\n", cx.sim.status().c_str()); }
+	fputs(heightProbeReport().c_str(), f);	// kenshi-k16.2.384.1: the vertical height probe's listing while one is set
 	fputs(cx.hudText().c_str(), f);	// kenshi-k16.2.335.1: the developer text block's lines under --debug
 	fprintf(f, "keys held:%s\n", cx.keysHeld().c_str());
 	fclose(f);

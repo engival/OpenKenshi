@@ -21,7 +21,6 @@
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
-#include "caravan_unhurt.hpp"
 #include "test_util.hpp"
 
 #include <algorithm>
@@ -261,14 +260,12 @@ void givePackets(Game& game, const kdata::Record* bread, const kdata::Record* ir
 }
 
 // Runs until the player is knocked out (or down); a player still standing after `seconds` is knocked out by the fixture (printed).
-void runToKo(Game& game, double seconds, const char* what, const std::vector<Person>& unhurt = {})
+void runToKo(Game& game, double seconds, const char* what)
 {
 	Simulation& sim = *game.sim;
 	for (int i = 0; i < static_cast<int>(20 * seconds); ++i)
 	{
 		sim.run(1);
-		for (const Person& p : unhurt)
-			keepCaravanUnhurt(sim, p.id);
 		const state::Fighter& me = game.me();
 		if (me.unconscious || me.down)
 			return;
@@ -314,7 +311,7 @@ void slaverCapture(const std::string& bake)
 	game.teleport(kSpawnX + 18.0, kSpawnZ);
 	sim.run(2);
 	sim.enqueue(Command::fighterAttack(state::Id{game.player}, state::Id{caravan.members.front().id}));
-	runToKo(game, 90.0, "slaver capture", caravan.members);
+	runToKo(game, 90.0, "slaver capture");
 	test::require(game.me().unconscious || game.me().down, "the caravan puts the player down");
 
 	// The chain: watch every tick. The KO is held (a KO that outlasts the chain, as a fresh one does) until the lift.
@@ -594,7 +591,7 @@ void caravanWithAi(const std::string& bake)
 		});
 	// The player walks up and attacks one member: the only order given.
 	sim.enqueue(Command::fighterAttack(state::Id{game.player}, state::Id{caravan.members.front().id}));
-	runToKo(game, 90.0, "ai caravan", caravan.members);
+	runToKo(game, 90.0, "ai caravan");
 	test::require(game.me().unconscious || game.me().down, "the caravan puts the player down");
 
 	// The catch, as in fixture A: the KO is held until the lift.

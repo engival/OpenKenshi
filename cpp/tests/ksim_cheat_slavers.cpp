@@ -18,7 +18,6 @@
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
-#include "caravan_unhurt.hpp"
 #include "test_util.hpp"
 
 #include <algorithm>
@@ -100,8 +99,6 @@ Trace runCase(bool cheat, const kworld::LoadOrder& order)
 			test::require(sim.debugCheat(0, 1).empty(), "the cheat knock out was refused");
 		sim.tick();
 		const state::Fighter* f = sim.combat()->find(player);
-		for (std::uint64_t id = boss; id < boss + 8; ++id)
-			keepCaravanUnhurt(sim, id);
 		if (f->unconscious)
 			mark("down", i);
 		if (f->unconscious && f->armour.size() < armour0)

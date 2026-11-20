@@ -34,6 +34,22 @@ static const cfg::Float kWarmSlackMs{ cfg::Group{ "Character loading" }, "sim.ch
 static const cfg::Float kAddBudgetMs{ cfg::Group{ "Character loading" }, "sim.char_add_budget_ms", 4.0, 0.5, 1000.0, "New characters (race, meshes, textures load on the main thread) are built per frame until this many ms are spent; the rest wait for the next frame (kenshi-k16.2.205.10)" };
 static const cfg::Bool kBodyNudge{ cfg::Group{ "Locomotion" }, "anim.body_nudge", true, "Display depenetration (kenshi-k16.2.345): a drawn standing body is nudged (cap 0.45 u, eased) out of the client collision and other bodies; never fed to the sim, picks or orders. Off = the drawn body stands at the sim's x, z" };
 static int64_t nudgeKey(int cx, int cz) { return ((int64_t)cx << 32) ^ (int64_t)(uint32_t)cz; }
+// kenshi-k16.2.382 / .382.1: the standing ray's result `res` (CollisionPick::groundY: 1 hit, 2 drawn face, 0 a shape covers x,z but none in the window, -1 a
+// building's collision not loaded, 3 open ground: nothing covers x,z) joined with the heightmap `th` under the same x, z. Open ground: the terrain is the
+// surface whatever the window (the coarse navmesh y is up to ~6 u off the curved terrain), bounded by kOpenMax from the wire y; beyond it the wire y stays
+// (res 0). Elsewhere the terrain competes inside [wy - down, wy + up] and wins when nearer the wire y (a floor under a dune, a dune over a floor); not
+// loaded (-1) keeps the wire y. Returns the new result, ry set when >= 1. One rule for both call sites.
+static int standTerrain(int res, double& ry, double th, double wy, double up, double down)
+{
+	constexpr double kOpenMax = 12.0;
+	if (res == 3)
+	{
+		if (std::fabs(th - wy) <= kOpenMax) { ry = th; return 1; }
+		return 0;
+	}
+	if (res != -1 && th <= wy + up && th >= wy - down && (res < 1 || std::fabs(th - wy) < std::fabs(ry - wy))) { ry = th; return 1; }
+	return res;
+}
 static const cfg::Float kSlopTau{ cfg::Group{ "Locomotion" }, "anim.slop_tau", 0.25, 0.0, 2.0, "Display slop: the drawn position eases to the sim with this time constant (s), speed-capped; a small offset rides. 0 = the capped catch-up chase" };
 // The run file's three case lines (kenshi-k16.2.264.1). The user's 2026-11-15 walk into Outpost s-IV: "running in place ... movement spurts every
 // second or two", the body gone indoors while its tag drew, and nothing in the run file. kN: how long the wire's own position must stand still while
@@ -152,6 +168,22 @@ bool SimView::pump()
 		if (!send(out, "ping")) { return false; }
 	}
 	return true;
+}
+
+int SimView::standRayAt(double x, double z, double wireY, double terrain, double& y, const char** kind) const
+{
+	const char* k = "";
+	if (kind) { *kind = k; }
+	if (!groundRay_) { return -1; }
+	const void* gen = nullptr;
+	double ry = 0;
+	const int raw = groundRay_(x, z, wireY, kRayUp, kRayDown, ry, &gen);
+	const double before = ry;
+	const int res = standTerrain(raw, ry, terrain, wireY, kRayUp, kRayDown);	// the one rule update() applies
+	if (res >= 1) { k = raw == 3 ? "open ground (terrain)" : raw < 1 || ry != before ? "terrain" : raw == 2 ? "drawn" : "collision"; y = ry; }
+	else { k = raw == 3 ? "open ground, terrain beyond the reach" : raw == -1 ? "collision not loaded" : "no collision in the window"; }
+	if (kind) { *kind = k; }
+	return res;
 }
 
 void SimView::update(double dt, Characters& chars, const std::function<double(double, double)>& ground)
@@ -729,12 +761,12 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		// sim's ground ray is the one authority, retired/simview_ground_blend.cpp). Only without a navmesh y (yValid clear) the heightmap stands in.
 		const double terrain = ground(p[0], p[2]);
 		const double simY = p[1];
+		int ylogRes = -9;	// the stand ray's result this frame (KYLOG only; -9: no ray)
 		if (!(ib->flags & kYValid)) { p[1] = terrain; }
 		else if (groundRay_ && !((b.flags & (kSeated | kAsleep)) && b.poseClip))
 		{
 			// kenshi-k16.2.344: the wire y is the sim's point; the body stands on the nearest collision surface under its x, z (CollisionPick buildings) or the
 			// heightmap there, within [wire - kRayDown, wire + kRayUp]. No hit / not loaded: the wire y, counted.
-			constexpr double kRayUp = 1.5, kRayDown = 4.5;	// the navmesh floats 0.45-0.71 u over the plank floor and up to ~4 u off on slopes (k16.7.36, k16.6.271)
 			const double wy = p[1] - (id == local_.id ? predictYOff_ : 0.0);	// the driven character's prediction carries the wire offset: ray from the navmesh point
 			const double rx = p[0], rz = p[2];
 			const bool same = std::fabs(rx - sl.rayX) < 0.02 && std::fabs(rz - sl.rayZ) < 0.02 && std::fabs(wy - sl.rayWireY) < 0.02;
@@ -750,12 +782,8 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 				rayStats_.casts++; rayStats_.ms += ms; rayStats_.frameCasts++; rayStats_.frameMs += ms;
 				sl.rayX = rx; sl.rayZ = rz; sl.rayWireY = wy; sl.rayRes = res; sl.rayY = ry; sl.rayGen = gen;
 			}
-			// the terrain competes by the same rule: nearest the wire y (a floor under a dune, a dune over a floor)
-			if (res != -1)
-			{
-				const double th = terrain;
-				if (th <= wy + kRayUp && th >= wy - kRayDown && (res < 1 || std::fabs(th - wy) < std::fabs(ry - wy))) { ry = th; res = 1; }
-			}
+			res = standTerrain(res, ry, terrain, wy, kRayUp, kRayDown);
+			ylogRes = res;
 			if (res >= 1) { rayStats_.hits++; if (res == 2) { rayStats_.faces++; } rayStats_.sumShift += std::fabs(ry - p[1]); rayStats_.maxShift = std::max(rayStats_.maxShift, std::fabs(ry - p[1])); p[1] = ry; }
 			else
 			{
@@ -769,8 +797,8 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 			}
 		}
 #ifdef KCLIENT_DEV_TOOLS
-		static const bool ylog = std::getenv("KYLOG") != nullptr;	// KYLOG=1: per character per frame: id tick x z sim terrain drawn (kenshi-kyat.2)
-		if (ylog) { fprintf(stderr, "YLOG %llu %.0f %.2f %.2f %.2f %.2f %.2f\n", (unsigned long long)id, tick_, p[0], p[2], simY, terrain, p[1]); }
+		static const bool ylog = std::getenv("KYLOG") != nullptr;	// KYLOG=1: per character per frame: id tick x z sim terrain drawn ray-result (kenshi-kyat.2, k16.2.382.1)
+		if (ylog) { fprintf(stderr, "YLOG %llu %.0f %.2f %.2f %.2f %.2f %.2f %d %.2f\n", (unsigned long long)id, tick_, p[0], p[2], simY, terrain, p[1], ylogRes, ylogAlt ? ylogAlt(p[0], p[2]) : 0.0); }
 #endif
 		if (posed)
 		{
@@ -958,8 +986,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 					const double wy = simY - (id == local_.id ? predictYOff_ : 0.0);
 					double ry = 0; const void* gen = nullptr;
 					int res = groundRay_(p[0], p[2], wy, 1.5, 4.5, ry, &gen);
-					const double th = ground(p[0], p[2]);
-					if (res != -1 && th <= wy + 1.5 && th >= wy - 4.5 && (res < 1 || std::fabs(th - wy) < std::fabs(ry - wy))) { ry = th; res = 1; }
+					res = standTerrain(res, ry, ground(p[0], p[2]), wy, 1.5, 4.5);
 					if (res >= 1) { p[1] = ry; }
 				}
 			}
@@ -1341,6 +1368,12 @@ void SimView::answers()
 			printf("lock roll: %llu on %llu: %s\n", (unsigned long long)e.a, (unsigned long long)e.b, e.result ? "success" : "failed");
 			continue;
 		}
+		if (e.kind == 51 || e.kind == 52)	// caught_stealing / alarm_raised: the original's HUD message-bar lines (the host posts them)
+		{
+			crimeLog_.push_back(e.kind);
+			printf("%s: %llu / %llu\n", e.kind == 51 ? "caught stealing" : "alarm raised", (unsigned long long)e.a, (unsigned long long)e.b);
+			continue;
+		}
 		if (e.kind == 19)	// discovered: the original's "Discovered {1}" log line (the host's)
 		{
 			discovered_.push_back(e.str);
@@ -1682,6 +1715,14 @@ bool SimView::simPos(uint64_t id, double pos[3]) const
 	const auto it = slots_.find(id);
 	if (it == slots_.end() || it->second.index < 0) { return false; }
 	for (int k = 0; k < 3; k++) { pos[k] = it->second.sim[k]; }
+	return true;
+}
+
+bool SimView::wireY(uint64_t id, double& y) const
+{
+	const auto it = slots_.find(id);
+	if (it == slots_.end() || it->second.index < 0 || it->second.rayRes == -2) { return false; }
+	y = it->second.rayWireY;
 	return true;
 }
 

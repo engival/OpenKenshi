@@ -22,6 +22,11 @@ namespace dev
 
 void probeOp(const Context& cx, const std::vector<std::string>& a)
 {
+	if (!a.empty() && a[0] == "height")	// probe height X Z (dev/heightprobe.cpp, kenshi-k16.2.384.1)
+	{
+		if (!heightProbeOp(cx, a)) { fprintf(stderr, "kclient: script: probe height X Z | id=N\n"); }
+		return;
+	}
 #if defined(SOKOL_GLCORE)
 	if (a.size() < 3 || a[0] != "depth" || ((a.size() - 1) % 2) != 0) { fprintf(stderr, "kclient: script: probe depth X Y [X Y ...]\n"); return; }
 	const double ground = cx.hm->height(cx.pos[0], cx.pos[2]);

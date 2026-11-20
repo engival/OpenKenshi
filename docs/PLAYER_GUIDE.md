@@ -867,6 +867,21 @@ raw rows.
 the wall band, the height band round the selected character's feet (below dimmed, above faint), the hovered polygon
 white, and — from the F8 panel's "Navmesh: pruned polygons" — the polygons the bake pruned in dim red.
 
+### 6.5a The vertical height probe
+
+`Ctrl+F10` turns probe mode on (it needs `--debug` and a dev build): a left click on the world then sets the probe at that
+x, z instead of acting. The probe lists, top to bottom in the developer text, every surface the vertical line through the
+point crosses, each with its y and source: the drawn building / layout triangles (cyan), the building collision triangles
+(orange; door leaves and thin props dimmer, `coll-skip`, the ones the standing ray ignores), the navmesh polygons on every
+storey (green, with the detour tile layer), the terrain (red `terr-tri`: `Heightmap::terrainHeight`, the drawn lattice triangle the standing
+ray stands on; yellow `terr-bilin`: the bilinear `Heightmap::height`, listed beside it because the two differ by up to ~0.5 u on rough ground).
+Where a character stands within 1 u of the point it
+adds the wire y, the standing ray's window (`wire - 4.5` .. `wire + 1.5`, the constants `SimView::kRayDown` / `kRayUp`; rows
+inside it are marked `W`) and the ray's pick (`STAND`: its y and what decided it: collision, drawn face, terrain or open ground, or `MISS` with the reason), by the same rule the body is placed with (`SimView::standRayAt` calls the `standTerrain` helper `update()` uses).
+In the scene it draws a vertical line with a tick per crossing in the same colours. An F12 shot's `.txt` carries the same
+listing as `probe:` lines while a probe is set. From a script, `probe height X Z` (or `id=N`: at that character) sets the probe and prints the listing
+to stdout (`probe: ...` lines; `--debug` only).
+
 ### 6.6 Camera and world toggles
 
 - `Ctrl+F2` cycles the terrain view: the detail splat, the biome map, plain, and the colour map only (the last level
@@ -1003,6 +1018,7 @@ marked *inert* is bound today but the client does not act on it yet: **not built
 | Debug | `Ctrl+F4` | Squad overlay |
 | Debug | `Ctrl+F5` | Navmesh overlay |
 | Debug | `Ctrl+F6` | Trails (the last 30 s) |
+| Debug | `Ctrl+F10` | The vertical height probe mode (6.5a) |
 | Debug | `Shift+F6` | The trails panel (6.3) |
 | Debug | `Shift+F7` | The light debugger window (6.6) |
 | Debug | `Ctrl+PageUp` / `Ctrl+PageDown` | Foliage range up / down |

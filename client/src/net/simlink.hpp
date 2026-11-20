@@ -15,7 +15,7 @@
 namespace simlink
 {
 	constexpr uint32_t kMagic = 0x4D49534B;	// 'KSIM'
-	constexpr uint16_t kProtocol = 5;
+	constexpr uint16_t kProtocol = 6;
 	enum FrameType : uint16_t { kHello = 1, kStrtab = 2, kError = 3, kPing = 4, kSnapBegin = 10, kSnapEnd = 11, kAppearance = 20, kDynamic = 21, kMedical = 22, kRoute = 23, kInteractable = 24, kInventory = 25, kDetect = 26, kItemQuality = 27, kItemGrid = 28, kItemStats = 29, kSquads = 30, kPlayerSquads = 31, kSaves = 32, kStarts = 33, kJobs = 34, kProspect = 35, kUnlocks = 36, kDiscovered = 37, kFactionRelations = 38, kTaskProgress = 39, kBuilding = 47, kBuildingGrid = 48, kCharStats = 49,
 		kClock = 40, kWeather = 41, kBounds = 42, kNavParams = 43, kNavTile = 44, kNavPolyFlags = 45, kEvent = 50, kTrade = 53, kScenarioList = 54, kScenarioStarted = 55, kScenarioMetrics = 56, kItemLock = 57, kBeams = 58, kSeenBy = 59, kDetectedBy = 60, kMenuEntries = 61, kNewGameResult = 62, kResearchState = 63, kCages = 64, kProfile = 70, kOrder = 100, kScenarioListReq = 102, kScenarioLoad = 103, kScenarioEnd = 104, kNewGame = 111 };
 	enum Flag : uint32_t { kCombat = 1, kStealth = 2, kDrawn = 4, kKO = 8, kDead = 16, kProne = 32, kPlayer = 64, kCarryL = 128, kCarryR = 256, kYValid = 512,

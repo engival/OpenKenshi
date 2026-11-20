@@ -143,6 +143,8 @@ static int selftest()
 		w.put((uint8_t)2); w.put((uint32_t)2); w.put((uint64_t)0x1234); }	// shot: missed, weapon strid 2, from a turret
 	{ W w(s, kEvent); w.put((uint64_t)101); w.put((uint16_t)50); w.put((uint64_t)7); w.put((uint64_t)8); w.put((uint8_t)1); w.put(42.5f); }	// stealth_ko: a failed roll at 42.5%
 	{ W w(s, kEvent); w.put((uint64_t)101); w.put((uint16_t)11); w.put((uint64_t)8); }	// character 8 leaves the view: its SEEN_BY entry goes (event 11)
+	{ W w(s, kEvent); w.put((uint64_t)102); w.put((uint16_t)51); w.put((uint64_t)7); w.put((uint64_t)9); w.put((uint8_t)1); w.put((uint64_t)0x55); }	// caught_stealing: 9 saw 7 take from container 0x55
+	{ W w(s, kEvent); w.put((uint64_t)102); w.put((uint16_t)52); w.put((uint64_t)9); w.put((uint64_t)7); w.put((uint8_t)3); w.put((uint32_t)2); w.put(1.0f); w.put(2.0f); w.put(3.0f); }	// alarm_raised
 	// navmesh tile stream: params, tiles (a repeat and another bake's tile ignored), a door patch (a stale one dropped), a removal
 	auto navTile = [&](uint32_t mesh, int32_t tx, uint32_t version, uint32_t size)
 	{
@@ -191,9 +193,9 @@ static int selftest()
 		check(std::fabs(c.cur.pos[2] - 3481.0f) < 1e-3f && c.cur.flags == (kPlayer | kYValid) && d.str(c.cur.action) == "walk lower", "dynamic fields");
 	}
 	check(d.lastCompleteTick == 101 && d.clock.valid && d.clock.day == 3, "snapshot / clock");
-	check(d.events.size() == 9 && d.events[0].kind == 9 && d.events[1].kind == 1 && d.events[1].b == 8 && d.events[1].dir == 64, "events");
-	check(d.events.size() == 9 && d.events[4].kind == 14 && d.events[4].a == 7 && d.events[4].b == 32 && d.str(d.events[4].str) == "Katana", "theft event");
-	check(d.events.size() == 9 && d.events[3].kind == 13 && d.events[3].a == 7 && d.events[3].b == 30 && d.events[3].dir == 1 && d.events[3].result == 0, "interact done event");
+	check(d.events.size() == 11 && d.events[0].kind == 9 && d.events[1].kind == 1 && d.events[1].b == 8 && d.events[1].dir == 64, "events");
+	check(d.events.size() == 11 && d.events[4].kind == 14 && d.events[4].a == 7 && d.events[4].b == 32 && d.str(d.events[4].str) == "Katana", "theft event");
+	check(d.events.size() == 11 && d.events[3].kind == 13 && d.events[3].a == 7 && d.events[3].b == 30 && d.events[3].dir == 1 && d.events[3].result == 0, "interact done event");
 	const auto door = d.things.find(30);
 	check(d.things.size() == 1 && door != d.things.end() && door->second.kind == 1 && door->second.state == 1 && door->second.use[2] == 5.0f && door->second.count == 3
 		&& door->second.version == 4, "interactables");
@@ -205,15 +207,17 @@ static int selftest()
 	const auto med = d.medical.find(7);
 	check(med != d.medical.end() && med->second.tick == 101 && med->second.blood == 3.5f && med->second.parts.size() == 2 && med->second.parts[1].health == -5.0f
 		&& d.str(med->second.parts[0].part) == "Katana", "medical");
-	check(d.events.size() == 9 && d.events[5].kind == 15 && d.events[5].a == 8 && d.events[5].b == 7, "noticed event");
-	check(d.events.size() == 9 && d.events[6].kind == 49 && d.events[6].a == 8 && d.events[6].b == 7 && d.events[6].pos[2] == 2.0f && d.events[6].to[0] == 3.0f
+	check(d.events.size() == 11 && d.events[5].kind == 15 && d.events[5].a == 8 && d.events[5].b == 7, "noticed event");
+	check(d.events.size() == 11 && d.events[6].kind == 49 && d.events[6].a == 8 && d.events[6].b == 7 && d.events[6].pos[2] == 2.0f && d.events[6].to[0] == 3.0f
 		&& d.events[6].to[2] == 5.0f && d.events[6].result == 2 && d.events[6].str == 2 && d.events[6].c == 0x1234, "shot event");
-	check(d.events.size() == 9 && d.events[7].kind == 50 && d.events[7].a == 7 && d.events[7].b == 8 && d.events[7].result == 1
+	check(d.events.size() == 11 && d.events[7].kind == 50 && d.events[7].a == 7 && d.events[7].b == 8 && d.events[7].result == 1
 		&& std::fabs(d.events[7].amount - 42.5f) < 1e-6f, "stealth_ko event");
+	check(d.events.size() == 11 && d.events[9].kind == 51 && d.events[9].a == 7 && d.events[9].b == 9 && d.events[9].result == 1 && d.events[9].c == 0x55, "caught_stealing event");
+	check(d.events.size() == 11 && d.events[10].kind == 52 && d.events[10].a == 9 && d.events[10].b == 7 && d.events[10].result == 3 && d.events[10].str == 2 && d.events[10].pos[2] == 3.0f, "alarm_raised event");
 	// SEEN_BY: 7's set changed to {9}; 9's set emptied (n = 0); 8's entry went with event 11 (character 8 leaves the view)
 	const auto sb7 = d.seenBy.find(7), sb9 = d.seenBy.find(9);
 	check(d.seenBy.size() == 1 && sb7 != d.seenBy.end() && sb7->second.tick == 102 && sb7->second.by.size() == 1 && sb7->second.by[0] == 9, "seen_by set and change");
-	check(sb9 == d.seenBy.end() && d.seenBy.count(8) == 0 && d.events.size() == 9 && d.events[8].kind == 11 && d.events[8].a == 8, "seen_by n = 0 and event 11");
+	check(sb9 == d.seenBy.end() && d.seenBy.count(8) == 0 && d.events.size() == 11 && d.events[8].kind == 11 && d.events[8].a == 8, "seen_by n = 0 and event 11");
 	const auto det = d.detect.find(7);
 	check(d.detect.size() == 1 && det != d.detect.end() && det->second.meter == 0.5f && det->second.state == Detect::kNoticing && det->second.by == 8, "detect");
 	const auto stats7 = d.charStats.find(7), stats9 = d.charStats.find(9);

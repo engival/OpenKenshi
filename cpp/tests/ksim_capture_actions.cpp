@@ -15,7 +15,6 @@
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
-#include "caravan_unhurt.hpp"
 #include "test_util.hpp"
 
 #include <algorithm>
@@ -66,8 +65,6 @@ int play(const std::uint64_t seed)
 	const std::uint64_t kPlayer = firstId + 2;
 	const std::uint64_t kBoss = firstId + 3;
 	scenario::apply(sim, *context.gameData, *data, context, file, seed);
-	// This fixture pins the capture's actions (cuff, lift), not the aid: a kitted guard heals the downed player before the lift (k16.6.287).
-	stripMedkits(sim, kBoss, kBoss + 8);
 	ServerAiOptions ai;
 	ai.registryPath = KSIM_AI_TABLE;
 	enableServerAi(sim, ai);
@@ -95,8 +92,6 @@ int play(const std::uint64_t seed)
 	for (int i = 0; i < 9000; ++i)
 	{
 		sim.tick();
-		for (std::uint64_t id = kBoss; id < kBoss + 8; ++id)
-			keepCaravanUnhurt(sim, id);
 		if (capturer == 0 && when("capture 181 strip member") >= 0)
 		{
 			for (const auto& [tick, line] : lines)

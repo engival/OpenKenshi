@@ -1,6 +1,7 @@
 // Task 379.5: ksim_server's command line and server as a library (ksim/server_main.hpp), without the process around them: --help and
 // a usage error give their exit codes through parseServerArgs, and runServer dumps a --no-world snapshot into the log sink.
 
+#include "ksim/net/simlink.hpp"
 #include "ksim/server_main.hpp"
 
 #include <atomic>
@@ -47,6 +48,13 @@ int main()
 			version.log = &versionLog;
 			require(parse({"ksim_server", "--version"}, version) == 0, "--version is not exit code 0");
 			require(versionLog.str().rfind("OpenKenshi server ", 0) == 0 && versionLog.str().size() > 19 && versionLog.str().back() == '\n', "--version text");
+		}
+		{
+			std::ostringstream wireLog;
+			ServerConfig wire;
+			wire.log = &wireLog;
+			require(parse({"ksim_server", "--wire-version"}, wire) == 0, "--wire-version is not exit code 0");
+			require(wireLog.str() == std::to_string(simlink::kProtocol) + "\n", "--wire-version prints kProtocol and a newline");
 		}
 
 		ServerConfig bad;

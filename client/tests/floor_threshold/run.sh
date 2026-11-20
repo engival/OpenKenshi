@@ -234,6 +234,10 @@ run_stairs_down()
 # deck_edge (kenshi-k16.2.236.8.4.1, .8.3): the lead rests on the deck at the stair top, then walks the length of the flight's edge right beside it (its
 # sim path dips into the zone rect's east side at deck height). Nothing changes: the view stays 1 and the lead stays drawn. (On the base the same walk
 # flipped to 0 at 1.6 u ABOVE the top tread and left the lead hidden: the user's 2026-11-15 22:23 state.)
+# The goal (kenshi-k16.2.375.1): the first goal, -50545 -1290, lies beyond the flight's far side (the flight's footprint is z -1288 .. -1271), so the sim
+# snapped it onto the flight itself, 0.1 u from the descent line (1 rise below the top tread: local y 62.6; the lead settled at 62.1 .. 62.7). Whether the
+# interpolated feet dipped under the line on the way decided the flip 1 -> 0 (flight) and the model's half-rise hold kept it: 5 of 5 failures on 2026-11-19.
+# The goal now is a deck point east of the flight's top end (local x 44.3, the footprint ends at 38.3), still reached along the flight's edge, never on it.
 run_deck_edge()
 {
 	local d=$out/deck_edge id
@@ -242,7 +246,7 @@ run_deck_edge()
 		open; climb
 		echo "1000 move -50550 1140 -1266"	# rest on the deck at the stair top (the user's pre-click spot)
 		dumps 1060 1440 60 "$id"
-		echo "1500 move -50545 -1290"	# the deck edge right beside the zone
+		echo "1500 move -50538 -1280"	# the deck edge right beside the zone
 		dumps 1560 2100 60 "$id"
 		echo "2240 quit"
 	} > "$d/script.txt"

@@ -14,7 +14,6 @@
 #include "ksim/net/simlink.hpp"
 #include "ksim/net/simlink_scenario.hpp"
 #include "knav/native.hpp"
-#include "caravan_unhurt.hpp"
 #include "ksim/core/simulation.hpp"
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"
@@ -84,11 +83,12 @@ void play(const std::uint64_t seed)
 	int bossAt = -1;
 	int hunters = 0;
 	bool down = false;
-	for (int i = 0; i < 1500; ++i)
+	bool woke = false; // the aid woke the downed player before the capture (package order: Medic 58 at 100 over CAPTURE_NEW_SLAVES 167 at 24, k16.6.287)
+	// The guards carry their kits, so they first-aid the downed player before the capture: the run goes on past 1500 ticks until the cuff (or a wake).
+	for (int i = 0; i < 1500 || (i < 6000 && !woke && sim.combat()->find(kPlayer)->slaveState == 0); ++i)
 	{
 		sim.tick();
-		for (std::uint64_t id = kBoss; id < kBoss + 8; ++id)
-			keepCaravanUnhurt(sim, id);
+		woke = woke || (down && !sim.combat()->find(kPlayer)->unconscious && sim.combat()->find(kPlayer)->slaveState == 0);
 		down = down || sim.combat()->find(kPlayer)->unconscious;
 		if (i < 100 || down)
 			continue;
@@ -111,7 +111,14 @@ void play(const std::uint64_t seed)
 	{
 		return std::count_if(lines.begin(), lines.end(), [&](const std::string& line) { return line.find(needle) != std::string::npos; });
 	};
-	test::require(count("fight goal 15 member") >= 1 && count("goal CAPTURE_NEW_SLAVES member") >= 1, "a fight goal, then the capture goal, on the downed player");
+	test::require(count("fight goal 15 member") >= 1, "a fight goal on the downed player" + tag);
+	if (woke)
+	{
+		// The first aid (58) came before 167 and woke the player: no capture to follow in this run (the original's order, not a gap).
+		test::require(count("goal Medic member") >= 1, "the player woke under the guards' first aid" + tag);
+		return;
+	}
+	test::require(count("goal CAPTURE_NEW_SLAVES member") >= 1, "the capture goal on the downed player" + tag);
 	test::require(count("168 cuff + lift") == 1, "the capture chain runs to the cuff once (seed " + std::to_string(seed) + ")");
 	// kenshi-k16.6.111: the cuff wipes the player's jobs and adds the one row 187 Obedient Slave (a player cannot add it); its goal is the slave task it runs.
 	const state::Fighter& slave = *sim.combat()->find(kPlayer);

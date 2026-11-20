@@ -654,6 +654,9 @@ target_link_libraries(ksim_server_lib PRIVATE ksim)
 add_test(NAME ksim_server_lib COMMAND ksim_server_lib
 	WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 kdata_warnings(ksim_server_lib)
+# The real binary prints its kProtocol for the deploy script (kenshi-k16.2.306.4.1): one number, exit 0.
+add_test(NAME ksim_server_wire_version COMMAND ksim_server --wire-version)
+set_tests_properties(ksim_server_wire_version PROPERTIES PASS_REGULAR_EXPRESSION "^[0-9]+\n$")
 
 # Scenario files (docs/reference/SCENARIO_IMPORT.md): the fight of a KSCEN file, N seeds, per-run summary JSON + a distribution table.
 add_executable(ksim_save_import tools/ksim_save_import.cpp)
@@ -1674,6 +1677,7 @@ add_library(knav
 	src/knav/compare.cpp
 	src/knav/native_tiles.cpp
 	src/knav/seeds.cpp
+	src/knav/route.cpp
 )
 target_include_directories(knav PUBLIC include)
 target_link_libraries(knav PUBLIC kworld PRIVATE
@@ -3616,6 +3620,13 @@ target_compile_definitions(ksim_route_wall_start PRIVATE KENSHI_DATA="${KENSHI_D
 kdata_warnings(ksim_route_wall_start)
 add_test(NAME ksim_route_wall_start COMMAND ksim_route_wall_start ${KSIM_NAVWORLD})
 set_tests_properties(ksim_route_wall_start PROPERTIES SKIP_RETURN_CODE 77)
+
+add_executable(knav_route_shared tests/knav_route_shared.cpp)
+target_link_libraries(knav_route_shared PRIVATE ksim)
+target_compile_definitions(knav_route_shared PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(knav_route_shared)
+add_test(NAME knav_route_shared COMMAND knav_route_shared ${KSIM_NAVWORLD})
+set_tests_properties(knav_route_shared PROPERTIES SKIP_RETURN_CODE 77)
 
 add_executable(knav_counter_arm tests/knav_counter_arm.cpp)
 target_link_libraries(knav_counter_arm PRIVATE knav)

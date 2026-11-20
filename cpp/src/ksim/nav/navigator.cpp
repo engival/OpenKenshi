@@ -1591,151 +1591,40 @@ Route MeshNavigator::routeFrom(const knav::Position& from, double toX, double to
 #endif
 }
 
-// A walker is stranded when its connected set holds under 1/kStrandedRatio of the goal set's polygons (PATHFINDING_STATIC 1.11).
-static constexpr std::uint32_t kStrandedRatio = 4;
-
-std::uint32_t MeshNavigator::setOf(const knav::PolyLoc& loc) const
-{
-	if (!sets_ || setsRevision_ != mesh_.revision())
-	{
-		// Doors count as ground: a locked gate is the door check's business, not a reason to seat a walker elsewhere.
-		sets_.emplace(mesh_, static_cast<std::uint16_t>(0xffff));
-		setsRevision_ = mesh_.revision();
-		setSizes_.assign(sets_->count(), 0);
-		sets_->forEach([&](int, int, int, std::uint32_t label)
-		{
-			if (label != knav::PolyComponents::kNone)
-				++setSizes_[label];
-		});
-	}
-	return sets_->at(loc.tileX, loc.tileZ, loc.poly);
-}
-
-std::uint32_t MeshNavigator::setSize(std::uint32_t label) const
-{
-	return label < setSizes_.size() ? setSizes_[label] : 0;
-}
-
 Route MeshNavigator::routeFromUntimed(const knav::Position& from, double toX, double toZ, std::optional<double> toY, bool planned,
 	Body body, bool straighten, bool clickGoal) const
 {
-	// Class kDoorClasses is no class: no denied-door bit is excluded, so locked doors stay in the search.
-	knav::TravelFilter travel;
-	travel.radius = static_cast<float>(body.radius);
-	if (body.water)
-		travel.setWaterCost(*body.water);
-	travel.straighten = straighten;
-	if (planned)
-		travel.doorClass = knav::kDoorClasses;
+	// The planner is knav::planRoute (knav/route.hpp), shared with the client's path preview; this maps its plan onto a Route and the counters.
+	knav::RouteRequest request;
+	request.from = from;
+	request.toX = toX;
+	request.toZ = toZ;
+	request.toY = toY;
+	request.planned = planned;
+	request.radius = body.radius;
+	request.water = body.water;
+	request.straighten = straighten;
+	request.clickGoal = clickGoal;
+	const knav::RoutePlan plan = knav::planRoute(mesh_, query_, routeSets_, request);
+	stats_.routeClearanceNodes += plan.clearanceNodes;
 	Route route;
-	const float reach = static_cast<float>(kClickReach);
-	const knav::Point start{static_cast<float>(from.x), static_cast<float>(from.y), static_cast<float>(from.z)};
-	const knav::Point end{static_cast<float>(toX), static_cast<float>(toY.value_or(from.y)), static_cast<float>(toZ)};
-	// The end is looked up in a box of kClickReach: with a click height the nearest point must also be
-	// within kClickReach in 3D; without one any height counts (a point on the terrain under a deck, or on it),
-	// so the ground nearest in xz is meant, not the lowest ground in a box spanning every height.
-	const knav::Point extents{reach, toY ? reach : 1.0e5f, reach};
-	knav::Point snapped;
-	// The start's own connected set (none when it is off the mesh): a goal with no height prefers ground in it.
-	knav::PolyLoc startLoc;
-	const bool startOn = query_.locate(start, {kEndReach, 40.0f, kEndReach}, startLoc);
-	const std::uint32_t startSet = startOn ? setOf(startLoc) : knav::PolyComponents::kNone;
-	bool snappedOk = toY ? query_.nearestPoint(end, extents, snapped) : query_.nearestPointXZ(end, reach, snapped);
-	if (snappedOk && !toY && startSet != knav::PolyComponents::kNone)
+	route.check = plan.check;
+	if (!plan.found)
 	{
-		// Ground in the start's set no farther than 1 u (xz) than the nearest ground wins: a deck and the ground under it are both
-		// at distance 0 and the walker's own level is meant, not the lowest floor.
-		knav::Point own;
-		const auto sameSet = [&](const knav::PolyLoc& loc) { return setOf(loc) == startSet; };
-		if (query_.nearestPointXZ(end, reach, own, sameSet)
-			&& std::hypot(own[0] - end[0], own[2] - end[2]) <= std::hypot(snapped[0] - end[0], snapped[2] - end[2]) + 1.0)
-			snapped = own;
-	}
-	if (!snappedOk
-		|| (toY && std::sqrt((snapped[0] - end[0]) * (snapped[0] - end[0]) + (snapped[1] - end[1]) * (snapped[1] - end[1])
-			+ (snapped[2] - end[2]) * (snapped[2] - end[2])) > reach))
-	{
-		route.failure = state::AiReason::OffMesh;
-		route.check = snappedOk ? "goal: nearest poly is farther than the click reach in 3D (wrong layer / height)"
-			: "goal: no walkable poly within the click reach";
-		return route;
-	}
-	// A click without a height (`clickGoal`): the goal is the ground nearest in xz (`snapped`), at ITS height. findPath snaps its end in 3D from the walker's own
-	// height, which where floors stack picked the floor level with the walker, ground beside the click: the Hub's ramp top at (-50802, 2756) is
-	// 31 u over the ground 5.6 u away, and the goal push then took the approach 12 u from the click (kenshi-k16.8.10). When the snapped floor
-	// cannot be reached the walker's own level is tried, as before.
-	knav::PathResult path;
-	bool tried = false;
-	if (clickGoal && !toY)
-	{
-		// Only where the walker's level is over 1 u farther from the click in xz than the ground nearest it: floors stacked over the click
-		// (a room behind a shut door, a deck) stay with the walker's level, as before.
-		knav::Point level;
-		const auto xz = [&](const knav::Point& p) { return std::hypot(p[0] - end[0], p[2] - end[2]); };
-		if (!query_.nearestPoint(end, extents, level) || xz(level) > xz(snapped) + 1.0)
-		{
-			knav::Point goal = end;
-			goal[1] = snapped[1];
-			path = query_.findPath(start, goal, extents, travel);
-			tried = true;
-		}
-	}
-	if (!tried || !path.found || !path.complete || path.points.empty())
-		path = query_.findPath(start, end, extents, travel);
-	stats_.routeClearanceNodes += static_cast<std::uint64_t>(path.clearanceNodes);
-	// PATHFINDING_STATIC 1.11: a walker off the mesh, or in a set with no way to the goal, is seated on the nearest ground of the goal's
-	// set, searched in 1000 u then 10000 u (the pocket / island / flipped edge polygon a character can land on has no way back otherwise).
-	bool reseated = false;
-	if ((!path.found || !path.complete || path.points.empty()) && path.failure != knav::PathResult::Failure::EndOffMesh)
-	{
-		knav::PolyLoc goalLoc;
-		const std::uint32_t goalSet = query_.locate(snapped, {2.0f, 40.0f, 2.0f}, goalLoc) ? setOf(goalLoc) : knav::PolyComponents::kNone;
-		// Only a walker that is stranded: off the mesh, or in a set under a quarter of the goal's (a pocket, an island, a deck). A goal on
-		// an island, a roof, is no reason to move a walker standing on the mainland, and a walker in a big set walled off from the goal's
-		// (a chase to an actor behind a wall) is not stranded: it gets NoRoute, so the give-up / retry / leave ladder runs.
-		if (goalSet != knav::PolyComponents::kNone
-			&& (!startOn || (startSet != goalSet && setSize(startSet) * kStrandedRatio < setSize(goalSet))))
-		{
-			const auto inGoalSet = [&](const knav::PolyLoc& loc) { return setOf(loc) == goalSet; };
-			for (const float widen : {1000.0f, 10000.0f})
-			{
-				knav::Point seat;
-				if (!query_.nearestPointXZ(start, widen, seat, inGoalSet))
-					continue;
-				const knav::PathResult again = query_.findPath(seat, end, extents, travel);
-				stats_.routeClearanceNodes += static_cast<std::uint64_t>(again.clearanceNodes);
-				if (again.found && again.complete && !again.points.empty())
-				{
-					path = again;
-					reseated = true;
-				}
-				break;
-			}
-		}
-	}
-	if (!path.found || !path.complete || path.points.empty())
-	{
-		++stats_.routeFailures[static_cast<std::size_t>(path.failure)];
-		route.failure = path.failure == knav::PathResult::Failure::StartOffMesh
-			|| path.failure == knav::PathResult::Failure::EndOffMesh ? state::AiReason::OffMesh
-			: state::AiReason::NoRoute;
-		route.check = pathCheck(path.failure);
-		route.plainFailed = path.plainFailed;
-		return route;
-	}
-	const knav::Point& last = path.points.back();
-	route.approach = std::hypot(last[0] - toX, last[2] - toZ) > kClickExact;
-	// Nowhere to go: the snapped point is the spot the walker stands on.
-	if (route.approach && path.points.size() < 2)
-	{
-		route.approach = false;
-		route.failure = state::AiReason::NoRoute;
-		route.check = "goal: only a partial path, ending on the start's own spot (the goal's poly is not connected)";
+		if (plan.failure == knav::RoutePlan::Failure::OffMesh)
+			route.failure = state::AiReason::OffMesh;
+		else if (plan.failure == knav::RoutePlan::Failure::NoRoute)
+			route.failure = state::AiReason::NoRoute;
+		if (plan.pathFailure != knav::PathResult::Failure::None)
+			++stats_.routeFailures[static_cast<std::size_t>(plan.pathFailure)];
+		route.plainFailed = plan.plainFailed;
+		route.approach = plan.approach;
 		return route;
 	}
 	route.found = true;
-	route.reseated = reseated;
-	for (const knav::Point& p : path.points)
+	route.approach = plan.approach;
+	route.reseated = plan.reseated;
+	for (const knav::Point& p : plan.points)
 	{
 		route.points.push_back({p[0], p[2]});
 		route.heights.push_back(p[1]);

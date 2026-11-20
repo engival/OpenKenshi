@@ -218,9 +218,70 @@ int CollisionPick::groundY(double x, double z, double wireY, double up, double d
 			if (!found || std::abs(hy - wireY) < std::abs(best - wireY)) { best = hy; found = true; }
 		}
 	}
-	if (!found) { return 0; }
-	y = best;
-	return 1;
+	if (found) { y = best; return 1; }
+	// kenshi-k16.2.382.1: 0 = a shape covers x,z but none in the window (a floor above or below), 3 = no shape covers x,z at all (open ground: the
+	// caller's heightmap is the surface whatever the window)
+	for (size_t si = 0; si < n; si++)
+	{
+		const kworld::WorldShape& s = (*shapes)[si];
+		if (s.use == kworld::NavUse::Door) { continue; }
+		if (x < s.min[0] || x > s.max[0] || z < s.min[2] || z > s.max[2]) { continue; }
+		const float box[6] = { (float)s.min[0], (float)s.min[1], (float)s.min[2], (float)s.max[0], (float)s.max[1], (float)s.max[2] };
+		if (thin(box)) { continue; }
+		for (size_t i = 0; i + 2 < s.indices.size(); i += 3)
+		{
+			double v[3][3];
+			for (int j = 0; j < 3; j++) { for (int k = 0; k < 3; k++) { v[j][k] = s.vertices[s.indices[i + j] * 3 + k]; } }
+			const double d = (v[1][2] - v[2][2]) * (v[0][0] - v[2][0]) + (v[2][0] - v[1][0]) * (v[0][2] - v[2][2]);
+			if (std::abs(d) < 1e-9) { continue; }
+			const double a = ((v[1][2] - v[2][2]) * (x - v[2][0]) + (v[2][0] - v[1][0]) * (z - v[2][2])) / d;
+			const double b = ((v[2][2] - v[0][2]) * (x - v[2][0]) + (v[0][0] - v[2][0]) * (z - v[2][2])) / d;
+			if (a >= 0 && b >= 0 && 1 - a - b >= 0) { return 0; }
+		}
+	}
+	return 3;
+}
+
+int CollisionPick::column(double x, double z, double lo, double hi, std::vector<ColumnHit>& out) const
+{
+	std::shared_ptr<const std::vector<kworld::WorldShape>> shapes;
+	std::shared_ptr<const std::vector<std::string>> names;
+	size_t buildings;
+	int done[2];
+	{
+		std::lock_guard<std::mutex> lk(m_);
+		shapes = shapes_;
+		names = names_;
+		buildings = buildingShapes_;
+		done[0] = done_[0];
+		done[1] = done_[1];
+	}
+	if (!shapes) { return -1; }
+	const kworld::ZoneCell cell = kworld::zoneCellOf(x, z);
+	if (std::abs(cell.x - done[0]) > 1 || std::abs(cell.z - done[1]) > 1) { return -1; }
+	const size_t n = std::min(buildings, shapes->size());
+	for (size_t si = 0; si < n; si++)
+	{
+		const kworld::WorldShape& s = (*shapes)[si];
+		if (x < s.min[0] || x > s.max[0] || z < s.min[2] || z > s.max[2] || s.max[1] < lo || s.min[1] > hi) { continue; }
+		const float box[6] = { (float)s.min[0], (float)s.min[1], (float)s.min[2], (float)s.max[0], (float)s.max[1], (float)s.max[2] };
+		const bool isThin = thin(box), isDoor = s.use == kworld::NavUse::Door;
+		for (size_t i = 0; i + 2 < s.indices.size(); i += 3)
+		{
+			double v[3][3];
+			for (int j = 0; j < 3; j++) { for (int k = 0; k < 3; k++) { v[j][k] = s.vertices[s.indices[i + j] * 3 + k]; } }
+			const double d = (v[1][2] - v[2][2]) * (v[0][0] - v[2][0]) + (v[2][0] - v[1][0]) * (v[0][2] - v[2][2]);
+			if (std::abs(d) < 1e-9) { continue; }
+			const double a = ((v[1][2] - v[2][2]) * (x - v[2][0]) + (v[2][0] - v[1][0]) * (z - v[2][2])) / d;
+			const double b = ((v[2][2] - v[0][2]) * (x - v[2][0]) + (v[0][0] - v[2][0]) * (z - v[2][2])) / d;
+			const double c = 1 - a - b;
+			if (a < 0 || b < 0 || c < 0) { continue; }
+			const double hy = a * v[0][1] + b * v[1][1] + c * v[2][1];
+			if (hy > hi || hy < lo) { continue; }
+			out.push_back({ hy, isDoor, isThin, names && si < names->size() ? (*names)[si] : "shape " + std::to_string(si) });
+		}
+	}
+	return out.empty() ? 0 : 1;
 }
 
 // One wall face (|normal y| < 0.7) of a shape near a grid cell, with everything depenetrate() derives from it that does not depend on the body's position.

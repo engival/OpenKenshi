@@ -1,7 +1,7 @@
 // ksim_server: runs the simulation in real time and serves one SIMLINK client over TCP
 // (docs/formats/SIMLINK.md).
 //
-//   ksim_server --listen 127.0.0.1:PORT [--scenario duel|duel_katana|duel_armour|squad|newgame [--start SID] [--stealth N]] [--seed N] [--no-world] [--follow-heading-fix]
+//   ksim_server --listen 127.0.0.1:PORT [--scenario duel|duel_katana|duel_armour|squad|newgame [--start SID] [--stealth N]] [--seed N] [--wire-version] [--no-world] [--follow-heading-fix]
 //               [--run-without-clients] [--bake DIR [--regions RX0 RZ0 RX1 RZ1]] [--navmesh FILE | --navworld DIR] [--ai-routes] [--squad-limit N]
 //               [--log-world-squads N] [--place-squad TEMPLATE X Z]... [--force-dialogue CHARACTER DIALOGUE] [--own-container ID]... [--money N] [--give-item ITEM [COUNT]]... [--record FILE] [--order-log FILE] [--mods FILE] [--save-dir DIR]
 //               [--scenario-file PATH]
@@ -276,6 +276,12 @@ int parseServerArgs(int argc, char** argv, ServerConfig& options)
 			{
 				// stdout, not the log: a script reads it.
 				(options.log != nullptr ? *options.log : std::cout) << "OpenKenshi server " << simlink::buildHash() << "\n";
+				return 0;
+			}
+			if (arg == "--wire-version")
+			{
+				// The SIMLINK kProtocol alone, for a deploy script that pairs a server binary with a client (SIMLINK.md "Protocol version").
+				(options.log != nullptr ? *options.log : std::cout) << simlink::kProtocol << "\n";
 				return 0;
 			}
 			if (arg == "--help" || arg == "-h")

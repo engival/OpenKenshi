@@ -36,6 +36,11 @@ public:
 	// down below wireY. Returns 1 hit (y set), 0 no shape in the window, -1 the collision under (x, z) is not gathered (the zone cell is outside the newest
 	// gather's 3x3). gen: the gather's address (a new gather invalidates a caller's cache).
 	int groundY(double x, double z, double wireY, double up, double down, double& y, const void** gen = nullptr) const;
+	// Every building collision triangle the vertical line through (x, z) crosses with y in [lo, hi] (the height probe, dev/heightprobe.cpp): groundY's
+	// geometry without its filters, each hit flagged by what groundY does with it (door: a NavUse::Door leaf, skipped; thin: a thin() prop, skipped).
+	// Returns 1, 0 when there is none, -1 when the collision under (x, z) is not gathered. y ascending is not promised.
+	struct ColumnHit { double y; bool door, thin; std::string name; };
+	int column(double x, double z, double lo, double hi, std::vector<ColumnHit>& out) const;
 	// Display depenetration (kenshi-k16.2.345): the horizontal push that takes a body of the given radius at (x, z), feet at y, out of the building
 	// collision (not foliage, not door leaves, not thin props, not floors): out = the (dx, dz) to add, capped at maxPush. Only the wall-like faces
 	// (|normal y| < 0.7) between y + 0.35 and y + 1.5 count; the face's outward side is away from its shape's box centre. False: nothing to push from

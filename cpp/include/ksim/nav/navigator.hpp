@@ -17,6 +17,7 @@
 
 #include "knav/door.hpp"
 #include "knav/navmesh.hpp"
+#include "knav/route.hpp"
 #include "knav/walk.hpp"
 #include "kworld/coords.hpp"
 
@@ -276,11 +277,11 @@ public:
 	// How far from the mesh a clicked destination may be and still be routed to its nearest point.
 	// MEASURED (docs/reference/MOVE_CLICK_LIVE.md): the original finds a point at 347 u (diagonal) and 330 u
 	// (vertical) and refuses 354 / 340: a 335-347 bracket; 340 is the pick.
-	static constexpr double kClickReach = 340.0;
+	static constexpr double kClickReach = knav::kClickReach;
 	// A route end this close (xz) to the click counts as the clicked spot, not an approach point.
-	static constexpr double kClickExact = 0.75;
+	static constexpr double kClickExact = knav::kClickExact;
 	// How far from the mesh a walker's own start may be and still be snapped on (route()).
-	static constexpr double kEndReach = 40.0;
+	static constexpr double kEndReach = knav::kEndReach;
 
 	// Paints the door polygons of the mesh from `book` (knav::NavMesh::applyDoors): a closed door stays passable at the
 	// DoorClosed cost, a locked one is excluded from every search and slide. Changed tiles get a new tileVersion and a patch
@@ -454,13 +455,8 @@ private:
 	mutable NavStats stats_; // routeFrom's calls and time, for the tick profiler; the failure counters run in every build
 	Route routeFromUntimed(const knav::Position& from, double toX, double toZ, std::optional<double> toY, bool planned, Body body,
 		bool straighten, bool clickGoal) const;
-	// The connected-set label (area flags without doors) of a polygon: sets are rebuilt lazily when the mesh revision changes.
-	std::uint32_t setOf(const knav::PolyLoc& loc) const;
-	// Polygons in set `label` (as setOf).
-	std::uint32_t setSize(std::uint32_t label) const;
-	mutable std::vector<std::uint32_t> setSizes_;
-	mutable std::optional<knav::PolyComponents> sets_;
-	mutable std::uint64_t setsRevision_ = 0;
+	// The connected sets of the mesh for the planner (rebuilt lazily when the mesh revision changes).
+	mutable knav::RouteSets routeSets_;
 	knav::Walker walker_;
 	knav::NavQuery query_;
 };

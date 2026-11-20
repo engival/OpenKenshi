@@ -247,6 +247,11 @@ add_library(kclient_obj OBJECT
 	src/world/wbdraw.cpp
 	src/app/loadscreen.cpp
 	src/host/pick.cpp
+	src/host/orders.cpp
+	src/host/script.cpp
+	src/host/session.cpp
+	src/host/uihost.cpp
+	src/host/panels.cpp
 	src/world/worldmap.cpp
 	${KCLIENT_SOKOL_IMPL}
 	src/audio/audiohook.cpp
@@ -287,6 +292,7 @@ if(KCLIENT_DEV_TOOLS)
 		src/dev/pickmask.cpp
 		src/dev/scenetest.cpp
 		src/dev/probe.cpp
+		src/dev/heightprobe.cpp
 		src/dev/scriptlog.cpp
 		src/dev/viewmesh.cpp
 		src/dev/hintsop.cpp
@@ -479,7 +485,7 @@ endif()
 # (cmake --build ... --target OpenKenshi).
 get_target_property(KENSHI_DEFS kclient_obj COMPILE_DEFINITIONS)
 get_target_property(KENSHI_LIBS kclient_obj LINK_LIBRARIES)
-set(KENSHI_PER_TARGET_SOURCES src/main.cpp src/app/localserver.cpp)
+set(KENSHI_PER_TARGET_SOURCES src/main.cpp src/app/localserver.cpp src/host/hud.cpp src/host/logicframe.cpp src/host/events.cpp)
 foreach(tgt kclient OpenKenshi)
 	if(tgt STREQUAL "kclient")
 		add_executable(kclient ${KENSHI_PER_TARGET_SOURCES} $<TARGET_OBJECTS:kclient_obj>)

@@ -46,7 +46,7 @@
 namespace ksim::simlink {
 
 inline constexpr std::uint32_t kMagic = 0x4D49534B; // 'KSIM'
-inline constexpr std::uint16_t kProtocol = 5;
+inline constexpr std::uint16_t kProtocol = 6; // bump in the same commit as any incompatible wire / snapshot / server-args change (SIMLINK.md "Protocol version"); the client has its own copy
 // INTERACTABLE `kind` (SIMLINK.md section 13).
 inline constexpr std::uint8_t kInteractableDoor = 1;
 inline constexpr std::uint8_t kInteractableItem = 2;

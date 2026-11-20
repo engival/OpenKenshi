@@ -86,9 +86,19 @@ public:
 	}
 	// The owner's failure it can act on (the exe's vf10 "failed for good"): every rung is used up.
 	bool stuck(std::uint64_t id) const { return retries(id) > kSideways + 1; }
+	// Whether `id` asked for this same goal (within kSameGoal) fewer than `window` ticks before `now`: a walker the owner re-asks every tick
+	// (a route found, the walk not started: a body in the way) must not cost a search per tick. A fresh or different ask is recorded and false.
+	bool askedRecently(std::uint64_t id, double goalX, double goalZ, std::uint64_t now, std::uint64_t window)
+	{
+		Stamp& s = stamps_[id];
+		if (s.seen && now - s.tick < window && std::hypot(goalX - s.goalX, goalZ - s.goalZ) <= kSameGoal)
+			return true;
+		s = Stamp{true, now, goalX, goalZ};
+		return false;
+	}
 	// invalidate (C57): a navmesh change zeroes everyone's counter; a character leaving the world drops its own.
-	void reset(std::uint64_t id) { entries_.erase(id); }
-	void resetAll() { entries_.clear(); }
+	void reset(std::uint64_t id) { entries_.erase(id); stamps_.erase(id); }
+	void resetAll() { entries_.clear(); stamps_.clear(); }
 
 private:
 	struct Entry
@@ -99,7 +109,15 @@ private:
 		double goalX = 0.0;
 		double goalZ = 0.0;
 	};
+	struct Stamp
+	{
+		bool seen = false;
+		std::uint64_t tick = 0;
+		double goalX = 0.0;
+		double goalZ = 0.0;
+	};
 	std::map<std::uint64_t, Entry> entries_;
+	std::map<std::uint64_t, Stamp> stamps_;
 };
 
 } // namespace ksim
