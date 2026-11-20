@@ -9,7 +9,7 @@
 
 #include "assets/ogremesh.hpp"
 #include "render/camera.hpp"
-#include "render/renderframe.hpp"
+#include "frame/renderframe.hpp"
 #include "app/config.hpp"
 
 namespace host

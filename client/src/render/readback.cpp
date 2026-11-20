@@ -11,7 +11,7 @@
 
 #include "sokol_gfx.h"
 #include "stb_image_write.h"
-#include "app/windowgate.hpp"
+#include "platform/windowgate.hpp"
 
 #if defined(SOKOL_GLCORE)
 #include "platform/gl.hpp"

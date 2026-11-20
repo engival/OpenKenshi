@@ -1,7 +1,7 @@
 // Test driver for datapicker_check.sh: datadir::resolve exactly as main.cpp calls it, built without the dev build's KENSHI_DATA default.
 #include <cstdio>
 #include <string>
-#include "app/datadir.hpp"
+#include "platform/datadir.hpp"
 int main(int argc, char** argv)
 {
 	std::string out, why;

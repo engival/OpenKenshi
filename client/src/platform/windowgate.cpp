@@ -1,6 +1,6 @@
 // The window-state gate (windowgate.hpp, kenshi-k16.2.222). Polls the window once a frame: the first change applies at once, later
 // changes within the 1 s cooldown are held, and the latest held state applies once when it ends (which starts a new cooldown).
-#include "app/windowgate.hpp"
+#include "platform/windowgate.hpp"
 
 #include <chrono>
 #include <cstdio>

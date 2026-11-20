@@ -17,7 +17,7 @@
 #include "dev/devhooks.hpp"
 #include "kworld/heightmap.hpp"
 #include "render/shadow.hpp"
-#include "net/simview.hpp"
+#include "bridge/simview.hpp"
 #include "ui/progressbars.hpp"
 
 namespace dev

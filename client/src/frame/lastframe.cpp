@@ -1,5 +1,5 @@
 // The last composed frame, kept render side (lastframe.hpp; kenshi-k16.2.205.12.25).
-#include "app/lastframe.hpp"
+#include "frame/lastframe.hpp"
 
 #include <cstdio>
 #include <cstdlib>

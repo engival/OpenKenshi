@@ -412,7 +412,7 @@ Moved to `CLIENT_GOALS.md` (one section per feature): M1 — walk the bare terra
   F12) also writes `<shot>.trails.tsv` beside the .png: `id name t tick kind x y z warn`, one row a kept point, kind lfoot / rfoot / sim /
   drawn, the whole kept history (not the view window). Kept when a track moved over 0.5 u (at most 20 Hz) or 0.25 s passed, 640 points a track
   (the widest draw window, 30 s x 20 Hz = 600, plus a margin; ~5 MB with the 64-character cap; the points past it are `debug.trails_dump`'s), 64
-  characters (`src/render/trails.cpp`). **A player character keeps more (kenshi-k16.2.231.1):** 60 s, or the whole time since its newest move_to order
+  characters (`src/frame/trails.cpp`). **A player character keeps more (kenshi-k16.2.231.1):** 60 s, or the whole time since its newest move_to order
   when that is longer, capped at 120 s (2400 points a track at the top rate; the whole span goes in the shot's `.trails.tsv`), so a walk out of a
   building that took a minute and a half is still in the shot. Beside it a `--debug` shot writes `<shot>.route.tsv` (`shot_route` in
   `src/main.cpp`, `KCLIENT_DEV_TOOLS`): per selected character — every player character when none is selected — the wire's current CHAR_ROUTE

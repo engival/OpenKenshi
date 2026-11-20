@@ -11,7 +11,7 @@
 #include "sokol_app.h"
 
 #include "app/config.hpp"
-#include "app/windowgate.hpp"
+#include "platform/windowgate.hpp"
 #include "audio/events.hpp"
 #include "host/app.hpp"
 #include "host/orders.hpp"

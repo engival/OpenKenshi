@@ -15,7 +15,7 @@
 #include "sokol_gl.h"
 #include "sokol_debugtext.h"
 #include "sokol_log.h"
-#include "app/windowgate.hpp"
+#include "platform/windowgate.hpp"
 
 namespace
 {

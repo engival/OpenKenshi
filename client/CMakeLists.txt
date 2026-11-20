@@ -181,12 +181,12 @@ add_library(kclient_obj OBJECT
 	src/characters/creator.cpp
 	src/app/eventlog.cpp
 	src/net/simlink.cpp
-	src/net/simview.cpp
-	src/app/datadir.cpp
+	src/bridge/simview.cpp
+	src/platform/datadir.cpp
 	src/app/steamvdf.cpp
 	src/app/datapicker.cpp
 	third_party/tinyfiledialogs/tinyfiledialogs.c
-	src/render/trails.cpp
+	src/frame/trails.cpp
 	src/world/clientnav.cpp
 	src/render/navoverlay.cpp
 	src/input/collisionpick.cpp
@@ -195,7 +195,7 @@ add_library(kclient_obj OBJECT
 	src/input/cursors.cpp
 	src/app/sappcmd.cpp
 	src/app/logicthread.cpp
-	src/app/lastframe.cpp
+	src/frame/lastframe.cpp
 	src/render/colourmap.cpp
 	src/render/blooddecals.cpp
 	src/render/renderqueue.cpp
@@ -204,18 +204,18 @@ add_library(kclient_obj OBJECT
 	src/characters/portraits.cpp
 	src/assets/dds.cpp
 	src/render/detail.cpp
-	src/render/foliage.cpp
+	src/world/foliage.cpp
 	src/world/floorfollow.cpp
 	src/render/fogvolume.cpp
 	src/render/sunshafts.cpp
 	src/render/dust.cpp
-	src/render/grass.cpp
+	src/world/grass.cpp
 	src/render/gputimer.cpp
 	src/render/hdr.cpp
 	src/render/reflection.cpp
 	src/render/idbuffer.cpp
 	src/render/readback.cpp
-	src/render/renderframe.cpp
+	src/frame/renderframe.cpp
 	src/render/post.cpp
 	src/render/smaa_lut.cpp
 	src/assets/materials.cpp
@@ -223,10 +223,10 @@ add_library(kclient_obj OBJECT
 	src/assets/ogremesh.cpp
 	src/render/openwindows.cpp
 	src/render/particles.cpp
-	src/render/particleworld.cpp
-	src/render/beamfield.cpp
+	src/world/particleworld.cpp
+	src/frame/beamfield.cpp
 	src/characters/physics.cpp
-	src/characters/ragdolldrive.cpp
+	src/bridge/ragdolldrive.cpp
 	src/characters/ragdoll.cpp
 	src/assets/resources.cpp
 	src/render/shadow.cpp
@@ -234,7 +234,7 @@ add_library(kclient_obj OBJECT
 	src/characters/creatorscene.cpp
 	src/render/speccube.cpp
 	src/world/weatherinstances.cpp
-	src/world/weathermap.cpp
+	src/render/weathermap.cpp
 	src/world/squads.cpp
 	src/render/arrows.cpp
 	src/render/terrain.cpp
@@ -245,7 +245,7 @@ add_library(kclient_obj OBJECT
 	src/world/wbload.cpp
 	src/world/wbfloors.cpp
 	src/world/wbdraw.cpp
-	src/app/loadscreen.cpp
+	src/frame/loadscreen.cpp
 	src/host/pick.cpp
 	src/host/orders.cpp
 	src/host/script.cpp
@@ -258,7 +258,7 @@ add_library(kclient_obj OBJECT
 	src/app/config.cpp
 	${KCLIENT_WINDOWGEOM}
 	${KCLIENT_PLATFORM}
-	src/app/windowgate.cpp
+	src/platform/windowgate.cpp
 	src/app/serverrows.cpp
 	src/app/workpool.cpp
 	src/assets/stb_impl.cpp
@@ -296,7 +296,7 @@ if(KCLIENT_DEV_TOOLS)
 		src/dev/scriptlog.cpp
 		src/dev/viewmesh.cpp
 		src/dev/hintsop.cpp
-		src/dev/lightterms.cpp
+		src/knobs/lightterms.cpp
 		src/dev/packetdigest.cpp
 		src/dev/shotsidecars.cpp
 	)
@@ -480,12 +480,12 @@ endif()
 
 # The two executables (client/README.md "Release targets"): both link the kclient_obj objects; main.cpp and localserver.cpp compile per target.
 # kclient is the client only (LocalServer fork()+execv of OpenKenshi-server); OpenKenshi is the full single-player target, with LocalServer running
-# ksim::runServer on a std::thread (KENSHI_EMBED_SERVER, src/app/localserver.cpp), joined over loopback TCP, plus the ksim library. Defines, includes
+# ksim::runServer on a std::thread (KENSHI_EMBED_SERVER, src/platform/localserver.cpp), joined over loopback TCP, plus the ksim library. Defines, includes
 # and libraries are taken from kclient_obj at the end of this file, so every later option reaches both. OpenKenshi stays out of the default build
 # (cmake --build ... --target OpenKenshi).
 get_target_property(KENSHI_DEFS kclient_obj COMPILE_DEFINITIONS)
 get_target_property(KENSHI_LIBS kclient_obj LINK_LIBRARIES)
-set(KENSHI_PER_TARGET_SOURCES src/main.cpp src/app/localserver.cpp src/host/hud.cpp src/host/logicframe.cpp src/host/events.cpp)
+set(KENSHI_PER_TARGET_SOURCES src/main.cpp src/platform/localserver.cpp src/host/hud.cpp src/host/logicframe.cpp src/host/events.cpp)
 foreach(tgt kclient OpenKenshi)
 	if(tgt STREQUAL "kclient")
 		add_executable(kclient ${KENSHI_PER_TARGET_SOURCES} $<TARGET_OBJECTS:kclient_obj>)

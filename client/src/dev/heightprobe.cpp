@@ -18,7 +18,7 @@
 #include "dev/devhooks.hpp"
 #include "input/collisionpick.hpp"
 #include "kworld/heightmap.hpp"
-#include "net/simview.hpp"
+#include "bridge/simview.hpp"
 #include "render/overlaylist.hpp"
 #include "world/clientnav.hpp"
 #include "world/worldbuildings.hpp"

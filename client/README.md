@@ -70,12 +70,12 @@ The reports are written by TSan's `log_path` into `OUT/tsan/`, one file per proc
 
 Three binaries from the same libraries: `kclient` (client only; single player forks `OpenKenshi-server` from the build dir's `cpp/`), `OpenKenshi-server`
 (dedicated) and `OpenKenshi` (full: the same client with the server in its process). `OpenKenshi` is not in the default build (it shares the client objects with
-kclient; only main.cpp and localserver.cpp compile a second time): `nice -n 10 cmake --build client/build -j4 --target OpenKenshi`. Its `LocalServer` (`src/app/localserver.cpp`, `KENSHI_EMBED_SERVER`)
+kclient; only main.cpp and localserver.cpp compile a second time): `nice -n 10 cmake --build client/build -j4 --target OpenKenshi`. Its `LocalServer` (`src/platform/localserver.cpp`, `KENSHI_EMBED_SERVER`)
 runs `ksim::runServer` on a `std::thread` and stops it with the server's stop flag; the client still joins over loopback TCP, the same path as
 multiplayer. The server's globals are shared with the client (crash recorder tick, process-wide state): the audit is kenshi-379.7. The smoke run
 (title, New Game, Wanderer, BEGIN, CONFIRM, a few seconds in the Hub, quit) is `tests/localserver/run.sh BINARY OUT` (use `OpenKenshi` or `kclient`).
 
-**No flags for a player (kenshi-379.13).** The game data is resolved at runtime (`src/app/datadir.cpp`): `--data DIR`, then `$KENSHI_DATA`, then a
+**No flags for a player (kenshi-379.13).** The game data is resolved at runtime (`src/platform/datadir.cpp`): `--data DIR`, then `$KENSHI_DATA`, then a
 saved `data=PATH` line in `$XDG_CONFIG_HOME/kenshi-client/data.conf` (`~/.config/kenshi-client/data.conf`; `~/Library/Application Support/kenshi-client/`
 on macOS, `%APPDATA%\kenshi-client\` on Windows), then the Steam/GOG default installs (Linux: `~/.steam/steam` and `~/.local/share/Steam`, plus
 their `libraryfolders.vdf` libraries; macOS: Steam's `common/Kenshi` and a `Kenshi` folder beside the binary; a copied Windows install works
@@ -327,6 +327,6 @@ It prints one line per scene and writes `NAME.sheet.png` (reference | baseline |
 `gap` = the time outside `frame()` (present, sokol events), `total`, and the HUD's `cpu`; frames under the threshold are not printed
 (0 = every frame). `KCLIENT_GPULOG=1` appends each GPU section's ms and its submit counters (draws, instances, triangles) to the
 same line — the GPU values are collected two frames late, so a timer never stalls the frame it measures. `KCLIENT_ABL=a,b` removes
-work for upper-bound measurements (`src/dev/ablate.hpp`: `charshadow`, `nosample`, `noprops`; `onedraw` measured the retired per-part draw and went with it in kenshi-k16.2.205.8; the picture is wrong by
+work for upper-bound measurements (`src/knobs/ablate.hpp`: `charshadow`, `nosample`, `noprops`; `onedraw` measured the retired per-part draw and went with it in kenshi-k16.2.205.8; the picture is wrong by
 design and a run with one set is a measurement, never a playtest). `--simspeed N` (with `--debug`) sets the sim's game speed.
 kenshi-k16.2.205.7's report is the worked example: `kenshi-inspect/findings/kenshi-k16.2.205.7/REPORT.md`.

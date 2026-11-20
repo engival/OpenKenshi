@@ -4,7 +4,7 @@
 #include <cmath>
 #include <cstdio>
 
-#include "world/weathermap.hpp"
+#include "render/weathermap.hpp"
 #include "kworld/heightmap.hpp"
 
 namespace

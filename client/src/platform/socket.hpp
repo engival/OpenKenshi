@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string>
 
-// The client's one TCP connection (net/simview.cpp, the simlink): connect, non-blocking receive, whole-frame send. POSIX sockets on Linux and macOS
+// The client's one TCP connection (bridge/simview.cpp, the simlink): connect, non-blocking receive, whole-frame send. POSIX sockets on Linux and macOS
 // (platform/posix/socket.cpp), Winsock on Windows (platform/windows/socket.cpp, kenshi-379.31.1). A Socket is the OS handle widened to fit a Win64
 // SOCKET; kNoSocket is "none".
 namespace plat {

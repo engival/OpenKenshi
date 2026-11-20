@@ -1,10 +1,10 @@
 #include "world/worldbuildings.hpp"
 #include "world/worldbuildings_internal.hpp"
 #include "render/drawstats.hpp"
-#include "dev/lightterms.hpp"
+#include "knobs/lightterms.hpp"
 #include "render/ao.hpp"
 #include "render/speccube.hpp"
-#include "world/weathermap.hpp"
+#include "render/weathermap.hpp"
 
 #include <algorithm>
 #include <chrono>

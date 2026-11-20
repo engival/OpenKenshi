@@ -17,7 +17,7 @@
 #include <map>
 
 #include "net/simlink.hpp"
-#include "net/simview.hpp"
+#include "bridge/simview.hpp"
 
 namespace dev
 {

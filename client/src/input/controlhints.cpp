@@ -5,7 +5,7 @@
 #include <cstdio>
 
 #include "characters/characters.hpp"
-#include "net/simview.hpp"
+#include "bridge/simview.hpp"
 
 namespace hints
 {

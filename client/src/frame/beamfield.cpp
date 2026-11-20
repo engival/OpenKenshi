@@ -1,4 +1,4 @@
-#include "render/beamfield.hpp"
+#include "frame/beamfield.hpp"
 
 #include <algorithm>
 #include <cmath>

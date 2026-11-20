@@ -2,7 +2,7 @@
 #include "kutil/executable.hpp"
 #include "render/lightbake.hpp"
 #include "render/drawstats.hpp"
-#include "app/framestats.hpp"
+#include "render/framestats.hpp"
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -39,15 +39,15 @@
 #endif
 
 #include "world/buildings.hpp"
-#include "render/foliage.hpp"
-#include "render/grass.hpp"
+#include "world/foliage.hpp"
+#include "world/grass.hpp"
 #include "render/gputimer.hpp"
 #include "app/cpustage.hpp"
 #ifdef KCLIENT_DEV_TOOLS
-#include "dev/threadsplit.hpp"	// the logic / render split on the stages line (kenshi-k16.2.205.12.84)
+#include "app/threadsplit.hpp"	// the logic / render split on the stages line (kenshi-k16.2.205.12.84)
 #endif
 #include "dev/packetdigest.hpp"	// KCLIENT_PACKET_DIGEST / KCLIENT_PACKET_POISON (kenshi-k16.2.205.12.93)
-#include "dev/ablate.hpp"	// KCLIENT_ABL removal switches (upper-bound measurements, kenshi-k16.2.205.7)
+#include "knobs/ablate.hpp"	// KCLIENT_ABL removal switches (upper-bound measurements, kenshi-k16.2.205.7)
 #include "assets/sidorder.hpp"
 #include "render/fogvolume.hpp"
 #include "render/sunshafts.hpp"
@@ -55,10 +55,10 @@
 #include "render/blooddecals.hpp"
 #include "render/arrows.hpp"
 #include "render/particles.hpp"
-#include "render/particleworld.hpp"
-#include "render/beamfield.hpp"
+#include "world/particleworld.hpp"
+#include "frame/beamfield.hpp"
 #include "characters/physics.hpp"
-#include "characters/ragdolldrive.hpp"
+#include "bridge/ragdolldrive.hpp"
 #include "characters/ragdoll.hpp"
 #include "render/hdr.hpp"
 #include "render/idbuffer.hpp"
@@ -71,28 +71,28 @@
 #ifdef KCLIENT_DEV_TOOLS
 #include "dev/pickmask.hpp"
 #endif
-#include "dev/lightterms.hpp"
+#include "knobs/lightterms.hpp"
 #include "net/aitask.hpp"
 #include "app/githash.hpp"
-#include "app/loadscreen.hpp"
-#include "app/localserver.hpp"
+#include "frame/loadscreen.hpp"
+#include "platform/localserver.hpp"
 #include "assets/dds.hpp"
 #include "assets/ogremesh.hpp"
 #include "world/clientnav.hpp"
 #include "kworld/towns.hpp"
 #include "render/navoverlay.hpp"
 #include "app/config.hpp"
-#include "app/datadir.hpp"
+#include "platform/datadir.hpp"
 #include "platform/windowgeom.hpp"
 #include "platform/process.hpp"	// plat::unsetEnv
-#include "app/windowgate.hpp"
+#include "platform/windowgate.hpp"
 #include "render/readback.hpp"
 #include "render/renderqueue.hpp"
 #include "input/inputqueue.hpp"
 #include "app/sappcmd.hpp"
 #include "app/logicthread.hpp"
-#include "app/lastframe.hpp"
-#include "render/renderframe.hpp"
+#include "frame/lastframe.hpp"
+#include "frame/renderframe.hpp"
 #include "app/opencont.hpp"
 #include "render/weff.hpp"
 #include "net/progressfeed.hpp"
@@ -154,12 +154,12 @@
 #include "render/water.hpp"
 #include "render/reflection.hpp"
 #include "render/speccube.hpp"
-#include "world/weathermap.hpp"
+#include "render/weathermap.hpp"
 #include "world/weatherinstances.hpp"
 #include "audio/audiohook.hpp"
 #include "audio/events.hpp"
-#include "net/simview.hpp"
-#include "render/trails.hpp"
+#include "bridge/simview.hpp"
+#include "frame/trails.hpp"
 #include "input/collisionpick.hpp"
 #include "input/controlhints.hpp"	// the control-hints types and the resolver stub (kenshi-k16.2.294.2)
 #include "input/pick.hpp"	// Pick and the target predicates the hover / click / menu read (kenshi-k16.2.294.2)

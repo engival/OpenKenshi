@@ -10,7 +10,7 @@
 #include "input/inputqueue.hpp"
 #include "render/arrows.hpp"
 #include "render/camera.hpp"
-#include "render/renderframe.hpp"
+#include "frame/renderframe.hpp"
 
 namespace host
 {

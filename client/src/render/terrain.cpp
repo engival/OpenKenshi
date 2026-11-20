@@ -3,7 +3,7 @@
 #include "render/terrain.hpp"
 #include "render/ao.hpp"
 #include "render/speccube.hpp"
-#include "world/weathermap.hpp"
+#include "render/weathermap.hpp"
 
 #include <algorithm>
 #include <cmath>

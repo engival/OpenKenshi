@@ -1,7 +1,7 @@
 #include "render/interiorclip.hpp"
 #include "render/drawstats.hpp"
-#include "app/framestats.hpp"
-#include "render/grass.hpp"
+#include "render/framestats.hpp"
+#include "world/grass.hpp"
 #include "render/renderqueue.hpp"
 
 #include <algorithm>
@@ -23,7 +23,7 @@
 #include "render/speccube.hpp"
 #include "stb_image.h"
 #include "render/ao.hpp"
-#include "world/weathermap.hpp"
+#include "render/weathermap.hpp"
 
 namespace
 {

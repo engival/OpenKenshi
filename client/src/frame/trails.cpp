@@ -1,4 +1,4 @@
-#include "render/trails.hpp"
+#include "frame/trails.hpp"
 #include "render/drawstats.hpp"
 
 #include <algorithm>
@@ -11,7 +11,7 @@
 
 #include "characters/characters.hpp"
 #include "app/config.hpp"
-#include "net/simview.hpp"
+#include "bridge/simview.hpp"
 #include "sokol_gfx.h"
 #include "sokol_gl.h"
 #include "render/overlaylist.hpp"

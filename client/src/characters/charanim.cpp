@@ -5,7 +5,7 @@
 #include <thread>
 #include "characters/characters.hpp"
 #include "app/cpustage.hpp"
-#include "dev/ablate.hpp"	// KCLIENT_ABL removal switches (upper-bound measurements, kenshi-k16.2.205.7)
+#include "knobs/ablate.hpp"	// KCLIENT_ABL removal switches (upper-bound measurements, kenshi-k16.2.205.7)
 #include "render/drawstats.hpp"
 #include "assets/sidorder.hpp"
 #include "app/eventlog.hpp"
@@ -29,7 +29,7 @@
 #include "assets/ogremesh.hpp"
 #include "render/speccube.hpp"
 #include "stb_image.h"
-#include "world/weathermap.hpp"
+#include "render/weathermap.hpp"
 
 #include "character.glsl.h"
 #include "characters/characters_internal.hpp"

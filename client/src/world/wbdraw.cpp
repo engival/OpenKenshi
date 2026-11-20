@@ -8,10 +8,10 @@
 #include <cstring>
 
 #include "render/drawstats.hpp"
-#include "dev/lightterms.hpp"
+#include "knobs/lightterms.hpp"
 #include "render/ao.hpp"
 #include "render/speccube.hpp"
-#include "world/weathermap.hpp"
+#include "render/weathermap.hpp"
 #include "app/config.hpp"
 #include "interiormask.glsl.h"
 #include "kworld/coords.hpp"
@@ -771,7 +771,7 @@ void WorldBuildings::packLights(FrameData& out) const
 	std::vector<const LightRt*> order;
 	for (const LightRt& l : lights_) { order.push_back(&l); }
 	std::sort(order.begin(), order.end(), [](const LightRt* a, const LightRt* b) { return a->near < b->near; });
-	{	// the light debugger: the lamps in view (nearest 64) by id, and the switched-off ones leave the list (dev/lightterms.hpp; no-ops in a release build)
+	{	// the light debugger: the lamps in view (nearest 64) by id, and the switched-off ones leave the list (knobs/lightterms.hpp; no-ops in a release build)
 		std::vector<uint64_t> ids;
 		for (size_t i = 0; i < order.size() && i < 64; i++) { ids.push_back(order[i]->id); }
 		dev::noteLamps(ids);

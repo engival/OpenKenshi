@@ -5,7 +5,7 @@
 #include <algorithm>
 
 #include "characters/characters.hpp"
-#include "net/simview.hpp"
+#include "bridge/simview.hpp"
 
 uint64_t sneak_actor(const SimView& sim)
 {

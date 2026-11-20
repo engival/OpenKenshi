@@ -1,5 +1,5 @@
 #define STB_TRUETYPE_IMPLEMENTATION
-#include "app/loadscreen.hpp"
+#include "frame/loadscreen.hpp"
 #include "render/drawstats.hpp"
 
 #include <algorithm>
@@ -19,7 +19,7 @@
 #include "stb_image.h"
 #include "ui/skin.hpp"
 #include "world/worldmap.hpp"
-#include "app/windowgate.hpp"
+#include "platform/windowgate.hpp"
 
 namespace
 {

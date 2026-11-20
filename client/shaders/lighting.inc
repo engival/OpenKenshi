@@ -15,7 +15,7 @@ layout(binding=2) uniform light_params
 	vec4 surf;      // camera-blended weather surface state: x = wetness, y = dust amount, z = dust slope (stickiness), w = dust inside (the shared params wetness / dustAmount.xyz)
 	vec4 fog_sun;   // xyz = sunDirectionReal (not clamped to the horizon), the light direction of the atmosphere fog scatter; w = horizonClouds.w (the fog colour blends to hcloud with it)
 	vec4 hcloud;    // rgb = horizonClouds.rgb (the game's display-referred HDR: the fog blend happens before the composite's clip)
-	vec4 pl_head;   // w = the light debugger's mask of switched-off terms (dev/lightterms.hpp, an integer in a float; 0 = all on, always so in a release build); x = point / spot lights in pl (light_points; WorldBuildings::gatherLights), y = 1: the water reflection pass (reflect_pass), z = water plane y - camera y (wet_under)
+	vec4 pl_head;   // w = the light debugger's mask of switched-off terms (knobs/lightterms.hpp, an integer in a float; 0 = all on, always so in a release build); x = point / spot lights in pl (light_points; WorldBuildings::gatherLights), y = 1: the water reflection pass (reflect_pass), z = water plane y - camera y (wet_under)
 	vec4 pl[64];    // 4 per light: pos relative to the camera + radius; colour x power + type (1 = spot); spot direction; cos(inner / 2), cos(outer / 2), falloff
 	vec4 amb_sh[9]; // the dynamic ambient (ours, post.sky_ambient; Sky::ambientSH): rgb = irradiance polynomial coefficients, amb_sh[0].w = its weight (0 = the game's cube)
 };
@@ -29,7 +29,7 @@ bool reflect_pass() { return pl_head.y > 0.5; }
 float lit_on() { return reflect_pass() ? 0.0 : 1.0; }
 vec3 albedo_luma(vec3 albedo) { return vec3(dot(albedo, vec3(0.25, 0.5, 0.25))); }
 
-// The light debugger (kenshi-jj3.27.1): pl_head.w holds one bit per switched-off light term (dev/lightterms.hpp LightBit; docs/CLIENT.md "Light terms"). Bit values here are those enums.
+// The light debugger (kenshi-jj3.27.1): pl_head.w holds one bit per switched-off light term (knobs/lightterms.hpp LightBit; docs/CLIENT.md "Light terms"). Bit values here are those enums.
 bool term_off(int b) { return ((int(pl_head.w) >> b) & 1) != 0; }
 float term_on(int b) { return term_off(b) ? 0.0 : 1.0; }
 #define LT_SUN 0
@@ -46,7 +46,7 @@ float term_on(int b) { return term_off(b) ? 0.0 : 1.0; }
 #define LT_FOG_WEATHER 11
 #define LT_SKY 12
 #define LT_CUTBAND 13
-#define LT_MOTES_OWN 21	// set by `solo dust_motes`: the dust shader lights its motes by sun / lamps whatever those terms say (dev/lightterms.hpp kLtMotesOwnLight)
+#define LT_MOTES_OWN 21	// set by `solo dust_motes`: the dust shader lights its motes by sun / lamps whatever those terms say (knobs/lightterms.hpp kLtMotesOwnLight)
 float emissive_on() { return reflect_pass() ? 0.0 : term_on(LT_EMISSIVE); }
 
 float scale_fn(float c, float sd)
@@ -352,7 +352,7 @@ vec4 light_ao_raw(vec3 rel)
 	}
 	return wsum > 1e-3 ? vec4(isum / wsum * ao_par.w, mix(1.0, sum / wsum, ao_par.x)) : vec4(0.0, 0.0, 0.0, 1.0);
 }
-// the light debugger's ao / indirect switches (dev/lightterms.hpp)
+// the light debugger's ao / indirect switches (knobs/lightterms.hpp)
 vec4 light_ao(vec3 rel)
 {
 	vec4 r = light_ao_raw(rel);

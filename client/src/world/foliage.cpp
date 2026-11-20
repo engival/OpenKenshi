@@ -1,4 +1,4 @@
-#include "render/foliage.hpp"
+#include "world/foliage.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -9,7 +9,7 @@
 #include <functional>
 
 #include "app/config.hpp"
-#include "app/framestats.hpp"
+#include "render/framestats.hpp"
 #include "render/renderqueue.hpp"
 #include "kworld/coords.hpp"
 #include "kworld/features.hpp"

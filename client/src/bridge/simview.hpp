@@ -228,7 +228,7 @@ public:
 	void setGroundRay(GroundRay r, std::function<const void*()> gen) { groundRay_ = std::move(r); groundGen_ = std::move(gen); }
 	// The standing ray's window around the wire y (kenshi-k16.2.344): up above, down below. The navmesh floats 0.45-0.71 u over the plank floor and up to ~4 u off on slopes (k16.7.36, k16.6.271).
 	static constexpr double kRayUp = 1.5, kRayDown = 4.5;
-	// One uncached stand-ray cast with update()'s rule (the ray, then standTerrain: net/simview.cpp), for the height probe (dev/heightprobe.cpp): terrain is the
+	// One uncached stand-ray cast with update()'s rule (the ray, then standTerrain: bridge/simview.cpp), for the height probe (dev/heightprobe.cpp): terrain is the
 	// drawn triangle height update() gets. Returns the result as update() sees it (-1 collision not loaded, 0 miss, 1 hit, 2 drawn-face hit); y is set for >= 1.
 	// kind: what decided it ("collision", "drawn", "terrain", "open ground (terrain)", or why it missed).
 	int standRayAt(double x, double z, double wireY, double terrain, double& y, const char** kind = nullptr) const;

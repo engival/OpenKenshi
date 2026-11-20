@@ -1347,7 +1347,7 @@ void build()
 			demo.trs.status = "trails: all, 14 chars, 4 tracks, window 30 s";
 		}
 		{
-			// The host's terms as merged (dev/lightterms.cpp, kenshi-jj3.27.1), cut_band in its own "marker" group, then three lamps nearest first.
+			// The host's terms as merged (knobs/lightterms.cpp, kenshi-jj3.27.1), cut_band in its own "marker" group, then three lamps nearest first.
 			const std::pair<const char*, const char*> terms[] = { { "sun_direct", "sun" }, { "sun_shadows", "sun" }, { "sky_ambient", "ambient" }, { "ao", "ambient" },
 				{ "post_indirect", "ambient" }, { "sun_bounce", "ambient" }, { "interior_light", "ambient" }, { "env_specular", "ambient" }, { "lamps", "lamps" },
 				{ "emissive", "emissive" }, { "fog_atmosphere", "fog" }, { "fog_weather", "fog" }, { "sky", "sky" }, { "cut_band", "marker" }, { "sun_shafts", "air" },

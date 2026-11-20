@@ -1,7 +1,7 @@
 #include "render/water.hpp"
 #include "render/drawstats.hpp"
 #include "render/speccube.hpp"
-#include "world/weathermap.hpp"
+#include "render/weathermap.hpp"
 
 #include <algorithm>
 #include <array>

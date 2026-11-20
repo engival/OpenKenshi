@@ -10,7 +10,7 @@
 #include "sokol_debugtext.h"
 #include "render/sky.hpp"	// LightParams
 #include "ui/widget.hpp"	// ui::PortraitRef: the offscreen image the browser window shows
-#include "dev/labframe.hpp"
+#include "frame/labframe.hpp"
 #include "render/renderqueue.hpp"
 
 class Characters;

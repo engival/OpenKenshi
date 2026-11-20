@@ -36,7 +36,7 @@ void start(Hooks hooks, bool scripted);
 // Logic thread, overlap only (rule 12): returns once the render thread is outside render_frame and no packet is filled, so what follows may write
 // anything the draw reads until logic marks its next packet filled. Called before the world frame's second half (part B), at the top of a frame
 // that is not a plain world frame (session load, title, creator, lab), and before rare writes (sim_opened, exec_cmd, the buildings' set). Its
-// wait checks the stop flag every 100 ms and never gives up otherwise; the time waited goes to lt.gate (dev/threadsplit.hpp). Free (returns at
+// wait checks the stop flag every 100 ms and never gives up otherwise; the time waited goes to lt.gate (app/threadsplit.hpp). Free (returns at
 // once) in off and lockstep and on any other thread.
 void renderIdle();
 bool running();	// start() ran and stop() has not

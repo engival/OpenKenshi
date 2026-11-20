@@ -37,8 +37,8 @@
 #include "render/camera.hpp"
 #include "characters/characters.hpp"
 #include "render/drawlist.hpp"
-#include "render/foliage.hpp"
-#include "render/grass.hpp"
+#include "world/foliage.hpp"
+#include "world/grass.hpp"
 #include "render/overlaylist.hpp"
 #include "render/fogvolume.hpp"
 #include "render/particles.hpp"
@@ -46,7 +46,7 @@
 #include "render/sky.hpp"
 #include "world/worldbuildings.hpp"
 #ifdef KCLIENT_DEV_TOOLS
-#include "dev/labframe.hpp"
+#include "frame/labframe.hpp"
 #endif
 
 #include <cstdint>
@@ -118,7 +118,7 @@ struct FramePacket
 	// frame's last change to the sky: the script's time ops included), read by the sky pass, the fog volumes and the legacy passes that light with the
 	// sky. kWorld only.
 	SkyFrame sky;
-	uint32_t lightOff = 0;	// the light debugger's mask of switched-off terms (dev/lightterms.hpp), set with the sky block; also in sky.light.plHead[3] for the shaders. 0 in a release build
+	uint32_t lightOff = 0;	// the light debugger's mask of switched-off terms (knobs/lightterms.hpp), set with the sky block; also in sky.light.plHead[3] for the shaders. 0 in a release build
 	// The post block (kenshi-k16.2.205.12.47): the exposure's and the post chain's options, which are logic's (config, command line), set with the sky
 	// block. The luminance range, the heat haze and the clock are in `sky`. kWorld only.
 	struct Post

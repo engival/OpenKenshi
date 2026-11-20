@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-// The local server child (app/localserver.cpp, kclient only; OpenKenshi runs its server on a thread): spawn with stdout piped back, poll, stop.
+// The local server child (platform/localserver.cpp, kclient only; OpenKenshi runs its server on a thread): spawn with stdout piped back, poll, stop.
 // POSIX fork / execv on Linux and macOS (platform/posix/process.cpp), CreateProcess on Windows (platform/windows/process.cpp, kenshi-379.31.1).
 namespace plat {
 

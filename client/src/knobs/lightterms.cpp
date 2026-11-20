@@ -1,5 +1,5 @@
-// The scene light debugger's state and script ops (dev/lightterms.hpp). Built only with KCLIENT_DEV_TOOLS.
-#include "dev/lightterms.hpp"
+// The scene light debugger's state and script ops (knobs/lightterms.hpp). Built only with KCLIENT_DEV_TOOLS.
+#include "knobs/lightterms.hpp"
 
 #include <algorithm>
 #include <cstdio>

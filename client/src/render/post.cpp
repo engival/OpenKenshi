@@ -1,6 +1,6 @@
 #include "render/post.hpp"
 #include "render/drawstats.hpp"
-#include "dev/lightterms.hpp"
+#include "knobs/lightterms.hpp"
 
 #include <algorithm>
 #include <cmath>

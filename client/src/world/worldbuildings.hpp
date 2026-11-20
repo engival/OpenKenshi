@@ -625,7 +625,7 @@ private:
 		float dir[4];
 		float cone[4];		// cos inner / 2, cos outer / 2, falloff
 		float near;		// distance from the camera to the light's sphere (fillLights' order)
-		uint64_t id = 0;	// the light debugger's lamp id (dev/lightterms.hpp): instance << 32 | light index, bit 31 set = the building's own list
+		uint64_t id = 0;	// the light debugger's lamp id (knobs/lightterms.hpp): instance << 32 | light index, bit 31 set = the building's own list
 		uint32_t owner = 0xffffffffu;	// the building (not furniture) instance the lamp belongs to, with lamp = its slot in lampReg_ (render.lamp_occlusion, kenshi-jj3.9.1); lamp < 0: no visibility volume
 		int lamp = -1;
 	};

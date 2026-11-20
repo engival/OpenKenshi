@@ -12,7 +12,7 @@
 
 #include "app/config.hpp"
 #ifdef KCLIENT_DEV_TOOLS
-#include "dev/threadsplit.hpp"
+#include "app/threadsplit.hpp"
 #endif
 
 namespace logicthread

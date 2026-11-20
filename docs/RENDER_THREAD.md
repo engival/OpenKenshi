@@ -566,7 +566,7 @@ into it. Items already filed carry their id:
   (kenshi-k16.2.205.12.26), then the renderers the order lacked: shadow (cascade maths and the cache signature inputs
   in the packet; its slot comes when the `shadow.cpp` freeze lifts), blood decals, weather fog map / sky parameter
   block, portraits, arrows, world map, light volumes, labels and overlays (the last join hook 8's list);
-- alongside 7: `render_frame` in an `app`-free TU (kenshi-k16.2.205.12.27): `client/src/render/renderframe.cpp`, which cannot
+- alongside 7: `render_frame` in an `app`-free TU (kenshi-k16.2.205.12.27): `client/src/frame/renderframe.cpp`, which cannot
   see `App`; the blocks that still read `app.` sat in main.cpp behind `RenderState::Legacy` and left it one renderer
   per sitting (what has moved and what is left: the top of `renderframe.hpp`; sitting 2, kenshi-k16.2.205.12.45: the
   sky pass and the fog volumes, from the packet's sky block `FramePacket::sky`, a `SkyFrame` that `Sky::frame()` takes

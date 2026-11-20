@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "characters/physics.hpp"
-#include "net/simview.hpp"
+#include "bridge/simview.hpp"
 #include "kworld/ogreskeleton.hpp"
 
 class Characters;

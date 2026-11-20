@@ -14,7 +14,7 @@
 #ifdef KCLIENT_DEV_TOOLS
 #include <functional>
 
-#include "dev/labframe.hpp"
+#include "frame/labframe.hpp"
 #include "net/simlink.hpp"
 #endif
 

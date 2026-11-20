@@ -9,7 +9,7 @@
 
 #include "app/config.hpp"
 #include "ui/gfx.hpp"
-#include "app/windowgate.hpp"
+#include "platform/windowgate.hpp"
 
 namespace dev::pickmask
 {

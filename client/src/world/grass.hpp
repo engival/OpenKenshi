@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "assets/dds.hpp"
-#include "render/foliage.hpp"
+#include "world/foliage.hpp"
 #include "assets/resources.hpp"
 #include "render/shadow.hpp"
 #include "render/sky.hpp"

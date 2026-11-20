@@ -2,7 +2,7 @@
 #include <string>
 #include <vector>
 
-// The OS half of the game-data lookup (app/datadir.cpp, kenshi-379.13; moved out of datadir.cpp's #ifdefs by kenshi-379.31.1): where Kenshi is
+// The OS half of the game-data lookup (platform/datadir.cpp, kenshi-379.13; moved out of datadir.cpp's #ifdefs by kenshi-379.31.1): where Kenshi is
 // installed by default, where per-user config lives. One file per OS: platform/linux/installs.cpp, macos/installs.cpp, windows/installs.cpp.
 namespace plat {
 

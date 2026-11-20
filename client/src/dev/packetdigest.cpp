@@ -10,7 +10,7 @@
 #include <type_traits>
 #include <vector>
 
-#include "render/renderframe.hpp"
+#include "frame/renderframe.hpp"
 
 namespace dev
 {

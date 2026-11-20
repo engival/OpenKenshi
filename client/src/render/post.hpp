@@ -31,7 +31,7 @@ public:
 	// post.letterbox: the height in framebuffer pixels of each of the two black bars (top and bottom) over the 3D view this frame, 0 = none. Clicks and
 	// the cursor inside them must not reach the world.
 	int letterboxBar() const { return bar_; }
-	void debugOff(uint32_t mask) { dbgOff_ = mask; }	// the light debugger's switched-off terms (dev/lightterms.hpp), from the packet: bloom and the grade read it in settings()
+	void debugOff(uint32_t mask) { dbgOff_ = mask; }	// the light debugger's switched-off terms (knobs/lightterms.hpp), from the packet: bloom and the grade read it in settings()
 
 private:
 	struct Settings
