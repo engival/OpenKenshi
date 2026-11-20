@@ -51,8 +51,12 @@ bool gExited = false;	// the logic thread left its loop
 // Render thread only: the waits that ran out since the last draw.
 int gMissed = 0;
 std::chrono::steady_clock::time_point gMissStart;
+// Render thread only, since the last takeMisses() (kenshi-k16.2.437.1): the frames without a pass, the runs that ended, the longest run.
+long gRepeats = 0, gRuns = 0, gLongest = 0, gPrinted = 0;
+double gLongestMs = 0, gLastBound = 0;
 
 std::atomic<double> gStallMs{ 0 };	// the scripted render stall, taken once
+std::atomic<double> gLogicMs{ 0 };	// the newest world frame's logic ms (kenshi-k16.2.437.1): logic writes it, the pace log reads it
 
 // Logic thread only.
 IdleStats gIdle;
@@ -176,6 +180,8 @@ bool renderFrame(double boundMs)
 	if (!gCv.wait_for(lk, bound, [] { return gFilled >= 0 || gExited; }) || gFilled < 0)
 	{
 		if (gMissed++ == 0) { gMissStart = std::chrono::steady_clock::now(); }
+		gLastBound = boundMs;
+		gRepeats++;
 		return false;
 	}
 	// The flip (rule 3): filled -> drawing, the slot drawn before -> free, then logic is told (it waits for the draw itself in lockstep).
@@ -190,7 +196,15 @@ bool renderFrame(double boundMs)
 	if (gMissed)
 	{
 		const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - gMissStart).count() + boundMs;
-		fprintf(stderr, "kclient: lockstep: no packet for %.0f ms: %d frames without a pass showed the last frame\n", ms, gMissed);
+		gRuns++;
+		if (gMissed > gLongest) { gLongest = gMissed; gLongestMs = ms; }	// the run with the most frames; ms is its wall time (today's number)
+		// Only a real stall prints (kenshi-k16.2.437.1): a run of misses over kMissLogMs, once, when it ends. A one-frame repeat is the normal
+		// jitter of a logic frame that just misses the bound; the count of those goes to the pace log (dev/pacelog.hpp).
+		if (ms > kMissLogMs)
+		{
+			fprintf(stderr, "kclient: lockstep: no packet for %.0f ms: %d frames without a pass showed the last frame\n", ms, gMissed);
+			gPrinted++;
+		}
 		gMissed = 0;
 	}
 	gHooks.render(s);
@@ -233,6 +247,10 @@ double stop()
 
 void stallRender(double ms) { gStallMs.store(ms); }
 
+void noteLogicMs(double ms) { gLogicMs.store(ms); }
+
+double lastLogicMs() { return gLogicMs.load(); }
+
 void renderStallPoint()
 {
 	const double ms = gStallMs.exchange(0);
@@ -244,6 +262,20 @@ IdleStats takeIdle()
 	std::lock_guard<std::mutex> lk(gMutex);	// logic writes gIdle under the mutex (its wait loop)
 	IdleStats s = gIdle;
 	gIdle = {};
+	return s;
+}
+
+MissStats takeMisses()
+{
+	MissStats s{ gRepeats, gRuns, gLongest, gPrinted, gLongestMs };	// render thread only: renderFrame writes these, the caller is that thread
+	if (gMissed > 0)	// a run still going: its length and the time it has lasted so far (it may have begun in an earlier second)
+	{
+		const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - gMissStart).count() + gLastBound;
+		if (gMissed > s.longest) { s.longest = gMissed; s.longestMs = ms; }
+		else if (gMissed == s.longest && ms > s.longestMs) { s.longestMs = ms; }
+	}
+	gRepeats = gRuns = gLongest = gPrinted = 0;
+	gLongestMs = 0;
 	return s;
 }
 }

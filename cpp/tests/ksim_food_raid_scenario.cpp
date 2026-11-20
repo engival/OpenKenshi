@@ -7,6 +7,7 @@
 #include "scenario_rig.hpp"
 #include "sim_access.hpp"
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -17,12 +18,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
-#endif
-#ifndef KSIM_SCENARIO
-#error KSIM_SCENARIO must be defined
 #endif
 
 using namespace ksim;
@@ -112,7 +107,7 @@ int main(int argc, char** argv)
 {
 	try
 	{
-		const scenario::File file = scenario::parseFile(KSIM_SCENARIO);
+		const scenario::File file = scenario::parseFile(ksim::dev::srcPath("../scenarios/food_raid.kscen"));
 		if (argc < 2 || !runRaid(file, argv[1], "Old Village"))
 		{
 			std::cout << "ksim_food_raid_scenario: SKIPPED: needs the world navmesh bake with the Old Village region (pass its directory)\n";

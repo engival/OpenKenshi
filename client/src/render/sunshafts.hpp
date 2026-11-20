@@ -16,7 +16,7 @@ public:
 	// sun forced lit, 4 = the enclosure along the path. Returns true when it drew.
 	// lampScale: render.lamp_beams (kenshi-jj3.28.1; 0 = off): the cones of the shaded lamps in `light` (the scene's list with its visibility codes) ride the same march; the pass then
 	// runs without a sun (scale 0, or night / shadows off) as well.
-	bool render(const Camera& c, const LightParams& light, const Shadow& shadow, float scale, float lampScale, float sunY, sg_view depth, int debug = 0);
+	bool render(const Camera& c, const LightParams& light, const Shadow::FrameData& shadow, float scale, float lampScale, float sunY, sg_view depth, int debug = 0);
 
 private:
 	sg_shader shd_ = {};

@@ -20,6 +20,7 @@
 #include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
+#include "kutil/platform/socket.hpp"
 #include "knav/navmesh.hpp"
 #include "kworld/loadorder.hpp"
 
@@ -46,7 +47,7 @@
 namespace ksim::simlink {
 
 inline constexpr std::uint32_t kMagic = 0x4D49534B; // 'KSIM'
-inline constexpr std::uint16_t kProtocol = 6; // bump in the same commit as any incompatible wire / snapshot / server-args change (SIMLINK.md "Protocol version"); the client has its own copy
+inline constexpr std::uint16_t kProtocol = 8; // bump in the same commit as any incompatible wire / snapshot / server-args change (SIMLINK.md "Protocol version"); the client has its own copy
 // INTERACTABLE `kind` (SIMLINK.md section 13).
 inline constexpr std::uint8_t kInteractableDoor = 1;
 inline constexpr std::uint8_t kInteractableItem = 2;
@@ -103,7 +104,7 @@ enum FrameType : std::uint16_t
 	kEvent = 50,
 	kScenarioList = 54, // SCENARIO_LIST: the playtest scenarios the server carries (SIMLINK.md SCENARIO; task CE)
 	kScenarioStarted = 55, // SCENARIO_STARTED: the answer to SCENARIO_LOAD 103
-	kSeenBy = 59, // SEEN_BY: the hostile observers that know a sneaking player character, the stealth KO's abort test (SIMLINK.md section 6)
+	kSeenBy = 59, // SEEN_BY: the non-allied observers that know (seen now, not merely heard) a sneaking player character, the stealth KO's abort test (SIMLINK.md section 6)
 	kDetectedBy = 60, // DETECTED_BY: a sneaking player character's detection records (observer, red/yellow, friendly) for the stealth arrows (SIMLINK.md)
 	kBeams = 58, // BEAMS: Venge's sky beams, planned ahead, to the sessions in range (SIMLINK.md section 6; 57 is ITEM_LOCK)
 	kScenarioMetrics = 56, // SCENARIO_METRICS: the answer to SCENARIO_END 104
@@ -401,6 +402,7 @@ struct ServerContext
 	std::size_t squadLimit = 0; // 0 = every squad
 	std::vector<OrderLogEntry> orderLog;
 	bool paused = false; // the admin's pause order
+	bool pausedUntilOrder = false; // --paused: `paused` was set by the server; the first speed or pause order of a client releases it
 	bool idle = false; // SimLinkServer: no ready session is connected (the default pause policy); never set by an order
 	// DIALOGUE.md 13.2 (V1: Freeze): the speakers whose reply menu a present session shows; while any is open the sim does not tick. Wall
 	// clock, never saved: a reply or end_talk order takes its entry out (the order then applies on the first tick), a gone session clears
@@ -665,7 +667,11 @@ private:
 	{
 		std::uint64_t id = 0;
 		state::Inventory inventory;
+		std::vector<std::uint8_t> steal; // ITEM_GRID's steal tail, one percent per flat entry; empty = all 255 (no roll)
+		bool gridOnly = false; // only the steal tail changed: resend ITEM_GRID alone (same id and version)
 	};
+	// The steal percent of every flat entry of an opened container / body for the opener `actor` (Simulation::stealPercent).
+	std::vector<std::uint8_t> stealTail(std::uint64_t actor, const InvRecord& record) const;
 	void writeInventory(RecordWriter& out, std::uint64_t tick, const InvRecord& record);
 	void writeItemQuality(RecordWriter& out, std::uint64_t tick, const InvRecord& record);
 	void writeItemGrid(RecordWriter& out, std::uint64_t tick, const InvRecord& record);
@@ -840,6 +846,7 @@ private:
 	std::unordered_map<std::uint64_t, std::uint32_t> knownInventory_; // player character id -> inventory version the client has
 	std::uint32_t tradeWindows_ = 0;
 	std::map<std::uint64_t, OpenTrade> trades_; // actor id -> its open trade (session state: the sim keeps only the stock and the wallets)
+	std::map<std::uint64_t, std::pair<std::uint64_t, std::vector<std::uint8_t>>> stealSent_; // opened id -> the steal tail last sent (actor, percents)
 	std::map<std::uint64_t, std::set<std::uint64_t>> openLoots_; // opened body / container id -> the session's looters that opened it (loot open)
 	struct InterKnown
 	{
@@ -889,7 +896,7 @@ private:
 	Simulation& sim_;
 	ServerContext& ctx_;
 	ServerOptions options_;
-	int listenFd_ = -1;
+	kutil::net::Socket listenFd_ = kutil::net::kNoSocket;
 	std::mutex callMutex_;
 	std::deque<std::pair<const std::function<void()>*, std::promise<void>>> calls_;
 };

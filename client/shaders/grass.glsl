@@ -9,7 +9,7 @@ layout(binding=0) uniform grass_vs_params
 	vec4 base;      // xyz = tile origin relative to the camera
 	vec4 camw;      // xyz = camera world position (world = p + camw), w = time (s)
 	vec4 fade;      // x = distance where the fade-out starts, y = where it ends
-	vec4 wind;      // x = sway length in world units (GRASS `wind factor` x 3), yz = wind direction (xz), w = 1: two crossed quads
+	vec4 wind;      // x = sway length in world units (GRASS `wind factor` x 3), yz = wind direction (xz), w = 1: the original sway (+X, 0.3 pi rad/s, 2.0 rad/unit), 0: the live-wind field
 };
 
 in vec3 corner;     // x -0.5..0.5 across the quad, y 0..1 up, z = quad index (0 / 1: the second quad is turned 90 degrees)
@@ -35,7 +35,8 @@ void main()
 	float sink = clamp((d - fade.x * 0.9) / max(fade.y - fade.x * 0.9, 1.0), 0.0, 1.0);	// grows out of the ground over the last stretch
 	vec3 q = p + vec3(right.x * corner.x * w, corner.y * h * (1.0 - 0.8 * sink) - 0.8 * sink * h, right.y * corner.x * w);
 	vec2 wp = q.xz + camw.xz;
-	float sway = sin(camw.w * 1.9 + dot(wp, vec2(0.021, 0.013)) + inst_rnd.y * 6.2831853) * 0.7 + sin(camw.w * 0.7 + wp.x * 0.004) * 0.3;
+	// wind.w = 1: the original (kinspect foliage_wind.md 2-3): sin(time + x * 2.0), time = real s * 0.3 pi; else our two-sine field at the live wind's phase
+	float sway = wind.w > 0.5 ? sin(camw.w * 0.94247780 + wp.x * 2.0) : (sin(camw.w * 1.9 + dot(wp, vec2(0.021, 0.013)) + inst_rnd.y * 6.2831853) * 0.7 + sin(camw.w * 0.7 + wp.x * 0.004) * 0.3);
 	q.xz += wind.yz * (wind.x * sway * corner.y * corner.y);
 	v_uv = vec2(corner.x + 0.5, 1.0 - corner.y);
 	v_col = inst_col.rgb;

@@ -21,13 +21,12 @@
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
-#endif
 
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
 #include <filesystem>
 #include <map>
 #include <fstream>
@@ -36,7 +35,19 @@
 #include <string>
 #include <vector>
 
-#include <unistd.h> // mkdtemp: macOS declares it here only
+
+namespace
+{
+// A fresh unique directory under the temp path (mkdtemp does not exist on MinGW).
+std::filesystem::path makeTempDir(const std::string& prefix)
+{
+	static int counter = 0;
+	const std::filesystem::path dir = std::filesystem::temp_directory_path()
+		/ (prefix + std::to_string(static_cast<long long>(std::chrono::steady_clock::now().time_since_epoch().count())) + "_" + std::to_string(counter++));
+	std::filesystem::create_directories(dir);
+	return dir;
+}
+} // namespace
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
@@ -332,8 +343,7 @@ void walkAfterImport(const kworld::LoadOrder& order, const char* knav)
 	const auto data = CombatData::build(*gd, KENSHI_DATA);
 	sim.enableCombat(data, CombatSettings{});
 	sim.enableNavigation(nav);
-	char pattern[] = "ksim_save_import_walk_XXXXXX";
-	const fs::path dir = mkdtemp(pattern);
+	const fs::path dir = makeTempDir("ksim_save_import_walk_");
 	fs::create_directories(dir / "platoon");
 	Who hero{"Hero", 7, from->x, from->z, true};
 	hero.y = from->y;
@@ -372,8 +382,7 @@ void snapAfterImport(const kworld::LoadOrder& order, const char* knav)
 		const auto data = CombatData::build(*gd, KENSHI_DATA);
 		sim.enableCombat(data, CombatSettings{});
 		sim.enableNavigation(nav);
-		char pattern[] = "ksim_save_import_snap_XXXXXX";
-		const fs::path dir = mkdtemp(pattern);
+		const fs::path dir = makeTempDir("ksim_save_import_snap_");
 		fs::create_directories(dir / "platoon");
 		Who hero{"Hero", 7, from->x, from->z, true};
 		hero.y = from->y - 50.0;
@@ -406,8 +415,25 @@ void snapAfterImport(const kworld::LoadOrder& order, const char* knav)
 
 } // namespace
 
+// `ksim_save_import_test --write-fixture DIR`: the smallest save the server's --import-save test (ksim_server_import) starts from: the hero (a player Fighter,
+// selected in CAMERA) and one more member of the player squad. Written to DIR (quick.save, platoon/); nothing is imported.
+int writeFixture(const fs::path& dir)
+{
+	fs::create_directories(dir / "platoon");
+	Who hero{"Hero", 7, 1000.0, 1000.0, true};
+	Who mate{"Mate", 8, 1010.0, 1000.0};
+	writePlatoon(dir / "platoon" / "Expedition.platoon", "pl", kPoolPlayer, {hero, mate});
+	Rec cam("CAMERA", "cam", "camera");
+	cam.s("pfaction name", "Nameless").vec3("pos", 1000.0f, 20.0f, 1000.0f).vec4("rot", 1.0f, 0.0f, 0.0f, 0.0f).f("zoom", -300.0).handle("selected_character", kPoolPlayer, 7, 1)
+		.i("time day", 140).i("time hour", 17).i("time minute", 32).i("player money", 0);
+	writeFile(dir / "quick.save", {cam, platoon("Expedition", kNameless, "Nameless", "platoon/Expedition.platoon", kPoolPlayer, 1000.0f, 1000.0f, 2, 0)});
+	return 0;
+}
+
 int main(int argc, char** argv)
 {
+	if (argc == 3 && std::string(argv[1]) == "--write-fixture")
+		return writeFixture(argv[2]);
 	fs::path dir;
 	try
 	{
@@ -420,8 +446,7 @@ int main(int argc, char** argv)
 		sim.enableCombat(data, CombatSettings{});
 		const Names names = namesFor(*gd, *data, sim);
 
-		char pattern[] = "ksim_save_import_XXXXXX";
-		dir = fs::path(mkdtemp(pattern));
+		dir = makeTempDir("ksim_save_import_");
 		fs::create_directories(dir / "platoon");
 		// The player's squad (CAMERA's selected character is its member 7), a far token squad, a near squad that becomes Full, a never-activated one and one
 		// whose file is gone.

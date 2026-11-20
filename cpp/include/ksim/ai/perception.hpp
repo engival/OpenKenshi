@@ -181,9 +181,15 @@ double stagger(std::uint64_t id) noexcept;
 const state::SightRecord* find(const state::Fighter& observer, std::uint64_t target) noexcept;
 // The observer learns of the target outside a scan (an attacker targeting it: onTargetedBy). The record becomes noticed (state 1) whatever it
 // was, a state-2 one included (140858f40). True when it was not noticed before (new, or promoted from suspicious / remembered).
-bool notice(state::Fighter& observer, std::uint64_t target);
+bool notice(state::Fighter& observer, std::uint64_t target, bool known = true);
 // The observer is aware of the target (a hostile one makes the squad attack).
 bool aware(const state::Fighter& observer, std::uint64_t target) noexcept;
+// The exe's SensorRecord seen_now: the last scan knew the target by sight (or a force-notice), never by the noise roll alone.
+bool knownNow(const state::Fighter& observer, std::uint64_t target) noexcept;
+// The exe's FRESH strength (rwh.212): SensorRecord +0x38 (seen_now) || +0x39 (sensed this update; sight, else hearing). The fight-start
+// resolvers (goals 16, 15, 143) gate on it; a remembered record that no scan sensed lately does not pass. Our "this update" is one
+// scan interval (kScanMax), since scans are round-robin.
+bool sensedNow(const state::Fighter& observer, std::uint64_t target) noexcept;
 // Aware and sighted within `maxAge` seconds (the follow task's "leader perceived").
 bool seenWithin(const state::Fighter& observer, std::uint64_t target, double maxAge) noexcept;
 // A scan itself sensed the target (known or sighted) within `maxAge` seconds; the attacker's `notice` does not count. The chase

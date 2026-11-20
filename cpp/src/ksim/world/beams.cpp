@@ -109,6 +109,9 @@ Beam planBeam(const BeamPlanKey& key, const EffectDef& effect, const std::vector
 		left -= beam.segments.back().ticks;
 		yaw = std::fmod(yaw + (2.0 * rng.uniform01() - 1.0) * kMaxTurn + kTwoPi, kTwoPi);
 	}
+	// The visible burst is rolled last so the path above stays what it was.
+	beam.visibleTicks = static_cast<std::uint16_t>(
+		std::min<std::uint64_t>({ticksOf(rollRange(rng, kBeamVisibleMinSeconds, kBeamVisibleMaxSeconds)), life, 0xFFFF}));
 	return beam;
 }
 
@@ -167,7 +170,11 @@ void BeamField::rebuild(BeamGroup& group, std::size_t index, const state::Weathe
 		{
 			BeamSlot& entry = group.slots.emplace_back();
 			entry.effect = effect;
-			entry.current = planBeam(key, *effect, cells, slot, 0, start, group.limitTick);
+			// The onset is staggered (user 2026-11-19): handler s strikes its first beam at a random tick inside the first time-to-live
+			// after the weather starts, never all 40 at once; after that each slot refills as its beam ends.
+			const std::uint64_t stagger = splitMix64(splitMix64(key.seed) ^ splitMix64(key.startMinute) ^ splitMix64(0x57a66e5ull + slot))
+				% (ticksOf(effect->ttlMax) + 1);
+			entry.current = planBeam(key, *effect, cells, slot, 0, start + stagger, group.limitTick);
 			entry.next = planBeam(key, *effect, cells, slot, 1, entry.current.endTick, group.limitTick);
 		}
 	}
@@ -179,6 +186,24 @@ void BeamField::rebuild(BeamGroup& group, std::size_t index, const state::Weathe
 	}
 	advance(group, now);
 	group.epoch = ++changes_;
+}
+
+bool BeamField::nearZone(std::uint32_t colour, double x, double z, double range) const noexcept
+{
+	const auto found = cells_.find(colour);
+	if (found == cells_.end())
+		return false;
+	for (const int index : found->second)
+	{
+		const kworld::ZoneCell cell = kworld::zoneCellOfIndex(index);
+		const double minX = kworld::zoneMinX(cell.x);
+		const double minZ = kworld::zoneMinZ(cell.z);
+		const double dx = std::max({minX - x, 0.0, x - (minX + kworld::kZoneSize)});
+		const double dz = std::max({minZ - z, 0.0, z - (minZ + kworld::kZoneSize)});
+		if (dx * dx + dz * dz <= range * range)
+			return true;
+	}
+	return false;
 }
 
 void BeamField::advance(BeamGroup& group, std::uint64_t now)
@@ -221,6 +246,7 @@ void BeamField::advance(BeamGroup& group, std::uint64_t now)
 
 void BeamField::step(const flecs::world& ecs, std::uint64_t now)
 {
+	now_ = now;
 	const state::WeatherRegions* regions = ecs.get<state::WeatherRegions>();
 	if (regions == nullptr)
 		return;
@@ -264,7 +290,7 @@ double BeamField::burnAt(double x, double z, int& type) const noexcept
 		for (const BeamSlot& slot : group.slots)
 		{
 			const Beam& beam = slot.current;
-			if (beam.effect == nullptr || slot.posTick < beam.spawnTick || slot.posTick >= beam.endTick)
+			if (beam.effect == nullptr || now_ < beam.spawnTick || slot.posTick >= beam.endTick)
 				continue;
 			const double dx = x - slot.px;
 			const double dz = z - slot.pz;

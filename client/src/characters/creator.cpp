@@ -9,6 +9,9 @@ static float Characters::Spec::* postureField(const std::string& slider)
 {
 	return slider == "Posture" ? &Characters::Spec::posture : slider == "Shoulder set" ? &Characters::Spec::shoulderSet : slider == "Neck position" ? &Characters::Spec::neckPosition : nullptr;
 }
+// The original's default appearance (140072c50) holds Posture at a fixed 20, not the human range's mid 35 (findings/charedit.md (2)): RESET and a
+// race / sex change show that body.
+constexpr float kDefaultPosture = 20;
 
 bool Creator::open(Characters& chars, const double pos[3], float yaw, const std::string& race, bool female, std::string& err)
 {
@@ -43,9 +46,36 @@ bool Creator::setRace(const std::string& race, bool female, std::string& err)
 	spec_.hair.clear();
 	spec_.beard.clear();
 	if (!choices_.hairColours.empty()) { spec_.hairColour = choices_.hairColours[0]; }
+	// RESET / a new race or sex: the original's default appearance. Every <Range> at its xml mid (the parser's round(min + (max-min)/2); so Arm bulk
+	// 108, not 100: 70 + 75/2 = 107.5), except Posture at the default appearance's fixed 20, and the shape map clears so value() answers the mids.
 	spec_.shape.clear();
-	for (const Characters::EditorRange& r : ranges()) { if (const auto f = postureField(r.name)) { spec_.*f = r.mid; } }
+	for (const Characters::EditorRange& r : ranges())
+	{
+		if (r.name == "Posture") { spec_.posture = kDefaultPosture; }
+		else if (const auto f = postureField(r.name)) { spec_.*f = r.mid; }
+	}
 	return true;
+}
+
+// The editor's Skin Tone slider top in tenths: (swatch count - 1) * 10 (140077090; kinspect rwh47_skin_tone_scale_static.md).
+int Creator::skinMax() const
+{
+	const int stops = choices_.skinStops[spec_.female ? 1 : 0];
+	return stops > 0 ? 10 * (stops - 1) : 0;
+}
+
+bool Creator::defaultLook(const std::string& race, bool female, std::string& err)
+{
+	if (!chars_) { err = "creator not open"; return false; }
+	// a fresh Spec (no wear, weapons or hair of the member shown before it), the preview where it stands, standing on its own idle
+	const double pos[3] = { spec_.pos[0], spec_.pos[1], spec_.pos[2] };
+	const float yaw = spec_.yaw;
+	spec_ = Characters::Spec();
+	for (int k = 0; k < 3; k++) { spec_.pos[k] = pos[k]; }
+	spec_.yaw = yaw;
+	spec_.loco = true;
+	spec_.move = 0;
+	return setRace(race, female, err);
 }
 
 float Creator::value(const std::string& slider) const
@@ -66,8 +96,8 @@ void Creator::setValue(const std::string& slider, float v)
 
 // RANDOMISE after the original (findings/charedit.md, 1405ef930 / 14006fcf0): every editor Range gets round(mid + variation * (2u - 1)), u uniform in [0, 1),
 // variation = round((max - min) * random_variation / 100), or (max - min) * 0.2 without one; Ranges of one random_group share their u. The head is uniform
-// over the race's heads, hair and beard weighted by the race's `hairs` (the empty record is the none), skin tone a uniform integer 0..100 (Skin Tone shows
-// 0..100), the hair colour weighted by the race's `hair colors` (val0, 0 = 100; charedit8b_static.md). Posture, Age and the idle stance never change.
+// over the race's heads, hair and beard weighted by the race's `hairs` (the empty record is the none), skin tone a uniform integer over the ColourRange
+// (0..skinMax(), tenths), the hair colour weighted by the race's `hair colors` (val0, 0 = 100; charedit8b_static.md). Posture, Age and the idle stance never change.
 // The exe turns the picked COLOR_DATA into Hair Colour / Saturation / Brightness sliders (HSB x 100); the spec keeps the record. The face morph pass
 // (14007b7c0, one side of each pair 0) is the signed Face ranges here, so it goes through the Range formula too.
 void Creator::randomize(uint32_t seed, int part)
@@ -109,7 +139,12 @@ void Creator::randomize(uint32_t seed, int part)
 		spec_.beard = spec_.female || beard < 0 ? std::string() : choices_.beards[(size_t)beard];
 		if (const int c = weighted(0, choices_.hairColourWeights); c >= 0) { spec_.hairColour = choices_.hairColours[(size_t)c]; }
 	}
-	if (has(kBody)) { spec_.skin = (float)std::uniform_int_distribution<int>(0, 100)(rng) / 100.0f; }
+	// Skin Tone: a uniform integer slider position over the ColourRange, stored as the 0..1 position along the palette (charedit.md (2))
+	if (has(kBody))
+	{
+		const int top = skinMax();
+		spec_.skin = top > 0 ? (float)std::uniform_int_distribution<int>(0, top)(rng) / (float)top : 0.0f;
+	}
 }
 
 std::string Creator::specString() const

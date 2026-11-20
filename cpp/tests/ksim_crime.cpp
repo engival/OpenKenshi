@@ -16,6 +16,7 @@
 
 #include "test_util.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <optional>
@@ -182,7 +183,7 @@ struct Rig
 			sim->tick();
 	}
 	// A container of `owner` at the character's feet holding one item; the character takes it by the transfer command.
-	std::uint64_t steal(std::uint64_t who, const std::string& owner)
+	std::uint64_t steal(std::uint64_t who, const std::string& owner, double thievery = 100.0)
 	{
 		state::Container box;
 		box.recordSid = "box";
@@ -197,7 +198,7 @@ struct Rig
 		stock.add(w.item, 1);
 		flecs::entity c = sim->spawnContainer(box, stock);
 		const std::uint64_t id = c.get<state::Id>()->value;
-		f(who).skills.thievery = 100.0; // a sure take (steal chance 127%): these tests are about the crime, ksim_steal_chance rolls
+		f(who).skills.thievery = thievery; // 100: a sure take (steal chance 127%): these tests are about the crime, ksim_steal_chance rolls
 		sim->enqueue(Command::containerTransfer(state::Id{who}, id, w.item, 1, true, 1));
 		return id;
 	}
@@ -266,6 +267,27 @@ void caughtStealing(const Data& w)
 		rig.steal(thief, w.holy);
 		rig.tick(20 * 12);
 		check(sent.empty(), "an unwitnessed theft sends no EVENT 51");
+	}
+	// Acts the steal roll catches (thievery 0: caught on a draw above 30%) are acts too: one 51 per act, a later act after the record
+	// ended sends its own (k16.6.424: the caught path never started the entry, so bar_lure's witnessed take sent only alarm 52).
+	{
+		Rig rig(w);
+		std::vector<Event> sent;
+		rig.sim->setCrimeObserver([&](const Event& e) { sent.push_back(e); });
+		const std::uint64_t guard = rig.add(w.holy, 1, 1, 0.0, 0.0, 0.0, false);
+		const std::uint64_t thief = rig.add(w.nameless, 9, 0, 0.0, 60.0, 3.14159265, true);
+		rig.tick(20 * 3);
+		bool allNamed = true;
+		for (int act = 1; act <= 8; ++act)
+		{
+			const std::uint64_t box = rig.steal(thief, w.holy, 0.0);
+			rig.tick(20 * 5);
+			rig.sim->forgiveCrime(thief, w.holy); // the record ends (a watching witness keeps it alive otherwise): the act is over
+			rig.tick(20);
+			allNamed = allNamed && sent.size() == static_cast<std::size_t>(act) && sent.back().who == thief && sent.back().other == guard
+				&& sent.back().container == box; // 51 names the container, caught or landed
+		}
+		check(allNamed, "each of 8 takes at thievery 0, caught or landed, sends exactly one EVENT 51 (" + std::to_string(sent.size()) + ")");
 	}
 	// A lockpick seen: cause 2, the picked container, once although the crime is reported every tick.
 	{
@@ -731,6 +753,34 @@ void joinerAssault(const Data& w)
 	check(rig.sim->crimeRecord(bystander) == nullptr, "a character that landed nothing carries crime 0");
 }
 
+// k16.6.362: the law branch alone. The guard (law) attacks a player character: the generic attack-record path charges the ATTACKER, and a
+// law character cannot be a criminal, so only the law branch (k16.6.269) can charge the defender. No other law character is present to
+// witness anything (same team: the targeting flips the defender's squad to hostile, tag 4), and the relation is never written on this path. Tag 4 (the arena's targeting hostility) is on the defender's squad.
+void lawHitCharges(const Data& w)
+{
+	Rig rig(w, 1);
+	rig.fights = true;
+	const flecs::entity holy = rig.faction(w.holy);
+	const flecs::entity nameless = rig.faction(w.nameless);
+	const double before = factionRelation(*w.gd, holy, nameless);
+	const std::uint64_t guard = rig.add(w.holy, cr::kClassLaw, 1, 0.0, 0.0, 0.0, false);
+	const std::uint64_t defender = rig.add(w.nameless, 9, 1, 0.0, 8.0, 3.14159265, true);
+	rig.tick(20 * 3);
+	rig.sim->enqueue(Command::fighterAttack(state::Id{guard}, state::Id{defender}));
+	const state::CrimeRecord* r = nullptr;
+	for (int i = 0; i < 20 * 20 && (r == nullptr || cr::bountyOf(*r, w.holy) < 500); ++i)
+	{
+		rig.tick();
+		r = rig.sim->crimeRecord(defender);
+	}
+	check(r != nullptr && r->crime == cr::kAssault && r->victimChar == guard, "a guard's landed hit charges the defender with Assault");
+	check(r != nullptr && cr::bountyOf(*r, w.holy) >= 500, "with a 500 bounty with the guard's faction");
+	check(rig.sim->crimeRecord(guard) == nullptr, "the guard carries no crime");
+	const std::vector<std::uint64_t>& tags = rig.f(defender).hostileSquads;
+	check(std::find(tags.begin(), tags.end(), rig.f(guard).squad) != tags.end(), "tag 4: the defender's squad lists the guard's squad hostile");
+	check(factionRelation(*w.gd, holy, nameless) == before, "the faction relation is unchanged");
+}
+
 // The cuff's crime (dt5, Task_CuffTarget vf2 14034af20): a slaver's restrain of a free, unbountied, player-owned person is crime 1
 // ENSLAVING on the cuffer. It stays a pending crime: enslaving is never committed to a bounty (140853ec0).
 void cuffing(const Data& w)
@@ -907,6 +957,7 @@ int main()
 		twoPlayers(w);
 		assault(w);
 		joinerAssault(w);
+		lawHitCharges(w);
 		wanted(w);
 		cuffing(w);
 		trespass(w);

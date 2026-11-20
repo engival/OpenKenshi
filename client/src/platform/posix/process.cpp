@@ -32,6 +32,7 @@ bool spawnPiped(const std::vector<std::string>& args, Child& c, FILE*& out, std:
 #endif
 		if (getppid() != parent) { _exit(1); }
 		dup2(fds[1], STDOUT_FILENO);
+		dup2(fds[1], STDERR_FILENO);	// one pipe for both: the host reads the startup stages from stderr and echoes it
 		close(fds[0]);
 		close(fds[1]);
 		execv(exe.c_str(), argv.data());

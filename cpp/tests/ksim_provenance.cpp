@@ -5,6 +5,7 @@
 
 #include "ksim/economy/inventory_grid.hpp"
 #include "ksim/save/save.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cstdio>
 

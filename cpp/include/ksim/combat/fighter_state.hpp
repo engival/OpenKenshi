@@ -65,6 +65,7 @@ struct FighterSkills
 	double crossbows = 1.0; // STATS `bow` (save v96): the Crossbows skill (dt41_A: the shot's accuracy and the reload read it)
 	double turrets = 1.0; // STATS `turrets` (save v97): the skill id 0xb a turret's gunner shoots with (dt41_B section 3)
 	double thievery = 1.0; // STATS `thievery` (save v98, stat 10): a term of the victim's defence against a stealth KO (dt41_C)
+	double perception = 1.0; // STATS `perception` (save v113, stat 0x18): trained by the ranged aim (combat.cpp rangedFire); nothing else reads it yet
 	double assassination = 1.0; // stat 0x16 (CharStats+0xb8, save v98): the stealth KO's attack and its KO time. No STATS key: UNSURE where it starts
 
 	template <typename Archive, typename Self>
@@ -100,6 +101,8 @@ struct FighterSkills
 			ar(self.thievery);
 			ar(self.assassination);
 		}
+		if (ar.version >= 113)
+			ar(self.perception);
 	}
 };
 
@@ -493,6 +496,10 @@ struct SightRecord
 	// Seconds since perception::notice (the original's force-notice, 140858f40) wrote this record. Derived, never saved: the wire's
 	// DETECTED_BY reads it to tell a told-about friendly from a sighted one.
 	double sinceNoticed = 1.0e9;
+	// The exe's SensorRecord seen_now (+0x38): the last scan KNEW the target (sight, or the sneak meter past 1.0) or perception::notice
+	// forced it; a noise-roll "heard" (sighted) never sets it, and the first scan with neither clears it. Derived, not saved (one scan
+	// after a load it reads false). The stealth KO's abort and SEEN_BY read it (rwh.152).
+	bool knownNow = false;
 
 	template <typename Archive, typename Self>
 	static void fields(Archive& ar, Self& self)
@@ -606,7 +613,8 @@ struct Fighter
 	std::int32_t team = 0; // characters of different teams are enemies
 	bool blockMode = false; // CharStats+0x128 (the player's "defensive" mode)
 	bool passive = false; // CharStats+0x12c: PROTECT_ALLIES is utility 0 (rwh.148 3a); the rest of the AI runs. Saved, v112
-	bool holdPosition = false; // the HOLD POSITION toggle: no ally join, no chase, fights only in close range (rwh.148 3b; UNSURE, not measured as the toggle). Saved, v112
+	bool holdPosition = false; // the HOLD POSITION toggle: joins an ally's fight but never leaves the anchor: crossbow in reach, melee in close range only (rwh.148 3b, rwh.179; UNSURE, not measured as the toggle). Saved, v112
+	bool fought = false; // had a target at least once (Simulation::stepRearm): only such a member stands down when the squad is quiet (k16.6.361). Saved, v118
 
 	// Kinematics (the hot part). yaw in radians, 0 = +z, increasing towards +x.
 	double x = 0.0;
@@ -646,8 +654,40 @@ struct Fighter
 	// The CHARACTER's `inventory` list (item sid, count) a spawn carries: adoptFighter moves it into the new pack and clears it. Not
 	// saved: a loaded fighter's pack is the saved one (k16.6.287).
 	std::vector<std::pair<std::string, std::int32_t>> spawnPack;
+	// The CONTAINER sid of the backpack the spawn wears (the CHARACTER's `backpack` list); adoptFighter puts it in the BACKPACK slot and clears it.
+	std::string spawnBackpack;
 
 	// MedicalSystem.
+	// The arena's pair-distance cache entries this fighter is the lower id of (CombatArena::PathSample, saved v114, k16.8.50): written into the
+	// save by the mirror and read back by CombatArena::add, empty in a running arena. A cache a load dropped made the decisions that read it
+	// (unreachableNear, the Hub's floor test) differ from the unbroken run; `ageTicks` is arena steps since the sample (whole steps: a seconds age rebased on a new clock rounds differently from the unbroken run's).
+	struct PathSample
+	{
+		std::uint64_t other = 0;
+		double length = 0.0;
+		double ax = 0.0;
+		double ay = 0.0;
+		double az = 0.0;
+		double bx = 0.0;
+		double by = 0.0;
+		double bz = 0.0;
+		std::uint64_t ageTicks = 0;
+
+		template <typename Archive, typename Self>
+		static void fields(Archive& ar, Self& self)
+		{
+			ar(self.other);
+			ar(self.length);
+			ar(self.ax);
+			ar(self.ay);
+			ar(self.az);
+			ar(self.bx);
+			ar(self.by);
+			ar(self.bz);
+			ar(self.ageTicks);
+		}
+	};
+	std::vector<PathSample> pathSamples;
 	std::vector<FighterPart> parts;
 	double blood = 150.0;
 	double minBlood = 75.0;
@@ -1128,6 +1168,8 @@ struct Fighter
 			ar(self.passive);
 			ar(self.holdPosition);
 		}
+		if (ar.version >= 118)
+			ar(self.fought);
 		ar(self.walkStuck);
 		ar(self.orderTarget);
 		ar(self.hold);
@@ -1241,6 +1283,9 @@ struct Fighter
 		// Save v98: the stealth KO it is carrying out (task ds/stealth-ko S4). An older save loads nobody mid-KO.
 		if (ar.version >= 98)
 			ar(self.stealthKo);
+		// Save v114: the pair-distance cache entries (k16.8.50). An older save loads none: the first looks re-measure.
+		if (ar.version >= 114)
+			ar(self.pathSamples);
 	}
 };
 

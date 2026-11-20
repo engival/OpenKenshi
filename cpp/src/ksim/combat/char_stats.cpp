@@ -272,6 +272,20 @@ const char* goalLabel(Behaviour behaviour)
 
 } // namespace
 
+// A KO'd or dead fighter may keep its target but is not fighting. The run-in to the target (Approach, 11; 10 is folded in) is not combat mode: the
+// original's approach plays jog / run lower clips, which are is-combat-mode NO (COMBAT_ANIM.md 3, kenshi-k16.6.129); it comes on from the hub / circle /
+// wait / attack / defend states or a technique. The pre-approach states (hub, between) with the target beyond the approach distance (150 u, combat.cpp
+// kTuneApproachDistance) are the run-in too: an attack order lands there for a few ticks before the move-in task starts (kenshi-k16.6.164).
+bool Simulation::combatMode(const state::Fighter& fighter) const
+{
+	const state::Fighter* enemy = fighter.target != 0 ? combat_->find(fighter.target) : nullptr;
+	const bool farHub = (fighter.state == state::CombatState::Hub || fighter.state == state::CombatState::Between) && enemy != nullptr
+		&& std::hypot(enemy->x - fighter.x, enemy->z - fighter.z) > 150.0;
+	return !fighter.unconscious && !fighter.dead
+		&& (fighter.technique >= 0 || fighter.state == state::CombatState::Attack || fighter.state == state::CombatState::Defend
+			|| (fighter.target != 0 && fighter.state != state::CombatState::Approach && !farHub));
+}
+
 Simulation::CharStats Simulation::charStats(std::uint64_t id) const
 {
 	CharStats stats;
@@ -379,14 +393,36 @@ Simulation::CharStats Simulation::charStats(std::uint64_t id) const
 	stats.damageResist = static_cast<float>(1.0 - combat_->rules().toughnessFactor(f)); // lerp(min, max, toughness / 100), F8 getDamageResistance
 
 	const double speed = std::hypot(f.velX, f.velZ);
-	if (f.sneak)
+	// The skill in use (row 6), first match wins: 6 swimming (never: the sim has no swim state) > 3 a job skill this tick > 4 ranged (never: no
+	// ranged combat) > 5 combat-ready with a melee weapon > 1 sneaking > 2 moving faster than 9 u/s > 0. Ids are row 8's table.
+	const auto skillValue = [&](std::uint8_t skill)
 	{
-		stats.extraKind = 1;
-		stats.extra = static_cast<float>(f.skills.stealth);
-	} else if (speed > 9.0) {
-		stats.extraKind = 2;
-		stats.extra = static_cast<float>(f.skills.athletics);
-	}
+		const std::map<std::uint8_t, double> table = {{3, f.skills.athletics}, {7, f.skills.katana}, {8, f.skills.sabres}, {9, f.skills.hackers},
+			{10, f.skills.blunt}, {11, f.skills.heavy}, {12, f.skills.unarmed}, {13, f.skills.poles}, {15, f.skills.lockpicking},
+			{16, f.skills.stealth}, {17, f.skills.science}, {18, f.skills.labouring}, {19, f.skills.engineer}};
+		return static_cast<float>(table.at(skill));
+	};
+	const auto setExtra = [&](std::uint8_t kind, std::uint8_t skill)
+	{
+		stats.extraKind = kind;
+		stats.extraSkill = skill;
+		stats.extra = skillValue(skill);
+	};
+	TaskProgressRow work;
+	if (const std::optional<OperateAction> operate = operateAction(id))
+		setExtra(3, operate->skill);
+	else if (lockProgress(id, work))
+		setExtra(3, 15);
+	else if (constructionProgress(id, work))
+		setExtra(3, 19);
+	else if (combatMode(f))
+	{
+		static constexpr std::uint8_t kWeaponSkill[] = {7, 8, 10, 11, 9, 12, 12, 12, 13}; // by weaponType; 5 = unarmed (Martial Arts)
+		setExtra(5, kWeaponSkill[std::clamp(f.weapon.weaponType, 0, 8)]);
+	} else if (f.sneak)
+		setExtra(1, 16);
+	else if (speed > 9.0)
+		setExtra(2, 3);
 	stats.weaponClass = f.weapon.weaponType == 5 ? 0 : 1; // no ranged combat: never 2
 
 	// Skill ids (SIMLINK.md "Skill ids"): fixed, never the struct order. UNSURE: `bonus` is 0, the gear part is not split out yet.
@@ -395,10 +431,10 @@ Simulation::CharStats Simulation::charStats(std::uint64_t id) const
 		f.skills.medic, f.skills.lockpicking, f.skills.stealth, f.skills.science, f.skills.labouring};
 	for (std::size_t i = 0; i < std::size(skills); ++i)
 		stats.skills.push_back({static_cast<std::uint8_t>(i), static_cast<float>(skills[i]), 0.0f});
-	// Ids 19-23 are FighterSkills; 24-32 nothing trains or uses yet, so they are the template STATS record's numbers at send time (no
+	// Ids 19-24 are FighterSkills (24 Perception: the ranged aim trains it, k16.5.16); 25-32 nothing trains or uses yet, so they are the template STATS record's numbers at send time (no
 	// save change; STATS keys from docs/reference/combat/data/keys_STATS.tsv: `ff` is the precision shooting skill, `bow smith` the
 	// crossbow smith). A character with no STATS record shows the data default 1.
-	const double extended[] = {f.skills.engineer, f.skills.crossbows, f.skills.turrets, f.skills.thievery, f.skills.assassination};
+	const double extended[] = {f.skills.engineer, f.skills.crossbows, f.skills.turrets, f.skills.thievery, f.skills.assassination, f.skills.perception};
 	for (std::size_t i = 0; i < std::size(extended); ++i)
 		stats.skills.push_back({static_cast<std::uint8_t>(19 + i), static_cast<float>(extended[i]), 0.0f});
 	const kdata::Record* statsRecord = nullptr;
@@ -410,10 +446,10 @@ Simulation::CharStats Simulation::charStats(std::uint64_t id) const
 		if (statsRef != nullptr && !statsRef->entries.empty())
 			statsRecord = gameData_->find(statsRef->entries.front().targetID);
 	}
-	static constexpr const char* kTemplateStats[] = {"perception", "swimming", "robotics", "weapon smith", "armour smith", "bow smith", "farming",
+	static constexpr const char* kTemplateStats[] = {"swimming", "robotics", "weapon smith", "armour smith", "bow smith", "farming",
 		"cooking", "ff"};
 	for (std::size_t i = 0; i < std::size(kTemplateStats); ++i)
-		stats.skills.push_back({static_cast<std::uint8_t>(24 + i), statsRecord != nullptr ? statsRecord->floatOr(kTemplateStats[i], 1.0f) : 1.0f, 0.0f});
+		stats.skills.push_back({static_cast<std::uint8_t>(25 + i), statsRecord != nullptr ? statsRecord->floatOr(kTemplateStats[i], 1.0f) : 1.0f, 0.0f});
 	// The Next Level bar: the fractional part of the value. UNSURE: the exe's bar formula (deferred: playtesting); the sim trains nothing, so
 	// it is static.
 	for (const Simulation::CharStats::Skill& skill : stats.skills)

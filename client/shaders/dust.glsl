@@ -62,6 +62,10 @@ void main()
 	// a tumbling flake glints: the brightness flickers slowly
 	const float glint = 0.55 + 0.45 * sin(t * (0.8 + seed.w * 1.7) + ph * 11.0);
 	v_gain = box_y.w * glint * smoothstep(box_z.w, box_z.w * 4.0, vz) * (px * px) / (grown * grown);
+	// A far view (a camera outside, above a cut roof) sees the whole window at once: the motes thin out with the square of the distance past kFar, so a lit room reads as a sparse glint, not a sheet
+	// (kenshi-jj3.8.19). Inside the room (vz under kFar) nothing changes. The hash is the mote's own, so the survivors stay put.
+	const float kFar = 14.0;
+	if (vz > kFar && hash1(i * 7u + 11u) > (kFar * kFar) / (vz * vz)) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
 	if (vz < 0.1) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
 	gl_Position = vec4((vx + corner.x * radius) * cam_r.w, (vy + corner.y * radius) * cam_u.w, 0.5 * vz, vz);
 }

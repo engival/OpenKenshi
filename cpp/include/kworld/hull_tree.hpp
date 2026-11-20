@@ -29,6 +29,11 @@ public:
 	// The same answer without the tree (a linear scan of every triangle): the tests' reference for `trace`.
 	bool traceBrute(const std::array<double, 3>& a, const std::array<double, 3>& b, double& t) const;
 
+	// Work done by `trace` on this thread since the last reset: nodes whose box was tested, triangles tested. Deterministic
+	// (host load does not change it), so a test can gate the cost of a ray on it.
+	struct Work { std::uint64_t nodes = 0, triangles = 0; };
+	static Work& work() noexcept;
+
 	bool empty() const noexcept { return tris_.empty(); }
 	std::size_t triangleCount() const noexcept { return tris_.size() / 9; }
 	// The bytes the tree holds: the triangles and the nodes (the caller's own storage is not counted).

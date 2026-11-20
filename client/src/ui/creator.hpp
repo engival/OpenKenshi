@@ -43,6 +43,9 @@ namespace ui
 		int group = 0, race = 0;	// race: index into groups[group].races
 		int sex = 0;	// 0 male, 1 female
 		bool bothSexes = true;	// false: the race has one sex; the gender picker is disabled
+		// A non-editable member (an animal in the squad) is in no race group: RACE / SUBRACE / GENDER show these texts instead of the list's entry
+		// (the animal's race name; no subrace or sex). Empty: the list's.
+		std::string raceText, subraceText, genderText;
 		int character = 0, characters = 1;	// CHANGE CHARACTER ("i/n", wrapping): index into the squad being made, and its size; hidden with one
 		bool editable = true;	// false (an animal in the squad): only the stepper, CONFIRM and turning the preview
 		bool clothes = true;	// the CLOTHES toggle
@@ -67,7 +70,6 @@ namespace ui
 		std::function<void(int page)> randomize;	// the shown tab (CreatorPage)
 		std::function<void()> randomizeAll, resetDefaults, importCharacter, exportCharacter, done;
 		std::function<void()> cancel;	// CANCEL and Escape; null (the new game's editor): no CANCEL, Escape goes on to the host; setCancel changes it
-		std::function<void(float dx)> rotate;	// a left-drag in the preview area, pixels moved right since the last call
 	};
 
 	class Creator

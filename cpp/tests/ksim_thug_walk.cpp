@@ -23,6 +23,7 @@
 
 #include "test_util.hpp"
 #include "nav_source.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cmath>
 #include <filesystem>

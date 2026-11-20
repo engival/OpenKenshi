@@ -17,6 +17,7 @@
 #include "nav_source.hpp"
 #include "sim_access.hpp"
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -30,9 +31,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_FAR_SCEN
-#error KSIM_FAR_SCEN must be defined
 #endif
 
 using namespace ksim;
@@ -173,7 +171,7 @@ int main(int argc, char** argv)
 				std::printf("t%d st %d tgt %llu tech %d rt %u/%zu seq %u chase %d ord %llu hold %d sneak %d pos %.1f %.1f d %.1f step %.2f wire %.1f %.1f flags 0x%x\n", tick,
 					static_cast<int>(a->state), static_cast<unsigned long long>(a->target), a->technique, a->routeNext, a->route.size(), a->routeSeq, a->routeChase,
 					static_cast<unsigned long long>(a->orderTarget), a->hold, a->sneak, a->x, a->z, dist, step, wireX, wireZ, wireFlags);
-			if (tick > 0 && step > 3.5) // a jump: more than the fastest run (the chase ramps up to 3.0 u/tick, 3.004 on a long straight leg with no corner to brake for, k16.6.248) allows in one tick
+			if (tick > 0 && step > 3.5 + 0.01) // a jump: more than the fastest run (3.5 u/tick) allows in one tick; 0.01 u for the mesh's float32 blur (the chase has no corner brake since k16.8.24 and runs 3.50008 on a long leg)
 				++snaps;
 			lastX = a->x;
 			lastZ = a->z;

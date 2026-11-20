@@ -84,11 +84,10 @@ animlab::Lab::Lab() : chars_(std::make_unique<Characters>()) {}
 
 animlab::Lab::~Lab() { shutdown(); }
 
-void animlab::Lab::setup(const ResourceIndex* res, const std::string& dataDir, const Shadow* shadow)
+void animlab::Lab::setup(const ResourceIndex* res, const std::string& dataDir)
 {
 	res_ = res;
 	dataDir_ = dataDir;
-	if (chars_) { chars_->shadow = shadow; }
 }
 
 // Lazy init (coordinator 2026-11-07): a game start used to pay for the lab's own Characters set, render target and character; they are built on
@@ -1276,9 +1275,10 @@ void animlab::Lab::frame(dev::LabFrame& f)
 	}
 }
 
-void animlab::Lab::render(const dev::LabFrame& f)
+void animlab::Lab::render(const dev::LabFrame& f, const Shadow::FrameData& shadow)
 {
 	if (!f.draw || !f.chars) { return; }
+	f.chars->sfd = &shadow;	// the packet's shadow data, for this draw
 	sg_pass p = {};
 	p.action.colors[0].load_action = SG_LOADACTION_CLEAR;
 	p.action.colors[0].clear_value = { 0.10f, 0.11f, 0.13f, 1.0f };

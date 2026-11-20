@@ -1,5 +1,6 @@
 #include "world/worldbuildings.hpp"
 #include "world/worldbuildings_internal.hpp"
+#include "world/foliagewind.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -21,7 +22,6 @@ using namespace wbi;
 
 namespace
 {
-constexpr float kGlassBuild = 200000.0f;	// a peeked part: stretch w = -(kGlassBuild + opacity x 1000) (mesh.glsl inst_vs)
 constexpr float kFlipFade = 0.25f;	// MINE (user 2026-11-18): seconds a wall that turned away from the cut-away camera takes to fade out
 constexpr float kGlassAlpha = 0.25f;	// MINE: a fully peeked or ghosted part's opacity
 constexpr double kEffectMargin = 1500.0;	// units of view margin for effect collection: a just-off-screen fire stays alive (ParticleWorld)
@@ -33,8 +33,21 @@ const cfg::Float kBuildingFar{ cfg::Group{ "Draw distance" }, "render.building_f
 constexpr float kFarFade = 0.15f;	// MINE: the share of the far distance the exteriors dither out over
 const cfg::Bool kSignsIndoors{ cfg::Group{ "Interiors" }, "render.signs_indoors", true, "Display building signs while indoors: on by default (the original): a building's outside signs (shop and bar signs) keep drawing while it is cut to a floor; off hides them until the roof view" };
 [[maybe_unused]] const bool kRetiredCutShadows = (cfg::retire("render.cut_shadows", "render.cut_shadows is gone (kenshi-jj3.30): the cut-away floors and roof always cast their sun shadows"), true);
-const cfg::Bool kLeafSway{ cfg::Group{ "Detail" }, "render.leaf_sway", false, "A tree's leaves sway in the wind (off: the original, whose leaves do not move; edits are picked up while the client runs)" };
+const cfg::Bool kLeafSway{ cfg::Group{ "Detail" }, "render.leaf_sway", true, "A tree bends and its leaves sway with the live wind: strength and direction, still at no wind (on by default, user decision 2026-11-20, kenshi-k16.2.420; off: the original's static trees; edits are picked up while the client runs)" };
+const cfg::Float kFoliageWindRef{ cfg::Group{ "Detail" }, "render.foliage_wind_ref", 30.0, 1.0, 1000.0, "The wind speed (u/s) at which foliage sways at full strength; the weather records' wind speed max is 30 for most (60-100 in storms), the windmill blades ramp over 10..50" };
 constexpr float kInteriorFade = 0.8f;	// the dithered fade of interior parts and furniture starts at this fraction of the interior radius
+// The loading stand-in of a building (kenshi-k16.2.258.4, user 2026-11-19: "If the load delay is just textures and lighting, then we can use the same
+// pure-black body trick as the character loader. It shows that SOMETHING is there."; the character's is render.loading_standin, kenshi-k16.2.258.1):
+// an instance whose shell meshes are through but whose textures are not all ready draws every part flat black (unlit, no texture); when the last one is
+// ready the whole instance switches to its real look over kStandinFade, dithered against the stand-in (a character's colour stage, about 0.2 s).
+constexpr double kStandinFade = 0.2;
+constexpr float kGlassFndBuild = 210000.0f, kFndOnlyBuild = 220000.0f;	// a ghosted occluder's glass without its solid zone: -(kGlassFndBuild + opacity x 1000); its solid zone alone, opaque: -kFndOnlyBuild (mesh.glsl inst_vs)
+constexpr float kGlassBuild = 200000.0f;	// a peeked part: stretch w = -(kGlassBuild + opacity x 1000) (mesh.glsl inst_vs)
+#ifdef KCLIENT_DEV_TOOLS
+// dev.building_standin_hold (KCLIENT_DEV_TOOLS, kenshi-k16.2.258.4): hold every building in its stand-in (its textures counted as not ready) until this many
+// seconds after the first update, so the black silhouettes and the switch can be seen; a script sets it to 0 to release them into the switch at once.
+const cfg::Float kStandinHold{ cfg::Group{ "Character loading", "", "Debug" }, "dev.building_standin_hold", 0.0, 0.0, 100000.0, "Dev: keep every building in its loading stand-in (flat black) until this many s after the first update (0 = off; a script sets it back to 0 to release the switch)" };
+#endif
 constexpr double kMinCasterRadius = 1.0;	// instances out of view cast shadows only if their bounding radius is at least this
 constexpr float kTriplanarUnits = 5000.0f;	// world units per texture repeat at tile 1 for the triplanar modes (triplanar.hlsl triplanar_vs: / 5000.0)
 
@@ -49,7 +62,13 @@ inst_vs_params_t instVsParams(const BuildingPartDef& def, int offsetFrame, const
 	vs.tile[0] = def.tileX;
 	vs.tile[1] = def.tileY;
 	vs.tile[2] = swayTop;
-	vs.camw[3] = (float)time;	// the wind clock of a swaying leaves part (grass.glsl has its own, the same animTime)
+	vs.camw[3] = (float)time;
+	if (swayTop > 0)	// render.leaf_sway: the live foliage wind (foliagewind.hpp)
+	{
+		const foliagewind::State& f = foliagewind::g;
+		vs.sway[0] = f.strength; vs.sway[1] = f.dir[0]; vs.sway[2] = f.dir[1]; vs.sway[3] = (float)f.phase;
+		vs.limb[1] = def.leavesPart ? 1.0f : 0.0f;
+	}
 	double off[3], axis[3];
 	toMesh(offsetFrame, def.offset, off);
 	const float unit[3] = { def.rotAxis == 0 ? 1.0f : 0.0f, def.rotAxis == 1 ? 1.0f : 0.0f, def.rotAxis == 2 ? 1.0f : 0.0f };
@@ -94,6 +113,42 @@ void WorldBuildings::advanceMotion()
 	const double dt = time_ - motionTime_;
 	motionTime_ = time_;
 	const bool step = dt > 0 && dt < 1;	// a clock jump (a load, a scene) restarts the integration
+	{
+		// The foliage wind: the same windSpeed / wind[] as the spin ramp and the aimed parts, smoothed (about 1.5 s) and turned to a strength and a unit
+		// direction (foliagewind.hpp). An unknown speed (an offline scene) holds strength 1, an unknown direction today's (0.8, 0.6).
+		foliagewind::State& f = foliagewind::g;
+		const float target = windSpeed < 0 ? 1.0f : std::min(windSpeed / std::max((float)kFoliageWindRef.get(), 1.0f), 1.5f);
+		float tx = f.dir[0], tz = f.dir[1];
+		if (wind[2] >= 0.5f && std::hypot(wind[0], wind[1]) > 1e-4f) { tx = wind[0]; tz = wind[1]; }
+		if (step)
+		{
+			const float k = 1.0f - std::exp(-(float)dt / 1.5f);
+			f.strength += (target - f.strength) * k;
+			f.dir[0] += (tx - f.dir[0]) * k;
+			f.dir[1] += (tz - f.dir[1]) * k;
+			f.phase = std::fmod(f.phase + dt * (0.35 + 0.65 * std::min(f.strength, 1.5f)), 100000.0);	// the rate rises with the strength; integrated
+		}
+		else { f.strength = target; f.dir[0] = tx; f.dir[1] = tz; }
+		const float l = std::hypot(f.dir[0], f.dir[1]);
+		if (l > 1e-4f) { f.dir[0] /= l; f.dir[1] /= l; } else { f.dir[0] = 0.8f; f.dir[1] = 0.6f; }
+#ifdef KCLIENT_DEV_TOOLS
+		// KCLIENT_WINDLOG=1 (dev-only): once a second, the foliage strength and direction next to the raw wind and the blade spin ramp of the first
+		// wind-driven spinning part (the same factor advanceMotion applies below), to see that they move together.
+		static const bool logOn = getenv("KCLIENT_WINDLOG") != nullptr;
+		static double nextLog = 0;
+		if (logOn && step && time_ >= nextLog)
+		{
+			nextLog = time_ + 1.0;
+			double blade = -1;
+			for (uint32_t pid : turning_)
+			{
+				const BuildingPartDef& d = data_.parts[pid];
+				if (spinning(d) && d.windMax > d.windMin) { blade = windSpeed < 0 ? 1.0 : std::clamp((windSpeed - d.windMin) / (d.windMax - d.windMin), 0.0f, 1.0f); break; }
+			}
+			fprintf(stderr, "windlog: t=%.1f windSpeed=%.2f foliage strength=%.3f dir=(%.2f,%.2f) phase=%.2f blade ramp=%.3f\n", time_, windSpeed, f.strength, f.dir[0], f.dir[1], f.phase, blade);
+		}
+#endif
+	}
 	for (uint32_t pid : turning_)
 	{
 		const BuildingPartDef& d = data_.parts[pid];
@@ -151,13 +206,52 @@ void WorldBuildings::resetTurns()
 	for (Motion& mo : motion_) { mo.aimed = false; }
 }
 
+// Which resources the streams make first (kenshi-k16.2.258.3): a building in view and near, then in view and far, then out of view, each by distance.
+// A lower score runs sooner. The view test is the instance origin against the frustum, with a margin for the building's size.
+float WorldBuildings::streamScore(const BuildingInstance& b, const double cam[3], const float mvp[16]) const
+{
+	if (!streamPriority) { return 0.0f; }	// every score equal: the queues keep their submit order (render.stream_priority 0, the old lane)
+	const double p[3] = { b.x - cam[0], b.y - cam[1], b.z - cam[2] };
+	const double dist = std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
+	double c[4];
+	for (int k = 0; k < 4; k++) { c[k] = mvp[k] * p[0] + mvp[4 + k] * p[1] + mvp[8 + k] * p[2]; }	// the view's rows: x, y, z, w (column-major, no translation)
+	const double m = 1.4, slack = 600.0;	// 40 % past the screen's edge and the building's size
+	const bool inView = c[3] > -slack && std::fabs(c[0]) <= m * (c[3] + slack) && std::fabs(c[1]) <= m * (c[3] + slack);
+	const float cls = !inView ? 2e5f : dist < kNearView ? 0.0f : 1e5f;
+	return cls + (float)std::min(dist, 9e4);
+}
+
 void WorldBuildings::update(const double cam[3], const float mvp[16], float fogDist, bool blocking, double time, double shadowFar, FrameData& out)
 {
-	struct SigOut { const WorldBuildings& wb; FrameData& out; ~SigOut() { out.shadowSig = wb.shadowSig(); } } sigOut{ *this, out };	// on every return, after the last change
+	struct SigOut { WorldBuildings& wb; FrameData& out; ~SigOut() { out.shadowSig = wb.shadowSig(); wb.resolveDraws(out); } } sigOut{ *this, out };	// on every return, after the last change
 	out.inst.clear();
 	out.lightCount = 0;
 	frame_++;
 	time_ = time;
+#ifdef KCLIENT_DEV_TOOLS
+	// The pop-in timeline's clock (kenshi-k16.2.258.2): seconds since the first update, the frame, and how this run streams (a scripted run
+	// waits for every decode unless debug.stream_scripted is on, so its timeline is one frame long).
+	if (popin.on)
+	{
+		const double s = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+		if (popin.clock0 < 0) { popin.clock0 = s; }
+		popin.now = s - popin.clock0;
+		popin.frame = frame_;
+		popin.blocking = blocking;
+		popin.streaming = !blocking;
+	}
+	// One curve row a frame, while one of its counts moved: the load's shape in wall time (the same numbers `dump popin` prints).
+	auto popinCurve = [&] {
+		if (!popin.on) { return; }
+		if (!popin.curve.empty())
+		{
+			const PopIn::Curve& l = popin.curve.back();
+			if (l.inRange == popin.inRange && l.drawn == popin.drawn && l.full == popin.full && l.meshesReady == stats_.meshesReady
+				&& l.texturesReady == stats_.texturesReady && l.pending == stats_.pending) { return; }
+		}
+		popin.curve.push_back({ popin.now, frame_, popin.inRange, popin.drawn, popin.full, stats_.meshesReady, stats_.texturesReady, stats_.pending });
+	};
+#endif
 	advanceMotion();
 	for (int k = 0; k < 3; k++) { cam_[k] = cam[k]; }
 	// the eye ring of the cut-away flip fade, in wall-clock seconds (a paused game still orbits; a blocking scripted run takes the scripted time, frame / 60,
@@ -190,13 +284,35 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 		}
 	}
 	fog_ = fogDist;
+	// the loading stand-in's clock and mode (kenshi-k16.2.258.4): a live run's wall seconds, a scripted run's frame time; render.loading_standin read
+	// again when a setting changed (silhouette and double are both black here, see the pack loop)
+	standNow_ = blocking ? time : std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+	if (standT0_ < 0) { standT0_ = standNow_; }
+	{
+		static uint64_t seen = ~0ull;
+		if (const uint64_t g = cfg::generation(); g != seen)
+		{
+			seen = g;
+			for (const cfg::Info& i : cfg::find("render.loading_standin")) { if (i.key == "render.loading_standin") { standMode_ = i.value == "off" ? 2 : i.value == "double" ? 1 : 0; } }
+		}
+	}
+	standHeld_ = false;
+#ifdef KCLIENT_DEV_TOOLS
+	standHeld_ = kStandinHold.get() > 0.0 && standNow_ - standT0_ < kStandinHold.get();
+#endif
 	if (frame_ % 120 == 0) { evict(); }
 	const Stats prev = stats_;
 	stats_ = Stats();
 	stats_.uploadedMeshes = prev.uploadedMeshes;
 	stats_.uploadedTextures = prev.uploadedTextures;
 	needed_.clear();
-	if (data_.instances.empty()) { active_.clear(); fitGround_.clear(); fitRel_.clear(); idDraws_.clear(); return; }
+	if (data_.instances.empty())
+	{
+#ifdef KCLIENT_DEV_TOOLS
+		popinCurve();
+#endif
+		active_.clear(); fitGround_.clear(); fitRel_.clear(); idDraws_.clear(); return;
+	}
 	updateFocus();	// first: findOccluders skips the sliced
 	findOccluders(cam);
 	cursorBuildings_.clear();
@@ -252,26 +368,42 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 		const double dx = b.x - cam[0], dy = b.y - cam[1], dz = b.z - cam[2], r = interiorRadius + kInteriorSlack;
 		return dx * dx + dy * dy + dz * dz <= r * r;
 	};
+	// A ghosted occluder (the occluder fade, ghosts_) shows its interior from any distance: its floor, which the faded walls and roof would otherwise leave as
+	// the terrain seen through (user 2026-11-19: terrain shows where the floor should be; kenshi-k16.2.411.1), and its interior mask, which clips that terrain.
+	const auto interiorWanted = [&](uint32_t ii, const BuildingInstance& b)
+	{
+		if (interiorNear(b)) { return true; }
+		if (!interiors || b.parent >= 0) { return false; }
+		const auto g = ghosts_.find(ii);
+		return g != ghosts_.end() && g->second > 0;
+	};
 	hulls_.clear();
 	for (const CellRef& c : cells)
 	{
 		for (const uint32_t ii : *c.list)
 		{
 			const BuildingInstance& b = data_.instances[ii];
-			const bool near = !c.far && interiorNear(b);
+			const bool near = !c.far && interiorWanted(ii, b);
+			const float score = streamScore(b, cam, mvp);
 			for (uint32_t k = 0; k < b.partCount; k++)
 			{
 				const uint32_t pid = data_.partRefs[b.firstPart + k];
 				if (data_.parts[pid].kind != 0 && !near) { continue; }
 				if (data_.parts[pid].kind == 2) { hulls_.push_back({ ii, pid }); }
-				if (partStamp_[pid] != frame_) { partStamp_[pid] = (uint32_t)frame_; needed_.push_back(pid); }
+				if (partStamp_[pid] != (uint32_t)frame_) { partStamp_[pid] = (uint32_t)frame_; partScore_[pid] = score; needed_.push_back(pid); }
+				else if (score < partScore_[pid]) { partScore_[pid] = score; }
 			}
+#ifdef KCLIENT_DEV_TOOLS
+			// pop-in: the instance entered a load cell (the load radius / the far ring): its timeline starts here (kenshi-k16.2.258.2)
+			if (popin.on && b.parent < 0 && !b.feature && !b.prop && popin.rows.find(ii) == popin.rows.end()) { popinMark(ii, b); }
+#endif
 		}
 	}
 	for (;;)
 	{
 		for (const uint32_t pid : needed_) { ensurePart(pid); }
-		if (!blocking) { drain(false, kUploadsPerFrame); break; }
+		rerank();
+		if (!blocking) { drain(false, streamAll ? -1 : kUploadsPerFrame); break; }
 		if (outstanding_ == 0) { break; }
 		drain(true, -1);
 	}
@@ -293,10 +425,14 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 		pulseLights();
 		packLights(out);
 		out.inst.assign(frameData_.begin(), frameData_.end());	// upload() writes it into the transient buffer, which must be written each frame it is drawn
+#ifdef KCLIENT_DEV_TOOLS
+		popinCurve();
+#endif
 		return;
 	}
 	packSig_ = sig;
 	packValid_ = true;
+	standFading_ = false;
 	active_.clear();
 	fitGround_.clear();
 	fitRel_.clear();
@@ -314,7 +450,7 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 	}
 	const double maxDist = drawLimit > 0 ? drawLimit : std::min((double)fogDist, nearDist);	// lights and interior parts; exterior parts: farDist_
 
-	for (Group& g : groups_) { g.onlyShadow.clear(); g.inRange.clear(); g.outRange.clear(); g.glass.clear(); g.flip.clear(); }
+	for (Group& g : groups_) { g.onlyShadow.clear(); g.inRange.clear(); g.outRange.clear(); g.glass.clear(); g.flip.clear(); g.standin.clear(); g.fade.clear(); }
 	lightCands_.clear();
 	placed_.clear();
 	size_t total = 0;
@@ -336,7 +472,8 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 			}
 			const BuildingInstance& b = *src;
 			const float q[4] = { b.qw, b.qx, b.qy, b.qz };
-			const bool furniture = b.parent >= 0, near = !c.far && interiorNear(b);
+			const bool furniture = b.parent >= 0, near = !c.far && interiorWanted(ii, b);
+			if (!furniture && !c.far) { infoFor(ii); }	// fills the parts' foundY before any part of the building draws (mesh.glsl xray_fnd); cached after the first success
 			// Floors above the shown one are hidden: a building's parts by their own floor, furniture by its floor (a building without floors shows all)
 			const int shown = furniture ? shownOf((uint32_t)b.parent) : b.maxFloor > 0 ? shownOf(ii) : 3;
 			const int furnitureFloor = furniture && shown < data_.instances[b.parent].maxFloor ? floorOfInstance(b) : 0;
@@ -371,6 +508,42 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 			const int peekFloor = peeked ? pk->second.floor : glassy ? -1 : 3;
 			const int instFloor = glassy && furniture ? floorOfInstance(b) : 0;
 			const bool cursorOwner = std::find(cursorBuildings_.begin(), cursorBuildings_.end(), owner) != cursorBuildings_.end();
+			// The loading stand-in's decision for the whole instance (kenshi-k16.2.258.4): 1 nothing (a shell mesh not through yet), 2 every part flat black
+			// (a texture still streaming), 3 the switch to the real look, 0 the real look. The per-part ready test (partTexturesReady, kenshi-k16.2.298.1) is
+			// the completion test; the draw decision is per instance. Failed and fileless meshes never hold it. An instance that cannot stand in (glass,
+			// under construction, render.loading_standin off) waits whole with nothing drawn.
+			int ss = 0;
+			float cover = 1.0f;
+			{
+				bool meshWait = false, texWait = false, counted = false;
+				for (uint32_t k = 0; k < b.partCount; k++)
+				{
+					const uint32_t pid = data_.partRefs[b.firstPart + k];
+					const PartRt& prt = partRt_[pid];
+					const uint8_t kind = data_.parts[pid].kind;
+					if (kind == 2 || (kind != 0 && !near) || prt.mesh < 0) { continue; }
+					const State ms = meshes_[prt.mesh].state;
+					if (ms == Failed) { continue; }
+					if (ms != Ready || !prt.resolved) { meshWait = true; continue; }
+					counted = true;
+					if (!partTexturesReady(pid)) { texWait = true; }
+				}
+				if (standHeld_ && counted) { texWait = true; }
+				const bool standable = build == 0.0f && !glassy && standMode_ != 2;
+				auto st = stand_.find(ii);
+				if (meshWait) { ss = 1; }
+				else if (texWait) { ss = standable ? 2 : 1; }
+				if (ss == 2) { Stand& z = stand_[ii]; z.stood = true; z.readyAt = -1; }
+				else if (ss == 1) { if (st != stand_.end()) { stand_.erase(st); } }
+				else if (st != stand_.end())
+				{
+					if (st->second.readyAt < 0) { st->second.readyAt = standNow_; }
+					cover = (float)((standNow_ - st->second.readyAt) / kStandinFade);
+					if (cover >= 1.0f || !standable) { stand_.erase(st); cover = 1.0f; }
+					else { ss = 3; standFading_ = true; }
+				}
+			}
+			size_t nBlack = 0, nReal = 0;
 			bool any = false, anyOpen = false;
 			float lowest = 1e30f;
 			if (kOpenWindows.get()) { for (uint32_t k = 0; k < b.partCount; k++) { if (partRt_[data_.partRefs[b.firstPart + k]].openHas) { anyOpen = true; break; } } }
@@ -388,7 +561,7 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 				if (def.blackCap && def.floor == shown && shown < b.maxFloor) { continue; }	// the cut floor's black cap (BuildingPartDef::blackCap)
 				if (!cutHidden && (furniture || def.kind == 1 || night) && !c.far) { for (uint32_t k = 0; k < def.lightCount; k++) { addLight(b, ii, def, def.firstLight + k, cam, planes, maxDist); } }
 				for (uint32_t k = 0; k < def.effectCount && !c.far && !cutHidden; k++) { addEffect(b, ii, (int32_t)pid, &def, def.firstEffect + k, cam, planes); }
-				if (!partTexturesReady(pid)) { continue; }	// mesh ready, a texture it draws still streaming: held out of the draw list, never a grey unlit frame (kenshi-k16.2.298.1)
+				if (ss == 1 || rt.mesh < 0 || !rt.resolved || meshes_[rt.mesh].state != Ready) { continue; }	// the instance waits whole, or this part has no mesh (the loading stand-in above; never a grey unlit frame, kenshi-k16.2.298.1)
 				const MeshEntry& m = meshes_[rt.mesh];
 				double off[3];
 				toMesh(offsetFrame, def.offset, off);
@@ -416,7 +589,7 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 					const bool limb = b.limb && def.limb;
 					const uint64_t key = limb ? (0x8000000000000000ull | ((uint64_t)ii << 8) | (uint64_t)(s & 0xff)) : (((uint64_t)pid << 16) | s);
 					auto [it, fresh] = groupIds_.emplace(key, (int)groups_.size());
-					if (fresh) { groups_.push_back({ pid, (int)s, {}, {}, {}, {}, {}, 0 }); }
+					if (fresh) { groups_.push_back({ pid, (int)s, {}, {}, {}, {}, {}, {}, {}, 0 }); }
 					Group& g = groups_[it->second];
 					if (limb)
 					{
@@ -427,14 +600,48 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 					const float inst[kInstanceFloats] = { (float)(b.x - cam[0]), (float)(b.y - cam[1]), (float)(b.z - cam[2]), b.scale, b.qx, b.qy, b.qz, b.qw,
 						b.stretch[0], b.stretch[1], b.stretch[2], def.featureMode == 2 && detail ? detail->rowAt(b.x, b.z) : build };
 					if (total >= kMaxInstances) { continue; }
+					if (ss == 2)	// the stand-in: flat black, no shadow, whole (stretch w = glass coding, cover 0: the black not yet dithered away)
+					{
+						if (!vis) { continue; }
+						g.standin.insert(g.standin.end(), inst, inst + kInstanceFloats);
+						g.standin.back() = -(kGlassBuild + 0.0f);
+						total++;
+						nBlack++;
+						stats_.submeshDraws++;
+						continue;
+					}
+					if (ss == 3 && def.featureMode != 2)	// the switch: the real look dithers in (its share = cover) over the black dithering out; the shadow is the real one's
+					{
+						if (casts) { g.onlyShadow.insert(g.onlyShadow.end(), inst, inst + kInstanceFloats); }
+						if (!vis || total + 2 > kMaxInstances) { continue; }
+						g.fade.insert(g.fade.end(), inst, inst + kInstanceFloats);
+						g.fade.back() = -(kGlassBuild + cover * 1000.0f);
+						g.standin.insert(g.standin.end(), inst, inst + kInstanceFloats);
+						g.standin.back() = -(kGlassBuild + cover * 1000.0f);
+						total += 2;
+						stats_.submeshDraws++;
+						continue;
+					}
+					if (vis && ss == 0) { nReal++; }
 					if ((furniture ? instFloor : def.floor) > peekFloor || (peeked && def.blackCap && def.floor == peekFloor))	// the cut floor's cap too
 					{
 						if (casts) { g.onlyShadow.insert(g.onlyShadow.end(), inst, inst + kInstanceFloats); }	// the glass keeps its shadow: it does not change with the peek (user 2026-11-05)
 						if (!vis) { continue; }
 						if (def.blackCap) { continue; }	// not drawn as glass: a near-opaque black layer over the stairwells early in the fade (user 2026-11-04)
 						if (cursorOwner) { idDraws_.push_back({ it->second, 2, (uint32_t)(g.glass.size() / kInstanceFloats), owner }); }
+						// A ghosted occluder keeps its foundation and ground floor solid (kenshi-k16.2.411.1): the glass pass draws only the nearest glass layer, so a floor
+						// behind the roof's layer never showed. The part draws twice: its fragments under rt.foundY opaque in the normal pass (kFndOnlyBuild), the rest as
+						// glass without them (kGlassFndBuild); mesh.glsl tells the two apart by v_build.z.
+						const bool fndSplit = gh != ghosts_.end() && rt.foundY > -1e29f && total + 2 <= kMaxInstances;
 						g.glass.insert(g.glass.end(), inst, inst + kInstanceFloats);
-						g.glass.back() = -(kGlassBuild + glassAlpha * 1000.0f);
+						g.glass.back() = -((fndSplit ? kGlassFndBuild : kGlassBuild) + glassAlpha * 1000.0f);
+						if (fndSplit)
+						{
+							// outRange, never inRange: the shadow pass draws inRange, and onlyShadow above already casts this part's shadow once (kenshi-k16.2.411.2)
+							g.outRange.insert(g.outRange.end(), inst, inst + kInstanceFloats);
+							g.outRange.back() = -kFndOnlyBuild;
+							total++;
+						}
 						total++;
 						stats_.submeshDraws++;
 						continue;
@@ -453,6 +660,23 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 					stats_.realTextured += rt.subTex[s] >= 0 && textures_[rt.subTex[s]].state == Ready;
 				}
 			}
+			stats_.standing += nBlack > 0;
+			stats_.fading += ss == 3;
+			stats_.mixed += nBlack > 0 && nReal > 0;	// black and real parts of one instance in one frame outside the switch: by construction never
+#ifdef KCLIENT_DEV_TOOLS
+			if (popin.on)
+			{
+				popin.standingInstanceFrames += nBlack > 0;
+				popin.fadingInstanceFrames += ss == 3;
+				popin.mixedInstanceFrames += nBlack > 0 && nReal > 0;
+				if (const auto row = popin.rows.find(ii); row != popin.rows.end())
+				{
+					if (nBlack > 0 && row->second.black < 0) { row->second.black = popin.now; }
+					if (ss == 3 && row->second.black >= 0 && row->second.swtch < 0) { row->second.swtch = popin.now; }
+					if (nBlack > 0 && nReal > 0) { row->second.mixedFrames++; }
+				}
+			}
+#endif
 			if (any && furniture) { stats_.interiorsDrawn++; }
 			else if (any)
 			{
@@ -460,6 +684,9 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 				stats_.featuresDrawn += b.feature;
 				fitGround_.push_back((float)(b.y - b.ground) + lowest);
 				fitRel_.push_back((float)(b.y - b.ground));
+#ifdef KCLIENT_DEV_TOOLS
+				if (popin.on) { popinDrawn(ii); }	// its first drawn frame / its last shell part textured (kenshi-k16.2.258.2)
+#endif
 			}
 		}
 	}
@@ -475,7 +702,7 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 			for (const uint32_t ii : *c.list)
 			{
 				const BuildingInstance& b = data_.instances[ii];
-				if (b.parent >= 0 || !interiorNear(b)) { continue; }
+				if (b.parent >= 0 || !interiorWanted(ii, b)) { continue; }
 				const float q[4] = { b.qw, b.qx, b.qy, b.qz };
 				for (uint32_t k = 0; k < b.partCount; k++)
 				{
@@ -514,13 +741,15 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 	for (size_t i = 0; i < groups_.size(); i++)
 	{
 		Group& g = groups_[i];
-		if (g.onlyShadow.empty() && g.inRange.empty() && g.outRange.empty() && g.glass.empty() && g.flip.empty()) { continue; }
+		if (g.onlyShadow.empty() && g.inRange.empty() && g.outRange.empty() && g.glass.empty() && g.flip.empty() && g.standin.empty() && g.fade.empty()) { continue; }
 		g.first = (int)(frameData_.size() / kInstanceFloats);
 		frameData_.insert(frameData_.end(), g.onlyShadow.begin(), g.onlyShadow.end());
 		frameData_.insert(frameData_.end(), g.inRange.begin(), g.inRange.end());
 		frameData_.insert(frameData_.end(), g.outRange.begin(), g.outRange.end());
 		frameData_.insert(frameData_.end(), g.glass.begin(), g.glass.end());
 		frameData_.insert(frameData_.end(), g.flip.begin(), g.flip.end());
+		frameData_.insert(frameData_.end(), g.standin.begin(), g.standin.end());
+		frameData_.insert(frameData_.end(), g.fade.begin(), g.fade.end());
 		active_.push_back((int)i);
 	}
 	for (MaskGroup& g : maskGroups_)
@@ -535,6 +764,9 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 	packLights(out);
 	if (lampOcclusion) { kickLamps(cam); }
 	out.inst.assign(frameData_.begin(), frameData_.end());
+#ifdef KCLIENT_DEV_TOOLS
+	popinCurve();
+#endif
 }
 
 // The top of render_frame (render hook 7a pattern): the packet's instances into the transient buffer, on every draw of the packet.
@@ -581,7 +813,26 @@ uint64_t WorldBuildings::packSignature(const double cam[3], const float mvp[16],
 	for (const auto& [bi, pk] : peeks) { mix(bi); mix((uint64_t)pk.floor); mix(fb(pk.fade)); mix((uint64_t)(pk.on ? 1u : 0u)); }
 	mix(dataGen_);
 	mix(stateGen_);
+	mix((uint64_t)standMode_ | (standHeld_ ? 4u : 0u) | (standFading_ ? 8u : 0u));
+	if (standFading_) { mix(frame_); }	// a switch under way: the cover moves with the clock, so every frame repacks
 	return h;
+}
+
+void WorldBuildings::setSwayMates(const std::vector<uint32_t>& ids)
+{
+	for (uint32_t id : ids) { data_.parts[id].swayMates = ids; }
+}
+
+float WorldBuildings::swayTop(uint32_t pid) const
+{
+	const BuildingPartDef& d = data_.parts[pid];
+	if (!d.plant) { return 0.0f; }	// rocks, wrecks, ruins and props never bend (plants::isPlant)
+	float top = meshes_[partRt_[pid].mesh].bmax[1];
+	for (uint32_t id : d.swayMates)
+	{
+		if (id < partRt_.size() && partRt_[id].mesh < meshes_.size()) { top = std::max(top, meshes_[partRt_[id].mesh].bmax[1]); }
+	}
+	return top;
 }
 
 uint32_t WorldBuildings::addPart(const BuildingPartDef& def)
@@ -590,6 +841,7 @@ uint32_t WorldBuildings::addPart(const BuildingPartDef& def)
 	data_.parts.push_back(def);
 	partRt_.emplace_back();
 	partStamp_.push_back(0);
+	partScore_.push_back(0.0f);
 	motion_.emplace_back();	// per part, like partRt_ (setData sizes it): turnOf / spin read motion_[pid] for every drawn part
 	return (uint32_t)data_.parts.size() - 1;
 }
@@ -806,38 +1058,167 @@ void WorldBuildings::fillLights(const FrameData& d, LightParams& light, const li
 	if (vols) { for (int i = 0; i < d.lightCount; i++) { if (d.lightLamp[i] >= 0) { light.pl[4 * i + 3][3] = (float)vols->lampCode(d.lightOwner[i], d.lightLamp[i]); } } }
 }
 
-int WorldBuildings::draw(uint32_t pid, int sub, sg_buffer inst, int instByteOffset, int count, const float base[3], const float mvp[16], const LightParams& light, float fadeStart, float fadeEnd, int fadeMode,
-	const float* limbSkin, const float* limbBlood)
+int WorldBuildings::meshRef(DrawList& L, int mesh) const
+{
+	if ((size_t)mesh < L.meshAt.size())
+	{
+		int& at = L.meshAt[mesh];
+		if (at < 0) { at = (int)L.meshes.size(); L.meshes.push_back(meshes_[mesh].gpu); }
+		return at;
+	}
+	L.meshes.push_back(meshes_[mesh].gpu);
+	return (int)L.meshes.size() - 1;
+}
+
+int WorldBuildings::texRef(DrawList& L, int t) const
+{
+	if (t < 0 || textures_[t].state != Ready) { return -1; }
+	if ((size_t)t < L.texAt.size())
+	{
+		int& at = L.texAt[t];
+		if (at < 0) { at = (int)L.textures.size(); L.textures.push_back(textures_[t].gpu); }
+		return at;
+	}
+	L.textures.push_back(textures_[t].gpu);
+	return (int)L.textures.size() - 1;
+}
+
+int WorldBuildings::ibufRef(DrawList& L, uint32_t pid) const
+{
+	const PartRt& rt = partRt_[pid];
+	if (!(kOpenWindows.get() && rt.openHas)) { return -1; }
+	if (pid < L.ibufAt.size())
+	{
+		int& at = L.ibufAt[pid];
+		if (at < 0) { at = (int)L.ibufs.size(); L.ibufs.push_back(rt.openIbuf); }
+		return at;
+	}
+	L.ibufs.push_back(rt.openIbuf);
+	return (int)L.ibufs.size() - 1;
+}
+
+// texView on a list slot: the texture's view if its create has run and sokol took it, else the fallback.
+sg_view WorldBuildings::viewOf(const DrawList& L, int slot, sg_view fallback) const
+{
+	if (slot < 0 || !L.textures[slot].ready()) { return fallback; }
+	const sg_view v = L.textures[slot].get().view;
+	return v.id != SG_INVALID_ID ? v : fallback;
+}
+
+static_assert(sizeof(inst_vs_params_t) == sizeof(WorldBuildings::ResolvedDraw::vs) && sizeof(inst_fs_params_t) == sizeof(WorldBuildings::ResolvedDraw::fs)
+		&& sizeof(shadow_fs_params_t) == sizeof(WorldBuildings::ResolvedShadow::fs),
+	"ResolvedDraw's uniform blocks are the shader's layout");
+static_assert(sizeof(inst_vs_params_t) == 56 * sizeof(float) && sizeof(inst_fs_params_t) == 76 * sizeof(float) && sizeof(shadow_fs_params_t) == 12 * sizeof(float),
+	"the per-draw uniform caches (WorldBuildings::drawVs_ / drawFs_ / shadowVs_ / shadowFs_) are the blocks' sizes (kenshi-k16.2.205.12.119)");
+static_assert(offsetof(inst_vs_params_t, mvp) == 0, "the replay writes the matrix at the block's start");
+
+// Everything draw() reads from the building tables and the logic-side frame state (camera, clock, wind, x-ray, flip eye), by value (see ResolvedDraw).
+void WorldBuildings::resolveDraw(DrawList& L, ResolvedDraw& r, uint32_t pid, int sub, sg_buffer inst, int instByteOffset, int count, const float base[3], float fadeStart, float fadeEnd, int fadeMode,
+	const float* limbSkin, const float* limbBlood, int standin, bool flip) const
 {
 	const PartRt& rt = partRt_[pid];
 	const BuildingPartDef& def = data_.parts[pid];
-	auto view = [&](int t) { return texView(t, grey_); };
-	const int mode = limbSkin ? 7 : modeFor(pid);	// 7: a severed limb with the wire's tint (mesh.glsl inst_fs); without one it draws as before
+	// standin 1: the loading stand-in (flat black, unlit: mesh.glsl inst_fs misc2.y = 1; no texture of the part is bound, its fragment shader reads none);
+	// 2: the real look dithering in over it (misc2.y = 2). 0: the draw as before.
+	auto view = [&](int t) { return standin == 1 ? -1 : texRef(L, t); };
+	const int mode = limbSkin || standin == 1 ? (standin == 1 ? 0 : 7) : modeFor(pid);	// 7: a severed limb with the wire's tint (mesh.glsl inst_fs); without one it draws as before
 	const MeshEntry& m = meshes_[rt.mesh];
 	const Sub& s = m.subs[sub];
-	sg_bindings b = {};
-	b.vertex_buffers[0] = m.gpu.get().vbuf;
-	b.vertex_buffer_offsets[0] = s.firstVertex * kVertexBytes;
-	b.vertex_buffers[1] = inst;
-	b.vertex_buffer_offsets[1] = instByteOffset;
-	b.index_buffer = ibufFor(pid);
-	b.index_buffer_offset = s.firstIndex * 4;
+	r.mesh = meshRef(L, rt.mesh);
+	r.ibuf = ibufRef(L, pid);
+	r.firstVertex = s.firstVertex;
+	r.firstIndex = s.firstIndex;
+	r.indexCount = s.indexCount;
+	r.instOffset = instByteOffset;
+	r.count = count;
+	r.inst = inst;
+	r.mode = mode;
+	r.cull = cullsBackFaces(def);
 	// a severed limb binds the item's own maps (SeveredLimbItem vf108), not the submesh's script material: its texture, the race body normal (DXT5)
 	// and its color map; every other part keeps the rule above
-	b.views[VIEW_inst_tex] = mode == 7 && rt.ownTex >= 0 ? view(rt.ownTex) : view(rt.subTex[sub]);
-	b.views[VIEW_inst_nrm] = mode == 7 ? texView(rt.normalTex, flat_)
-		: (rt.subFlat[sub] || !kNormalMaps.get()) && mode != 1 && mode != 2 ? flat_ : texView(rt.normalTex, flat_);
-	b.views[VIEW_inst_tex2] = view(rt.tex2Tex);
-	b.views[VIEW_inst_nrm2] = rt.subFlat[sub] || !kNormalMaps.get() || rt.nrm2Tex < 0 ? flat_ : texView(rt.nrm2Tex, flat_);
+	r.tex[0] = mode == 7 && rt.ownTex >= 0 ? view(rt.ownTex) : view(rt.subTex[sub]);
+	r.tex[1] = standin == 1 ? -1 : mode == 7 ? texRef(L, rt.normalTex)
+		: (rt.subFlat[sub] || !kNormalMaps.get()) && mode != 1 && mode != 2 ? -1 : texRef(L, rt.normalTex);
+	r.tex[2] = view(rt.tex2Tex);
+	r.tex[3] = rt.subFlat[sub] || !kNormalMaps.get() || rt.nrm2Tex < 0 ? -1 : texRef(L, rt.nrm2Tex);
+	r.tex[4] = mode == 7 ? view(rt.maskTex) : -1;	// a severed limb's `color map` (skin tone mask)
+	float turn[6];
+	const float noMvp[16] = {};
+	const float noBase[3] = {};
+	const inst_vs_params_t vs = instVsParams(def, offsetFrame, cam_, time_, noBase, noMvp, kLeafSway.get() ? swayTop(pid) : 0.0f, motion_[pid].spin, turnOf(pid, turn));	// base: the replay writes the group's, so a part's template keeps 0
+	for (int k = 0; k < 3; k++) { r.base[k] = base[k]; }
+	r.fade[0] = fadeStart;
+	r.fade[1] = fadeEnd;
+	inst_fs_params_t fs = {};
+	fs.misc[0] = cutOf(pid);	// features by record (building parts clip on the normal map alpha, mode 1)
+	fs.misc[3] = def.featureMode == 4 ? 1.0f : 0.0f;
+	fs.misc[1] = (float)mode;
+	fs.tri[0] = def.tileX;
+	fs.tri[1] = def.tileY;
+	fs.tri[2] = def.localCoords ? 1.0f : 0.0f;
+	fs.tri[3] = kTriplanarUnits;
+	fs.fade[2] = (float)fadeMode;
+	std::copy(xray, xray + 4, fs.xray);
+	if (def.plant) { fs.xray[3] = 0.0f; }	// foliage never dithers in the occluder cone (kenshi-k16.2.411.4.1; plants::isPlant)
+	for (int k = 0; k < 3; k++) { fs.xray_ex0[k] = (float)(xrayEx[k] - cam_[k]); fs.xray_ex1[k] = (float)xrayEx[4 + k]; }
+	fs.xray_ex0[3] = (float)xrayEx[3];
+	fs.xray_ex1[3] = (float)xrayEx[7];
+	fs.xray_fnd[0] = partRt_[pid].foundY;	// the solid zone (foundation + ground floor) never fades (mesh.glsl)
+	fs.misc[2] = def.featureMode == 4 ? 1.0f : 0.0f;	// FOLIAGE mode: COLOURING (vertex colour); otherwise lit like any StaticObject
+	if (flip)
+	{
+		fs.flip[0] = kFlipFade / 8.0f;
+		std::copy(&flipEye_[0][0], &flipEye_[0][0] + 32, &fs.flip_eye[0][0]);
+	}
+	fs.misc2[1] = (float)standin;
+	fs.misc2[0] = def.interior ? 1.0f : 0.0f;	// the dust coat takes the weather's `dust inside` (objects.hlsl INTERIOR, k16.2.202.1)
+	if (limbSkin)	// the wire's tint (SeveredLimbItem custom 2 / custom 3)
+	{
+		std::copy(limbSkin, limbSkin + 3, fs.skin);
+		std::copy(limbBlood, limbBlood + 3, fs.blood);
+		fs.blood[3] = 1.0f;	// bloodColour's alpha: the exe's AppearanceHuman stores the RACE `blood colour` as ARGB with alpha 1 (character.hlsl severed_limb_fs)
+	}
+	memcpy(r.vs, &vs, sizeof vs);
+	memcpy(r.fs, &fs, sizeof fs);
+}
+
+// The pass's shared uniform blocks (kenshi-k16.2.205.12.119): the light, the AO, the light volumes and this frame's shadow params. Every draw of a
+// building-shader pass reads the same ones, and on the GL backend an apply is a glUniform call per block member (~15 in the light block alone), so a
+// pass pays them once instead of 597 times. Resets the per-draw block cache: a new pass must upload its own.
+void WorldBuildings::applyPassUniforms(const LightParams& light)
+{
+	drawVsOk_ = drawFsOk_ = false;
+	sg_apply_uniforms(UB_light_params, { &light, sizeof light });
+	sg_apply_uniforms(UB_ao_params, SG_RANGE(ao_binding().params));
+	sg_apply_uniforms(UB_light_volumes, SG_RANGE(lightvol::binding().params));
+	sg_apply_uniforms(UB_shadow_params, { &sfd->params, sizeof(ShadowParams) });
+}
+
+// The draw call of a resolved draw: bindings the list names, the render-owned shared units, the per-draw uniforms (the pass's are applyPassUniforms').
+// `inst` overrides the draw's instance buffer (the foliage names it by buffer slot). Returns the shader mode.
+int WorldBuildings::replayDraw(const DrawList& L, const ResolvedDraw& r, sg_buffer inst, const float mvp[16])
+{
+	const MeshGpu& mg = L.meshes[r.mesh].get();
+	sg_bindings b = {};
+	b.vertex_buffers[0] = mg.vbuf;
+	b.vertex_buffer_offsets[0] = r.firstVertex * kVertexBytes;
+	b.vertex_buffers[1] = inst.id != SG_INVALID_ID ? inst : r.inst;
+	b.vertex_buffer_offsets[1] = r.instOffset;
+	b.index_buffer = r.ibuf >= 0 ? L.ibufs[r.ibuf].get() : mg.ibuf;
+	b.index_buffer_offset = r.firstIndex * 4;
+	b.views[VIEW_inst_tex] = viewOf(L, r.tex[0], grey_);
+	b.views[VIEW_inst_nrm] = viewOf(L, r.tex[1], flat_);
+	b.views[VIEW_inst_tex2] = viewOf(L, r.tex[2], grey_);
+	b.views[VIEW_inst_nrm2] = viewOf(L, r.tex[3], flat_);
 	b.views[VIEW_inst_ground] = groundView_;
 	b.views[VIEW_dust_noise] = dust_;
-	b.views[VIEW_inst_mask] = mode == 7 ? view(rt.maskTex) : grey_;	// a severed limb's `color map` (skin tone mask)
+	b.views[VIEW_inst_mask] = viewOf(L, r.tex[4], grey_);
 	b.views[VIEW_inst_blood] = blood_;	// materials/bloody.png, bound by every draw like the shared units (sokol drops an unbound slot)
 	b.samplers[SMP_inst_smp] = smp_;
 	b.samplers[SMP_ground_smp] = groundSmp_;
-	b.views[VIEW_shadow_tex] = shadow->view();
-	b.samplers[SMP_shadow_smp] = shadow->sampler();
-	b.samplers[SMP_shadow_raw] = shadow->rawSampler();
+	b.views[VIEW_shadow_tex] = sfd->view;
+	b.samplers[SMP_shadow_smp] = sfd->sampler;
+	b.samplers[SMP_shadow_raw] = sfd->rawSampler;
 	b.views[VIEW_fog_map] = fog_map_binding().view;
 	b.views[VIEW_spec_cube] = spec_cube_binding().view;
 	b.views[VIEW_irr_cube] = irr_cube_binding().view;
@@ -866,42 +1247,27 @@ int WorldBuildings::draw(uint32_t pid, int sub, sg_buffer inst, int instByteOffs
 		b.samplers[SMP_tsmp] = detail->tableSmp;
 	}
 	drawstats::bindings(&b);
-	float turn[6];
-	const inst_vs_params_t vs = instVsParams(def, offsetFrame, cam_, time_, base, mvp, def.sway && kLeafSway.get() ? m.bmax[1] : 0.0f, motion_[pid].spin, turnOf(pid, turn));
-	inst_fs_params_t fs = {};
-	static_assert(sizeof(light_params_t) == sizeof(LightParams));
-	fs.misc[0] = cutOf(pid);	// features by record (building parts clip on the normal map alpha, mode 1)
-	fs.misc[3] = def.featureMode == 4 ? 1.0f : 0.0f;
-	fs.misc[1] = (float)mode;
-	fs.tri[0] = def.tileX;
-	fs.tri[1] = def.tileY;
-	fs.tri[2] = def.localCoords ? 1.0f : 0.0f;
-	fs.tri[3] = kTriplanarUnits;
-	fs.fade[0] = fadeStart;
-	fs.fade[1] = fadeEnd;
-	fs.fade[2] = (float)fadeMode;
-	std::copy(xray, xray + 4, fs.xray);
-	fs.misc[2] = def.featureMode == 4 ? 1.0f : 0.0f;	// FOLIAGE mode: COLOURING (vertex colour); otherwise lit like any StaticObject
-	if (flipPass_)
-	{
-		fs.flip[0] = kFlipFade / 8.0f;
-		std::copy(&flipEye_[0][0], &flipEye_[0][0] + 32, &fs.flip_eye[0][0]);
-	}
-	fs.misc2[0] = def.interior ? 1.0f : 0.0f;	// the dust coat takes the weather's `dust inside` (objects.hlsl INTERIOR, k16.2.202.1)
-	if (limbSkin)	// the wire's tint (SeveredLimbItem custom 2 / custom 3)
-	{
-		std::copy(limbSkin, limbSkin + 3, fs.skin);
-		std::copy(limbBlood, limbBlood + 3, fs.blood);
-		fs.blood[3] = 1.0f;	// bloodColour's alpha: the exe's AppearanceHuman stores the RACE `blood colour` as ARGB with alpha 1 (character.hlsl severed_limb_fs)
-	}
-	sg_apply_uniforms(UB_inst_vs_params, SG_RANGE(vs));
-	sg_apply_uniforms(UB_inst_fs_params, SG_RANGE(fs));
-	sg_apply_uniforms(UB_light_params, { &light, sizeof light });
-	sg_apply_uniforms(UB_ao_params, SG_RANGE(ao_binding().params));
-	sg_apply_uniforms(UB_light_volumes, SG_RANGE(lightvol::binding().params));
-	sg_apply_uniforms(UB_shadow_params, { &shadow->params(), sizeof(ShadowParams) });
-	drawstats::draw(0, s.indexCount, count);
-	return mode;
+	inst_vs_params_t vs;
+	memcpy(&vs, r.vs, sizeof vs);
+	memcpy(vs.mvp, mvp, sizeof vs.mvp);
+	memcpy(vs.base, r.base, sizeof r.base);	// the group's origin: a part's template leaves it 0 (kenshi-k16.2.205.12.119)
+	inst_fs_params_t fs;
+	memcpy(&fs, r.fs, sizeof fs);
+	memcpy(fs.fade, r.fade, sizeof r.fade);
+	if (!drawVsOk_ || memcmp(&vs, drawVs_, sizeof vs) != 0) { sg_apply_uniforms(UB_inst_vs_params, SG_RANGE(vs)); memcpy(drawVs_, &vs, sizeof vs); drawVsOk_ = true; }
+	if (!drawFsOk_ || memcmp(&fs, drawFs_, sizeof fs) != 0) { sg_apply_uniforms(UB_inst_fs_params, SG_RANGE(fs)); memcpy(drawFs_, &fs, sizeof fs); drawFsOk_ = true; }
+	drawstats::draw(0, r.indexCount, r.count);
+	return r.mode;
+}
+
+int WorldBuildings::draw(uint32_t pid, int sub, sg_buffer inst, int instByteOffset, int count, const float base[3], const float mvp[16], const LightParams& light, float fadeStart, float fadeEnd, int fadeMode,
+	const float* limbSkin, const float* limbBlood, int standin)
+{
+	scratch_.clear();
+	ResolvedDraw r;
+	resolveDraw(scratch_, r, pid, sub, inst, instByteOffset, count, base, fadeStart, fadeEnd, fadeMode, limbSkin, limbBlood, standin);
+	applyPassUniforms(light);	// this one-draw pass sets its own (renderFlip calls it per group)
+	return replayDraw(scratch_, r, inst, mvp);
 }
 
 // A feature's alpha test cutoff, 0..1 (0 = none). FOLIAGE (kinspect foliage_alpha_threshold.md: the leaves and type-4 trunks are a StaticObject clone,
@@ -963,54 +1329,82 @@ bool WorldBuildings::partTexturesReady(uint32_t pid) const
 }
 
 // Depth-only draw of one (part, submesh) into a shadow cascade: the instance vertex shader with the cascade matrix as mvp; cut-out parts keep their alpha test.
-void WorldBuildings::drawShadow(uint32_t pid, int sub, sg_buffer inst, int instByteOffset, int count, const float base[3], const float lvp[16], const float bias[4], float fadeStart, float fadeEnd)
+void WorldBuildings::resolveShadow(DrawList& L, ResolvedShadow& r, uint32_t pid, int sub, sg_buffer inst, int instByteOffset, int count, const float base[3], float fadeStart, float fadeEnd) const
 {
 	const PartRt& rt = partRt_[pid];
 	const BuildingPartDef& def = data_.parts[pid];
 	const int mode = modeFor(pid);
 	const MeshEntry& m = meshes_[rt.mesh];
 	const Sub& s = m.subs[sub];
-	auto view = [&](int t) { return texView(t, grey_); };
 	const float alphaCut = mode > 3 ? 0.0f : cutOf(pid);
-	sg_bindings b = {};
-	b.vertex_buffers[0] = m.gpu.get().vbuf;
-	b.vertex_buffer_offsets[0] = s.firstVertex * kVertexBytes;
-	b.vertex_buffers[1] = inst;
-	b.vertex_buffer_offsets[1] = instByteOffset;
-	b.index_buffer = ibufFor(pid);
-	b.index_buffer_offset = s.firstIndex * 4;
-	b.views[VIEW_inst_tex] = alphaCut <= 0 ? grey_ : def.featureMode == 4 ? view(rt.normalTex) : view(rt.subTex[sub]);
-	b.views[VIEW_inst_nrm] = mode == 1 ? view(rt.normalTex) : grey_;
-	b.samplers[SMP_inst_smp] = smp_;
-	drawstats::bindings(&b);
+	r.mesh = meshRef(L, rt.mesh);
+	r.ibuf = ibufRef(L, pid);
+	r.firstVertex = s.firstVertex;
+	r.firstIndex = s.firstIndex;
+	r.indexCount = s.indexCount;
+	r.instOffset = instByteOffset;
+	r.count = count;
+	r.inst = inst;
+	r.animated = spinning(def) || def.aimed;
+	r.tex[0] = alphaCut <= 0 ? -1 : def.featureMode == 4 ? texRef(L, rt.normalTex) : texRef(L, rt.subTex[sub]);
+	r.tex[1] = mode == 1 ? texRef(L, rt.normalTex) : -1;
+	for (int k = 0; k < 3; k++) { r.base[k] = base[k]; }
+	r.fade[0] = fadeStart;
+	r.fade[1] = fadeEnd;
 	float turn[6];
-	const inst_vs_params_t vs = instVsParams(def, offsetFrame, cam_, time_, base, lvp, def.sway && kLeafSway.get() ? m.bmax[1] : 0.0f, motion_[pid].spin, turnOf(pid, turn));
+	const float noMvp[16] = {};
+	const float noBase[3] = {};
+	const inst_vs_params_t vs = instVsParams(def, offsetFrame, cam_, time_, noBase, noMvp, kLeafSway.get() ? swayTop(pid) : 0.0f, motion_[pid].spin, turnOf(pid, turn));
 	shadow_fs_params_t fs = {};
 	fs.cut[0] = alphaCut;
 	fs.cut[1] = mode == 1 ? 1.0f : 0.0f;
-	fs.fade[0] = fadeStart;
-	fs.fade[1] = fadeEnd;
-	memcpy(fs.bias, bias, sizeof fs.bias);
-	sg_apply_uniforms(UB_inst_vs_params, SG_RANGE(vs));
-	sg_apply_uniforms(UB_shadow_fs_params, SG_RANGE(fs));
-	drawstats::draw(0, s.indexCount, count);
+	memcpy(r.vs, &vs, sizeof vs);
+	memcpy(r.fs, &fs, sizeof fs);
 }
 
-bool WorldBuildings::renderShadow(const ShadowCascade& c, int which)
+void WorldBuildings::replayShadow(const DrawList& L, const ResolvedShadow& r, sg_buffer inst, const float lvp[16], const float bias[4])
 {
-	const float noBase[3] = {};
+	const MeshGpu& mg = L.meshes[r.mesh].get();
+	sg_bindings b = {};
+	b.vertex_buffers[0] = mg.vbuf;
+	b.vertex_buffer_offsets[0] = r.firstVertex * kVertexBytes;
+	b.vertex_buffers[1] = inst.id != SG_INVALID_ID ? inst : r.inst;
+	b.vertex_buffer_offsets[1] = r.instOffset;
+	b.index_buffer = r.ibuf >= 0 ? L.ibufs[r.ibuf].get() : mg.ibuf;
+	b.index_buffer_offset = r.firstIndex * 4;
+	b.views[VIEW_inst_tex] = viewOf(L, r.tex[0], grey_);
+	b.views[VIEW_inst_nrm] = viewOf(L, r.tex[1], grey_);
+	b.samplers[SMP_inst_smp] = smp_;
+	drawstats::bindings(&b);
+	inst_vs_params_t vs;
+	memcpy(&vs, r.vs, sizeof vs);
+	memcpy(vs.mvp, lvp, sizeof vs.mvp);
+	memcpy(vs.base, r.base, sizeof r.base);	// the group's origin: a part's template leaves it 0 (kenshi-k16.2.205.12.119)
+	shadow_fs_params_t fs;
+	memcpy(&fs, r.fs, sizeof fs);
+	memcpy(fs.bias, bias, sizeof fs.bias);
+	memcpy(fs.fade, r.fade, sizeof r.fade);
+	if (!shadowVsOk_ || memcmp(&vs, shadowVs_, sizeof vs) != 0) { sg_apply_uniforms(UB_inst_vs_params, SG_RANGE(vs)); memcpy(shadowVs_, &vs, sizeof vs); shadowVsOk_ = true; }
+	if (!shadowFsOk_ || memcmp(&fs, shadowFs_, sizeof fs) != 0) { sg_apply_uniforms(UB_shadow_fs_params, SG_RANGE(fs)); memcpy(shadowFs_, &fs, sizeof fs); shadowFsOk_ = true; }
+	drawstats::draw(0, r.indexCount, r.count);
+}
+
+void WorldBuildings::drawShadow(uint32_t pid, int sub, sg_buffer inst, int instByteOffset, int count, const float base[3], const float lvp[16], const float bias[4], float fadeStart, float fadeEnd)
+{
+	scratch_.clear();
+	ResolvedShadow r;
+	resolveShadow(scratch_, r, pid, sub, inst, instByteOffset, count, base, fadeStart, fadeEnd);
+	replayShadow(scratch_, r, inst, lvp, bias);
+}
+
+bool WorldBuildings::renderShadow(const DrawList& list, const ShadowCascade& c, int which)
+{
 	bool any = false;
-	for (const int gi : active_)
+	for (const ResolvedShadow& r : list.shadow)
 	{
-		const Group& g = groups_[gi];
-		const BuildingPartDef& def = data_.parts[g.part];
-		const bool animated = spinning(def) || def.aimed;
-		if ((which == 1 && animated) || (which == 2 && !animated)) { continue; }
-		const int n = (int)((g.onlyShadow.size() + g.inRange.size()) / kInstanceFloats);
-		const float fadeEnd = def.kind != 0 ? (float)interiorRadius : 0.0f;
-		if (n <= 0) { continue; }
+		if ((which == 1 && r.animated) || (which == 2 && !r.animated)) { continue; }
 		if (!any) { drawstats::pipeline(shadowPip_); any = true; }
-		drawShadow(g.part, g.sub, instBuf_, g.first * (int)kInstanceBytes, n, noBase, c.lvp, c.bias, fadeEnd * kInteriorFade, fadeEnd);
+		replayShadow(list, r, sg_buffer{}, c.lvp, c.bias);
 	}
 	return any;
 }
@@ -1052,69 +1446,200 @@ void WorldBuildings::fadeOf(uint32_t pid, float& start, float& end) const
 	start = end * (data_.parts[pid].kind != 0 ? kInteriorFade : 1.0f - kFarFade);
 }
 
-void WorldBuildings::render(const float mvp[16], const LightParams& light)
+void WorldBuildings::render(const DrawList& list, const float mvp[16], const LightParams& light)
 {
-	if (active_.empty()) { return; }
-	for (size_t& n : stats_.modeGroups) { n = 0; }
-	const float noBase[3] = {};
-	drawstats::pipeline(pip_);
+	if (list.opaque.empty()) { return; }
+	beginDraws(false);
+	applyPassUniforms(light);
 	bool culled = false;
-	for (const int gi : active_)
+	for (const ResolvedDraw& r : list.opaque)
 	{
-		const Group& g = groups_[gi];
 		// Interior parts and every feature / FOLIAGE_MESH mesh except the FOLIAGE mode (leaves, `Foliage` material: cull_hardware none) cull back faces
 		// like the game's mapfeature.material (no cull_hardware = clockwise); a camera inside a rock sees the terrain, not the rock's far wall.
-		if (cullsBackFaces(data_.parts[g.part]) != culled)
+		if (r.cull != culled)
 		{
 			culled = !culled;
 			drawstats::pipeline(culled ? pipInterior_ : pip_);
 		}
+		replayDraw(list, r, sg_buffer{}, mvp);
+	}
+}
+
+// update()'s last step, on every return: the groups' opaque and shadow draws, resolved into the packet (ResolvedDraw). The order is the old render()'s and
+// renderShadow()'s: per group (active_), the opaque draw, the loading stand-in, the dithering fade; and the shadow draw. stats_.modeGroups moves here
+// from render() (a stats write from the draw side).
+void WorldBuildings::resolveDraws(FrameData& out)
+{
+	DrawList& L = out.draws;
+	L.clear();
+	for (size_t& n : stats_.modeGroups) { n = 0; }
+	if (active_.empty() && maskGroups_.empty() && idDraws_.empty()) { return; }
+	L.meshAt.assign(meshes_.size(), -1);
+	L.texAt.assign(textures_.size(), -1);
+	L.ibufAt.assign(partRt_.size(), -1);
+	const float noBase[3] = {};
+	// the interior mask hulls (renderMask)
+	for (const MaskGroup& g : maskGroups_)
+	{
+		const PartRt& rt = partRt_[g.part];
+		const Sub& s = meshes_[rt.mesh].subs[g.sub];
+		L.mask.emplace_back();
+		ResolvedMask& r = L.mask.back();
+		r.mesh = meshRef(L, rt.mesh);
+		r.ibuf = ibufRef(L, g.part);
+		r.firstVertex = s.firstVertex;
+		r.firstIndex = s.firstIndex;
+		r.indexCount = s.indexCount;
+		r.instOffset = g.first * (int)kInstanceBytes;
+		r.count = (int)(g.inst.size() / kInstanceFloats);
+		r.inst = instBuf_;
+		float turn[6];
+		const float noMvp[16] = {};
+		const inst_vs_params_t p = instVsParams(data_.parts[g.part], offsetFrame, cam_, time_, noBase, noMvp, 0, motion_[g.part].spin, turnOf(g.part, turn));
+		std::copy(p.offset, p.offset + 4, r.offset);
+		std::copy(p.spin, p.spin + 4, r.spin);
+	}
+	// the peeked glass (renderGlass): the groups' glass instances, after in / out range
+	for (const int gi : active_)
+	{
+		const Group& g = groups_[gi];
+		if (g.glass.empty()) { continue; }
+		const int before = (int)((g.onlyShadow.size() + g.inRange.size() + g.outRange.size()) / kInstanceFloats);
+		float fadeStart, fadeEnd;
+		fadeOf(g.part, fadeStart, fadeEnd);
+		if (data_.parts[g.part].kind != 0) { fadeStart = fadeEnd = 0.0f; }	// a glass interior part (a ghosted occluder's floor, kenshi-k16.2.411.1) is wanted at any distance: no interior distance fade
+		L.glass.emplace_back();
+		resolveDraw(L, L.glass.back(), g.part, g.sub, instBuf_, (g.first + before) * (int)kInstanceBytes, (int)(g.glass.size() / kInstanceFloats), noBase, fadeStart, fadeEnd, 0, g.limb ? g.skin : nullptr, g.limb ? g.blood : nullptr, 0);
+	}
+	// the cut-away flip fade (renderFlip): the groups' flip instances after glass; flipMoving_ and the eye ring are read here, into each draw's uniforms
+	if (flipMoving_)
+	{
+		for (const int gi : active_)
+		{
+			const Group& g = groups_[gi];
+			if (g.flip.empty()) { continue; }
+			const int before = (int)((g.onlyShadow.size() + g.inRange.size() + g.outRange.size() + g.glass.size()) / kInstanceFloats);
+			float fadeStart, fadeEnd;
+			fadeOf(g.part, fadeStart, fadeEnd);
+			L.flip.emplace_back();
+			resolveDraw(L, L.flip.back(), g.part, g.sub, instBuf_, (g.first + before) * (int)kInstanceBytes, (int)(g.flip.size() / kInstanceFloats), noBase, fadeStart, fadeEnd, 0, nullptr, nullptr, 0, true);
+		}
+	}
+	// the cursor id draws (renderIds): one per run of the same (group, list, owner) with consecutive instances (kenshi-k16.2.205.12.119). The instances of
+	// one part are consecutive in its group's list, and the target resolves by the scene depth (EQUAL) with no blend, so grouping the runs by key and drawing
+	// them as one instanced range gives the same image in a fraction of the draws. Sorted first: update() appends the entries instance by instance.
+	std::sort(idDraws_.begin(), idDraws_.end(), [](const IdDraw& a, const IdDraw& b)
+	{
+		if (a.group != b.group) { return a.group < b.group; }
+		if (a.list != b.list) { return a.list < b.list; }
+		if (a.owner != b.owner) { return a.owner < b.owner; }
+		return a.index < b.index;
+	});
+	stats_.idDraws = stats_.idInstances = 0;
+	for (size_t i = 0; i < idDraws_.size();)
+	{
+		const IdDraw& d = idDraws_[i];
+		size_t run = 1;
+		while (i + run < idDraws_.size())
+		{
+			const IdDraw& n = idDraws_[i + run];
+			if (n.group != d.group || n.list != d.list || n.owner != d.owner || n.index != d.index + run) { break; }
+			run++;
+		}
+		const Group& g = groups_[d.group];
+		const BuildingPartDef& def = data_.parts[g.part];
+		const PartRt& rt = partRt_[g.part];
+		const Sub& sub = meshes_[rt.mesh].subs[g.sub];
+		const size_t lists[3] = { g.inRange.size(), g.outRange.size(), g.glass.size() };
+		size_t at = g.onlyShadow.size() / kInstanceFloats + d.index;
+		for (int l = 0; l < d.list; l++) { at += lists[l] / kInstanceFloats; }
+		L.ids.emplace_back();
+		ResolvedId& r = L.ids.back();
+		r.mesh = meshRef(L, rt.mesh);
+		r.ibuf = ibufRef(L, g.part);
+		r.firstVertex = sub.firstVertex;
+		r.firstIndex = sub.firstIndex;
+		r.indexCount = sub.indexCount;
+		r.instOffset = (g.first + (int)at) * (int)kInstanceBytes;
+		r.count = (int)run;
+		r.inst = instBuf_;
+		r.cull = cullsBackFaces(def);
+		r.owner = (float)d.owner + 1.0f;
+		float turn[6];
+		const float noMvp[16] = {};
+		const inst_vs_params_t vs = instVsParams(def, offsetFrame, cam_, time_, noBase, noMvp, kLeafSway.get() ? swayTop(g.part) : 0.0f, motion_[g.part].spin, turnOf(g.part, turn));
+		memcpy(r.vs, &vs, sizeof vs);
+		stats_.idDraws++;
+		stats_.idInstances += run;
+		i += run;
+	}
+	for (const int gi : active_)
+	{
+		const Group& g = groups_[gi];
+		const BuildingPartDef& def = data_.parts[g.part];
 		const int onlyShadow = (int)(g.onlyShadow.size() / kInstanceFloats), n = (int)((g.inRange.size() + g.outRange.size()) / kInstanceFloats);
 		float fadeStart, fadeEnd;
 		fadeOf(g.part, fadeStart, fadeEnd);
-		if (n > 0) { stats_.modeGroups[draw(g.part, g.sub, instBuf_, (g.first + onlyShadow) * (int)kInstanceBytes, n, noBase, mvp, light, fadeStart, fadeEnd, 0, g.limb ? g.skin : nullptr, g.limb ? g.blood : nullptr)]++; }
+		if (n > 0)
+		{
+			L.opaque.emplace_back();
+			resolveDraw(L, L.opaque.back(), g.part, g.sub, instBuf_, (g.first + onlyShadow) * (int)kInstanceBytes, n, noBase, fadeStart, fadeEnd, 0, g.limb ? g.skin : nullptr, g.limb ? g.blood : nullptr, 0);
+			stats_.modeGroups[L.opaque.back().mode]++;
+		}
+		// the loading stand-in (kenshi-k16.2.258.4) and the real look dithering in against it: after flip in the group's block
+		const int nStand = (int)(g.standin.size() / kInstanceFloats), nFade = (int)(g.fade.size() / kInstanceFloats);
+		if (nStand > 0 || nFade > 0)
+		{
+			const int tail = g.first + (int)((g.onlyShadow.size() + g.inRange.size() + g.outRange.size() + g.glass.size() + g.flip.size()) / kInstanceFloats);
+			if (nStand > 0) { L.opaque.emplace_back(); resolveDraw(L, L.opaque.back(), g.part, g.sub, instBuf_, tail * (int)kInstanceBytes, nStand, noBase, fadeStart, fadeEnd, 0, nullptr, nullptr, 1); }
+			if (nFade > 0) { L.opaque.emplace_back(); resolveDraw(L, L.opaque.back(), g.part, g.sub, instBuf_, (tail + nStand) * (int)kInstanceBytes, nFade, noBase, fadeStart, fadeEnd, 0, nullptr, nullptr, 2); }
+		}
+		const int ns = (int)((g.onlyShadow.size() + g.inRange.size()) / kInstanceFloats);
+		if (ns > 0)
+		{
+			const float shadowEnd = def.kind != 0 ? (float)interiorRadius : 0.0f;
+			L.shadow.emplace_back();
+			resolveShadow(L, L.shadow.back(), g.part, g.sub, instBuf_, g.first * (int)kInstanceBytes, ns, noBase, shadowEnd * kInteriorFade, shadowEnd);
+		}
 	}
 }
 
 // The interior mask (interiormask.glsl): back faces into G, then front faces into R of the open mask pass, every fragment its view depth + 1 - the
 // game's two InteriorMask render_scene passes. The instance positions were made relative to this view's camera in update(); mvp is this view's.
-void WorldBuildings::renderMask(const float mvp[16])
+void WorldBuildings::renderMask(const DrawList& list, const float mvp[16])
 {
-	if (maskGroups_.empty()) { return; }
-	const float noBase[3] = {};
+	if (list.mask.empty()) { return; }
 	for (const sg_pipeline pip : { pipMaskBack_, pipMaskFront_ })
 	{
 		drawstats::pipeline(pip);
-		for (const MaskGroup& g : maskGroups_)
+		for (const ResolvedMask& r : list.mask)
 		{
-			const MeshEntry& m = meshes_[partRt_[g.part].mesh];
-			const Sub& s = m.subs[g.sub];
+			const MeshGpu& mg = list.meshes[r.mesh].get();
 			imask_vs_params_t vs = {};
 			std::copy(mvp, mvp + 16, vs.mvp);
-			float turn[6];
-			const inst_vs_params_t p = instVsParams(data_.parts[g.part], offsetFrame, cam_, time_, noBase, mvp, 0, motion_[g.part].spin, turnOf(g.part, turn));
-			std::copy(p.offset, p.offset + 4, vs.offset);
-			std::copy(p.spin, p.spin + 4, vs.spin);
+			std::copy(r.offset, r.offset + 4, vs.offset);
+			std::copy(r.spin, r.spin + 4, vs.spin);
 			sg_apply_uniforms(UB_imask_vs_params, SG_RANGE(vs));
 			sg_bindings b = {};
-			b.vertex_buffers[0] = m.gpu.get().vbuf;
-			b.vertex_buffer_offsets[0] = s.firstVertex * kVertexBytes;
-			b.vertex_buffers[1] = instBuf_;
-			b.vertex_buffer_offsets[1] = g.first * (int)kInstanceBytes;
-			b.index_buffer = ibufFor(g.part);
-			b.index_buffer_offset = s.firstIndex * 4;
+			b.vertex_buffers[0] = mg.vbuf;
+			b.vertex_buffer_offsets[0] = r.firstVertex * kVertexBytes;
+			b.vertex_buffers[1] = r.inst;
+			b.vertex_buffer_offsets[1] = r.instOffset;
+			b.index_buffer = r.ibuf >= 0 ? list.ibufs[r.ibuf].get() : mg.ibuf;
+			b.index_buffer_offset = r.firstIndex * 4;
 			drawstats::bindings(&b);
-			drawstats::draw(0, s.indexCount, (int)(g.inst.size() / kInstanceFloats));
+			drawstats::draw(0, r.indexCount, r.count);
 		}
 	}
 }
 
-bool WorldBuildings::insideInterior(const double p[3], const double* origin, const double* dir, double* exitT) const
+bool WorldBuildings::insideInterior(const double p[3], const double* origin, const double* dir, double* exitT, bool carveOnly) const
 {
 	bool inside = false;
 	for (const HullRef& h : hulls_)
 	{
 		const BuildingInstance& b = data_.instances[h.instance];
+		if (carveOnly && !data_.parts[h.part].carve) { continue; }
 		const int mi = partRt_[h.part].mesh;
 		if (mi < 0) { continue; }
 		const MeshEntry& m = meshes_[mi];
@@ -1156,48 +1681,24 @@ bool WorldBuildings::insideInterior(const double p[3], const double* origin, con
 	return inside;
 }
 
-bool WorldBuildings::hasGlass() const
+void WorldBuildings::renderGlass(const DrawList& list, const float mvp[16], const LightParams& light)
 {
-	for (const int gi : active_) { if (!groups_[gi].glass.empty()) { return true; } }
-	return false;
-}
-
-void WorldBuildings::renderGlass(const float mvp[16], const LightParams& light)
-{
-	const float noBase[3] = {};
+	if (list.glass.empty()) { return; }
+	drawstats::pipeline(pipGlassDepth_);
+	applyPassUniforms(light);	// both pipelines are the building shader's: one upload serves the pass
 	for (const sg_pipeline pip : { pipGlassDepth_, pipGlass_ })
 	{
-		bool applied = false;
-		for (const int gi : active_)
-		{
-			const Group& g = groups_[gi];
-			if (g.glass.empty()) { continue; }
-			if (!applied) { drawstats::pipeline(pip); applied = true; }
-			const int before = (int)((g.onlyShadow.size() + g.inRange.size() + g.outRange.size()) / kInstanceFloats);
-			float fadeStart, fadeEnd;
-			fadeOf(g.part, fadeStart, fadeEnd);
-			draw(g.part, g.sub, instBuf_, (g.first + before) * (int)kInstanceBytes, (int)(g.glass.size() / kInstanceFloats), noBase, mvp, light, fadeStart, fadeEnd, 0, g.limb ? g.skin : nullptr, g.limb ? g.blood : nullptr);
-		}
+		drawstats::pipeline(pip);
+		for (const ResolvedDraw& r : list.glass) { replayDraw(list, r, sg_buffer{}, mvp); }
 	}
 }
 
-void WorldBuildings::renderFlip(const float mvp[16], const LightParams& light)
+void WorldBuildings::renderFlip(const DrawList& list, const float mvp[16], const LightParams& light)
 {
-	if (!flipMoving_) { return; }
-	const float noBase[3] = {};
-	bool applied = false;
-	flipPass_ = true;
-	for (const int gi : active_)
-	{
-		const Group& g = groups_[gi];
-		if (g.flip.empty()) { continue; }
-		if (!applied) { drawstats::pipeline(pipFlip_); applied = true; }
-		const int before = (int)((g.onlyShadow.size() + g.inRange.size() + g.outRange.size() + g.glass.size()) / kInstanceFloats);
-		float fadeStart, fadeEnd;
-		fadeOf(g.part, fadeStart, fadeEnd);
-		draw(g.part, g.sub, instBuf_, (g.first + before) * (int)kInstanceBytes, (int)(g.flip.size() / kInstanceFloats), noBase, mvp, light, fadeStart, fadeEnd, 0, nullptr, nullptr);
-	}
-	flipPass_ = false;
+	if (list.flip.empty()) { return; }
+	drawstats::pipeline(pipFlip_);
+	applyPassUniforms(light);	// the building shader's program, shared with the other passes; the per-draw blocks (the flip eye ring) follow per draw
+	for (const ResolvedDraw& r : list.flip) { replayDraw(list, r, sg_buffer{}, mvp); }
 }
 
 void WorldBuildings::cursorRay(const double dir[3], bool on)
@@ -1206,39 +1707,34 @@ void WorldBuildings::cursorRay(const double dir[3], bool on)
 	cursorOn_ = on;
 }
 
-void WorldBuildings::renderIds(const float mvp[16])
+void WorldBuildings::renderIds(const DrawList& list, const float mvp[16])
 {
-	const float noBase[3] = {};
 	bool culled = false;
 	drawstats::pipeline(pipId_);
-	for (const IdDraw& d : idDraws_)
+	idVsOk_ = false;
+	idOwner_ = -1;
+	for (const ResolvedId& r : list.ids)
 	{
-		const Group& g = groups_[d.group];
-		const BuildingPartDef& def = data_.parts[g.part];
-		if (cullsBackFaces(def) != culled)
+		if (r.cull != culled)
 		{
 			culled = !culled;
 			drawstats::pipeline(culled ? pipIdInterior_ : pipId_);
 		}
-		const PartRt& rt = partRt_[g.part];
-		const MeshEntry& m = meshes_[rt.mesh];
-		const Sub& sub = m.subs[g.sub];
-		const size_t lists[3] = { g.inRange.size(), g.outRange.size(), g.glass.size() };
-		size_t at = g.onlyShadow.size() / kInstanceFloats + d.index;
-		for (int l = 0; l < d.list; l++) { at += lists[l] / kInstanceFloats; }
+		const MeshGpu& mg = list.meshes[r.mesh].get();
 		sg_bindings b = {};
-		b.vertex_buffers[0] = m.gpu.get().vbuf;
-		b.vertex_buffer_offsets[0] = sub.firstVertex * kVertexBytes;
-		b.vertex_buffers[1] = instBuf_;
-		b.vertex_buffer_offsets[1] = (g.first + (int)at) * (int)kInstanceBytes;
-		b.index_buffer = ibufFor(g.part);
-		b.index_buffer_offset = sub.firstIndex * 4;
+		b.vertex_buffers[0] = mg.vbuf;
+		b.vertex_buffer_offsets[0] = r.firstVertex * kVertexBytes;
+		b.vertex_buffers[1] = r.inst;
+		b.vertex_buffer_offsets[1] = r.instOffset;
+		b.index_buffer = r.ibuf >= 0 ? list.ibufs[r.ibuf].get() : mg.ibuf;
+		b.index_buffer_offset = r.firstIndex * 4;
 		drawstats::bindings(&b);
-		float turn[6];
-		const inst_vs_params_t vs = instVsParams(def, offsetFrame, cam_, time_, noBase, mvp, def.sway && kLeafSway.get() ? m.bmax[1] : 0.0f, motion_[g.part].spin, turnOf(g.part, turn));
-		sg_apply_uniforms(UB_inst_vs_params, SG_RANGE(vs));
-		const id_fs_params_t fs = { { (float)d.owner + 1.0f, 0, 0, 0 } };
-		sg_apply_uniforms(UB_id_fs_params, SG_RANGE(fs));
-		drawstats::draw(0, sub.indexCount, 1);
+		inst_vs_params_t vs;
+		memcpy(&vs, r.vs, sizeof vs);
+		memcpy(vs.mvp, mvp, sizeof vs.mvp);
+		if (!idVsOk_ || memcmp(&vs, idVs_, sizeof vs) != 0) { sg_apply_uniforms(UB_inst_vs_params, SG_RANGE(vs)); memcpy(idVs_, &vs, sizeof vs); idVsOk_ = true; }
+		const id_fs_params_t fs = { { r.owner, 0, 0, 0 } };
+		if (r.owner != idOwner_) { sg_apply_uniforms(UB_id_fs_params, SG_RANGE(fs)); idOwner_ = r.owner; }
+		drawstats::draw(0, r.indexCount, r.count);
 	}
 }

@@ -429,7 +429,8 @@ std::optional<Simulation::OperateAction> Simulation::operateAction(std::uint64_t
 	const std::shared_ptr<const producers::Book> book = producerBook();
 	const producers::Spec* spec = book != nullptr ? book->find(producer->recordSid) : nullptr;
 	const auto since = producer->since.find(id);
-	return OperateAction{spec != nullptr ? spec->animation : producers::kDefaultClip, since != producer->since.end() ? since->second : clockTick()};
+	return OperateAction{spec != nullptr ? spec->animation : producers::kDefaultClip, since != producer->since.end() ? since->second : clockTick(),
+		spec != nullptr && spec->statUsed == 4 ? std::uint8_t{17} : std::uint8_t{18}}; // Science / Labouring, as statRef
 }
 
 void Simulation::stepProducers()

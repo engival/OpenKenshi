@@ -175,6 +175,7 @@ public:
 	// Advances the clock (real seconds) and recomputes sun, lighting and fog. fogDistance = the view distance (fog runs 0.8 .. 0.96 of it).
 	void update(double realDt, float fogDistance, const double camPos[3]);
 	void setSkyHours(double h) { skyHours_ = h; }
+	void restartStarClock() { skyHours_ = 0; lastHours_ = -1; }	// scene test: every scene starts the star scroll from 0, whatever scenes ran before it
 
 	// This frame's values for the draw (logic side; SkyFrame).
 	SkyFrame frame() const;

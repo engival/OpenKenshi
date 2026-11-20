@@ -211,6 +211,18 @@ void WorldBuildings::updateFocus()
 		s.flights = flights_.empty() ? nullptr : flights_.data();
 		s.flightCount = (int)flights_.size();
 		const ff::View v = view_.update(s);
+#ifdef KCLIENT_DEV_TOOLS
+		if (logFloor && view_.latchInfo().on)	// kenshi-k16.2.236.8.4.3: the latch's feet against its lines, when the feet moved 0.5 u or the latch changed state
+		{
+			const auto& li = view_.latchInfo();
+			static double lastY = -1e9; static int lastSide = -1; static bool lastFired = false;
+			if (std::fabs(li.y - lastY) >= 0.5 || li.side != lastSide || li.fired != lastFired)
+			{
+				lastY = li.y; lastSide = li.side; lastFired = li.fired;
+				printf("floor: latch y %.2f up %.2f low %.2f origin %d side %d %s rearm %.2f\n", li.y, li.upperLine, li.lowerLine, li.origin, li.side, li.fired ? "fired" : "armed", li.rearmY);
+			}
+		}
+#endif
 		visible_ = v.level;
 		viewWhy_ = ff::reasonName(v.reason);
 		autoFloor = view_.autoFloor();
@@ -279,12 +291,11 @@ int WorldBuildings::topFloor(int building) const { return building >= 0 ? data_.
 
 bool WorldBuildings::belowFloors(int building, const double p[3])
 {
-	constexpr double kSlab = 2;	// MINE: local units under the interior's bottom that still count as its floor
 	const BInfo* info = building >= 0 ? infoFor((uint32_t)building) : nullptr;
 	if (!info || !info->hasBounds) { return false; }
 	double l[3];
 	toLocal(data_.instances[building], p, l);
-	return l[1] < info->mn[1] - kSlab;
+	return l[1] < info->mn[1] - kFoundSlab;
 }
 
 int WorldBuildings::floorAt(int building, const double p[3])
@@ -303,6 +314,45 @@ int WorldBuildings::floorAt(int building, const double p[3])
 void WorldBuildings::findOccluders(const double cam[3], std::string* report)
 {
 	occluders_.clear();
+	xrayEx[3] = 0;
+	if (hasSeen)
+	{
+		// the building ours are in (sliced), else the one the camera is inside of (its parts' box), else the one seen is indoors in
+		int ex = cuts_.empty() ? -1 : (int)cuts_.front();
+		if (ex < 0)
+		{
+			for (const uint32_t i : topLevel_)
+			{
+				const BuildingInstance& b = data_.instances[i];
+				if (std::abs(b.x - cam[0]) > kFocusRange || std::abs(b.z - cam[2]) > kFocusRange) { continue; }
+				const BInfo* info = infoFor(i);
+				double l[3];
+				toLocal(b, cam, l);
+				bool in = info && info->hasBounds;
+				for (int a = 0; in && a < 3; a++) { in = l[a] >= info->mn[a] && l[a] <= info->mx[a]; }
+				if (in) { ex = (int)i; break; }
+			}
+		}
+		const BInfo* info = ex >= 0 ? infoFor((uint32_t)ex) : nullptr;
+		if (info && info->outerMn[0] <= info->outerMx[0])
+		{
+			const BuildingInstance& b = data_.instances[ex];
+			constexpr double kPad = 6, kBelow = 40;	// MINE: local units round the parts' box; the foundation reaches under the lowest part
+			const double c[3] = { (info->outerMn[0] + info->outerMx[0]) / 2, (info->outerMn[1] + info->outerMx[1]) / 2 - kBelow / 2, (info->outerMn[2] + info->outerMx[2]) / 2 };
+			const double cs[3] = { c[0] * b.scale, c[1] * b.scale, c[2] * b.scale };
+			double w[3];
+			const float q[4] = { b.qw, b.qx, b.qy, b.qz };
+			rotate(q, cs, w);
+			xrayEx[0] = b.x + w[0];
+			xrayEx[1] = b.y + w[1];
+			xrayEx[2] = b.z + w[2];
+			xrayEx[4] = ((info->outerMx[0] - info->outerMn[0]) / 2 + kPad) * b.scale;
+			xrayEx[5] = ((info->outerMx[1] - info->outerMn[1]) / 2 + kBelow / 2 + kPad) * b.scale;
+			xrayEx[6] = ((info->outerMx[2] - info->outerMn[2]) / 2 + kPad) * b.scale;
+			xrayEx[7] = 2 * std::atan2((double)b.qy, (double)b.qw);	// yaw about the up axis
+			xrayEx[3] = 1;
+		}
+	}
 	if (!autoGhost || !hasSeen) { return; }
 	const double chest[3] = { seen[0], seen[1] + 10.8, seen[2] };
 	const double len = std::sqrt((chest[0] - cam[0]) * (chest[0] - cam[0]) + (chest[1] - cam[1]) * (chest[1] - cam[1]) + (chest[2] - cam[2]) * (chest[2] - cam[2]));
@@ -381,6 +431,22 @@ bool WorldBuildings::aboveSlab(uint32_t bi, int s, const double p[3], double bot
 	return l[0] >= info->outerMn[0] && l[0] <= info->outerMx[0] && l[2] >= info->outerMn[2] && l[2] <= info->outerMx[2] && l[1] >= info->floorY[s + 1] - kSlab;
 }
 
+// kenshi-k16.2.412.3: p is in the solid zone (foundation + ground floor) of a ghosted occluder: drawn opaque under the fade (mesh.glsl xray_fnd), cone or not
+bool WorldBuildings::inSolidZone(const double p[3])
+{
+	for (const uint32_t bi : occluders_)
+	{
+		const BInfo* info = infoFor(bi);
+		if (!info) { continue; }
+		double l[3];
+		toLocal(data_.instances[bi], p, l);
+		bool in = l[1] <= info->foundY;
+		for (int a = 0; a < 3 && in; a++) { in = l[a] >= info->outerMn[a] && l[a] <= info->outerMx[a]; }
+		if (in) { return true; }
+	}
+	return false;
+}
+
 bool WorldBuildings::cutAway(const double p[3], double bottom, std::string* why)
 {
 	const auto above = [&](uint32_t bi, int s) { return aboveSlab(bi, s, p, bottom); };
@@ -392,7 +458,7 @@ bool WorldBuildings::cutAway(const double p[3], double bottom, std::string* why)
 		double l[3];
 		toLocal(data_.instances[bi], p, l);
 		for (int a = 0; a < 3; a++) { if (l[a] < info->outerMn[a] || l[a] > info->outerMx[a]) { return false; } }
-		return true;
+		return !(levelCuts && l[1] <= info->foundY);	// the click pick: the foundation and ground floor stay drawn solid under the ghost (kenshi-k16.2.411.1), so they are hit (412.3)
 	};
 	if (std::any_of(occluders_.begin(), occluders_.end(), inside))
 	{

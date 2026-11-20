@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# First-run folder picker (kenshi-379.28.1): datadir::resolve with a fake zenity first in PATH, a temp HOME / XDG_CONFIG_HOME, and no game data.
-# Builds a tiny driver from the real datadir.cpp + datapicker.cpp + tinyfiledialogs (no dev KENSHI_DATA default, so the miss path is reachable).
+# First-run folder picker (kenshi-379.28.1): datasetting::resolve with a fake zenity first in PATH, a temp HOME / XDG_CONFIG_HOME, and no game data.
+# Builds a tiny driver from the real datasetting.cpp + libkdata (KDATA_LIB, default build/cpp/libkdata.a) + datapicker.cpp + tinyfiledialogs (no dev KENSHI_DATA default, so the miss path is reachable).
 # Cases: no dialog (KCLIENT_NO_DIALOG, no display, KCLIENT_CONFIG=none), wrong folder then a good one (saved, second start silent), install
 # root accepted, cancel, no zenity at all.
 set -u
@@ -11,8 +11,8 @@ fail=0
 ok() { echo "ok   $1"; }
 bad() { echo "FAIL $1"; fail=1; }
 
-c++ -std=c++20 -w -I"$HERE/src" -I"$HERE/third_party" -x c++ "$HERE/third_party/tinyfiledialogs/tinyfiledialogs.c" -x c++ "$HERE/src/app/datapicker.cpp" \
-	"$HERE/src/platform/datadir.cpp" "$HERE/src/app/steamvdf.cpp" "$HERE/src/platform/$([ "$(uname)" = Darwin ] && echo macos || echo linux)/installs.cpp" "$HERE/tests/datapicker_main.cpp" -o "$T/drv" || { echo "FAIL build"; exit 1; }
+c++ -std=c++20 -w -I"$HERE/src" -I"$HERE/../cpp/include" -I"$HERE/third_party" -x c++ "$HERE/third_party/tinyfiledialogs/tinyfiledialogs.c" -x c++ "$HERE/src/app/datapicker.cpp" \
+	"$HERE/src/platform/datasetting.cpp" "$HERE/src/platform/$([ "$(uname)" = Darwin ] && echo macos || echo linux)/userdirs.cpp" "$HERE/tests/datapicker_main.cpp" -x none "${KDATA_LIB:-$HERE/build/cpp/libkdata.a}" -o "$T/drv" || { echo "FAIL build"; exit 1; }
 
 mkdir -p "$T/good/data" "$T/bad" "$T/bin" "$T/home" "$T/cfg"
 touch "$T/good/data/gamedata.base"

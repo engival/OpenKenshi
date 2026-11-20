@@ -9,8 +9,10 @@
 #include <functional>
 
 #include "app/config.hpp"
+#include "app/cpustage.hpp"
 #include "render/framestats.hpp"
 #include "render/renderqueue.hpp"
+#include "world/plants.hpp"
 #include "kworld/coords.hpp"
 #include "kworld/features.hpp"
 #include "kworld/foliage.hpp"
@@ -262,6 +264,7 @@ const std::vector<uint32_t>& Foliage::partsOf(int record)
 	std::vector<uint32_t>& parts = recordParts_[record];
 	if (recordPartsDone_[record]) { return parts; }
 	recordPartsDone_[record] = 1;
+	const bool plant = plants::isPlant(ctx_->gd, ctx_->records[record].recordID);	// plants only: a rock is a FOLIAGE_MESH record too (kenshi-k16.2.420.6.1)
 	for (const kworld::FeatureMesh& m : ctx_->records[record].meshes)
 	{
 		BuildingPartDef d;
@@ -273,9 +276,11 @@ const std::vector<uint32_t>& Foliage::partsOf(int record)
 		d.tileY = m.tileY;
 		d.featureMode = (int)m.mode;
 		d.alphaCut = m.alphaThreshold;
-		d.sway = m.leaves;	// the leaves sway, the trunk stays (mesh.glsl inst_vs; a deliberate deviation: the original's leaves are static)
+		d.plant = plant;	// render.leaf_sway: the whole tree bends with the wind, trunk and leaves as one (mesh.glsl inst_vs; a deliberate deviation: the original's trees are static)
+		d.leavesPart = m.leaves;
 		parts.push_back(wb_->addPart(d));
 	}
+	wb_->setSwayMates(parts);
 	return parts;
 }
 
@@ -292,12 +297,16 @@ void Foliage::accept(CellCpu& cpu)
 	if (!cpu.data.empty())	// the buffer is a resource job: the render side makes it before the packet's draw (frame lane, like the grass tiles)
 	{
 		const size_t bytes = cpu.data.size() * sizeof(float);
-		rq::push("foliage-cell", [this, cell = cpu.cell, data = std::move(cpu.data)]
+		c.buf = rq::Handle<sg_buffer>();
+		c.hasBuf = true;
+		rq::push("foliage-cell", [this, cell = cpu.cell, h = c.buf, data = std::move(cpu.data)]
 		{
 			sg_buffer_desc bd = {};
 			bd.data = { data.data(), data.size() * sizeof(float) };
 			bd.label = "foliage-instances";
-			gpu_[cell] = sg_make_buffer(&bd);
+			const sg_buffer b = sg_make_buffer(&bd);
+			gpu_[cell] = b;
+			h.publish(b);
 		}, rq::Lane::kFrame, bytes);
 	}
 	stats_.generated++;
@@ -338,6 +347,13 @@ void Foliage::prepare(const double cam[3], const float mvp[16], float, bool bloc
 	stats_.cullMs = stats_.uploadMs = 0;
 	stats_.instancesDrawn = stats_.draws = stats_.groupsDrawn = stats_.held = stats_.greyDraws = 0;
 	out.draws.clear();
+	out.list.clear();
+	out.bufs.clear();
+	bufSlot_.clear();
+	out.list.meshAt.assign(wb_->meshes_.size(), -1);
+	out.list.texAt.assign(wb_->textures_.size(), -1);
+	out.list.ibufAt.assign(wb_->partRt_.size(), -1);
+	for (auto& r : out.shadowRef) { r.clear(); }
 	for (auto& l : out.shadow) { l.reset(); }
 	for (int k = 0; k < 3; k++) { out.cam[k] = cam[k]; }
 	out.gen = cellGen_;
@@ -405,6 +421,9 @@ void Foliage::prepare(const double cam[3], const float mvp[16], float, bool bloc
 	out.gen = cellGen_;
 	stats_.uploadMs = msSince(t0);
 	t0 = Clock::now();
+	// prepare's own split (KCLIENT_STAGES): the cull and both lists, then the shadow candidates' resolution (the T20 cost, kenshi-k16.2.205.12.119).
+	CPUSTAGE_DECL(prepAcc);
+	CPUSTAGE_OPT(prepAcc, "foliage.prep-cull");
 
 	// Frustum side planes (Gribb-Hartmann), normalised.
 	float planes[4][4];
@@ -478,12 +497,47 @@ void Foliage::prepare(const double cam[3], const float mvp[16], float, bool bloc
 		const double reach = (m.radius + centreLen) * g.maxScale;
 		const double end = fadeEnd(g, m.radius);
 		if (k.dist - k.half - reach > end || sphereOut(k.centre, k.half + reach)) { continue; }
-		out.draws.push_back({ k.cell, g.first, g.count, k.part, (int)m.subs.size(), { k.base[0], k.base[1], k.base[2] }, (float)end, k.dist + k.half + reach > end * kFadeStart });
+		if (k.cp->hasBuf)
+		{
+			auto slot = bufSlot_.find(k.cell);
+			if (slot == bufSlot_.end()) { slot = bufSlot_.emplace(k.cell, (int)out.bufs.size()).first; out.bufs.push_back(k.cp->buf); }
+			const bool band = k.dist + k.half + reach > end * kFadeStart;
+			const int subs = (int)m.subs.size();
+			Draw d = { slot->second, (int)out.list.opaque.size(), subs, band };
+			if (drawPart_.size() <= k.part) { drawPart_.resize(k.part + 256); }
+			DrawPart& dp = drawPart_[k.part];
+			if (dp.stamp != frame_)	// this frame's first group of the part: resolve its draws (the list slots are this packet's)
+			{
+				dp.stamp = frame_;
+				const float noBase[3] = {};
+				for (int mode = 1; mode <= 2; mode++)
+				{
+					if (dp.subs[mode - 1].size() != (size_t)subs) { dp.subs[mode - 1].assign(subs, {}); }
+					for (int s = 0; s < subs; s++) { wb_->resolveDraw(out.list, dp.subs[mode - 1][s], k.part, s, sg_buffer{}, 0, 0, noBase, 0.0f, 0.0f, mode, nullptr, nullptr, 0); }
+				}
+			}
+			for (const int mode : { 1, 2 })
+			{
+				if (mode == 2 && !band) { break; }
+				for (int s = 0; s < subs; s++)
+				{
+					out.list.opaque.push_back(dp.subs[mode - 1][s]);
+					WorldBuildings::ResolvedDraw& r = out.list.opaque.back();
+					r.instOffset = g.first * (int)kInstanceBytes;
+					r.count = g.count;
+					for (int j = 0; j < 3; j++) { r.base[j] = k.base[j]; }
+					r.fade[0] = (float)end * kFadeStart;
+					r.fade[1] = (float)end;
+				}
+			}
+			out.draws.push_back(d);
+		}
 		stats_.draws += m.subs.size();
 		for (const int t : rt.subTex) { stats_.greyDraws += t >= 0 && wb_->textures_[t].state != WorldBuildings::Ready && wb_->textures_[t].state != WorldBuildings::Failed; }
 		stats_.instancesDrawn += (size_t)g.count;
 		stats_.groupsDrawn++;
 	}
+	CPUSTAGE_OPT(prepAcc, "foliage.prep-shadow");
 	if (shadowLevels)
 	{
 		const uint64_t key = shadowKey();
@@ -502,6 +556,57 @@ void Foliage::prepare(const double cam[3], const float mvp[16], float, bool bloc
 				sc.valid = true;
 			}
 			out.shadow[l] = sc.list;
+			const ShadowList& sl = *sc.list;
+			std::vector<FrameData::ShadowRef>& refs = out.shadowRef[l];
+			refs.resize(sl.cands.size());
+			const float sh[3] = { (float)(sl.origin[0] - cam[0]), (float)(sl.origin[1] - cam[1]), (float)(sl.origin[2] - cam[2]) };	// list origin -> this frame's camera
+			int lastCell = -1;	// the list's candidates come cell by cell (buildShadowList): the cell's buffer and its two lookups once per cell
+			bool cellOk = false;
+			int cellBuf = -1;
+			for (size_t i = 0; i < sl.cands.size(); i++)
+			{
+				const ShadowCand& k = sl.cands[i];
+				FrameData::ShadowRef& ref = refs[i];
+				ref = {};
+				if (k.cell != lastCell)
+				{
+					lastCell = k.cell;
+					const auto cit = cells_.find(k.cell);
+					cellOk = cit != cells_.end() && cit->second.hasBuf;
+					if (cellOk)
+					{
+						auto slot = bufSlot_.find(k.cell);
+						if (slot == bufSlot_.end()) { slot = bufSlot_.emplace(k.cell, (int)out.bufs.size()).first; out.bufs.push_back(cit->second.buf); }
+						cellBuf = slot->second;
+					}
+				}
+				if (!cellOk) { continue; }
+				if (shadowPart_.size() <= k.part) { shadowPart_.resize(k.part + 256); }
+				ShadowPart& sp = shadowPart_[k.part];
+				if (sp.stamp != frame_)	// this frame's first candidate of the part: resolve its draws (the list slots are this packet's)
+				{
+					sp.stamp = frame_;
+					const WorldBuildings::PartRt& rt = wb_->partRt_[k.part];
+					sp.ok = rt.mesh >= 0 && wb_->meshes_[rt.mesh].state == WorldBuildings::Ready;
+					if (sp.ok && sp.subs.size() != (size_t)k.subs) { sp.subs.assign(k.subs, {}); }
+					const float noBase[3] = {};
+					for (int s = 0; sp.ok && s < (int)sp.subs.size(); s++) { wb_->resolveShadow(out.list, sp.subs[s], k.part, s, sg_buffer{}, 0, 0, noBase, 0.0f, 0.0f); }
+				}
+				if (!sp.ok) { continue; }
+				ref.buf = cellBuf;
+				ref.first = (int)out.list.shadow.size();
+				const float base[3] = { k.base[0] + sh[0], k.base[1] + sh[1], k.base[2] + sh[2] };
+				for (int s = 0; s < k.subs; s++)
+				{
+					out.list.shadow.push_back(sp.subs[s]);
+					WorldBuildings::ResolvedShadow& r = out.list.shadow.back();
+					r.instOffset = k.first * (int)kInstanceBytes;
+					r.count = k.count;
+					for (int j = 0; j < 3; j++) { r.base[j] = base[j]; }
+					r.fade[0] = k.fadeEnd * kFadeStart;
+					r.fade[1] = k.fadeEnd;
+				}
+			}
 		}
 	}
 	stats_.cullMs = msSince(t0);
@@ -512,14 +617,17 @@ void Foliage::render(const FrameData& fd, const float mvp[16], const LightParams
 	if (fd.draws.empty()) { return; }
 	const auto t0 = Clock::now();
 	wb_->beginDraws(true);
-	int lastCell = -1;
-	sg_buffer buf = {};
+	wb_->applyPassUniforms(light);
 	for (const Draw& d : fd.draws)
 	{
-		if (d.cell != lastCell) { lastCell = d.cell; const auto g = gpu_.find(d.cell); buf = g == gpu_.end() ? sg_buffer{} : g->second; }
-		if (buf.id == SG_INVALID_ID) { continue; }
-		wb_->applyCull(d.part);
-		for (int s = 0; s < d.subs; s++) { wb_->draw(d.part, s, buf, d.first * kInstanceBytes, d.count, d.base, mvp, light, d.fadeEnd * kFadeStart, d.fadeEnd, 1); }
+		const rq::Handle<sg_buffer>& h = fd.bufs[d.buf];
+		if (!h.ready() || h.get().id == SG_INVALID_ID) { continue; }
+		for (int i = d.first; i < d.first + d.subs; i++)
+		{
+			const WorldBuildings::ResolvedDraw& r = fd.list.opaque[i];
+			if (r.cull != wb_->culled_) { wb_->culled_ = r.cull; drawstats::pipeline(r.cull ? wb_->pipInterior_ : wb_->pip_); }
+			wb_->replayDraw(fd.list, r, h.get(), mvp);
+		}
 	}
 	framestats::addFoliage(msSince(t0), 0, 0);
 }
@@ -534,15 +642,16 @@ void Foliage::renderFadeBand(const FrameData& fd, const float mvp[16], const Lig
 	for (const bool depthOnly : { true, false })
 	{
 		bool begun = false;
-		int lastCell = -1;
-		sg_buffer buf = {};
 		for (const Draw& d : fd.draws)
 		{
 			if (!d.band) { continue; }
-			if (!begun) { wb_->beginFadeBand(depthOnly); begun = true; }
-			if (d.cell != lastCell) { lastCell = d.cell; const auto g = gpu_.find(d.cell); buf = g == gpu_.end() ? sg_buffer{} : g->second; }
-			if (buf.id == SG_INVALID_ID) { continue; }
-			for (int s = 0; s < d.subs; s++) { wb_->draw(d.part, s, buf, d.first * kInstanceBytes, d.count, d.base, mvp, light, d.fadeEnd * kFadeStart, d.fadeEnd, 2); }
+			if (!begun) { wb_->beginFadeBand(depthOnly); wb_->applyPassUniforms(light); begun = true; }
+			const rq::Handle<sg_buffer>& h = fd.bufs[d.buf];
+			if (!h.ready() || h.get().id == SG_INVALID_ID) { continue; }
+			for (int i = d.first + d.subs; i < d.first + 2 * d.subs; i++)
+			{
+				wb_->replayDraw(fd.list, fd.list.opaque[i], h.get(), mvp);
+			}
 		}
 	}
 	framestats::addFoliage(msSince(t0), 0, 0);
@@ -609,22 +718,21 @@ void Foliage::renderShadow(const FrameData& fd, const ShadowCascade& c)
 	wb_->beginShadowDraws();
 	const double minSize = c.texel * kShadowMinTexels[ci];
 	size_t draws = 0;
-	int lastCell = -1;
-	sg_buffer buf = {};
 	if (!fd.shadow[level]) { framestats::addFoliage(0, msSince(t0), 0); return; }
 	const ShadowList& sl = *fd.shadow[level];
 	const float sh[3] = { (float)(sl.origin[0] - fd.cam[0]), (float)(sl.origin[1] - fd.cam[1]), (float)(sl.origin[2] - fd.cam[2]) };	// list origin -> this frame's camera
-	for (const ShadowCand& k : sl.cands)
+	const std::vector<FrameData::ShadowRef>& refs = fd.shadowRef[level];
+	for (size_t i = 0; i < sl.cands.size(); i++)
 	{
-		if (k.size < minSize) { continue; }
+		const ShadowCand& k = sl.cands[i];
+		if (k.size < minSize || refs[i].first < 0) { continue; }
 		const float ctr[3] = { k.ctr[0] + sh[0], k.ctr[1] + sh[1], k.ctr[2] + sh[2] };
 		bool out = false;
 		for (int p = 0; p < 4 && !out; p++) { out = c.planes[p][0] * ctr[0] + c.planes[p][1] * ctr[1] + c.planes[p][2] * ctr[2] + c.planes[p][3] < -k.reach; }
 		if (out) { continue; }
-		if (k.cell != lastCell) { lastCell = k.cell; const auto g = gpu_.find(k.cell); buf = g == gpu_.end() ? sg_buffer{} : g->second; }
-		if (buf.id == SG_INVALID_ID) { continue; }
-		const float base[3] = { k.base[0] + sh[0], k.base[1] + sh[1], k.base[2] + sh[2] };
-		for (int s = 0; s < k.subs; s++) { wb_->drawShadow(k.part, s, buf, k.first * kInstanceBytes, k.count, base, c.lvp, c.bias, k.fadeEnd * kFadeStart, k.fadeEnd); }
+		const rq::Handle<sg_buffer>& h = fd.bufs[refs[i].buf];
+		if (!h.ready() || h.get().id == SG_INVALID_ID) { continue; }
+		for (int s = 0; s < k.subs; s++) { wb_->replayShadow(fd.list, fd.list.shadow[refs[i].first + s], h.get(), c.lvp, c.bias); }
 		draws += k.subs;
 	}
 	framestats::addFoliage(0, msSince(t0), draws);
@@ -644,9 +752,14 @@ std::string Foliage::nearReport(const double pos[3], double radius) const
 	{
 		if ((f.x - pos[0]) * (f.x - pos[0]) + (f.z - pos[2]) * (f.z - pos[2]) > radius * radius) { continue; }
 		const kdata::Record* r = c.gd.find(f.recordID);
-		snprintf(buf, sizeof buf, "foliage %s at %.1f %.1f %.1f scale %.3f q %.3f %.3f %.3f %.3f\n", r ? r->name.c_str() : f.recordID.c_str(), f.x, f.y, f.z, f.scale, f.qw, f.qx, f.qy, f.qz);
-		out += buf;
 		const auto it = c.recordIndex.find(f.recordID);
+		// sway 1/0: the weight render.leaf_sway gives this instance (plants::isPlant, kenshi-k16.2.420.6.1). A rock must read 0.
+		// `src` says which decided it: `material` (the FOLIAGE material rule) or `data` (client/data/foliage_plants.txt) + its reason.
+		const bool plant = plants::isPlant(c.gd, f.recordID);
+		const plants::Override* ov = plants::overrideOf(f.recordID);
+		const std::string src = ov == nullptr ? "material" : ov->reason.empty() ? "data" : "data \"" + ov->reason + "\"";
+		snprintf(buf, sizeof buf, "foliage %s at %.1f %.1f %.1f scale %.3f q %.3f %.3f %.3f %.3f sway %d src %s\n", r ? r->name.c_str() : f.recordID.c_str(), f.x, f.y, f.z, f.scale, f.qw, f.qx, f.qy, f.qz, plant ? 1 : 0, src.c_str());
+		out += buf;
 		if (it == c.recordIndex.end() || recordPartsDone_.size() <= (size_t)it->second || !recordPartsDone_[it->second]) { continue; }
 		for (const uint32_t pid : recordParts_.at(it->second))
 		{

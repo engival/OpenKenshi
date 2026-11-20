@@ -186,6 +186,7 @@ void apply_scene(const Context& cx, const Scene& s)
 	cx.walk = false;
 	cx.sky.clock.setHours(s.time);
 	cx.sky.clock.day = s.day - 1;
+	cx.sky.restartStarClock();	// else the star scroll carries the earlier scenes' small clock steps (kenshi-k16.2.328.1)
 	cx.sceneName = s.name;
 	// set=KEY=VALUE: the previous scene's options go back, then this scene's apply (every other scene runs on the options it always did)
 	SceneState& t = sc();

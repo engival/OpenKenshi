@@ -68,6 +68,7 @@
 #include "world/doorpose.hpp"
 #include "dev/debughost.hpp"
 #include "dev/devhooks.hpp"
+#include "dev/pacelog.hpp"
 #ifdef KCLIENT_DEV_TOOLS
 #include "dev/pickmask.hpp"
 #endif
@@ -82,10 +83,12 @@
 #include "kworld/towns.hpp"
 #include "render/navoverlay.hpp"
 #include "app/config.hpp"
-#include "platform/datadir.hpp"
+#include "app/userdirs.hpp"	// plat::userDataDir: the screenshot / camera / crash folders (kenshi-379.31.3)
+#include "platform/datasetting.hpp"
 #include "platform/windowgeom.hpp"
 #include "platform/process.hpp"	// plat::unsetEnv
 #include "platform/windowgate.hpp"
+#include "platform/swapinfo.hpp"
 #include "render/readback.hpp"
 #include "render/renderqueue.hpp"
 #include "input/inputqueue.hpp"
@@ -139,6 +142,7 @@
 #include "render/shadow.hpp"
 #include "render/sky.hpp"
 #include "kutil/crashlog.hpp"
+#include "platform/console.hpp"
 #include "app/eventlog.hpp"
 #include "world/squads.hpp"
 #ifdef KCLIENT_DEBUG_VIEW
@@ -404,14 +408,14 @@ bool ray_ground(const double origin[3], const double dir[3], double hit[3])
 bool see_through(const double p[3], double bottom, std::string* why)
 {
 	const float* x = app.buildings.xray;
-	if (x[3] > 0)
+	if (x[3] > 0)	// not exempted for the click ray (kenshi-k16.2.405.1): the cut-open building's near wall shape is not drawn there, and the click must pass it as before
 	{
 		const double c[3] = { p[0] - app.pos[0], p[1] - app.pos[1], p[2] - app.pos[2] };
 		const double len2 = x[0] * x[0] + x[1] * x[1] + x[2] * x[2];
 		const double t = (c[0] * x[0] + c[1] * x[1] + c[2] * x[2]) / len2;
 		const double back = (1 - t) * std::sqrt(len2);
 		const double d = std::sqrt(std::pow(c[0] - x[0] * t, 2) + std::pow(c[1] - x[1] * t, 2) + std::pow(c[2] - x[2] * t, 2));
-		if (t < 1 && back > 8 && d < 0.85 * std::min<double>(x[3], 0.35 * back))
+		if (t < 1 && back > 8 && d < 0.85 * std::min<double>(x[3], 0.35 * back) && !app.buildings.inSolidZone(p))
 		{
 			if (why) { *why = "inside the occluder fade's cone"; }
 			return true;
@@ -528,7 +532,14 @@ const cfg::Int kSunShaftsDebug{ cfg::Group{ "Light debug", "needs render.sun_sha
 #endif
 const cfg::Bool kShadowCache{ cfg::Group{ "Shadows" }, "render.shadow_cache", true, "Cache the sun shadow maps' static casters (terrain, buildings, features, foliage; kenshi-k16.2.205.12.2): each cascade's tile is redrawn only when its snapped centre, the sun, the streamed content or a door changes, and the characters and wind-turned parts are drawn over a restored copy each frame. Off: every cascade redraws every caster every frame" };
 const cfg::Int kShadowStaticBudget{ cfg::Group{ "Shadows" }, "render.shadow_static_budget", 1, 0, 4, "With render.shadow_cache: the most cached shadow tiles a frame redraws only because their content changed (buildings streamed in, a door, terrain; kenshi-k16.2.205.12.73). The others keep their old content a few frames (at most 3); a tile the camera or the sun moved redraws at once. 0: every changed tile in the same frame" };
-const cfg::Float kStreamMs{ cfg::Group{ "Performance" }, "render.stream_ms", 4.0, 0.0, 50.0, "The time a frame gives the streamed resource creates (buildings, characters: the render queue's stream lane; kenshi-k16.2.205.12.74), ms. A create that would run past it waits for the next frame; one always runs. 0: no time budget (the 8 MB per frame byte cap only)" };
+const cfg::Bool kStreamPriority{ cfg::Group{ "Performance" }, "render.stream_priority", true, "The building streams (decodes and the render queue's stream lane) run in view and near first, then in view and far, then out of view by distance, re-ranked as the camera moves (kenshi-k16.2.258.3). Off: submit order, the nearest zone cell first" };
+const cfg::Bool kLoadGate{ cfg::Group{ "Single player" }, "session.load_gate", true, "The load screen is the ready-set gate (kenshi-k16.2.258.3): while it is up nothing of the world is shown, so the stream lane's per-frame budgets are lifted (session.load_stream_ms) and the screen lifts once every building in the load ring is created. Off: the lane's play budgets over the screen too" };
+const cfg::Float kLoadStreamMs{ cfg::Group{ "Single player" }, "session.load_stream_ms", 40.0, 0.0, 500.0, "The time a frame gives the stream lane's creates while the load screen is up (session.load_gate), ms; 0: no time budget" };
+const cfg::Int kVengeBeamsMax{ cfg::Group{ "Performance" }, "render.venge_beams_max", 7, 0, 1000, "The most Venge sky beams drawn (kenshi-k16.2.409.1): the sim runs every beam, the client draws only this many nearest the camera whose zone cell is loaded (the original's weather-handler gate, kenshi-k16.2.409.3). A beam stays in the set until it is 10% farther than the last one, and fades in or out over a second at the boundary. 0 = none; a large number = all the loaded ones" };
+#ifdef KCLIENT_DEV_TOOLS
+const cfg::Bool kVengeBeamsGate{ cfg::Group{ "Performance" }, "debug.venge_beams_gate", true, "Debug (kenshi-k16.2.409.3): the original's loaded-cell gate on the Venge beam draw set (rwh.211, weather gate 140100ba0: a beam's own zone cell must be loaded). Off = every bursting beam can be drawn, the pre-409.3 look, for the before shot" };
+#endif
+const cfg::Float kStreamMs{cfg::Group{ "Performance" }, "render.stream_ms", 4.0, 0.0, 50.0, "The time a frame gives the streamed resource creates (buildings, characters: the render queue's stream lane; kenshi-k16.2.205.12.74), ms. A create that would run past it waits for the next frame; one always runs. 0: no time budget (the 8 MB per frame byte cap only)" };
 const cfg::Int kStreamSliceMb{ cfg::Group{ "Performance" }, "render.stream_slice_mb", 4, 0, 64, "A streamed texture over twice this size (MiB) is created in slices of this size, one per render queue job, over several frames (kenshi-k16.2.205.12.74); it shows once whole. 0: one create per texture" };
 const cfg::Bool kLampOcclusion{ cfg::Group{ "Indoor lighting (experimental)" }, "render.lamp_occlusion", false, "Experimental (kenshi-jj3.9.1): the lamps of a building stop at its walls and floors: a baked per-probe visibility of each lamp (one ray per probe per lamp through the building's triangles) multiplies the lamp's light, so it does not light the floor above or the room next door through the slab or wall. Soft (probe spacing), not the shadow of a chair. Works without render.interior_light" };
 const cfg::Float kShadowSoft{ cfg::Group{ "Indoor lighting (experimental)" }, "render.shadow_soft", 0.0, 0.0, 10.0, "Experimental (kenshi-jj3.6.1): sun shadow edges widen with the distance between caster and surface (PCSS, near two cascades); the value is the sun's half angle in degrees (0 = off, the fixed-width edge; the real sun is 0.27, 1.5 to 2 reads soft)" };
@@ -542,7 +553,7 @@ const cfg::Float kNavBand{ cfg::Group{ "Navmesh" }, "debug.navmesh_band", 20, 2,
 const cfg::Bool kRouteLine{ cfg::Group{ "Markers" }, "markers.route", false, "Debug: each selected character's route as a line, and the approach point" };
 const cfg::Bool kOccluderFade{ cfg::Group{ "Building see-through" }, "camera.occluder_fade", true, "Buildings between the camera and the followed character turn see-through (auto-center and hover camera)" };
 const cfg::Bool kHudText{ cfg::Group{ "Developer text" }, "debug.hud_text", false, "Debug: the top-left developer text block (camera, ground, zone, nearest town, counts, time, weather, timings, sim); needs --debug. Off: the F12 shot's .txt still carries every line (hud.* keys)" };
-const cfg::Text kShotDir{ cfg::Group{ "Screenshots" }, "screenshot.dir", "", "Where the screenshot key saves (and its .txt scene notes); empty: $XDG_DATA_HOME/kclient/screenshots (~/.local/share)" };
+const cfg::Text kShotDir{ cfg::Group{ "Screenshots" }, "screenshot.dir", "", "Where the screenshot key saves (and its .txt scene notes); empty: the user data dir's kclient/screenshots ($XDG_DATA_HOME or ~/.local/share; Windows %LOCALAPPDATA%\\OpenKenshi\\data)" };
 const cfg::Bool kPeek{ cfg::Group{ "Building see-through" }, "camera.peek", true, "Pointing at a building's inside from outside shows its walls as a ghost (ours; the original has none; playtest)" };
 const cfg::Text kSpeedUnit{ cfg::Group{ "HUD and labels" }, "ui.speed_unit", "kph", { "kph", "mph" }, "The unit of speeds in the panels (run speed, wind); the original shows mph" };
 // u/s -> the ui.speed_unit (1 u = 10 cm; mph: kinspect run_speed_mph.md, the exe's float)
@@ -684,10 +695,12 @@ void update_peek(double dt)
 std::string hoverRule;	// the rule hover_cursor last applied, for the F12 shot's pick report (k16.2.234.1); a text only, never read by the decision
 void hover_cursor()
 {
+	app.hoverHitOk = false;
 	if (app.look) { hoverRule = "mouse look: no hover decision (the cursor is hidden)"; return; }
 	if (app.boxDown && app.boxDrag) { hoverRule = "box select drag: the hover cursor holds still"; return; }	// while the box shows the hover cursor holds still (the original skips the hover dispatch; kenshi-rwh.134)
 	if (app.uiOn && ui::wantsMouse()) { app.hoverThing = 0; hoverCage = 0; hoverRule = "pointer over a UI panel -> arrow (no world pick)"; app.cursors.set("arrow"); return; }
 	const Pick p = pick_screen(app.mouseX, app.mouseY);
+	if (p.kind == Pick::Ground) { app.hoverHitOk = true; std::copy(p.hit, p.hit + 3, app.hoverHit); }
 	hoverRule = "no rule matched (nothing hit, or a hit with no cursor of its own) -> arrow";
 	app.hoverThing = p.kind == Pick::Item || p.kind == Pick::Door || p.kind == Pick::Container || p.kind == Pick::Producer ? p.id : 0;
 	std::string name = "arrow";
@@ -978,6 +991,7 @@ void set_follow(bool on)
 		if (driving()) { send_drive(0, app.headingSent, 0); }
 		app.follow = false;
 		app.autorun = false;
+		app.pitch -= app.followPitchAdj; app.followPitchAdj = 0; app.followRise = 0; app.followRide = 0; app.followEase = 1e9;	// the drive camera's look-down at its raised eye (k16.2.289.4) is not the free camera's pitch
 		return;
 	}
 	// the selection first (the original); with no player squad, the watched character (a click's inspect focus)
@@ -998,6 +1012,7 @@ void set_rts(uint64_t center)
 		app.focus[1] = ground_under(app.focus[0], app.focus[2], &app.focusOn);
 		app.rts = true;
 	}
+	app.rtsEase = 1e9; app.rtsRide = 0;	// a new orbit: the direction window's length and ride height start here (kenshi-k16.2.353.4)
 	app.centerId = center;
 	if (center) { app.buildings.engage(); }
 }
@@ -1068,13 +1083,12 @@ void follow_retarget()
 	}
 }
 
-// The screenshot key's folder: screenshot.dir, else the XDG data home's kclient/screenshots.
+// The screenshot key's folder: screenshot.dir, else the per-user data root's kclient/screenshots (app/userdirs.hpp; on Windows
+// %LOCALAPPDATA%\OpenKenshi\data, kenshi-379.31.3).
 std::filesystem::path shot_dir()
 {
 	if (!kShotDir.get().empty()) { return kShotDir.get(); }
-	const char* xdg = getenv("XDG_DATA_HOME");
-	const char* home = getenv("HOME");
-	return std::filesystem::path(xdg && *xdg ? std::string(xdg) : std::string(home ? home : ".") + "/.local/share") / "kclient" / "screenshots";
+	return std::filesystem::path(plat::userDataDir()) / "kclient" / "screenshots";
 }
 
 // The HDR luminance levels (Hdr::read, a GPU read) for a done that prints or writes them: a readback request made right before the shot it
@@ -1151,10 +1165,13 @@ std::string camera_state_line(const CameraState& s)
 	return buf;
 }
 
-// Written when the client issues a save, from the camera as it stands then (the order itself goes out beside it).
+// Written when the client issues a save, from the camera as it stands then (the order itself goes out beside it). The world map's view goes in the
+// same file (k16.2.435): not while its default is still waiting for the MAP page (the load computes that default again).
 void camera_sidecar_save(const std::string& name)
 {
 	const CameraState s = camera_state_now();
+	const bool hasMap = app.uiOn && app.overview && !app.mapViewPending;
+	const ui::MapView mapView = hasMap ? app.overview->mapView() : ui::MapView{};
 	const std::filesystem::path path = camera_sidecar_dir() / camera_sidecar_file(name);
 	std::error_code ec;
 	std::filesystem::create_directories(path.parent_path(), ec);
@@ -1173,11 +1190,17 @@ void camera_sidecar_save(const std::string& name)
 			<< "follow_id=" << (unsigned long long)s.followId << "\nfollow_dist=" << s.followDist << "\n"
 			<< "follow_base=" << s.followBase * d << "\nfollow_offset=" << s.followOffset * d << "\n"
 			<< "floor_level=" << s.floorLevel << "\n";
+		if (hasMap)	// k16.2.435: the world map's view (an older sidecar has no lines: its load starts at the default)
+		{
+			out << "map_zoom=" << mapView.zoom << "\nmap_cx=" << mapView.cx << "\nmap_cz=" << mapView.cz << "\n";
+		}
 		if (!out) { fprintf(stderr, "kclient: camera sidecar: cannot write %s\n", tmp.string().c_str()); return; }
 	}
 	std::filesystem::rename(tmp, path, ec);
 	if (ec) { fprintf(stderr, "kclient: camera sidecar: cannot rename %s\n", path.string().c_str()); return; }
 	printf("camera sidecar: saved \"%s\": %s (%s)\n", name.c_str(), camera_state_line(s).c_str(), path.string().c_str());
+	if (hasMap) { printf("map view: saved \"%s\": zoom %.6f cx %.3f cz %.3f\n", name.c_str(), mapView.zoom, mapView.cx, mapView.cz); }
+	else { printf("map view: not saved with \"%s\": the default overview is not applied yet\n", name.c_str()); }
 }
 
 bool camera_sidecar_read(const std::string& name, CameraState& s)
@@ -1213,6 +1236,13 @@ bool camera_sidecar_read(const std::string& name, CameraState& s)
 	s.followBase = num("follow_base", 0) * r;
 	s.followOffset = num("follow_offset", 0) * r;
 	s.floorLevel = (int)num("floor_level", -1);
+	// k16.2.435: the world map's view, when the sidecar has it (an older one has not: the load starts at the default overview)
+	s.hasMapView = false;
+	if (kv.count("map_zoom") && kv.count("map_cx") && kv.count("map_cz"))
+	{
+		const double z = num("map_zoom", -1), x = num("map_cx", 0), y = num("map_cz", 0);
+		if (z >= 0 && std::isfinite(z) && std::isfinite(x) && std::isfinite(y)) { s.hasMapView = true; s.mapZoom = z; s.mapCx = x; s.mapCz = y; }
+	}
 	s.valid = true;
 	return true;
 }
@@ -1255,6 +1285,13 @@ void camera_restore_apply(const std::string& name, const CameraState& s)
 	// the saved floor view is respected (user 2026-11-15): the level comes back and the subject it centres on is adopted without a snap; an older sidecar
 	// (no level) is a plain start: the engage the camera restore made above snaps.
 	if (s.floorLevel >= 0) { app.buildings.restoreView(s.floorLevel, camera_subject()); }
+	// k16.2.435: the save's world map view with the camera; an older sidecar's load keeps the default armed (it applies on the MAP page's first layout)
+	if (s.hasMapView && app.uiOn && app.overview)
+	{
+		app.overview->setMapView({ s.mapZoom, s.mapCx, s.mapCz });
+		app.mapViewPending = false;
+		printf("map view: restored \"%s\": zoom %.6f cx %.3f cz %.3f\n", name.c_str(), s.mapZoom, s.mapCx, s.mapCz);
+	}
 	printf("camera sidecar: restored \"%s\": %s\n", name.c_str(), camera_state_line(camera_state_now()).c_str());
 }
 
@@ -1267,6 +1304,49 @@ void camera_restore_frame()
 	r.armed = false;
 	CameraState s;
 	if (camera_sidecar_read(r.name, s)) { camera_restore_apply(r.name, s); r.applied = true; }
+}
+
+// The world map's default view (k16.2.435: a deliberate deviation from the original, whose map opened fitted and kept nothing): centred on the Hub,
+// Stack just inside the top edge. Derived from the two towns' world positions and the MAP page's height; false when a record is missing (a mod).
+bool map_view_default(const ui::MapFrame& frame, ui::MapView& v)
+{
+	const auto named = [](const char* name) -> const Town*
+	{
+		for (const Town& t : app.towns.towns) { if (t.name == name) { return &t; } }
+		return nullptr;
+	};
+	const Town* hub = named("The Hub");
+	const Town* stack = named("Stack");
+	const char* missing = !hub ? "The Hub" : !stack ? "Stack" : nullptr;
+	if (missing) { fprintf(stderr, "kclient: map view: no town \"%s\" in the records (a mod?); the map starts fitted\n", missing); return false; }
+	const double north = hub->z - stack->z;	// Stack north of the Hub: the map is north-up, so a smaller z is higher on the screen
+	if (!(north > 0))
+	{
+		fprintf(stderr, "kclient: map view: \"Stack\" (%.1f, %.1f) is not north of \"The Hub\" (%.1f, %.1f); the map starts fitted\n", stack->x, stack->z, hub->x, hub->z);
+		return false;
+	}
+	const ui::MapState state;	// the host fills only the camera, the characters and the places: the image is the UI's default (uihost.cpp update_ui)
+	// Pixels of clearance above Stack's point: the town icon is 48 units tall, halved for its centre by the page's own level sizes (18 here), a little
+	// air, and the scroll bar's strip, which the default's zoom turns on after the page's first layout with this view (14 units).
+	const double margin = 40.0 * ui::scale();
+	const double ppu = (frame.h / 2 - margin) / north;	// pixels a world unit: half the view's height is that distance, less the margin
+	v.zoom = ppu * state.extent / state.texels;	// pixels a map texel, the view's own unit (MapArea::ppu is texels x zoom / extent)
+	v.cx = hub->x;
+	v.cz = hub->z;
+	printf("map view: default zoom %.6f, on \"The Hub\" (%.1f, %.1f), \"Stack\" %.1f u north (view %.0f x %.0f)\n", v.zoom, hub->x, hub->z, north, frame.w, frame.h);
+	return true;
+}
+
+// The pending default (k16.2.435): set on the first frame the MAP page has a rect (a hidden page is never laid out) and the towns are loaded.
+void map_view_frame()
+{
+	if (!app.uiOn || !app.overview || !app.mapViewPending || !app.townsReady) { return; }
+	const ui::MapFrame frame = app.overview->mapFrame();
+	if (!(frame.w > 0 && frame.h > 0)) { return; }
+	ui::MapView v;
+	if (!map_view_default(frame, v)) { v = {}; }	// the entire world, as the page started before this change
+	app.overview->setMapView(v);
+	app.mapViewPending = false;
 }
 
 // Moves the camera to (x, z), keeping its height above the ground.
@@ -1474,13 +1554,15 @@ dev::Context& dev_context()
 		app.squads, app.towns, app.townsReady, app.follow, app.rts, app.autorun, kNavOverlay, kNavPruned, debug_toggle,
 		app.opt.cmdline, app.opt.debug, app.look, app.weatherMix, app.followId, app.followDist, app.followOffset, app.focus, app.rtsDist, app.focusOn,
 		compass, camera_mode_name, keys_held, [] { return app.cursors.current(); }, clicks_report, pick_owner_report, hints_for_pick, dev_pick_screen,
-		camera_subject, build_mvp, [] {
+		camera_subject, build_mvp,
 #ifdef KCLIENT_DEV_TOOLS
-			if (app.lightsPanel) { app.lightsPanel->show(true); }
+		[] { return app.lightsPanel && app.lightsPanel->shown(); }, [](bool on) { if (app.lightsPanel) { app.lightsPanel->show(on); } },
+#else
+		[] { return false; }, [](bool) {},
 #endif
-		}, [] { app.options->showTab("Keys"); }, [] { app.wmap.full = !app.wmap.full; }, shot_hud_text
+		[] { return app.options->tabShown("Keys"); }, [](bool on) { if (on) { app.options->showTab("Keys"); } else { app.options->show(false); } }, [] { return app.wmap.full; }, [] { app.wmap.full = !app.wmap.full; }, shot_hud_text
 #ifdef KCLIENT_DEBUG_VIEW
-		, app.debugView, app.debugSubscribed, app.infoChar, debug_tree_open, tree_state_value
+		, app.debugView, app.debugSubscribed, app.infoChar, [] { return app.debugTree && app.debugTree->shown(); }, [] { if (app.debugTree) { app.debugTree->show(false); } }, debug_tree_open, tree_state_value
 #endif
 	};
 	return cx;
@@ -1518,6 +1600,17 @@ static void shot_route(const std::string& shotPath, int frame)	// frame: app.fra
 	fprintf(f, "# kclient route sidecar (kenshi-k16.2.231.1): the selected characters' CHAR_ROUTE as the wire has it at the shot's frame, the last 8\n");
 	fprintf(f, "# move_to orders this client sent each and the answer the wire gave, and the characters' wire position and building. One row a fact.\n");
 	fprintf(f, "# shot\t%s\tframe\t%d\ttick\t%.2f\t%s\n", tsv_text(shotPath).c_str(), frame, app.sim.tick(), tsv_text(app.sim.status()).c_str());
+	{
+		// The floor view's stair latch (kenshi-k16.2.236.8.4.3): the feet's building-local y against the two switch lines, the origin floor and the level it shows, and
+		// the hotspot's consumed state: armed (hot, will fire on the line) or fired (cold until the feet pass rearm_y, about 2 steps past the line).
+		const auto& li = app.buildings.latchInfo();
+		if (li.on)
+		{
+			fprintf(f, "floor\tlatch\ty\t%.2f\tup_line\t%.2f\tlow_line\t%.2f\torigin\t%d\tshown\t%d\t%s\trearm_y\t%.2f\tto_rearm\t%.2f\n", li.y, li.upperLine, li.lowerLine, li.origin, li.side,
+				li.fired ? "fired" : "armed", li.rearmY, li.fired ? li.rearmY - li.y : 0.0);
+		}
+		else { fputs("floor\tlatch\toff\n", f); }
+	}
 	std::vector<uint64_t> ids = app.sim.selected();
 	if (ids.empty()) { ids = app.sim.players(); }
 	double pos[3];
@@ -1602,9 +1695,9 @@ void run_script(bool post)
 			if (!dev::viewing() && app.bldReady)
 			{
 				const WorldBuildings::Stats bs = app.buildings.stats();
-				printf("  buildings: %zu instances, %zu draw groups, %zu submesh draws, %zu with a real texture (%.1f%%); meshes ready %zu failed %zu, textures ready %zu failed %zu; frame %.1f ms\n",
+				printf("  buildings: %zu instances, %zu draw groups, %zu submesh draws, %zu with a real texture (%.1f%%); meshes ready %zu failed %zu, textures ready %zu failed %zu; id pass %zu draws for %zu instances; frame %.1f ms\n",
 					bs.instancesDrawn, bs.groups, bs.submeshDraws, bs.realTextured, bs.submeshDraws ? 100.0 * bs.realTextured / bs.submeshDraws : 0.0,
-					bs.meshesReady, bs.meshesFailed, bs.texturesReady, bs.texturesFailed, app.frameMs);
+					bs.meshesReady, bs.meshesFailed, bs.texturesReady, bs.texturesFailed, bs.idDraws, bs.idInstances, app.frameMs);
 				printf("  shader modes (groups): plain %zu ALPHA %zu EMISSIVE %zu DUAL %zu TRIPLANAR %zu TERRAIN %zu DUAL_TRIPLANAR %zu LIMB %zu; features drawn %zu\n", bs.modeGroups[0], bs.modeGroups[1], bs.modeGroups[2],
 					bs.modeGroups[3], bs.modeGroups[4], bs.modeGroups[5], bs.modeGroups[6], bs.modeGroups[7], bs.featuresDrawn);
 				printf("  lights: %zu in view (nearest %d drawn), outdoor %s\n", app.buildings.lightsInView(), (int)std::min<size_t>(app.buildings.lightsInView(), LightParams::kMaxPoints), app.buildings.night ? "on" : "off");
@@ -1649,6 +1742,43 @@ constexpr double kCreatorPivot = 12, kCreatorRoot = 11.3, kCreatorBodyDist = 30,
 constexpr double kCreatorDrop = 3000;	// the original's editor scene depth below the world (Ogre (0, -3000, 0))
 constexpr double kCreatorBodyPitch = 27 * M_PI / 180.0;
 constexpr float kCreatorNear = 5, kCreatorFar = 200;
+// The preview's orbit (kenshi-k16.2.433.1, user 2026-11-20 ~14:55 and the lead's 14:44 comment on kenshi-k16.2.433): the character and the platform
+// are ONE assembly that the drag turns (the original's charedit_chars_rotation node, its platform under the same root: findings/charedit.md), the
+// wheel zooms towards the point of the model under the cursor, and the last 30% of the way out drifts the pivot, the tilt, the yaw and the eye back to
+// the page's default framing (the default view is the front one, so the turn goes back too: user 2026-11-20, kenshi-k16.2.433.3). It is the NODE that
+// turns, not the camera: CharacterEditorLighting's lightDirection (-3,2,-3) is fixed in the scene and tuned to the default framing (a front-upper key),
+// so an assembly turned under it keeps the side facing the camera the lit one (a turntable); a camera orbit would carry the camera behind the light,
+// where the only light there is leaves the character black, and the platform would not turn with it.
+constexpr double kCreatorZoomsPerNotch = 1.2;	// the wheel: one notch moves this much nearer / farther
+constexpr double kCreatorResetFrom = 0.7;	// the reset drift runs over the last share (1 - this) of the zoom range, smoothstepped
+constexpr double kCreatorMinDistBody = 8, kCreatorMinDistFace = 6;	// the eye's closest (the near clip is 5)
+constexpr double kCreatorTiltMax = 60 * M_PI / 180.0;	// short of flipping over
+constexpr double kCreatorDragRate = 0.01;	// radians a pixel of drag
+constexpr double kCreatorGlideTau = 0.05;	// s: the wheel glide's time constant (about 5 tau = 0.25 s to settle, k16.2.433.4)
+constexpr double kCreatorPickRadius = 5;	// the wheel's skeleton pick (Characters::skeletonRay)
+
+static void creator_copy(double* to, const double* from) { for (int k = 0; k < 3; k++) { to[k] = from[k]; } }
+static double creator_smoothstep(double t) { t = std::clamp(t, 0.0, 1.0); return t * t * (3 - 2 * t); }
+static double creator_reset(double zoom) { return creator_smoothstep((zoom - kCreatorResetFrom) / (1 - kCreatorResetFrom)); }
+// The shorter way round from a yaw to the default front view (any whole turn of the assembly IS the front): the signed angle to the nearest multiple
+// of 2 pi, in (-pi, pi]. The drift adds a share of it each step, so the turn goes home the way the user would turn it, never the long way (k16.2.433.3).
+static double creator_yaw_home(double yaw)
+{
+	const double turn = 2 * M_PI;
+	double d = std::fmod(yaw + M_PI, turn);	// [0, 2 pi) after the wrap below
+	if (d < 0) { d += turn; }
+	return -(d - M_PI);
+}
+static kworld::SkelQuat creator_quat(float ax, float ay, float az)	// the axis-angle the orbit composes (radians)
+{
+	const float l = std::sqrt(ax * ax + ay * ay + az * az);
+	if (l < 1e-9f) { return {}; }
+	const float s = std::sin(l * 0.5f) / l;
+	return { std::cos(l * 0.5f), ax * s, ay * s, az * s };
+}
+static kworld::SkelQuat creator_conj(const kworld::SkelQuat& q) { return { q.w, -q.x, -q.y, -q.z }; }
+// The assembly's rotation from its home pose: the drag's tilt about +X (its top towards the camera at +tilt) after the yaw about +Y.
+static kworld::SkelQuat creator_assembly(float yaw, float tilt) { return kworld::multiply(creator_quat(-tilt, 0, 0), creator_quat(0, yaw, 0)); }
 void open_creator(const std::string& what)
 {
 	const size_t slash = what.find('/');
@@ -1663,17 +1793,24 @@ void open_creator(const std::string& what)
 		fprintf(stderr, "kclient: --creator %s: %s\n", what.c_str(), err.c_str());
 		return;
 	}
+	app.creatorOrbit = App::CreatorOrbit();	// a fresh framing (creator_frame makes it the page's)
+	app.creatorDragging = false;
 	printf("creator: %s, %zu sliders\n", what.c_str(), app.creator.ranges().size());
 	app.creatorFrames = 0;
 	printf("creator: weather before: %s rain %.2f wetness %.2f effects %zu\n", app.sky.weather.name.c_str(), app.sky.weather.rain, app.sky.weather.wetness, app.sky.weather.effects.size());
 	if (app.creatorUi) { app.creatorUi->show(true); }
 }
 
-// A creator slider by its shown name: the editor ranges, plus Skin Tone (0..100) and Idle stance (1..N over Characters::idleStances). apply() after.
+// A creator slider by its shown name: the editor ranges, plus Skin Tone (0..Creator::skinMax(), tenths of a palette step) and Idle stance (1..N over
+// Characters::idleStances). apply() after.
 void creator_slider(const std::string& name, float v)
 {
 	const auto& stances = app.chars.idleStances();
-	if (name == "Skin Tone") { app.creator.spec().skin = std::clamp(v / 100.0f, 0.0f, 1.0f); }
+	if (name == "Skin Tone")
+	{
+		const float top = (float)app.creator.skinMax();
+		app.creator.spec().skin = top > 0 ? std::clamp(v / top, 0.0f, 1.0f) : 0.0f;
+	}
 	else if (name == "Idle stance" && !stances.empty()) { app.creator.spec().stance = stances[std::clamp((int)std::lround(v), 1, (int)stances.size()) - 1]; }
 	else { app.creator.setValue(name, v); }
 }
@@ -1728,19 +1865,23 @@ static void ng_save()
 	m.wire = ng_wire();
 }
 
-// Shows member i in the creator: its kept look, else (first time) a random one of its race and sex; a non-editable member (an animal) keeps the
-// last preview and only its name (MINE: the original's preview of one is not captured)
+// Shows member i in the creator: its kept look, else (first time) a random one of its race and sex; a non-editable member (an animal) previews
+// its own body: its race's default look and its own idle (the wire Spec is the sim's; only its name is the editor's)
 void ng_load(int i)
 {
 	app.ngIndex = i;
 	App::NewGameMember& m = app.ngMembers[i];
 	m.visited = true;
 	app.creator.name = m.name;
-	if (!m.editable) { return; }
 	std::string err;
 	const auto race = app.raceNames.find(app.sim.decoder().str(m.wire.race));
 	const Characters::Spec& want = m.looked ? m.look : Characters::Spec{};
 	const std::string raceName = m.looked ? want.race : race != app.raceNames.end() ? race->second : app.creator.spec().race;
+	if (!m.editable)	// an animal: no editor choices; the preview is its race's default look, standing on its own idle
+	{
+		if (!app.creator.defaultLook(raceName, m.wire.female, err) || !app.creator.apply(err)) { ui::toast(err); }
+		return;
+	}
 	if (!app.creator.setRace(raceName, m.looked ? want.female : m.wire.female, err)) { ui::toast(err); return; }
 	if (m.looked) { app.creator.spec() = m.look; }
 	else
@@ -1955,37 +2096,246 @@ ui::CreatorActions creator_actions()
 		app.creatorWeatherAfter = true;
 	};
 	act.cancel = []() { app.creatorUi->show(false); app.creatorWeatherAfter = true; };
-	act.rotate = [](float dx) { app.creator.turn(dx * 0.01f); };
 	return act;
 }
 
-// The preview between the creator's columns: the editor camera (kCreatorBodyDist / kCreatorFaceDist), slid sideways so the character stands at the rect's centre
-void creator_frame()
+static int creator_page() { return app.creatorUi ? app.creatorUi->page() : ui::kCreatorBody; }
+static double creator_pitch(int page) { return page == ui::kCreatorBody ? kCreatorBodyPitch : 0; }
+static double creator_dist(int page) { return page == ui::kCreatorBody ? kCreatorBodyDist : kCreatorFaceDist; }
+static double creator_min_dist(int page) { return page == ui::kCreatorBody ? kCreatorMinDistBody : kCreatorMinDistFace; }
+// The zoom's eye distance at a zoom level: geometric from the page's closest to its default (1 = full out)
+static double creator_zoom_dist(int page, double zoom) { const double dmin = creator_min_dist(page), dmax = creator_dist(page); return dmin * std::pow(dmax / dmin, std::clamp(zoom, 0.0, 1.0)); }
+// The page's default pivot: the scene origin (BODY) or Bip01 Head as it is drawn (FACE / HAIR: the assembly turned, the pivot goes with it)
+static void creator_default_pivot(int page, double out[3])
+{
+	const double* scene = app.creatorScene;
+	out[0] = scene[0];
+	out[2] = scene[2];
+	if (page == ui::kCreatorBody) { out[1] = scene[1]; return; }
+	app.creatorHead = app.chars.headHeight(app.creator.index());
+	if (!app.chars.boneWorld(app.creator.index(), "Bip01 Head", out)) { out[1] = scene[1] - kCreatorRoot + app.creatorHead; }
+}
+// The page's default eye: kCreatorBodyDist / kCreatorFaceDist behind the pivot at its pitch, slid sideways so the character stands at the preview
+// rect's centre (the original's fixed x offsets only shifted it left of the window centre, creator_frame's comment)
+static void creator_default_eye(int page, const double pivot[3], const ui::Rect& r, double out[3])
+{
+	const double dist = creator_dist(page), pitch = creator_pitch(page);
+	const double ndc = (r.x + r.w * 0.5) / view::widthf() * 2 - 1;
+	const double side = -ndc * dist * std::tan(kFovY * 0.5) * view::widthf() / view::heightf();
+	out[0] = pivot[0] - side;	// the camera's right is -x
+	out[2] = pivot[2] - dist * std::cos(pitch);
+	out[1] = pivot[1] + dist * std::sin(pitch);
+}
+// Turn the whole assembly by the world rotation `next` (from its current one) about the world point P: the scene pivot's move follows so that P
+// stays where it is, which is what makes a drag turn about the rotation point the user zoomed onto.
+static void creator_about(App::CreatorOrbit& o, const kworld::SkelQuat& next, const double P[3])
+{
+	const double* c = app.creatorScene;
+	const kworld::SkelQuat d = kworld::multiply(next, creator_conj(o.q));
+	const kworld::SkelVec3 v = kworld::rotate(d, { (float)(c[0] + o.shift[0] - P[0]), (float)(c[1] + o.shift[1] - P[1]), (float)(c[2] + o.shift[2] - P[2]) });
+	o.shift[0] = P[0] - c[0] + v.x;
+	o.shift[1] = P[1] - c[1] + v.y;
+	o.shift[2] = P[2] - c[2] + v.z;
+	o.q = next;
+}
+
+// A drag of the preview area (creator_event, host/events.cpp): pixels right and down since the last call. It turns character AND platform about the
+// pivot (the assembly, k16.2.433.1): x yaws it about +Y, y tilts it about +X (the top towards the camera), clamped short of flipping over.
+void creator_drag(float dx, float dy)
+{
+	creator_turn((float)(dx * kCreatorDragRate), (float)(dy * kCreatorDragRate));
+}
+
+// The target becomes the shown view: a drag acts on what is on screen and ends any glide (it must never fight the drag, k16.2.433.4)
+static void creator_snap_shown(App::CreatorOrbit& o)
+{
+	if (!o.gliding) { return; }
+	creator_copy(o.eye, o.sEye);
+	creator_copy(o.shift, o.sShift);
+	o.yaw = o.sYaw;
+	o.tilt = o.sTilt;
+	o.zoom = o.sZoom;
+	o.q = creator_assembly(o.yaw, o.tilt);
+	o.gliding = false;
+	o.track = false;
+}
+
+// the same in radians (the script's `creator turn | tilt`)
+void creator_turn(float yaw, float tilt)
+{
+	if (!app.creator.active()) { return; }
+	App::CreatorOrbit& o = app.creatorOrbit;
+	creator_snap_shown(o);
+	o.yaw += yaw;
+	o.tilt = (float)std::clamp((double)o.tilt + tilt, -kCreatorTiltMax, kCreatorTiltMax);
+	creator_about(o, creator_assembly(o.yaw, o.tilt), o.pivot);
+}
+
+// One wheel gesture in the preview area: `notches` of the wheel at the pointer (mx, my). The eye moves along the pointer's ray to the point of the
+// model under it (Characters::skeletonRay: the point stays under the cursor) and that point becomes the pivot, so the next drag turns about it; off
+// the model the zoom is towards the pivot the eye is on. Over the last 30% of the way out the pivot, the tilt, the yaw and the eye drift back to the
+// page's default framing, never snapping (the lead's 2026-11-20 14:44 comment on kenshi-k16.2.433): the reset position is the default view, and that
+// includes the turn, so the yaw eases home too, the shorter way round (user 2026-11-20 ~15:00, kenshi-k16.2.433.3). Zooming in drifts nothing, so a
+// drag turns freely again; the drift is one share per notch, so it never fights a drag held through a wheel step.
+void creator_zoom(float notches, double mx, double my)
+{
+	if (!app.creator.active() || notches == 0 || !app.creatorUi) { return; }
+	const ui::Rect r = app.creatorUi->previewRect();
+	if (r.w <= 0) { return; }
+	App::CreatorOrbit& o = app.creatorOrbit;
+	const int page = creator_page();
+	const double z0 = o.zoom;
+	const double z1 = std::clamp(o.zoom * std::pow(kCreatorZoomsPerNotch, -notches), 0.0, 1.0);
+	if (z1 == o.zoom) { return; }
+	// The pick is on the SHOWN model (what the user points at, mid-glide too); its place in the TARGET assembly is where the step works. The camera's
+	// orientation never moves, so the cursor's ray direction is the same in both views.
+	double dir[3];
+	mouse_ray(mx, my, dir);
+	double T[3];
+	const bool model = app.chars.skeletonRay(app.creator.index(), app.pos, dir, T, kCreatorPickRadius);
+	if (model && o.gliding)
+	{
+		const double* c = app.creatorScene;
+		const kworld::SkelVec3 l = kworld::rotate(creator_conj(creator_assembly(o.sYaw, o.sTilt)), { (float)(T[0] - c[0] - o.sShift[0]), (float)(T[1] - c[1] - o.sShift[1]), (float)(T[2] - c[2] - o.sShift[2]) });
+		const kworld::SkelVec3 w = kworld::rotate(o.q, l);
+		T[0] = c[0] + o.shift[0] + w.x;
+		T[1] = c[1] + o.shift[1] + w.y;
+		T[2] = c[2] + o.shift[2] + w.z;
+	}
+	// the drift out: the share of the distance still to go that this step covers (0 while zooming in)
+	const double u0 = creator_reset(o.zoom), u1 = creator_reset(z1), f = u1 > u0 ? (u1 - u0) / (1 - u0) : 0;
+	double pivotD[3], eyeD[3];
+	creator_default_pivot(page, pivotD);
+	creator_default_eye(page, pivotD, r, eyeD);
+	if (f > 0)
+	{
+		for (int k = 0; k < 3; k++) { o.pivot[k] += (pivotD[k] - o.pivot[k]) * f; }
+		o.tilt = (float)(o.tilt * (1 - f));
+		o.yaw = (float)(o.yaw + creator_yaw_home(o.yaw) * f);	// home the way the user turned it: the shorter arc (k16.2.433.3)
+		creator_about(o, creator_assembly(o.yaw, o.tilt), o.pivot);
+		// The assembly's offset home too: turns about a point off the scene origin (the wheel's pivot) leave one behind, and the reset position is
+		// the home pose, not only the home orientation (k16.2.433.3: without this the full-out frame was the default camera on a shifted character).
+		for (int k = 0; k < 3; k++) { o.shift[k] *= (1 - f); }
+	}
+	const double d = creator_zoom_dist(page, z1);
+	if (model) { for (int k = 0; k < 3; k++) { o.eye[k] = T[k] - dir[k] * d; } }
+	else
+	{
+		creator_copy(T, o.pivot);	// off the model: towards the pivot, along the axis the eye is on
+		double axis[3] = { T[0] - o.eye[0], T[1] - o.eye[1], T[2] - o.eye[2] };
+		const double l = std::sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+		if (l < 1e-6) { return; }
+		for (int k = 0; k < 3; k++) { o.eye[k] = T[k] - axis[k] / l * d; }
+	}
+	creator_copy(o.pivot, T);
+	if (f > 0) { for (int k = 0; k < 3; k++) { o.eye[k] += (eyeD[k] - o.eye[k]) * f; } }
+	if (z1 >= 1) { creator_copy(o.pivot, pivotD); }	// fully out: the rotation point is the page's default, not whatever the cursor was over (the reset asked for)
+	o.zoom = z1;
+	o.gliding = true;	// the shown view follows creator_frame's glide; the settled check below is logged when it arrives
+	creator_copy(o.tCursor, T);
+	o.curX = (float)mx;
+	o.curY = (float)my;
+	o.track = true;
+	printf("creator: zoom %.2f -> %.2f (eye %.2f from %s): cursor %.0f %.0f, target %.2f %.2f %.2f (eye %.2f %.2f %.2f, pivot %.2f %.2f %.2f, tilt %.1f deg, yaw %.1f deg)\n",
+		z0, z1, d, model ? "the model" : "the pivot", mx, my, T[0], T[1], T[2],
+		o.eye[0], o.eye[1], o.eye[2], o.pivot[0], o.pivot[1], o.pivot[2], o.tilt * 180.0 / M_PI, o.yaw * 180.0 / M_PI);
+}
+
+// The pointer onto a bone of the preview (the scripted shots' way to aim the wheel at a hand); false = no such bone drawn.
+bool creator_point_at(const char* what)
+{
+	double p[3];
+	if (!app.creator.active() || !app.chars.boneWorld(app.creator.index(), what, p)) { return false; }
+	float x = 0, y = 0;
+	if (!world_to_screen(p, x, y)) { return false; }
+	app.mouseX = x;
+	app.mouseY = y;
+	pointer::set(x, y);
+	printf("creator: pointer on %s at %.0f %.0f (world %.2f %.2f %.2f)\n", what, x, y, p[0], p[1], p[2]);
+	return true;
+}
+
+// The preview between the creator's columns: the editor's assembly (character and platform, one node: the original's charedit_chars_rotation) turned
+// by the orbit, and the camera looking along +z from the eye the orbit holds. The orientation never moves with the zoom, which is what keeps the
+// point the wheel tracked exactly under the pointer (moving the eye along its ray cannot move what the ray hits).
+void creator_frame(double dt)
 {
 	const ui::Rect r = app.creatorUi->previewRect();
 	if (r.w <= 0) { return; }
-	const bool body = app.creatorUi->page() == ui::kCreatorBody;
-	const double dist = body ? kCreatorBodyDist : kCreatorFaceDist, pitch = body ? kCreatorBodyPitch : 0;
-	const double ndc = (r.x + r.w * 0.5) / view::widthf() * 2 - 1;
-	const double side = -ndc * dist * std::tan(kFovY * 0.5) * view::widthf() / view::heightf();
-	if (!body) { app.creatorHead = app.chars.headHeight(app.creator.index()); }
+	const int page = creator_page();
+	App::CreatorOrbit& o = app.creatorOrbit;
+	if (o.page != page)	// a tab: its own framing starts (the assembly keeps its yaw)
+	{
+		double pivot[3], eye[3];
+		creator_default_pivot(page, pivot);
+		creator_default_eye(page, pivot, r, eye);
+		o.page = page;
+		o.zoom = 1;
+		o.tilt = 0;
+		creator_copy(o.pivot, pivot);
+		creator_copy(o.eye, eye);
+		creator_about(o, creator_assembly(o.yaw, 0), o.pivot);
+		creator_copy(o.sEye, o.eye);	// the page's own framing starts shown, not glided
+		creator_copy(o.sShift, o.shift);
+		o.sYaw = o.yaw;
+		o.sTilt = o.tilt;
+		o.sZoom = o.zoom;
+		o.gliding = false;
+	}
+	// The glide (k16.2.433.4): the shown view eases to the target the wheel set, exponentially (tau kCreatorGlideTau: settled in about 0.25 s), by dt, so
+	// it is frame-rate independent. Eye and shift are straight lines, yaw and tilt angles, the shown rotation the assembly of the two: a pure zoom
+	// step moves only the eye, along the cursor's ray, so its point stays under the cursor all the way.
+	if (o.gliding)
+	{
+		const double a = dt > 0 ? 1 - std::exp(-dt / kCreatorGlideTau) : 0;
+		double gap = 0;
+		for (int k = 0; k < 3; k++)
+		{
+			o.sEye[k] += (o.eye[k] - o.sEye[k]) * a;
+			o.sShift[k] += (o.shift[k] - o.sShift[k]) * a;
+			gap = std::max({ gap, std::fabs(o.eye[k] - o.sEye[k]), std::fabs(o.shift[k] - o.sShift[k]) });
+		}
+		o.sYaw += (float)((o.yaw - o.sYaw) * a);
+		o.sTilt += (float)((o.tilt - o.sTilt) * a);
+		o.sZoom += (o.zoom - o.sZoom) * a;
+		gap = std::max({ gap, (double)std::fabs(o.yaw - o.sYaw) * 50, (double)std::fabs(o.tilt - o.sTilt) * 50 });
+		if (gap < 0.002)
+		{
+			creator_copy(o.sEye, o.eye);
+			creator_copy(o.sShift, o.shift);
+			o.sYaw = o.yaw;
+			o.sTilt = o.tilt;
+			o.sZoom = o.zoom;
+			o.gliding = false;
+		}
+	}
+	const kworld::SkelQuat shownQ = creator_assembly(o.sYaw, o.sTilt);
 	const double* scene = app.creatorScene;
-	const double pivotY = body ? scene[1] : scene[1] - kCreatorRoot + app.creatorHead;
+	app.chars.setPreviewOrbit(app.creator.index(), scene, shownQ, o.sShift);
+	const kworld::SkelVec3 plat = kworld::rotate(shownQ, { 0.0f, (float)-kCreatorPivot, 0.0f });
+	const double platform[3] = { scene[0] + o.sShift[0] + plat.x, scene[1] + o.sShift[1] + plat.y, scene[2] + o.sShift[2] + plat.z };
+	const float q4[4] = { shownQ.w, shownQ.x, shownQ.y, shownQ.z };
+	app.buildings.setEditor(true, platform, q4);
+	creator_copy(app.pos, o.sEye);
+	if (o.track && !o.gliding)	// the glide arrived: the step's point against the pointer it was taken at (the zoom is about the cursor)
+	{
+		float sx = 0, sy = 0;
+		const bool on = world_to_screen(o.tCursor, sx, sy);
+		printf("creator: glide settled: cursor %.0f %.0f, tracked point now at %.0f %.0f\n", o.curX, o.curY, on ? sx : -1.0f, on ? sy : -1.0f);
+		o.track = false;
+	}
 	app.yaw = M_PI;	// looking along +z
-	app.pitch = -pitch;
-	app.pos[0] = scene[0] - side;	// the camera's right is -x
-	app.pos[2] = scene[2] - dist * std::cos(pitch);
-	app.pos[1] = pivotY + dist * std::sin(pitch);
-	const double platform[3] = { scene[0], scene[1] - kCreatorPivot, scene[2] };
-	app.buildings.setEditor(true, platform);
+	app.pitch = -creator_pitch(page);
 	// The measurement (k16.17.6.1, --debug): the platform's plank top against the preview's foot bones, once the pose has settled. The platform part's
 	// mesh has its plank top at the instance origin (character_editor_platform.mesh, the up-facing triangles at y 0); the original's character root is
-	// 0.7 above it (findings/charedit.md: character (0,-3011.3,0), platform (0,-3012,0)), which is kCreatorPivot - kCreatorRoot here.
+	// 0.7 above it (findings/charedit.md: character (0,-3011.3,0), platform (0,-3012,0)), which is kCreatorPivot - kCreatorRoot here. Taken at the
+	// default framing (the creator just opened: the orbit is at rest and the platform level).
 	if (app.opt.debug && app.creatorFrames < 31 && ++app.creatorFrames == 30)
 	{
-		double lf[3] = {}, rf[3] = {};
+		double node[3] = {}, lf[3] = {}, rf[3] = {};
+		app.chars.nodeWorld(app.creator.index(), node);
 		const bool l = app.chars.boneWorld(app.creator.index(), "Bip01 L Foot", lf), r = app.chars.boneWorld(app.creator.index(), "Bip01 R Foot", rf);
-		printf("creator: platform top %.3f, preview node %.3f; L foot %s%+.3f, R foot %s%+.3f over the planks\n", platform[1], scene[1] - kCreatorRoot,
+		printf("creator: platform top %.3f, preview node %.3f; L foot %s%+.3f, R foot %s%+.3f over the planks\n", platform[1], node[1],
 			l ? "" : "none ", l ? lf[1] - platform[1] : 0.0, r ? "" : "none ", r ? rf[1] - platform[1] : 0.0);
 	}
 }
@@ -2175,14 +2525,35 @@ void sky_ramp(double dt)
 // The title's offline line (kenshi-k16.3.12, ui::MainMenu::setOffline): empty when a game is on screen; otherwise why the title's buttons cannot
 // start one, and they are greyed. A local start in flight says it is starting; a start or connect that failed says why and points at the launcher.
 // A --simlink join that has dropped has no server to start (the title starts none for a join).
-std::string title_status()
+// The same, with how the panel draws it: a failure is an error (ui::MainMenu::setError); a start in flight is progress with the server's stage (step of steps,
+// from platform/localserver, kenshi-k16.2.431.2); the elapsed seconds change the text once a second.
+struct TitleStatus { std::string text; int step = 0, steps = 0; bool error = false; };
+
+static TitleStatus title_status_full()
 {
-	if (app.sim.active()) { return {}; }
-	if (!app.serverErr.empty()) { return "The game server did not start: " + app.serverErr + "; run client/tools/play.sh game"; }
-	if (app.local && app.server.running()) { return "Starting the game server..."; }
-	if (!app.opt.simlink.empty()) { return "No game server; run client/tools/play.sh game"; }
-	return {};
+	TitleStatus t;
+	if (app.sim.active()) { return t; }
+#ifdef KCLIENT_DEV_TOOLS
+	const char* const where = "; run client/tools/play.sh game";
+#else
+	// a player's build has no play.sh: the Windows log file's path when there is one (kenshi-379.31.9.3), else just the log
+	const std::string logFile = plat::logPath();
+	const std::string where = logFile.empty() ? std::string("; see the game log for details") : "; the game log is " + logFile;
+#endif
+	if (!app.serverErr.empty()) { t.text = "The game server did not start: " + app.serverErr + where; t.error = true; return t; }
+	if (app.local && app.server.running())
+	{
+		const ServerStage st = app.server.stage();
+		t.text = "Starting the game server";
+		if (!st.text.empty()) { t.text += ": " + st.text + " (" + std::to_string(st.seconds) + " s)"; t.step = st.step; t.steps = st.steps; }
+		else { t.text += "..."; }
+		return t;
+	}
+	if (!app.opt.simlink.empty()) { t.text = std::string("No game server") + where; t.error = true; }
+	return t;
 }
+
+std::string title_status() { return title_status_full().text; }
 
 // A local start in flight: the only state a held click waits for (kenshi-k16.2.210.6). A failure line or a dropped join never clears by itself.
 static bool title_starting() { return !app.sim.active() && app.serverErr.empty() && app.local && app.server.running(); }
@@ -2229,8 +2600,9 @@ static void run_held_menu_action()
 // its panels) and the UI drawn.
 void frame_title(FramePacket& pk, double dt)
 {
-	const std::string status = title_status();
-	app.mainMenu->setOffline(status);	// may grey the buttons: on screen it is drawn after this
+	const TitleStatus ts = title_status_full();
+	const std::string& status = ts.text;
+	if (ts.error) { app.mainMenu->setError(status); } else { app.mainMenu->setOffline(status, ts.step, ts.steps); }	// may grey the buttons: on screen it is drawn after this
 	// The click held while the server started (kenshi-k16.2.210.4): run it once a game can act. A local server's link is open a frame or two before its
 	// HELLO, and no order may go before that (a CONTINUE's load would be refused): the title's line is clear, the held click waits for the greeting.
 	if (status.empty() && app.menuPendingRun && (!app.local || app.greeted)) { run_held_menu_action(); }
@@ -2390,7 +2762,7 @@ void resize_burst_frame()
 // The RenderState render_frame draws with (renderframe.hpp): references to the render-owned objects App still holds, and the legacy blocks.
 RenderState& render_state()
 {
-	static RenderState rs{ app.gpu, app.hdr, app.particles, app.sky, app.fogvol, app.post, app.buildings, app.terrain, app.foliage, app.grass, app.water, app.chars, app.squads, app.arrows, app.idbuf, app.shadow, app.sunShafts, app.dust, app.lightVolumes, {}, app.refl, app.portraits, app.creatorScene3d, app.loadScreen, app.cursors, app.trails, app.sglShown, false, false };
+	static RenderState rs{ app.gpu, app.hdr, app.particles, app.sky, app.fogvol, app.post, app.buildings, app.terrain, app.foliage, app.grass, app.water, app.chars, app.squads, app.arrows, app.idbuf, app.shadow, app.sunShafts, app.dust, app.lightVolumes, app.refl, app.portraits, app.creatorScene3d, app.loadScreen, app.cursors, app.trails, app.sglShown, false, false };
 	return rs;
 }
 
@@ -2416,11 +2788,34 @@ static void frame_lockstep()
 	logicthread::renderStallPoint();	// the script's `renderstall MS`: a window held in its swap
 #endif
 	const double bound = lockstep_bound_ms();
-	if (logicthread::renderFrame(bound)) { lastframe::keep(); return; }
+	const bool drew = logicthread::renderFrame(bound);
+	// The frame's frames without a pass and the logic half beside the bound, into the pace log's once-a-second line (kenshi-k16.2.437.1): the
+	// one-frame repeats do not print (logicthread::kMissLogMs), so this is where they are read.
+	pacelog::noteLockstep(logicthread::takeMisses(), logicthread::lastLogicMs(), bound);
+	if (drew) { lastframe::keep(); pacelog::note(true); return; }
 	lastframe::show();
+	pacelog::note(false);
 #ifdef KCLIENT_DEV_TOOLS
 	lastframe::stallShot();
 #endif
+}
+
+// The swap interval asked for and in effect, once, a few callbacks after the first swap (kenshi-k16.2.418.1): on the sapp thread, which owns the GL
+// context and does every swap in all render.thread modes. Printed once the logic thread has started (or at callback 60 when it never does), so the
+// mode is the one the run really uses (a scripted overlap runs lockstep).
+static void swap_startup_line()
+{
+	static int n = 0;
+	static bool done = false;
+	if (done || ++n < 3) { return; }
+	const logicthread::Mode m = logicthread::mode();
+	if (m != logicthread::Mode::kOff && !logicthread::running() && n < 60) { return; }
+	done = true;
+	const sapp_desc dd = sapp_query_desc();
+	const char* mode = m == logicthread::Mode::kOverlap ? "overlap" : m == logicthread::Mode::kLockstep ? "lockstep" : "off";
+	const bool gl = sg_query_backend() == SG_BACKEND_GLCORE;
+	fprintf(stderr, "kclient: swap interval asked %d (gfx.vsync %s, disable_vsync %d), in effect %s; render.thread=%s, swaps on the sapp thread (the GL context's; logic has none)\n",
+		dd.swap_interval, dd.swap_interval > 0 ? "on" : "off", (int)dd.disable_vsync, gl ? swapinfo::effective().c_str() : "n/a (not the GL backend)", mode);
 }
 
 // The frame callback: the window state on the sapp thread (published), the logic, the draw from its packet (render hook 6), then the queued
@@ -2438,6 +2833,8 @@ void frame()
 	threadsplit::enter();
 	struct Leave { ~Leave() { threadsplit::leave(); } } leave;
 #endif
+	swap_startup_line();
+	pacelog::begin();
 	if (logicthread::running()) { frame_lockstep(); return; }
 	FramePacket& pk = gPackets[0];	// one thread: slot 0 only
 	logic_frame(pk);
@@ -2446,6 +2843,7 @@ void frame()
 	if (pk.path == FramePath::kWorld) { threadsplit::split(pk.logicStart, pk.logicMs, false); }
 #endif
 	render_frame(pk, render_state());
+	pacelog::note(true);
 	sappcmd::flush();
 	// render.thread=lockstep (RENDER_THREAD.md 7.1 rule 7): the logic thread starts once, at the end of the first frame that is not loading, and
 	// frame() never runs logic_frame again. Off: never.
@@ -2671,7 +3069,7 @@ void update_session_load(double dt)
 	const bool newGame = !app.newGameStart.empty() || app.newGameSent || app.newGameLeader;
 	const bool creator = app.creatorUi->shown();	// the creator's scene is what the screen waits for, not a squad (kenshi-k16.2.133.1)
 	if (!newGame && !creator && !app.sessionPaused && app.sim.active() && !(app.sim.clock().pauseBits & 1)) { app.sim.pause(true); app.sessionPaused = true; }	// not before: NEW_GAME applies on a later tick
-	const bool busy = world_loading(&app.sessionPending) || (!app.simCamera && !creator) || newGame;
+	const bool busy = world_loading(&app.sessionPending) || (!app.simCamera && !creator && app.sim.active()) || newGame;
 	app.sessionPeak = std::max(app.sessionPeak, app.sessionPending);
 	app.sessionTime += dt;
 	app.sessionQuiet = busy ? 0 : app.sessionQuiet + 1;
@@ -2686,6 +3084,9 @@ static void end_session_load()
 {
 	if (!app.sessionLoad) { return; }
 	app.sessionLoad = false;
+#ifdef KCLIENT_DEV_TOOLS
+	app.buildings.popinLift();
+#endif
 	if (app.sessionPaused) { app.sim.pause(false); app.sessionPaused = false; }
 	fprintf(stderr, "kclient: session load: worst frame %.0f ms over the loading screen\n", app.sessionFrameMax);
 }
@@ -2711,7 +3112,12 @@ void start_local_server()
 	if (!app.server.start(exe, args, err))
 	{
 		fprintf(stderr, "kclient: local server: %s\n", err.c_str());
+#ifndef KCLIENT_DEV_TOOLS
+		const std::string logFile = plat::logPath();	// Windows: the toast names the log file too (kenshi-379.31.9.3)
+		ui::message("The game server did not start: " + err + (logFile.empty() ? std::string() : "; the game log is " + logFile));
+#else
 		ui::message("The game server did not start: " + err);
+#endif
 		app.serverErr = err;
 		return;
 	}
@@ -2749,8 +3155,10 @@ void poll_local_server()
 	}
 	else if (!app.server.running())
 	{
-		ui::message("The game server stopped: " + app.server.exited());
-		app.serverErr = app.server.exited().empty() ? "the server stopped" : "the server stopped: " + app.server.exited();
+		// Why, in the server's own words (its last stderr line, e.g. "no game data directory: ..."), else how it exited (kenshi-k16.2.431.2).
+		const std::string why = app.server.lastLine().empty() ? app.server.exited() : app.server.lastLine();
+		ui::message("The game server stopped: " + why);
+		app.serverErr = why.empty() ? "the server stopped" : why;
 		app.local = false;
 	}
 }
@@ -3033,6 +3441,13 @@ void crime_log()
 	for (uint16_t k : app.sim.takeCrimeLog()) { ui::message(k == 51 ? "Got caught stealing." : "Alarm raised"); }
 }
 
+// Event 13 result 8 on a lock pick (kenshi-k16.2.346): a lock too hard for the picker, a message-bar line. The text is OURS: the original has none
+// (LOCKS_EQUIP_STOCK_STATIC D-lockpick-zero).
+void lock_too_hard_log()
+{
+	for (uint32_t n = app.sim.takeLockTooHard(); n > 0; --n) { ui::message("This lock is too hard to pick"); }
+}
+
 void map_places(ui::MapState& ms)
 {
 	using K = ui::MapPlaceKind;
@@ -3246,6 +3661,7 @@ void usage()
 {
 	fprintf(stderr, "usage: kclient [--data DIR] [--pos x,z] [--at PLACE|x,z] [--alt H] [--yaw DEG] [--pitch DEG] [--walk] [--fog DIST]\n"
 		"               [--size WxH] [--time HH.H] [--exposure auto|N] [--adapt] [--day N] [--sky-hours H] [--timescale N] [--simspeed N] [--weather NAME|auto] [--weather-blur KM] [--front-blur KM] [--bradius CELLS] [--fradius CELLS] [--foliage-range F] [--no-features] [--no-interiors] [--no-foliage] [--no-grass] [--no-fog-volumes] [--grass-range F] [--grass-density F] [--grass-map disk|paint] [--no-water] [--no-shadows] [--map GUI_Map.dds] [--squads FILE] [--character SPEC]... [--creator RACE[/female]] [--simlink FILE.bin|HOST:PORT] [--simlink-tick N] [--local-server] [--camera-pos X Y Z] [--camera-yaw DEG] [--camera-pitch DEG] [--camera-dist D] [--screenshot out.png] [--script FILE] [--follow NAME|id=N]\n"
+		"               [--console]  (Windows: open a console for the log; otherwise it goes to <user data>\\logs\\openkenshi.log. KCLIENT_CONSOLE=1 does the same)\n"
 		"               [--list-mods] [--mod KEY=on|off]... [--save-mods] [--set KEY=VALUE]... [--print-defaults] [--check-options]\n");
 	dev::usage();
 	fprintf(stderr, "               [--debug]  (the development features: the F8 debug panel, the debug keys, the scenes, the debug script ops)\n"
@@ -3309,6 +3725,7 @@ using namespace host;	// sokol_main and the global-scope code below see the host
 
 sapp_desc sokol_main(int argc, char* argv[])
 {
+	plat::setupLog(argc, argv);	// Windows: the log file, or the console with --console (platform/console.hpp)
 	kutil::crashlog_install((shot_dir().parent_path() / "crashes").string(), "kclient");
 	app.trails.setDumpDir((shot_dir().parent_path() / "trails").string());	// debug.trails_dump's segments (kclient/trails beside the events; k16.19.6.1)
 	Options& o = app.opt;
@@ -3398,6 +3815,10 @@ sapp_desc sokol_main(int argc, char* argv[])
 		exit(bad.empty() ? 0 : 1);
 	}
 	if (printDefaults) { print_defaults(); exit(0); }	// before the data resolve and cfg::load(): the static compiled-in defaults only, no window
+	// The dev-only launch guard (dev/launchguard.cpp, kenshi-k16.2.392): from here on the run opens a window, so a Claude session without a
+	// gamescope above it (tools/headless.sh) is refused instead. After the argument checks' own exits (--check-options, --print-defaults, a
+	// usage error) and before datasetting::resolve, whose first-run folder picker is a window too; --list-mods exits later without one.
+	if (!listMods) { dev::launchGuard("kclient"); }
 #ifdef KENSHI_EMBED_SERVER
 	// The combined binary is what the preview ships (kenshi-379.13): with no options it behaves as `play.sh title`, --local-server included,
 	// so a scripted or headless run shows the title screen and starts its own server too. --debug keeps the offline fly-around, --simlink
@@ -3408,7 +3829,7 @@ sapp_desc sokol_main(int argc, char* argv[])
 	{
 		const std::string given = o.data;
 		std::string why;
-		if (!datadir::resolve(given, o.data, why)) { fprintf(stderr, "kclient: %s", why.c_str()); exit(1); }
+		if (!datasetting::resolve(given, o.data, why)) { fprintf(stderr, "kclient: %s", why.c_str()); exit(1); }
 	}
 	// The run's critical-events file, kclient/events beside the screenshots (kept per line: a crash loses nothing; the events of the
 	// argument parsing went to the ring and are written into it here). Its first line is the build (k16.2.127): the sim's is this same
@@ -3551,6 +3972,8 @@ sapp_desc sokol_main(int argc, char* argv[])
 		env.repoRoot = repo_root();
 		env.clientHash = kclient_git_hash();
 		dev::init(env);
+		framehooks::labRender = &dev::labRender;	// the render half's dev draws: dev is above the frame layer (frame/renderframe.hpp)
+		framehooks::viewDraw = &dev::viewDraw;
 	}
 #endif
 	if (!o.script.empty() && !load_script(o.script)) { exit(2); }
@@ -3574,6 +3997,9 @@ sapp_desc sokol_main(int argc, char* argv[])
 	windowgeom::arm(windowOff);
 	windowgeom::savedSize(o.width, o.height);
 	logicthread::configure();	// render.thread, once (docs/RENDER_THREAD.md 7.1 rule 9)
+#ifdef KCLIENT_DEV_TOOLS
+	pacelog::init();
+#endif
 
 	sapp_desc d = {};
 	d.init_cb = init;

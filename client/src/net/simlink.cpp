@@ -198,6 +198,7 @@ bool SimLinkDecoder::frame(uint16_t type, const uint8_t* p, size_t n)
 		c.goal = r.u32();
 		c.encumbrance = r.f32();
 		c.extraKind = r.u8();
+		c.extraSkill = r.u8();
 		c.extra = r.f32();
 		c.weaponClass = r.u8();
 		c.skills.resize(r.u8());
@@ -760,6 +761,7 @@ bool SimLinkDecoder::frame(uint16_t type, const uint8_t* p, size_t n)
 				b.effect = r.u32();
 				b.spawnTick = r.u64();
 				b.endTick = r.u64();
+				b.visibleTicks = r.u16();
 				b.x = r.f32();
 				b.z = r.f32();
 				b.speed = r.f32();
@@ -959,6 +961,19 @@ bool SimLinkDecoder::frame(uint16_t type, const uint8_t* p, size_t n)
 			e.y = y;
 			e.material = material;
 			e.colour = colour;
+		}
+		// Steal tail (SIMLINK ITEM_GRID, k16.6.392): one u8 per entry of the INVENTORY (the list above is that order), absent from an older server: all 255
+		if (live && !r.bad)
+		{
+			std::vector<Inventory::Entry>& items = it->second.items;
+			const bool tail = r.n - r.at >= items.size();
+			for (Inventory::Entry& e : items) { e.steal = tail ? r.u8() : 255; }
+			if (getenv("KSTEALLOG"))
+			{
+				fprintf(stderr, "steal tail: inv %llu v%u %s:", (unsigned long long)id, version, tail ? "tail" : "no tail");
+				for (const Inventory::Entry& e : items) { fprintf(stderr, " %u", (unsigned)e.steal); }
+				fprintf(stderr, "\n");
+			}
 		}
 		break;
 	}

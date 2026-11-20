@@ -267,6 +267,17 @@ void Characters::locomote(Char& c, float dt, bool instant)
 			l.target = s.combat ? windowHat(x, l.info->min, l.info->max, l.info->move) : 1.0f;
 			total[l.info->code] += l.target;
 		}
+		else if (!acting && !c.noIdleLogged)
+		{
+			// kenshi-k16.2.448: a body at rest with no idle clip fitting draws the bind pose (T-pose). Loud, once per character (dev only).
+			c.noIdleLogged = true;
+			std::string anims;
+			for (const std::string& a : s.anims) { anims += " " + a; }
+			fprintf(stderr, "kclient: no idle clip: %s stance '%s' combat %d stealth %d handL %d handR %d weaponCategory %d legs %.0f/%.0f action '%s' clip '%s' carry %d carriedBy %d posed %d layers %zu anims [%s ]\n",
+				label(s).c_str(), s.stance.c_str(), (int)s.combat, (int)s.stealth, (int)c.handL, (int)c.handR, (int)c.weaponCategory, (double)s.legs[0], (double)s.legs[1],
+				s.action.c_str(), s.clip.c_str(), (int)s.carry, (int)s.carriedBy, (int)s.posed, c.layers.size(), anims.c_str());
+			evlog::add("noidle", -1, s.id, "%s no idle clip (stance '%s' handL %d handR %d weapon %d)", label(s).c_str(), s.stance.c_str(), (int)c.handL, (int)c.handR, (int)c.weaponCategory);
+		}
 	}
 	float phaseRate = 0, strideSum = 0;
 	for (Layer& l : c.layers)
@@ -335,13 +346,30 @@ void Characters::locomote(Char& c, float dt, bool instant)
 	// whirled at several times cadence through a stop (user 2026-11-07).
 	// ds/stop-fix: the decel is the sim's own speed's, not the drawn one's - a catch-up step raises the drawn speed and drops it again, and the end of
 	// such a step read as a big decel and fired the steer mid-run (simview's vSim)
-	const float decel = dt > 0 ? (c.moveSimPrev - s.moveSim) / dt : 0.0f;
+	// kenshi-qaud.1: the sim's speed is a step function of the samples (one value per 0.05 s tick, between steps it holds), so the decel is a step's
+	// size over the time since the previous step, not over this one frame: at 60 Hz a 2.3 u/s wobble in a 70 u/s walk read as 138 u/s^2 (3x its
+	// real 46) and armed the steer mid-walk. Frames between steps carry no decel.
+	float decel = 0.0f;
+	if (dt > 0)
+	{
+		c.moveSimAge += dt;
+		if (std::fabs(s.moveSim - c.moveSimPrev) > 1e-3f)
+		{
+			decel = (c.moveSimPrev - s.moveSim) / c.moveSimAge;
+			c.moveSimAge = 0;
+		}
+	}
 	c.moveSimPrev = s.moveSim;
 	// off when the body stops, when it speeds up, or when the speed has not fallen for a few sim ticks: a ramp down to a *lower* limit
 	// (a corner, a slower order) ends there, and the steer must not keep holding the phase to its windows in a normal cycle
 	constexpr float kStopQuiet = 0.12f;	// seconds without a decel step (the sim's ramp steps once per tick, 0.05 s)
+	// kenshi-qaud.1: and only when the sim is stopping: its route's last waypoint is within the braking distance (v^2 / 2a, with a 50% margin and a
+	// 30 u slack for the standing point). A route with waypoints still ahead is a corner or a leg's slower limit (the sim dips to ~22 u/s at a corner
+	// of a 70 u/s walk and appends the next leg); the steer took each as a stop. No route on the wire (-1): the plain decel rule as before.
+	const float vStop = std::max(x, s.moveSim);
+	const bool routeStopping = s.routeEnd < 0 || s.routeEnd <= 1.5f * vStop * vStop / (2.0f * c.accel) + 30.0f;
 	if (c.stopActive && (x <= 0.0f || decel < -0.25f * c.accel)) { c.stopActive = false; }
-	else if (!c.stopActive && stopContact_ && dt > 0 && x > 2.0f && decel > 0.5f * c.accel)	// MINE: from a walk or faster
+	else if (!c.stopActive && stopContact_ && routeStopping && dt > 0 && x > 2.0f && decel > 0.5f * c.accel)	// MINE: from a walk or faster
 	{
 		c.stopActive = true;
 		c.stopQuiet = 0;
@@ -350,6 +378,9 @@ void Characters::locomote(Char& c, float dt, bool instant)
 		c.stopKMin = c.stopKMax = 0;
 		c.stopSpeed0 = x;
 		c.stopN = 0;
+#ifdef KCLIENT_DEV_TOOLS
+		if (std::getenv("KSTEPLOG")) { fprintf(stderr, "STOPARM%s: drawn %.2f moveSim %.2f (prev %.2f) wireMove %.2f dt %.4f\n", idTag(c.spec).c_str(), x, s.moveSim, c.moveSimPrev, s.wireMove, dt); }
+#endif
 	}
 	if (c.stopActive)
 	{
@@ -717,6 +748,20 @@ void Characters::pose(Char& c, float dt)
 	std::vector<const Layer*> active;
 	active.reserve(c.layers.size());
 	for (const Layer& l : c.layers) { if (l.weight > 0) { active.push_back(&l); } }
+	bool anyTracks = false;
+	for (const Layer* l : active) { if (l->clip && !l->clip->tracks.empty()) { anyTracks = true; } }
+	for (const Layer& l : c.postures) { if (l.clip && !l.clip->tracks.empty()) { anyTracks = true; } }
+	if (!anyTracks && !c.noClipLogged && !noSample && !c.spec.anims.empty())
+	{
+		// kenshi-k16.2.448: no layer carries weight and no posture clip: every bone is the bind pose (a T-pose). Loud, once per character (dev only).
+		c.noClipLogged = true;
+		std::string layers;
+		for (const Layer& l : c.layers) { layers += " " + (l.info ? l.info->name : std::string("?")) + (l.clip ? "" : "(no clip)") + (l.overlay ? "(overlay)" : ""); }
+		fprintf(stderr, "kclient: BIND POSE: %s drawn with no weighted clip: move %.2f stance '%s' combat %d stealth %d hands %d/%d weaponCategory %d idle %d action %d action '%s' clip '%s' carry %d carriedBy %d layers [%s ]\n",
+			label(c.spec).c_str(), (double)c.spec.move, c.spec.stance.c_str(), (int)c.spec.combat, (int)c.spec.stealth, (int)c.handL, (int)c.handR, (int)c.weaponCategory, c.idle, c.action,
+			c.spec.action.c_str(), c.spec.clip.c_str(), (int)c.spec.carry, (int)c.spec.carriedBy, layers.c_str());
+		evlog::add("bindpose", -1, c.spec.id, "%s drawn in the bind pose: no weighted clip (stance '%s' hands %d/%d weapon %d)", label(c.spec).c_str(), c.spec.stance.c_str(), (int)c.handL, (int)c.handR, (int)c.weaponCategory);
+	}
 	for (size_t b = 0; b < sk.bones.size(); b++)
 	{
 		const kworld::SkelTransform& bind = sk.bones[b].bind;

@@ -36,6 +36,7 @@
 #include "test_util.hpp"
 #include "live_world_rig.hpp"
 #include "sim_access.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -49,9 +50,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
 #endif
 
 namespace {

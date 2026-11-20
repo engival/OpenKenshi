@@ -386,27 +386,43 @@ void Shadow::beginPass()
 	sg_begin_pass(&p);
 }
 
-void Shadow::selectCascade(int i)
+void Shadow::snapshot(FrameData& o) const
 {
-	const ShadowCascade& c = cascade_[i];
+	o.params = params_;
+	for (int i = 0; i < kCascades; i++) { o.cascade[i] = cascade_[i]; o.render[i] = render_[i]; }
+	memcpy(o.geom, geom_, sizeof o.geom);
+	o.enabled = enabled;
+	o.cacheOn = cacheLive_;
+	o.set = set_;
+	o.staticBudget = staticBudget;
+	o.view = view_;
+	o.sampler = smp_;
+	o.rawSampler = rawSmp_;
+}
+
+void Shadow::selectCascade(const FrameData& fd, int i)
+{
+	const ShadowCascade& c = fd.cascade[i];
 	sg_apply_viewport(c.tile[0] * kTile, c.tile[1] * kTile, kTile, kTile, false);
 	sg_apply_scissor_rect(c.tile[0] * kTile, c.tile[1] * kTile, kTile, kTile, false);
 	drawstats::pipeline(clearPip_);
 	drawstats::draw(0, 3, 1);
 }
 
-void Shadow::selectTile(int i)
+void Shadow::selectTile(const FrameData& fd, int i)
 {
-	const ShadowCascade& c = cascade_[i];
+	const ShadowCascade& c = fd.cascade[i];
 	sg_apply_viewport(c.tile[0] * kTile, c.tile[1] * kTile, kTile, kTile, false);
 	sg_apply_scissor_rect(c.tile[0] * kTile, c.tile[1] * kTile, kTile, kTile, false);
 }
 
-void Shadow::resolve(uint64_t sig)
+void Shadow::resolve(const FrameData& fd, uint64_t sig)
 {
+	const int set_ = fd.set, staticBudget = fd.staticBudget;
+	const auto& geom_ = fd.geom;
 	for (bool& s : staticDraw_) { s = false; }
 	staticAny_ = false;
-	if (!cacheLive_)
+	if (!fd.cacheOn)
 	{
 		for (auto& set : slot_) { for (CacheSlot& s : set) { s.valid = false; } }	// whatever the owners did while it was off went unseen
 		memset(liveClean_, 0, sizeof liveClean_);
@@ -428,7 +444,7 @@ void Shadow::resolve(uint64_t sig)
 	int drawn = 0, waiting[kCascades], nWaiting = 0;
 	for (int c = 0; c < kCascades; c++)
 	{
-		if (!render_[c]) { continue; }
+		if (!fd.render[c]) { continue; }
 		CacheSlot& s = slot_[set_][c];
 		const bool sameKey = s.valid && memcmp(s.key, geom_[c], sizeof s.key) == 0;
 		if (!forceCache_ && sameKey && s.sig == sig) { s.waitingSince = 0; continue; }
@@ -455,15 +471,15 @@ void Shadow::beginStaticPass()
 	sg_begin_pass(&p);
 }
 
-void Shadow::selectStatic(int i) { selectCascade(i); }	// the same tile rectangle in the cache's atlas, cleared the same way
+void Shadow::selectStatic(const FrameData& fd, int i) { selectCascade(fd, i); }	// the same tile rectangle in the cache's atlas, cleared the same way
 
 void Shadow::endStaticPass() { sg_end_pass(); }
 
-void Shadow::restoreCascade(int i)
+void Shadow::restoreCascade(const FrameData& fd, int i)
 {
-	if (liveClean_[set_][i]) { return; }
-	liveClean_[set_][i] = true;
-	const ShadowCascade& c = cascade_[i];
+	if (liveClean_[fd.set][i]) { return; }
+	liveClean_[fd.set][i] = true;
+	const ShadowCascade& c = fd.cascade[i];
 	sg_apply_viewport(c.tile[0] * kTile, c.tile[1] * kTile, kTile, kTile, false);
 	sg_apply_scissor_rect(c.tile[0] * kTile, c.tile[1] * kTile, kTile, kTile, false);
 	drawstats::pipeline(restorePip_);
@@ -474,10 +490,14 @@ void Shadow::restoreCascade(int i)
 	drawstats::draw(0, 3, 1);
 }
 
-void Shadow::invalidate()
+void Shadow::invalidateAtlas()
 {
 	for (auto& set : slot_) { for (CacheSlot& s : set) { s.valid = false; } }
 	memset(liveClean_, 0, sizeof liveClean_);
+}
+
+void Shadow::invalidate()
+{
 	for (bool& v : valid_) { v = false; }
 	fade_ = 1.0f;	// whatever the other set holds is from before the gap: no crossfade into it
 }

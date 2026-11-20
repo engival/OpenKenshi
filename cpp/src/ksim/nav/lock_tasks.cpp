@@ -24,10 +24,11 @@ namespace ksim {
 
 namespace {
 
-// OURS: the shackles' own lock. The record carries `is locked` but no level or hardness we read; a level of 20 is the stock note in
-// shackleTarget, hardness 30 is the door default (DOORS_LIVE: "30 everywhere"). UNSURE.
+// The shackles' own lock: level 20 / work value (hardness) 20, read live on a worn pair of Hive Prisoner Shackles (rwh62_victim_cage_escape_live.md
+// section 7: pick 201 opened a level-20 lock; brute force needed > 3 x 20). The item record's `is locked` flag carries no level or work value that
+// we load, so these are the cited finding, not data. item22_static.md's "lock level 5" is not this field (unexplained; the live level is 20).
 constexpr double kShackleLockLevel = 20.0;
-constexpr double kShackleHardness = 30.0;
+constexpr double kShackleHardness = 20.0;
 constexpr int kEventUnlockSuccess = 0x0d; // EV_UNLOCK_MY_CAGE_OR_SHACKLES (dt24_picklock section 7.3)
 constexpr int kEventUnlockAttempt = 0x0e; // EV_UNLOCK_MY_CAGE_ATTEMPT
 constexpr int kEventReleased = 0x2e; // posted by Task_ReleasePrisoner (item28 b6)
@@ -310,13 +311,13 @@ Simulation::LockStep Simulation::stepLockTask(std::uint64_t id, std::uint16_t ta
 	if (f->walking())
 		f->clearRoute();
 
-	// At the lock a chance below the floor never starts the pick (kenshi-k16.6.366): no crime, no roll; the order ends refused (event 13
-	// result 1) and the log carries the key lock_too_hard (the wire's message layout waits on the client lead).
+	// At the lock a chance below the floor never starts the pick (kenshi-k16.6.366): no crime, no roll; the order ends event 13
+	// result 8 (too hard) and the log carries the key lock_too_hard.
 	if ((task == routines::task::PickLock || task == routines::task::PickLockOnShackles)
 		&& !sufficientLockSkill(level, f->skills.lockpicking, !shackles && f->cageBuilding != 0))
 	{
 		logLine("lock_too_hard");
-		return LockStep::Refused;
+		return LockStep::TooHard;
 	}
 
 	// The crime, every tick (dt24_picklock section 7.2): freeing someone else's slave is crime 7 against the captor, picking a building lock

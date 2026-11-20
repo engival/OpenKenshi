@@ -192,8 +192,8 @@ public:
 		(void)member;
 		return false;
 	}
-	// The `target has item type` list (step 8): some member of the target's squad holds an item of the same record type as a
-	// listed record (UNSURE: the exe's item-type reading is not decoded; the data's lists are all ITEM records).
+	// The `target has item type` list (step 8): some member of the target's squad holds, in the flat main inventory (not a
+	// backpack), an item whose `item function` equals the FIRST listed record's (140678f30; findings/bread.md "the loot line").
 	virtual bool targetSquadHasItemType(std::uint64_t target, std::span<const std::uint32_t> ids, std::uint64_t& member) const
 	{
 		(void)target;

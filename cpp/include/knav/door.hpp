@@ -22,26 +22,26 @@ using kworld::doorKey;
 enum class DoorState : std::uint8_t
 {
 	Open,
-	Closed, // a traveller with access waits for it to open: the DoorClosed area cost
+	Closed, // a traveller waits for it to open: the DoorClosed area cost
 	Locked, // nobody passes
 };
 
-// What a door says to one traveller class.
+// What a door says to a traveller.
 enum class DoorVerdict : std::uint8_t
 {
-	Free, // open and allowed: the DoorOpen cost
-	Wait, // closed and allowed: the DoorClosed cost (the opening delay)
-	Blocked, // locked, or the class has no access: excluded from the search
+	Free, // open: the DoorOpen cost
+	Wait, // closed: the DoorClosed cost (the opening delay)
+	Blocked, // locked: excluded from the search
 };
 
 struct DoorSetting
 {
 	DoorState state = DoorState::Open;
-	std::uint8_t denied = 0; // bit k set: traveller class k has no access
 
-	DoorVerdict verdict(int doorClass) const noexcept
+	// `throughLocks`: a bash ignores the lock.
+	DoorVerdict verdict(bool throughLocks = false) const noexcept
 	{
-		if (state == DoorState::Locked || (denied >> doorClass & 1) != 0)
+		if (state == DoorState::Locked && !throughLocks)
 			return DoorVerdict::Blocked;
 		return state == DoorState::Closed ? DoorVerdict::Wait : DoorVerdict::Free;
 	}
@@ -49,14 +49,12 @@ struct DoorSetting
 	bool operator==(const DoorSetting&) const = default;
 };
 
-// Every door's state and access policy. A door that is not in the book is open to everyone, which
+// Every door's state. A door that is not in the book is open to everyone, which
 // is also how the bake leaves it. Deterministic: ordered by key, default-valued entries not kept.
 class DoorBook
 {
 public:
 	void setState(DoorKey door, DoorState state);
-	// `allowed` false = traveller class `doorClass` (0..kDoorClasses-1) may not use the door.
-	void setAccess(DoorKey door, int doorClass, bool allowed);
 
 	DoorSetting get(DoorKey door) const noexcept;
 	const std::map<DoorKey, DoorSetting>& settings() const noexcept { return settings_; }
@@ -69,15 +67,14 @@ private:
 	std::map<DoorKey, DoorSetting> settings_;
 };
 
-// The door view of one query: whose state, and which class is asking. No book = every door as baked.
+// The door view of one query: whose state, and whether it breaks locks. No book = every door as baked.
 struct DoorQuery
 {
 	const DoorBook* book = nullptr;
-	int doorClass = 0;
+	bool throughLocks = false;
 };
 
-// What a door setting makes of its polygons: the area (open / closed) and flags (area bit + denied-class bits; a locked door
-// denies every class). The same numbers NAV_POLY_FLAGS carries.
+// What a door setting makes of its polygons: the area (open / closed) and flags (area bit + the locked bit). The same numbers NAV_POLY_FLAGS carries.
 struct DoorPaint
 {
 	std::uint16_t flags = 0;
@@ -86,7 +83,7 @@ struct DoorPaint
 DoorPaint doorPaint(const DoorSetting& setting) noexcept;
 
 // Paints one door polygon of a Detour mesh from a setting: its area (open / closed) and the
-// denied-class flag bits. A locked door denies every class.
+// locked flag bit.
 void paintDoor(dtNavMesh& mesh, std::uint32_t polyRef, const DoorSetting& setting);
 
 } // namespace knav

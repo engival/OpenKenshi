@@ -6,6 +6,7 @@
 // produced no fight (client report on sim 310d5e7a). The AI now runs whenever the server runs; --no-ai is the switch.
 
 #include "ksim/ai/ai.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <functional>
 #include <string>

@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "kdata/gamedata.hpp"
@@ -52,6 +53,7 @@ public:
 		float move = -1;	// locomotion: forward speed, 0 = idle; negative plays the clips in reverse (a body backing away)
 		float wireMove = -1;	// the sim's own forward speed on the newest sample (the stop steer: its last-tick dead stop)
 		float moveSim = 0;	// the drawn sample's own speed without the catch-up: the stop steer's decel (ds/stop-fix)
+		float routeEnd = -1;	// the horizontal distance from the sim's newest position to its route's last waypoint, u; -1 = the wire has no route (kenshi-qaud.1: a speed drop far from the route's end is a corner, not a stop)
 		float wireGap = 0;	// the drawn body's horizontal distance still to the newest sample, u (the stop steer's travel once the sim has stopped)
 		float strafe = 0;	// locomotion, combat: lateral speed (the strafe split)
 		bool strafeDrive = false;	// a direct-drive strafe is held: the strafe split runs out of combat too (k16.2.237.8)
@@ -105,11 +107,13 @@ public:
 	// hairColourWeights: the `hair colors` val0 (0 counts as 100), parallel to hairColours.
 	// hp / skills / noBleeding: the editor's RACE STATS panel: "Hit Points", the skills whose race multiplier is not 1 (the greens first, in the
 	// panel's order) and the "No bleeding" row.
+	// skinStops: the <Colour> count of the gender's "Skin Tone" ColourRange: the editor's Skin Tone slider runs 0..10*(skinStops-1), integer tenths
+	// of a step between the swatches (parse 140077090, sampler FUN_14006e340; kinspect rwh47_skin_tone_scale_static.md); 0 without an editor file.
 	struct RaceChoices { bool ok = false, playable = false; std::string description; int heads[2] = {}; std::vector<std::string> hairs, beards, hairColours;
 		std::vector<float> hairWeights, beardWeights, hairColourWeights;
 		float hairNone = 0, beardNone = 0;
 		float hp = 0; std::vector<std::pair<std::string, float>> skills; bool noBleeding = false;
-		std::vector<EditorRange> ranges[2]; };
+		std::vector<EditorRange> ranges[2]; int skinStops[2] = {}; };
 	RaceChoices choices(const std::string& race) const;
 	std::vector<std::string> races(bool playableOnly) const;	// RACE names with a body mesh (and an editor file when playableOnly)
 	// The creator's race / subrace pairs: RACE_GROUP name -> its playable races with an editor file (the editor's "Human" -> Greenlander, Scorchlander)
@@ -137,7 +141,15 @@ public:
 	// that is not kept. False when there was nothing to do now (not decoded yet, or the race is warm). Never waits on a worker. Main thread only.
 	bool warm(const Spec& s);
 	void clear() { chars_.clear(); }
-	void keep(const std::vector<int>& from);	// keeps the characters at old indices from[], in that order (their animation state intact), drops the rest
+	// keeps the characters at old indices from[], in that order (their animation state intact), drops the rest. departing: old indices whose character
+	// left the drawn set this frame but should dither out, kept (frozen, render.char_fade) after the kept ones; they take the next indices, from.size() + j.
+	void keep(const std::vector<int>& from, const std::vector<int>& departing = {});
+	// The arrival / departure dither (render.char_fade, kenshi-k16.2.258.10.1): a character that first appears in the drawn set dithers in over that
+	// many s and one that leaves dithers out over the same, so nothing pops a whole body in one frame. departDone: a departing character reached 0
+	// and can be dropped (the next keep() does); takeDepartDone clears it. cover(i): the drawn fraction 0..1 (1 = whole).
+	bool takeDepartDone() { return std::exchange(departDone_, false); }
+	float cover(size_t i) const { return chars_[i].cover; }
+	bool departing(size_t i) const { return chars_[i].departing; }
 	bool replace(size_t i, const Spec& s, std::string& err);	// rebuilds character i from s (same index); false with err set, the old one kept	// the characters only; loaded meshes and textures stay cached
 	// KO / death (kinspect ko_transitions.md: the original ragdolls, there is no fall clip; the real ragdoll is parked, CLIENT_GOALS "Ragdolls"). MINE:
 	// fall() rebuilds character i from the lying spec s but cross-fades the pose it had into the lying clip over cfg `anim.fall_blend` (0 = the snap).
@@ -235,6 +247,9 @@ public:
 	const ModInfo* modInfo(const std::string& sid) const { const auto i = mods_.find(sid); return i == mods_.end() ? nullptr : &i->second; }
 	const ItemInfo* itemInfo(const std::string& sid) const { const auto i = items_.find(sid); return i == items_.end() ? nullptr : &i->second; }
 	void hull(const std::string& race, float out[3]) const;
+	// The routing body of a race as ksim's CombatData::body has it (the route preview, kenshi-k16.2.331.2): clearance radius and water cost scale; false: the race is not in the data
+	// (out stays the default radius 2.6, no water scale)
+	bool pathBody(const std::string& race, double& radius, float& water) const;
 	int limbSlot(const std::string& race, const std::string& part) const;	// the limb slot (0 left arm, 1 right arm, 2 left leg, 3 right leg) of a body part, by its Forearm / Calf bone; -1 none
 	float partMaxHealth(const std::string& race, const std::string& part) const;	// the RACE `combat anatomy` health (v1) of a body part; 0 unknown	// RACE `hull size X/Y/Z`, the click box (5, 20, 5 when the race is unknown)
 	// The voice switches of a race (audio_sfx_triggers.md section 8; CharacterHuman::vf128 / CharacterAnimal::vf128). A humanoid: VO_Races =
@@ -261,6 +276,15 @@ public:
 	// debug (dump bones): the drawn body node and a bone's world position this frame (the node plus the bone's model-space offset, rotated by it)
 	void nodeWorld(size_t i, double out[3]) const;
 	bool boneWorld(size_t i, const char* name, double out[3]) const;
+	// The character editor's preview assembly (kenshi-k16.2.433.1, main.cpp creator_frame): character i is drawn where the creator builds it and its
+	// node is then p' = center + q x (p - center) + shift, q x orient, by every update() until clearPreviewOrbit. The creator turns the character AND
+	// the platform (which draws with the same q) about the pivot it frames, so the two stay one assembly as the original's charedit_chars_rotation
+	// node does. center is the editor scene's pivot (a home-space point near the character, so the products stay small); shift is its world move.
+	void setPreviewOrbit(size_t i, const double center[3], const kworld::SkelQuat& q, const double shift[3]);
+	void clearPreviewOrbit() { previewOrbit_ = false; }
+	// The creator's wheel pick: the point of the ray nearest a bone of character i's drawn skeleton within `radius`, in front of the eye. That point
+	// lies on the ray, so moving the eye along the ray to it keeps it under the cursor. False: the ray misses the model.
+	bool skeletonRay(size_t i, const double origin[3], const double dir[3], double hit[3], double radius) const;
 	std::function<double(double, double)> ground;	// the drawn ground (x, z): keeps feet out of slopes; unset = no clamp
 	float rootShift(size_t i) const { return chars_[i].rootShift; }	// dump feet
 	float soleLift(size_t i) const { return chars_[i].soleLift; }	// dump feet
@@ -352,7 +376,7 @@ public:
 	void portraitsNewFrame() { portraitUsed_ = 0; }
 	static constexpr int kPortraitSkins = 2, kPortraitInsts = 64, kPortraitList = 128;	// a portrait set's capacities (buildSet's caps, makeSet's sizes)
 
-	const Shadow* shadow = nullptr;	// the atlas the main pass samples (set once)
+	const Shadow::FrameData* sfd = nullptr;	// this frame's shadow data (the packet's; the render side points it there at the start of the draw)
 	std::function<bool(uint64_t id, const double pos[3])> culled;	// a character standing there is not drawn, nor its shadow (a floor the building cut hides; main.cpp char_cut_hidden: the wire's floor over the shown level, one decision with the name tags and labels, k16.2.264.1)
 	// Why a character in the world frame's set has no body drawn (kenshi-k16.2.264.1, the user's "went indoors and lost its character model" with its
 	// name tag still drawn): one byte per Characters index, filled by every main-view buildSet (the portrait passes leave it alone). The run file's
@@ -403,6 +427,7 @@ private:
 		std::vector<float> bonePart;	// per skeleton bone: its body part index
 		float bloodCol[4] = {}, bloodScale[2] = {};
 		float portrait[4] = {};	// RaceInfo::portrait
+		bool portraitSet = false;	// RaceInfo::portraitSet
 		std::vector<uint16_t> partBits;	// the RACE part map as partData.y bits per pixel (140071f90), rows top first; empty: none
 		std::string stump[4];	// per limb slot: the RACE `limb replacement` stump mesh for this sex (LIMB_REPLACEMENT `slot` 50 + limb)
 		int partW = 0, partH = 0;
@@ -490,6 +515,8 @@ private:
 		Spec spec;
 		const Body* body = nullptr;
 		std::vector<Layer> layers;
+		bool noClipLogged = false;	// kenshi-k16.2.448: posed with no weighted clip (bind pose): logged once
+		bool noIdleLogged = false;	// kenshi-k16.2.448: a body at rest found no idle clip (bind pose): logged once
 		bool infoless = false;	// a moving character held a layer with no record (the 2026-11-06 segfault): logged once, locomotion skipped
 		std::vector<Layer> postures;	// body posture clips: offsets on top at full weight, outside the per-bone normalisation
 		const GpuMesh* mesh = nullptr;	// the body mesh, morphed
@@ -523,6 +550,11 @@ private:
 		float standAge = 0;		// s this build has stood in (its own clock; a dev hold keeps the stand-in until it passes, dev.standin_hold)
 		float fadeAge = -1;		// s since it became drawable and drawable as itself (-1: not yet; >= kStandinShape + kStandinColour: done)
 		bool replaced = false;	// swapIn's build: it replaces one already on screen, so it appears without a stand-in and its fade
+		// render.char_fade (kenshi-k16.2.258.10.1): the whole character's drawn fraction, 0..1, dithered through the look's coverage (chardraw's row
+		// 199): 0 -> 1 over the cfg's seconds when a character first appears in the drawn set, 1 -> 0 when it leaves; departing keeps it in chars_
+		// (frozen) until the fade ends.
+		float cover = 1.0f;
+		bool departing = false;
 		// a rigid item's palette slot follows its bone: slot = skinning(bone) x local (local = the item in bind-pose model space)
 		struct Mount { int slot, bone; float local[16]; };
 		std::vector<Mount> mounts;
@@ -554,6 +586,7 @@ private:
 		float stopKMin = 0, stopKMax = 0;	// the steer's k over this stop (0..0 = no steer applied)
 		float stopSpeed0 = 0;	// the drawn speed when the steer took over
 		float moveSimPrev = 0;	// last frame's sim forward speed (the stop steer's decel excludes the catch-up)
+		float moveSimAge = 0;	// seconds since the sim speed last stepped (the decel's span; kenshi-qaud.1)
 		int stopN = 0;	// the stop's steered frames
 		bool warped = false;	// the stride warp replaced this frame's phase rate (log feet)
 		bool steered = false;	// the stop steer scaled it (log feet)
@@ -645,7 +678,9 @@ private:
 		std::vector<std::pair<std::string, std::vector<std::string>>> anatomy;	// `combat anatomy` parts in body part index order: name, bones
 		float bloodCol[4] = { 0.5f, 0, 0, 1 }, bloodScale[2] = { 1, 0.15f };
 		float hull[3] = { 5, 20, 5 };
+		float footprint = 2.6f, waterCost = 1.0f;	// RACE `pathfind footprint radius` and the routing cost scale of `water avoidance` as ksim derives them (combat_data.cpp): a route preview's body
 		float portrait[4] = { 10, 0, 0.5f, 0 };	// `portrait distance`, `portrait offset x / y / z` (the Human values)
+		bool portraitSet = false;	// the RACE has `portrait distance` and the race is a humanoid: its own framing; an animal: the portrait frames its head bone's bounds
 		std::unordered_map<std::string, float> partMax;	// LOCATIONAL_DAMAGE name -> `combat anatomy` v1
 		std::vector<const AnimInfo*> animalAnims;	// an animal: its ANIMAL_CHARACTER's ANIMAL_ANIMATION records (`animations`, `turning anim`); empty = a humanoid (the ANIMATION list)
 		const AnimInfo* animalStrafe = nullptr;	// `strafe anim`
@@ -756,6 +791,12 @@ private:
 	bool instancing_ = true;	// render.char_instancing
 	// the posed portrait copy of character i into `out` (portraitFrame, headHeight; see portraitFrame); logic side
 	bool portraitPose(size_t i, float yaw, float pitch, double target[3], double eye[3], Char& out);
+	// the world box of one body part's skinned vertices in the posed character (an animal portrait's fallback head frame); false when no vertex is its
+	static bool partBox(const Char& c, int part, double lo[3], double hi[3]);
+	// the world box of the skinned vertices whose heaviest bone is `bone` (the animal portrait's head bone, narrower than its body part)
+	static bool boneBox(const Char& c, int bone, double lo[3], double hi[3]);
+	static bool boundsOf(const Char& c, bool byPart, int index, double lo[3], double hi[3]);	// partBox / boneBox's shared scan
+	static int headBone(const kworld::Skeleton& sk);	// the skeleton's head bone: `Bip01 Head`, else a bone named like one (animals keep the Bip01 names; this is the fallback)
 
 	const ResourceIndex* res_ = nullptr;
 	std::vector<RaceInfo> races_;
@@ -798,7 +839,13 @@ private:
 	std::unordered_map<std::string, std::string> located_;	// record path -> file (textureFiles' cache)
 	std::vector<sg_image> images_;	// render side: the jobs append, shutdown destroys
 	std::vector<Char> chars_;
+	bool departDone_ = false;	// a departing character's fade reached 0 (takeDepartDone; the owner drops it at its next keep)
 	std::vector<uint8_t> drawState_;	// per index, the last main-view buildSet's DrawState (drawState())
+	// The creator preview's assembly rotation (setPreviewOrbit): character previewIndex_'s node goes through it at every update()
+	bool previewOrbit_ = false;
+	size_t previewIndex_ = 0;
+	double previewCenter_[3] = {}, previewShift_[3] = {};
+	kworld::SkelQuat previewQ_;
 	std::unordered_map<std::string, std::string> sidNames_;	// stringID -> record name, every record
 	std::unordered_map<std::string, ItemInfo> items_;
 	std::unordered_map<std::string, ModInfo> mods_;
@@ -810,6 +857,7 @@ private:
 	sg_shader standinShd_ = {}, standinLitShd_ = {};	// the loading stand-in: flat black, and the plain double under the shared light
 	sg_pipeline pip_ = {}, armourPip_ = {}, hairPip_ = {}, shadowPip_ = {}, standinPip_ = {}, standinLitPip_ = {};
 	int standin_ = kStandinSilhouette;	// render.loading_standin, read on change (cfg generation)
+	float charFade_ = 1.0f;	// render.char_fade: the arrival / departure dither's seconds, read on change (cfg generation); 0 = the pop
 	bool standinHeld(const Char& c) const;	// the dev hold: this build is kept in its stand-in (dev.standin_hold, KCLIENT_DEV_TOOLS)
 	bool standinLive(const Char& c) const;	// this build should be drawn standing in or fading this frame
 	// What this build draws as this frame: 0 as itself, 1 the stand-in whole (its GPU objects are queued, or the dev hold keeps it), 2 stage 1 (the

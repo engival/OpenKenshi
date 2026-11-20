@@ -182,14 +182,19 @@ namespace dev
 		Pick (*pickScreen)(double mx, double my, std::vector<PickSkip>& skipped);	// main.cpp's pick_screen: the sidecar's pick, `building` and skips included
 		uint64_t (*cameraSubject)();	// main.cpp's camera_subject (`.txt`: `tracked:`)
 		void (*buildMvp)(float mvp[16], float nearZ, float farZ);	// main.cpp's build_mvp (the trees capture's on-screen test)
-		void (*openLights)();	// main.cpp: the LIGHTS window (debug.lights_panel), shown
-		void (*openOptionsKeys)();	// main.cpp: Options at its Keys tab
+		bool (*lightsShown)();	// main.cpp: the LIGHTS window (debug.lights_panel) is up
+		void (*showLights)(bool on);
+		bool (*optionsKeysShown)();	// main.cpp: Options is up at its Keys tab
+		void (*showOptionsKeys)(bool on);	// on: Options at its Keys tab; off: Options closed
+		bool (*fullMapShown)();
 		void (*toggleFullMap)();	// main.cpp: the full-screen world map (debug.full_map, Ctrl+M)
 		std::string (*hudText)();	// main.cpp's shot_hud_text: "hud.KEY: TEXT" lines of the developer text block under --debug, "" otherwise (k16.2.335.1)
 #ifdef KCLIENT_DEBUG_VIEW
 		dbg::DebugView& debugView;	// App::debugView
 		const bool& debugSubscribed;	// App::debugSubscribed
 		const uint64_t& infoChar;	// App::infoChar, the inspect / status panel's character
+		bool (*debugTreeShown)();	// the DEBUG VIEW tree window is up
+		void (*debugTreeClose)();
 		void (*debugTreeOpen)(uint8_t kind, uint64_t id);	// main.cpp's debug_tree_open: DEBUG_QUERY and the tree window
 		std::string (*treeStateValue)(uint8_t kind, uint64_t id, const std::string& key, const std::string& value);	// main.cpp's tree_state_value
 #endif

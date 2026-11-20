@@ -148,7 +148,14 @@ bool knownKey(const std::string& k)
 		"min_frequency", "force", "movement", "forcefield_size", "delta", "acceleration", "resize", "octaves", "frequency", "amplitude",
 		"persistence", "movement_frequency", "worldsize", "velocity_scale", "since_start_system", "ignore_negative_y", "position_x",
 		"position_y", "position_z", "observe_interval", "handler", "DoExpire", "DoPlacementParticle", "DoStopSystem", "min", "max",
-		"control_point", "oscillate_frequency", "oscillate_phase", "oscillate_base", "oscillate_amplitude", "oscillate_type" };
+		"control_point", "oscillate_frequency", "oscillate_phase", "oscillate_base", "oscillate_amplitude", "oscillate_type",
+		// Parsed-and-ignored (a full scan of the shipped data/particles/scripts, kenshi-k16.2.391, found exactly these left). Pool sizing and
+		// renderer hints with no visible effect for us: emitted_affector_quota (PU pre-allocation budget for emitted affectors; we allocate
+		// on demand), spatial_hashing_cell_dimension (collision-affector acceleration), lod_index, sorting (we sort by depth anyway),
+		// common_up_vector, accurate_facing. Observer/handler/behaviour keys of the not-yet-ported event system: on_time, observe_until_event,
+		// observe_particle_type, force_emitter, behaviour (Slave).
+		"emitted_affector_quota", "spatial_hashing_cell_dimension", "lod_index", "sorting", "common_up_vector", "accurate_facing", "on_time",
+		"observe_until_event", "observe_particle_type", "force_emitter", "behaviour" };
 	return keys.count(k) != 0;
 }
 
@@ -766,6 +773,22 @@ void Particles::setPlaced(const std::vector<PlacedSystem>& systems)
 		}
 	}
 	sims_ = std::move(next);
+}
+
+size_t Particles::tailSystems(const std::vector<uint64_t>& keys, size_t* particles, const double* cam, double radius, size_t* near) const
+{
+	size_t n = 0, pc = 0;
+	if (near) { *near = 0; }
+	for (const Sim& s : sims_)
+	{
+		if (!s.placed || s.emitting || !s.hasParticles()) { continue; }
+		if (std::find(keys.begin(), keys.end(), s.key) == keys.end()) { continue; }
+		n++;
+		if (near && cam && std::hypot(s.pos[0] - cam[0], s.pos[2] - cam[2]) <= radius) { (*near)++; }
+		for (const std::vector<Particle>& p : s.pools) { pc += p.size(); }
+	}
+	if (particles) { *particles = pc; }
+	return n;
 }
 
 void Particles::emit(Sim& s, int ti, int ei, const Frame& f, float dt)

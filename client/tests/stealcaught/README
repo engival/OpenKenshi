@@ -1,0 +1,11 @@
+stealcaught (kenshi-k16.2.300.6.1): the original's "Got caught stealing." message bar line, live.
+A player character's take out of a foreign container (a bar's Large Basket) with a bar NPC in sight: the sim's theft
+event 14, its caught_stealing event 51 (kclient prints "caught stealing: thief / witness") and the HUD message box's
+line, shown by a shot taken while it is up. Run on the bar_lure scenario through client/tools/live.sh (the whole
+server + client round trip; the 300.4 recipe: camera on the basket, ALT held, right click, transfer take).
+
+usage: run.sh OUT_DIR [CLIENT_SECONDS]
+
+The run writes OUT_DIR/probe/ (the ids) and OUT_DIR/run/ (script.txt, client.log, server.log, the shots) and checks
+the logs for both events. The basket: the Large Basket the probe finds nearest the Wanderer (the Hub bar's baskets
+move with the build's world data; 41091 was the id on kenshi-k16.2.300.4); BASKET="id" or BASKET="name" overrides.

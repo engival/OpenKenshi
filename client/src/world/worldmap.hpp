@@ -18,21 +18,18 @@ int text_scale();
 void draw_text(float px, float py, float r, float g, float b, const char* s);	// framebuffer pixels, with shadow
 void draw_panel(float x, float y, float w, float h);					// translucent dark rect
 
-// The game's own world map (GUI_Map.dds, BC1 + mips uploaded as is): corner minimap and full-screen map.
+// The game's own world map (GUI_Map.dds, BC1 + mips uploaded as is): full-screen map and the overview's MAP page image (the corner minimap is ui::Minimap's window).
 class WorldMap
 {
 public:
-	static constexpr int kMinZoom = 0, kMaxZoom = 6;	// minimap span = 4608 * 2^zoom world units
 
 	// Returns false when the DDS is missing or not an 8192^2 BC1 image.
 	bool init(const std::string& path);
 	void shutdown();
 
 	bool full = false;	// full-screen map shown
-	int zoom = 3;
 
 	// Draw into the overlay (recorded on logic into the packet's overlay list, overlaylist.hpp). towns may be null while loading.
-	void drawMinimap(double cx, double cz, double yaw, const TownSet* towns, const Squads* squads) const;
 	void drawFull(double cx, double cz, double yaw, const TownSet* towns, const Squads* squads, const std::string& closeKey) const;	// closeKey: for the hint line
 
 	// The map in a rectangle (the overview's MAP page, whose view the UI keeps): world (cx, cz) at the rect's centre, pxPerUnit pixels a world
@@ -50,7 +47,6 @@ public:
 private:
 	struct Rect { float x, y, side; };
 	Rect fullRect() const;
-	Rect miniRect() const;
 	void marker(float sx, float sy, double yaw, float wedgeLen) const;
 	void drawMap(Rect r, double x0, double z0, double span, double cx, double cz, double yaw, const TownSet* towns, const Squads* squads, bool clipLabels) const;
 

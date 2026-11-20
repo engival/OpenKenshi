@@ -849,7 +849,8 @@ namespace ui
 			p.initial->text = m.portrait ? "" : name.substr(0, 1);	// no portrait yet: the initial, over a back overlay
 			p.initial->colour = style().textColour(Look::kPortrait, State::kNormal, false);
 			p.frame->checked = m.selected;
-			p.frame->tooltip = name + (m.down ? "\nDown" : "");
+			// No tooltip: the original's tip box is for UI items (status, bars, stats), never a character (user 2026-11-20, kenshi-k16.2.408.2).
+			// The F6 hints panel names the portrait; a downed member shows by its face layers and its name in BadBright.
 			p.frame->enabled = true;
 			p.name->colour = m.down ? res::colour("BadBright") : res::colour("Main");
 			p.bar->fraction = m.health;

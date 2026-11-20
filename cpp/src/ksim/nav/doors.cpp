@@ -19,8 +19,6 @@ namespace
 // UNSURE: gate hp is "per gate from data" in the original; no hp field was found in the data. The measured house door had 16.
 constexpr double kGateHp = 16.0;
 
-constexpr std::uint8_t kStrangers = doorClassBit(DoorClass::Neutral) | doorClassBit(DoorClass::Hostile);
-
 double distance(double ax, double az, double bx, double bz)
 {
 	return std::hypot(ax - bx, az - bz);
@@ -130,7 +128,12 @@ DoorClass DoorSystem::classOf(flecs::entity_t faction, flecs::entity_t owner) co
 	{
 		if (const state::FactionState* state = keeper.get<state::FactionState>())
 			if (const FactionInfo* info = factions_->faction(state->templateSid))
+			{
 				feeling = info->defaultRelation;
+				if (const state::FactionState* other = flecs::entity(ecs_->c_ptr(), faction).get<state::FactionState>())
+					if (const FactionInfo* theirs = factions_->faction(other->templateSid))
+						feeling = std::min(feeling, static_cast<double>(theirs->defaultRelation));
+			}
 	}
 	if (feeling >= tuning_.allyRelation)
 		return DoorClass::Ally;
@@ -139,38 +142,21 @@ DoorClass DoorSystem::classOf(flecs::entity_t faction, flecs::entity_t owner) co
 	return DoorClass::Neutral;
 }
 
-int DoorSystem::travellerClass(flecs::entity_t faction, double fromX, double fromZ, double toX,
-	double toZ) const
-{
-	if (!tuning_.enabled || ecs_ == nullptr)
-		return static_cast<int>(DoorClass::Resident);
-	// Leaving the walls is never refused.
-	if (nearest(fromX, fromZ, tuning_.insideReach) != nullptr)
-		return static_cast<int>(DoorClass::Resident);
-	const GateTown* target = nearest(toX, toZ, tuning_.townReach);
-	if (target == nullptr)
-		return static_cast<int>(DoorClass::Neutral);
-	const state::TownState* town = flecs::entity(ecs_->c_ptr(), target->entity).get<state::TownState>();
-	return static_cast<int>(classOf(faction, town != nullptr ? town->owner.id : 0));
-}
-
 GateBash DoorSystem::bashing(flecs::entity_t faction, double toX, double toZ) const
 {
+	(void)faction; // a gate refuses nobody by who they are (doors.hpp)
 	if (!tuning_.enabled || ecs_ == nullptr)
 		return {};
 	const GateTown* target = nearest(toX, toZ, tuning_.townReach);
 	if (target == nullptr)
 		return {};
-	const state::TownState* town = flecs::entity(ecs_->c_ptr(), target->entity).get<state::TownState>();
-	const int doorClass = static_cast<int>(classOf(faction, town != nullptr ? town->owner.id : 0));
-	// The first gate (lowest key) of the town that is locked or refuses this class while it is shut.
+	// The first gate (lowest key) of the town that is locked.
 	for (const Gate& gate : gates_)
 	{
 		if (gateTowns_[gate.town].entity != target->entity)
 			continue;
 		const knav::DoorSetting setting = book_.get(gate.key);
-		const bool refuses = (setting.denied >> doorClass & 1) != 0;
-		if (setting.state == knav::DoorState::Locked || (setting.state == knav::DoorState::Closed && refuses))
+		if (setting.state == knav::DoorState::Locked)
 		{
 			const DoorSite* site = nullptr;
 			for (const DoorSite& candidate : data_->sites)
@@ -191,18 +177,15 @@ GateBash DoorSystem::bashing(flecs::entity_t faction, double toX, double toZ) co
 
 GateBash DoorSystem::bashFor(flecs::entity_t faction, std::uint64_t key) const
 {
+	(void)faction;
 	if (!tuning_.enabled || ecs_ == nullptr)
 		return {};
 	const auto found = std::lower_bound(gates_.begin(), gates_.end(), key, [](const Gate& gate, std::uint64_t k) { return gate.key < k; });
 	if (found == gates_.end() || found->key != key)
 		return {};
 	const GateTown& gateTown = gateTowns_[found->town];
-	const state::TownState* town = flecs::entity(ecs_->c_ptr(), gateTown.entity).get<state::TownState>();
-	const int doorClass = static_cast<int>(classOf(faction, town != nullptr ? town->owner.id : 0));
-	const knav::DoorSetting setting = book_.get(key);
-	const bool refuses = (setting.denied >> doorClass & 1) != 0;
-	if (setting.state != knav::DoorState::Locked && !(setting.state == knav::DoorState::Closed && refuses))
-		return {}; // open (or shut but passable) for me: nothing to break here
+	if (book_.get(key).state != knav::DoorState::Locked)
+		return {}; // open (or shut but passable): nothing to break here
 	const DoorSite* site = nullptr;
 	for (const DoorSite& candidate : data_->sites)
 		if (candidate.key == key)
@@ -242,25 +225,14 @@ knav::DoorBook DoorSystem::build(flecs::world& ecs) const
 		const state::TownState* state = town.get<state::TownState>();
 		if (state == nullptr || state->owner.id == 0)
 			continue;
-		std::uint8_t denied = 0;
-		knav::DoorState doorState = knav::DoorState::Open;
-		if (data_->privateTowns.contains(state->activeSid))
-			denied |= kStrangers;
-		if (doorState != knav::DoorState::Open)
-			book.setState(gate.key, doorState);
-		for (int k = 0; k < knav::kDoorClasses; ++k)
-			if ((denied >> k & 1) != 0)
-				book.setAccess(gate.key, k, false);
 	}
 	if (const state::DoorOverrides* overrides = ecs.get<state::DoorOverrides>())
 		for (const state::DoorOverride& entry : overrides->entries)
 		{
 			if (entry.state == 3)
 			{
-				// Broken: open for ever, the lock and the policy are gone.
+				// Broken: open for ever, the lock is gone.
 				book.setState(entry.key, knav::DoorState::Open);
-				for (int k = 0; k < knav::kDoorClasses; ++k)
-					book.setAccess(entry.key, k, true);
 			} else {
 				book.setState(entry.key, static_cast<knav::DoorState>(entry.state));
 			}

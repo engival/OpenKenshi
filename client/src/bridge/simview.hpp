@@ -13,7 +13,7 @@
 #include "characters/characters.hpp"
 #include "knav/walk.hpp"
 #include "net/simlink.hpp"
-#include "platform/socket.hpp"
+#include "kutil/platform/socket.hpp"
 
 // The live sim link on screen (docs/formats/SIMLINK.md, docs/CLIENT.md "Live sim link"). Source: a recorded server stream (FILE.bin, replayed at the sim's
 // 20 ticks/s) or a server (HOST:PORT, TCP). Drives Characters: one character per sim character with an appearance, rebuilt when the set or an appearance
@@ -144,6 +144,7 @@ public:
 	bool foreign(uint64_t thing) const;
 	uint32_t ownFaction() const;	// our faction's FACTION strid: SQUADS `faction` of a squad PLAYER_SQUADS lists; 0 before both arrived
 	std::vector<uint16_t> takeCrimeLog() { return std::exchange(crimeLog_, {}); }	// event kinds 51 (caught_stealing) / 52 (alarm_raised) since the last take: HUD message-bar lines
+	uint32_t takeLockTooHard() { return std::exchange(lockTooHard_, 0); }	// event 13 result 8 lock picks (a player character's) since the last take: the HUD message-bar line
 	std::vector<uint32_t> takeDiscovered() { return std::exchange(discovered_, {}); }	// TOWN strids of event 19 (discovered) since the last take: the log line
 	// Floating texts from events (the game's ScreenLabel, kinspect floating_text.md): event 1 hit (landed; other = the attacker, damage cut / blunt /
 	// pierce / stun, part its strid) and 20 lock_roll. pos: the character's feet when it came (the label follows the character while it is drawn); dropped 12 sim-s after
@@ -174,6 +175,11 @@ public:
 	uint64_t pickItem(const double origin[3], const double dir[3], double* tOut = nullptr, const std::function<bool(uint64_t)>& skip = {}) const;
 	static constexpr double kItemReach = 4, kItemLift = 1, kContainerReach = 6, kContainerLift = 4;
 	const simlink::Interactable* thing(uint64_t id) const;
+	// kenshi-k16.2.412.4: a ground item / container's DRAWN y: the sim's pos y through groundAt (the body's feet lookup), cached per thing (moves with its pos or the solver's generation). Falls back to pos y.
+	double thingY(uint64_t id, const simlink::Interactable& t) const;
+	// How far over its pos y the drawn ground may lie for a thing to count as buried and be lifted onto it (lift, never sink: furniture surfaces are not in the solver). The coarse navmesh y runs 12-33 u under
+	// the drawn dune of the hill east of the Storm House (user 2026-11-19; measured in the findings of kenshi-k16.2.414.2: hill*.txt, hill_a.png), so 36 u covers it.
+	static constexpr double kBuriedMax = 36;
 	const std::unordered_map<uint64_t, simlink::Interactable>& things() const { return dec_.things; }
 	uint32_t thingsSerial() const { return dec_.thingsSerial; }	// moves when things() changed (the props list's dirty tracking)
 	std::string nameOf(uint32_t record, const Characters& chars) const;	// a record strid's display name
@@ -216,22 +222,33 @@ public:
 	// the path) steps with the mouse, not in 20 Hz stairs
 	void aim(uint64_t id, double heading) { if (local_.id == id) { local_.heading = heading; } }
 	double localHeading() const { return local_.heading; }	// the heading the last drive order sent (kenshi-k16.2.237.9 log)
-	// The standing ray (kenshi-k16.2.344): a drawn standing character's y is the collision surface nearest the wire's y under its x, z (CollisionPick::groundY).
-	// res: 1 hit (y), 2 a drawn-face hit (a part with no collision), 0 no shape in the window, -1 the collision is not loaded there; gen changes with the gather (the per-character cache's key).
+	// The standing ray (kenshi-k16.2.344): a drawn standing character's y is the drawn building surface nearest the wire's y under its x, z (WorldBuildings::groundDrawn; collision meshes left the stand search in kenshi-k16.2.382.2).
+	// res: 2 a drawn-floor hit (y), 0 a drawn surface over x,z but none in the window, 3 open ground, -1 a building mesh there is still loading; gen changes with the drawn set (the per-character cache's key).
 	using GroundRay = std::function<int(double x, double z, double wireY, double up, double down, double& y, const void** gen)>;
 	// Display depenetration (kenshi-k16.2.345): the collision's push (dx, dz) for a body at (x, z) with feet y; false: none. Never fed back to the sim.
 	using Depenetrate = std::function<bool(double x, double z, double y, double radius, double maxPush, double out[2], std::string* why)>;
 	void setDepenetrate(Depenetrate d) { depen_ = std::move(d); }
 	struct NudgeStats { uint64_t frames = 0, nudgedSum = 0; int frameNudged = 0, maxFrameNudged = 0; double maxOffset = 0, frameMax = 0, msSum = 0, frameMs = 0, maxFrameMs = 0; };
 	const NudgeStats& nudgeStats() const { return nudge_; }
+#ifdef KCLIENT_DEV_TOOLS
 	std::function<double(double, double)> ylogAlt;	// KYLOG only (k16.2.382.1): the other terrain sampler, logged beside the one in use
+#endif
+	// The terrain point (x, y, z) lies inside a carved interior, where the terrain is not drawn (WorldBuildings::insideInterior; the sunk-dune rule of the stand search, kenshi-k16.2.412.1)
 	void setGroundRay(GroundRay r, std::function<const void*()> gen) { groundRay_ = std::move(r); groundGen_ = std::move(gen); }
 	// The standing ray's window around the wire y (kenshi-k16.2.344): up above, down below. The navmesh floats 0.45-0.71 u over the plank floor and up to ~4 u off on slopes (k16.7.36, k16.6.271).
-	static constexpr double kRayUp = 1.5, kRayDown = 4.5;
-	// One uncached stand-ray cast with update()'s rule (the ray, then standTerrain: bridge/simview.cpp), for the height probe (dev/heightprobe.cpp): terrain is the
+	static constexpr double kRayUp = 1.5, kRayDown = 4.5, kDrawnDown = 8.0;	// kDrawnDown: how far under the wire y the drawn floors are looked for (kenshi-k16.2.382.2; the terrain still competes inside kRayDown)
+	// One uncached stand-ray cast with update()'s rule (the ray, then solveGround: bridge/simview.cpp), for the height probe (dev/heightprobe.cpp): terrain is the
 	// drawn triangle height update() gets. Returns the result as update() sees it (-1 collision not loaded, 0 miss, 1 hit, 2 drawn-face hit); y is set for >= 1.
 	// kind: what decided it ("collision", "drawn", "terrain", "open ground (terrain)", or why it missed).
 	int standRayAt(double x, double z, double wireY, double terrain, double& y, const char** kind = nullptr) const;
+	// The ground solver, navmesh -> drawn (kenshi-k16.2.414.2): the drawn walkable ground nearest the sim's navmesh point (x, navY, z) in [navY - kDrawnDown, navY + up], the terrain
+	// included under the interior-mask rule. >= 1: y is the drawn ground; 0 none in reach (keep the navmesh y); -1 not loaded yet / no solver. One rule for the body's feet
+	// (update, predict), the selection ring, the move marker, the route line and a probe hit on a character. No floor argument: the nearest walkable surface to the navmesh
+	// point IS the floor it is on (floors are separate navmesh islands, >= a storey apart). kind (optional) says what decided it.
+	int groundAt(double x, double z, double navY, double up, double down, double& y, const char** kind = nullptr) const;
+	int groundAt(double x, double z, double navY, double& y) const { return groundAt(x, z, navY, kRayUp, kRayDown, y); }
+	// The terrain the solver joins (the drawn terrain triangles) and the carve test (is the point inside an interior mask whose BUILDING has `interior terrain` 0)
+	void setTerrainFn(std::function<double(double, double)> t, std::function<bool(double, double, double)> masked) { terrainFn_ = std::move(t); terrainMasked_ = std::move(masked); }
 	struct RayStats { uint64_t faces = 0, casts = 0, cached = 0, hits = 0, misses = 0, unloaded = 0; double ms = 0, maxFrameMs = 0; int frameCasts = 0, maxFrameCasts = 0; double frameMs = 0; double maxShift = 0, sumShift = 0; };
 	const RayStats& rayStats() const { return rayStats_; }	// totals since the start; a dev counter (dump / the evlog standray line)
 	void setWalker(const knav::Walker* w) { walker_ = w; }	// ClientNav's, for drive prediction (each frame; null: none)
@@ -258,10 +275,10 @@ public:
 	std::vector<uint64_t> players() const;
 	std::vector<MoveOrder> moveOrders(uint64_t id) const;
 	uint64_t lastMoveTick(uint64_t id) const;	// the sim tick of the newest move_to sent for id (0: none): the trails' longer window
-	// The camera's ground point, every frame (live): set_interest (send filter, kInterestRadius round it) after kInterestMove units of travel, set_view (a
-	// logged sim command; the server quantizes it to 4608-unit zones with hysteresis) after kViewMove, so both stay rare (SIMLINK 5, 7).
+	// The camera's ground point, every frame (live): set_interest (send filter, render.interest_radius round it) after kInterestMove units of travel, set_view
+	// (a logged sim command; the server quantizes it to 4608-unit zones with hysteresis) after kViewMove, so both stay rare (SIMLINK 5, 7).
 	void view(double x, double z);
-	static constexpr double kInterestRadius = 2000, kInterestMove = 250, kViewMove = 1000;
+	static constexpr double kInterestRadius = 2000, kInterestMove = 250, kViewMove = 1000;	// 2000: render.interest_radius's default (kenshi-k16.2.258.10.1)
 	// a hit splash for the terrain blood (BLOOD_DECALS.md: 140793b20): world x, z, size (0.05..0.5), dirRad (x-z angle, the image's u axis), colour
 	// kind: a hit splash (decal type 1), a bleed drop (2), a growing pool (2, resized by id: BloodDecals::pool) or a smear (3)
 	enum SplashKind { kHit, kDrop, kPool, kSmear };
@@ -300,13 +317,14 @@ public:
 private:
 	enum Mode { None, File, Live };
 	enum Down { Up, Lying, Crawling, Carried, Seated, Asleep };
-	struct Slot { int index = -1; uint32_t version = 0; uint32_t action = 0, poseClip = 0; uint64_t actionStart = 0; bool loop = false; Down down = Up; bool rising = false, seen = false; int carry = 0, severed = 0; double pos[3] = {}, yaw = 0, bodyYaw = 0; bool bodyOn = false; float hull[3] = { 5, 20, 5 }; bool drawn = false; float vFwd = 0, vLat = 0, vSim = 0; float speedWin[2][8] = {}; int speedHead = -1; bool failed = false; Down failedDown = Up; uint32_t failedClip = 0; bool ragdollHeld = false; double catchStart = -1, catchMax = 0; uint64_t jumpTick = 0; double off[2] = {}, basePrev[2] = {}, sim[3] = {}, catchV[2] = {}; uint64_t wireTick = 0, wireMoveTick = 0, stallLogTick = 0, offLogTick = 0, nobodyLogTick = 0; float wireLast[2] = {}; uint8_t nobodyState = 255, nobodyPending = 255, nobodyPendingCount = 0; double rayX = 1e30, rayZ = 0, rayWireY = 0, rayY = 0; int rayRes = -2; const void* rayGen = nullptr; double missX = 1e30, missZ = 0; double nudge[2] = {}; bool nudgeOn = false; };	// the standing ray's cache (kenshi-k16.2.344): the input (x, z, wire y, gather) and its result (rayRes 1 hit at rayY, 0 miss, -1 not loaded; -2 none); missX / missZ: where a miss was last logged	// bodyYaw / bodyOn: the drawn body's own yaw while drive.facing = travel (or easing back from it; k16.2.237.10); the tail (kenshi-k16.2.264.1): wireTick = the newest sample's tick last seen, wireLast its xz, wireMoveTick the sample tick it last changed at (a walkstall line); stallLogTick / offLogTick / nobodyLogTick = the render tick each case line was last written at (5 s apart); nobodyState = the DrawState the last nobody line named, nobodyPending / nobodyPendingCount = the state being confirmed (two frames: the draw state is one prepare behind, and a rebuild renumbers the indices); off: display slop, the drawn position's offset from the sim (xz; eased to 0, kenshi-k16.2.74); basePrev: the sim's interpolated position last frame (the base-jump test); sim: the sim's interpolated position this frame (gameplay (pick) reads it, never the drawn pos); jumpTick: the wire sample last logged as a sim jump (evlog simjump); catchStart / catchMax: the catch-up episode under way (its first sim tick, -1: none) and its largest error, logged when it ends (evlog); drawn: pos holds last frame's drawn position; vFwd / vLat: its filtered velocity in the body frame (the legs); speedWin / speedHead: the last 8 raw fwd / lat speeds, the next write at speedHead (-1: empty); rising: playing the get-up while down stays Lying; seen: drawn once (a character first seen already down is snapped, not fallen into); failed / failedDown / failedClip: the down state the last rebuild failed to build (no retry while the wire still reads it, sl.down keeps the pose); ragdollHeld: sl.down's Lying was committed for an unbuildable lying pose that a ragdoll carries (the get-up is Characters::riseLive)
+	struct Slot { int index = -1; uint32_t version = 0; uint32_t action = 0, poseClip = 0; uint64_t actionStart = 0; bool loop = false; Down down = Up; bool rising = false, seen = false; int carry = 0, severed = 0; double pos[3] = {}, yaw = 0, bodyYaw = 0; bool bodyOn = false; float hull[3] = { 5, 20, 5 }; bool drawn = false; float vFwd = 0, vLat = 0, vSim = 0; float speedWin[2][8] = {}; int speedHead = -1; bool failed = false; Down failedDown = Up; uint32_t failedClip = 0; bool ragdollHeld = false; double catchStart = -1, catchMax = 0; uint64_t jumpTick = 0; double off[2] = {}, basePrev[2] = {}, sim[3] = {}, catchV[2] = {}; uint64_t wireTick = 0, wireMoveTick = 0, stallLogTick = 0, offLogTick = 0, nobodyLogTick = 0; float wireLast[2] = {}; uint8_t nobodyState = 255, nobodyPending = 255, nobodyPendingCount = 0; double rayX = 1e30, rayZ = 0, rayWireY = 0, rayY = 0; int rayRes = -2; const void* rayGen = nullptr; double missX = 1e30, missZ = 0; double nudge[2] = {}; bool nudgeOn = false; double drawY = 0; bool drawYOn = false; };	// the standing ray's cache (kenshi-k16.2.344): the input (x, z, wire y, gather) and its result (rayRes 1 hit at rayY, 2 drawn face at rayY, 3 open ground (nothing covers x,z), 0 miss, -1 not loaded; -2 none); missX / missZ: where a miss was last logged	// bodyYaw / bodyOn: the drawn body's own yaw while drive.facing = travel (or easing back from it; k16.2.237.10); the tail (kenshi-k16.2.264.1): wireTick = the newest sample's tick last seen, wireLast its xz, wireMoveTick the sample tick it last changed at (a walkstall line); stallLogTick / offLogTick / nobodyLogTick = the render tick each case line was last written at (5 s apart); nobodyState = the DrawState the last nobody line named, nobodyPending / nobodyPendingCount = the state being confirmed (two frames: the draw state is one prepare behind, and a rebuild renumbers the indices); off: display slop, the drawn position's offset from the sim (xz; eased to 0, kenshi-k16.2.74); basePrev: the sim's interpolated position last frame (the base-jump test); sim: the sim's interpolated position this frame (gameplay reads it; a pick reads its x, z, and the drawn y, k16.2.395.1); jumpTick: the wire sample last logged as a sim jump (evlog simjump); catchStart / catchMax: the catch-up episode under way (its first sim tick, -1: none) and its largest error, logged when it ends (evlog); drawn: pos holds last frame's drawn position; vFwd / vLat: its filtered velocity in the body frame (the legs); speedWin / speedHead: the last 8 raw fwd / lat speeds, the next write at speedHead (-1: empty); rising: playing the get-up while down stays Lying; seen: drawn once (a character first seen already down is snapped, not fallen into); failed / failedDown / failedClip: the down state the last rebuild failed to build (no retry while the wire still reads it, sl.down keeps the pose); ragdollHeld: sl.down's Lying was committed for an unbuildable lying pose that a ragdoll carries (the get-up is Characters::riseLive); drawY / drawYOn: the drawn body's eased y (kenshi-k16.2.395.1: the stand height eases toward, so a stair tread does not step it) and whether it holds a value from a previous frame
 	std::vector<SoundCue> cues_;
 	struct DoorSound { int type = 0; float speed = 0.5f; };
 	std::unordered_map<std::string, DoorSound> doorSounds_;
 	std::unordered_map<uint64_t, double> doorFirst_;	// door id -> the render tick it was first seen: its first second is arrival (the scenario's own opening), posts nothing
 	std::unordered_map<uint64_t, uint8_t> doorState_;	// door id -> the state last seen (a first sight posts nothing)
 	std::unordered_map<uint64_t, uint64_t> carried_;	// body id -> its carrier, while carried
+	std::unordered_map<uint64_t, int> departing_;	// body id -> its index in Characters, while its departure dither runs (render.char_fade, kenshi-k16.2.258.10.1)
 	std::vector<std::pair<double, SoundCue>> pending_;	// cues due at a render tick (Door_Shut)
 	std::set<uint64_t> rollOk_;	// doors a lock_roll succeeded on in this batch (their Unlock_Success is the picker's, posted by the event)
 	bool soundsPrimed_ = false;	// the first world pass seeds doorState_ / carried_ without posting
@@ -324,14 +342,16 @@ private:
 	int severedOf(uint64_t id, const Characters& chars) const { return dec_.medical.count(id) ? severedOf(id, chars.nameOf(dec_.str(dec_.chars.at(id).look.race)), chars) : 0; }
 	void fail(const std::string& why);
 	bool send(const std::vector<uint8_t>& out, const char* what);
+	bool sendNow(const std::vector<uint8_t>& out, const char* what);
 	void answers();	// events 9 / 10 for our orders: the HUD's last reply
 
 	Mode mode_ = None;
 	simlink::SimLinkDecoder dec_;
 	std::vector<uint8_t> file_;
 	size_t fed_ = 0;
-	plat::Socket fd_ = plat::kNoSocket;
+	kutil::net::Socket fd_ = kutil::net::kNoSocket;
 	bool helloSent_ = false;
+	std::vector<uint8_t> preHello_;	// frames sent before our HELLO: HELLO is always the first frame (the server refuses the link otherwise), these follow it in order
 	uint64_t focusSent_ = 0;
 	bool focusProducer_ = false;	// the focus is a producer's id: its BUILDING row is the focus row, not a player's building
 	simlink::SimLinkDecoder::Building focusRow_;	// the focused producer's row (id 0: none yet), kept out of dec_.buildings
@@ -343,12 +363,17 @@ private:
 	struct Local { uint64_t id = 0; uint8_t drive = 0; int strafe = 0; double heading = 0, gait = 0, fwd = 0, pos[3] = {}, vel[2] = {}; bool on = false, run = true; } local_;
 	const knav::Walker* walker_ = nullptr;
 	GroundRay groundRay_;
+	std::function<double(double, double)> terrainFn_;
+	std::function<bool(double, double, double)> terrainMasked_;
+	int solveGround(int raw, double& ry, double x, double z, double th, double navY, double up, double down) const;
 	Depenetrate depen_;
 	std::unordered_map<int64_t, std::vector<uint64_t>> nudgeGrid_;
 	bool nudgeOk(const simlink::Dynamic& d, uint64_t id) const;
 	NudgeStats nudge_;
 	uint64_t nudgeLogTick_ = 0;
 	std::function<const void*()> groundGen_;
+	struct ThingY { double x = 0, y = 0, z = 0, drawn = 0; const void* gen = nullptr; bool set = false; };
+	mutable std::unordered_map<uint64_t, ThingY> thingY_;
 	RayStats rayStats_;
 	double predictYOff_ = 0;	// predict's wire-navmesh y offset: the drawn y when the standing ray has no hit
 	double rayLogTick_ = 0;
@@ -397,11 +422,12 @@ private:
 	std::string profileStatus_;	// the refusal word (not_allowed / unsupported) once the server said no: set, no more queries are sent
 	std::vector<uint32_t> discovered_;
 	std::vector<uint16_t> crimeLog_;	// event kinds 51 / 52 since the last take
+	uint32_t lockTooHard_ = 0;	// event 13 result 8 lock picks since the last take (kenshi-k16.2.346)
 	std::deque<Popup> popups_;
 	std::unordered_map<uint64_t, Speech> speech_;
 	std::unordered_set<uint64_t> foreign_;	// containers a theft event named
 	bool rejected_ = false;
 	std::vector<Splash> splashes_;
-	double viewSent_[2] = {}, interestSent_[2] = {};
+	double viewSent_[2] = {}, interestSent_[2] = {}, interestRadiusSent_ = 0;
 	bool viewOnce_ = false;
 };

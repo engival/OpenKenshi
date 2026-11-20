@@ -908,6 +908,7 @@ struct GateCrew
 	}
 };
 
+// UNUSED since kenshi-k16.6.12.3 (the system that set it, stepGateCrews, is deleted; kept only so the save component list is unchanged).
 // MAN_THE_GATE for one full-detail character (the squad leader of a gate crew, gatecrew.cpp): the gate's first door key (the
 // state::Door's `key`) and the outside point it stands on. `phase`, for observers: 0 standing at / walking to the post, 1 working
 // the shut gate (UNLOCK, then OPEN), 2 walking back. On the leader's entity.
@@ -1261,6 +1262,7 @@ struct Allegiance
 // of the next added squad (saved, never reused; starts at 1, UNSURE), `squads` the PlayerSquad entities' state::Id in list order
 // (the HUD tab order).
 inline constexpr std::string_view kImportedStartoff = "<save import>";
+inline constexpr std::string_view kScenarioStartoff = "<scenario>"; // a scenario file with player characters: the areas follow them too (kenshi-k16.6.468)
 
 struct PlayerFaction
 {
@@ -2012,6 +2014,7 @@ struct MemberDelta
 	static constexpr std::uint8_t kSkills = 16; // trained stats
 	static constexpr std::uint8_t kKit = 32; // the first-aid kit in use (save v100): its sid and charges left
 	static constexpr std::uint8_t kLook = 64; // the name and the sex (save v103): what an imported save's member is called and is, which the template does not say
+	static constexpr std::uint8_t kFought = 128; // Fighter::fought (save v118, k16.6.361): no payload, the bit is the value
 
 	std::uint8_t mask = 0;
 	std::vector<FighterPart> parts;
@@ -2087,6 +2090,8 @@ struct MemberDelta
 			delta.name = now.name;
 			delta.female = now.look.female;
 		}
+		if (now.fought != built.fought)
+			delta.mask |= kFought;
 		if (delta.mask == 0)
 			return std::nullopt;
 		return delta;
@@ -2128,6 +2133,8 @@ struct MemberDelta
 			f.name = name;
 			f.look.female = female;
 		}
+		if ((mask & kFought) != 0)
+			f.fought = true;
 	}
 
 	template <typename Archive, typename Self>
@@ -2411,6 +2418,57 @@ struct RunStates
 	std::vector<Alarm> alarms;
 	std::uint64_t lastAlarm = 0; // the board's id counter: a new alarm after the load keeps counting
 	std::vector<Dwell> dwells;
+	// A leg-by-leg far move order (Simulation::farOrders_, save v116, kenshi-k16.6.483): the true goal, the queue flag, the client seq, the road markers
+	// and the one being walked to. `goalY` is read only when `hasGoalY`; `blockedUntil` is a clock tick.
+	struct FarMarker
+	{
+		double x = 0.0;
+		double y = 0.0;
+		double z = 0.0;
+
+		template <typename Archive, typename Self>
+		static void fields(Archive& ar, Self& self)
+		{
+			ar(self.x);
+			ar(self.y);
+			ar(self.z);
+		}
+	};
+	struct FarOrder
+	{
+		std::uint64_t member = 0;
+		std::uint32_t seq = 0;
+		double goalX = 0.0;
+		double goalZ = 0.0;
+		double goalY = 0.0;
+		bool hasGoalY = false;
+		std::vector<FarMarker> markers;
+		std::uint32_t next = 0;
+		bool done = false;
+		bool blocked = false;
+		std::uint64_t blockedUntil = 0;
+		std::uint32_t legs = 0;
+		std::uint32_t clamps = 0;
+
+		template <typename Archive, typename Self>
+		static void fields(Archive& ar, Self& self)
+		{
+			ar(self.member);
+			ar(self.seq);
+			ar(self.goalX);
+			ar(self.goalZ);
+			ar(self.goalY);
+			ar(self.hasGoalY);
+			ar(self.markers);
+			ar(self.next);
+			ar(self.done);
+			ar(self.blocked);
+			ar(self.blockedUntil);
+			ar(self.legs);
+			ar(self.clamps);
+		}
+	};
+	std::vector<FarOrder> farOrders;
 
 	template <typename Archive, typename Self>
 	static void fields(Archive& ar, Self& self)
@@ -2420,6 +2478,8 @@ struct RunStates
 		ar(self.alarms);
 		ar(self.lastAlarm);
 		ar(self.dwells);
+		if (ar.version >= 116)
+			ar(self.farOrders);
 	}
 };
 
@@ -3147,6 +3207,7 @@ struct BoardStates
 		double occupyHeld = 0.0; // and how long OccupyTown's condition has held
 		std::vector<std::uint64_t> owned; // v95: the ownership set (fighter ids) and the slaver packages' depot (a town Id), kinspect rwh.8
 		std::uint64_t depot = 0;
+		std::uint64_t occupyTown = 0; // v117: Board::occupyTown as the town's Id (0 = none)
 
 		template <typename Archive, typename Self>
 		static void fields(Archive& ar, Self& self)
@@ -3176,15 +3237,38 @@ struct BoardStates
 				ar(self.owned);
 				ar(self.depot);
 			}
+			if (ar.version >= 117)
+				ar(self.occupyTown);
+		}
+	};
+	// v117: Simulation::occupiers_ as the last second boundary built it (a town's Id, the factions holding it), so a load mid-second answers
+	// 'is the town ours' as the unbroken run does; occupiersBuilt false (an older file) = rebuild from the boards at the first tick.
+	struct Occupancy
+	{
+		std::uint64_t town = 0;
+		std::vector<std::uint64_t> factions;
+
+		template <typename Archive, typename Self>
+		static void fields(Archive& ar, Self& self)
+		{
+			ar(self.town);
+			ar(self.factions);
 		}
 	};
 	std::vector<Entry> entries; // by squad Id, ascending
+	bool occupiersBuilt = false;
+	std::vector<Occupancy> occupiers; // by town Id, ascending
 
 	template <typename Archive, typename Self>
 	static void fields(Archive& ar, Self& self)
 	{
 		if (ar.version >= 92)
 			ar(self.entries);
+		if (ar.version >= 117)
+		{
+			ar(self.occupiersBuilt);
+			ar(self.occupiers);
+		}
 	}
 };
 

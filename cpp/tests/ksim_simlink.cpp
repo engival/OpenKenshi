@@ -13,6 +13,7 @@
 #include "ksim/nav/navigator.hpp"
 #include "ksim/ai/perception.hpp"
 #include "ksim/net/simlink.hpp"
+#include "ksim/combat/stealth_ko.hpp"
 #include "ksim/net/simlink_scenario.hpp"
 #include "ksim/core/simulation.hpp"
 
@@ -26,12 +27,9 @@
 #include "net/simlink.hpp" // client/src/net/simlink.hpp
 
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "test_net.hpp"
 
 #include <array>
 #include <atomic>
@@ -51,9 +49,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_SAMPLE_BIN
-#error KSIM_SAMPLE_BIN must be defined
 #endif
 
 namespace {
@@ -843,7 +838,7 @@ struct Client
 	~Client()
 	{
 		if (fd >= 0)
-			::close(fd);
+			test_net::close(fd);
 	}
 
 	void send(const std::vector<std::uint8_t>& bytes)
@@ -851,7 +846,7 @@ struct Client
 		std::size_t at = 0;
 		while (at < bytes.size())
 		{
-			const ssize_t n = ::send(fd, bytes.data() + at, bytes.size() - at, MSG_NOSIGNAL);
+			const auto n = test_net::send(fd, bytes.data() + at, bytes.size() - at, test_net::kMsgNoSignal);
 			test::require(n > 0, "client send");
 			at += static_cast<std::size_t>(n);
 		}
@@ -915,6 +910,14 @@ struct Client
 		}
 		else if (type == simlink::kInteractable && n > 16) // + the 2026-11-04 ownership tail (strid owner, u16 lockLevel, strid model, f32 yaw)
 			cut = p[16] == ks::kInteractableBed ? 0 : (p[16] == ks::kInteractableProducer ? 16 : p[16] == ks::kInteractableContainer ? 10 : 0) + 14; // the client decodes a bed whole (188febfb)
+		else if (type == simlink::kItemGrid && n > 21) // + the 2026-11-18 steal tail: one u8 per item, after the list (255 = no roll; the player's own pack)
+		{
+			const std::size_t items = readAt<std::uint16_t>(p, 21 + 3u * p[20]);
+			test::require(n == 23u + 3u * p[20] + 14u * items, "ITEM_GRID: the frame is not header + grids + 13 B per item + 1 steal byte per item");
+			cut = items;
+			for (std::size_t i = 0; i < items; ++i)
+				test::require(p[n - items + i] == 255, "ITEM_GRID: the steal tail of a player's own pack is not 255");
+		}
 		else if (type == simlink::kWeather && n == 10u + 24u * readAt<std::uint16_t>(p, 8) + 8)
 			cut = 8; // the 2026-11-06 wind pair
 		if (cut != 0)
@@ -968,10 +971,10 @@ struct Client
 				return false;
 			keepAlive();
 			pollfd p{fd, POLLIN, 0};
-			if (::poll(&p, 1, 20) <= 0)
+			if (test_net::poll(&p, 1, 20) <= 0)
 				continue;
 			std::uint8_t block[65536];
-			const ssize_t n = ::recv(fd, block, sizeof(block), 0);
+			const auto n = test_net::recv(fd, block, sizeof(block), 0);
 			if (n <= 0)
 			{
 				closed = true;
@@ -2225,7 +2228,27 @@ int main()
 			test::require(!ksim::sensor::ally(bw.sim->sensorContext(), enemy, player), "SEEN_BY: the neutral observer is an ally");
 			test::require(step().empty(), "SEEN_BY: a neutral observer left the set");
 			test::require(koAborts(), "SEEN_BY: the KO did not abort on a neutral observer");
+			// rwh.152: heard is not known. A record that is aware only through the noise roll (seen, not knownNow) is not listed and does not abort.
+			{
+				const double yaw = enemy.yaw;
+				enemy.yaw += 3.14159265358979; // facing away: no sight cone, so a scan cannot make it known
+				enemy.sight.clear();
+				step(); // the listed neutral of the case above leaves the set (and the sent-list)
+				ksim::perception::notice(enemy, bw.duel.player);
+				for (auto& r : enemy.sight)
+					if (r.target == bw.duel.player)
+					{
+						r.knownNow = false;
+						r.sighted = true;
+					}
+				test::require(ksim::perception::aware(enemy, bw.duel.player) && !ksim::stealthko::victimKnows(enemy, bw.duel.player), "SEEN_BY: a heard record counts as known");
+				got = step(); // nothing was listed since the clear: a listed heard-only observer would be a record with it
+				test::require(got.empty(), "SEEN_BY: a heard-only observer is listed");
+				test::require(!koAborts(), "SEEN_BY: the KO aborted on a victim that only heard");
+				enemy.yaw = yaw;
+			}
 			ksim::perception::notice(enemy, bw.duel.player);
+			test::require(step().size() == 1, "SEEN_BY: a known neutral observer is listed again after the heard case");
 			enemy.faction = player.faction; // an ally while it knows the sneaker: it leaves the set
 			got = step();
 			test::require(got.size() == 1 && got[0].by == none, "SEEN_BY: an allied observer stayed in the set");
@@ -2915,7 +2938,18 @@ int main()
 			test::require(first->points[0][1] > 1.0f, "route waypoints carry the surface y");
 			const auto& end = first->points.back();
 			test::require(std::hypot(end[0] - targetX, end[2] - targetZ) < 45.0, "route ends near the target (within the 40 unit snap)");
-			test::require(last == first || last->version > first->version, "the clear bumps routeVersion");
+			// A record is also re-sent when only the diag tail changed (status 1 -> 3 blocked, a blocker), keeping the routeVersion (simlink.cpp
+			// "diagChanged"); so versions never go down, and the record that empties the route (the clear) is the one that bumps it.
+			std::string seen;
+			bool versionOk = true;
+			for (const RouteRecord& r : c.extras.routes)
+			{
+				if (r.id != player || r.clientSeq != seqMove)
+					continue;
+				seen += " v" + std::to_string(r.version) + (r.points.empty() ? "/clear" : "/pts") + "/st" + std::to_string(r.status);
+				versionOk = versionOk && r.version >= first->version && (!r.points.empty() || r.version > first->version);
+			}
+			test::require(versionOk, "the clear bumps routeVersion (records:" + seen + ")");
 			test::require(first->tailLength == 30, "the diag tail on a walking route: 30 bytes");
 			test::require(first->status == 1 || first->status == 3, "the diag tail on a walking route: status 1 (or 3 blocked), got " + std::to_string(first->status));
 			// At speed 16 the clear can share a snapshot with the next route and never go out alone (last == first); the clear's tail is read
@@ -2930,12 +2964,13 @@ int main()
 		}
 		test::require(c.extras.corrections.empty(), "a character was corrected off the navmesh during normal play");
 
-		// No route: a point far outside the baked zone is answered no_route, carrying the order's seq.
+		// A point far outside the baked zone is a far goal (kenshi-k16.6.481, rwh208): the exe never refuses a click for its distance, the
+		// walker sets off along the line and the walk ends silently where there is no ground. The order is applied (event 9), never no_route.
 		out.clear();
 		const std::uint32_t seqNoRoute = orders.moveTo(out, {player}, targetX + 30000.0f, targetZ, false);
 		c.send(out);
-		test::require(c.pump([&]() { return c.find(10, seqNoRoute) != nullptr; }, 5000), "off-mesh move_to not answered");
-		test::require(reasonOf(c, *c.find(10, seqNoRoute)) == "no_route", "off-mesh move_to is no_route");
+		test::require(c.pump([&]() { return c.find(9, seqNoRoute) != nullptr || c.find(10, seqNoRoute) != nullptr; }, 5000), "off-mesh move_to not answered");
+		test::require(c.find(10, seqNoRoute) == nullptr, "a far off-mesh move_to is refused (" + (c.find(10, seqNoRoute) != nullptr ? reasonOf(c, *c.find(10, seqNoRoute)) : std::string()) + "), the exe walks it");
 
 		// Direct drive: forward along a heading, then stop; driveSeq follows; a bad mode is bad_value.
 		// The drive and strafe checks stop a drive with an order, so how far the character went depends on how many ticks ran between the

@@ -125,6 +125,15 @@ namespace
 			h.each(p.batches, [&](const Particles::Batch& b) { h.v(b.tex); h.v(b.additive); h.v(b.clip); h.v(b.first); h.v(b.count); h.v(b.soft); });
 			h.each(p.texNames, [&](const std::string& s) { h.s(s); });
 		});
+		blk("shadow", [&](H& h)
+		{
+			const auto& s = pk.shadow;
+			h.bytes(&s.params, sizeof s.params);
+			for (const auto& c : s.cascade) { h.bytes(&c, sizeof c); }
+			for (const auto& g : s.geom) { h.a(g); }
+			for (bool r : s.render) { h.v(r); }
+			h.v(s.enabled); h.v(s.cacheOn); h.v(s.set); h.v(s.staticBudget);
+		});
 		blk("buildings", [&](H& h)
 		{
 			const auto& b = pk.buildings;
@@ -141,7 +150,7 @@ namespace
 		{
 			const auto& f = pk.foliage;
 			long sum = 0;
-			for (const auto& d : f.draws) { sum += d.count; }
+			for (const auto& r : f.list.opaque) { sum += r.count; }
 			h.v(f.draws.size()); h.v(sum);
 			for (const auto& sl : f.shadow)
 			{
@@ -232,6 +241,7 @@ void packetPoison(FramePacket& pk)
 	}
 	pk.width = pk.height = -1;
 	// containers
+	pk.shadow = {}; pk.shadow.enabled = false; pk.shadow.set = -1; pk.shadow.staticBudget = -1; nan(pk.shadow.params.sinfo);
 	pk.grass = {}; pk.grass.ready = true; nan(pk.grass.cam);
 	pk.particles.clear(); pk.particles.depthTest = false;
 	pk.buildings = {}; pk.buildings.lightCount = -1; pk.buildings.shadowSig = ~0ull;

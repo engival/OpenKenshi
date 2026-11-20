@@ -9,6 +9,7 @@
 # DRI_PRIME for GL), leaving the desktop's card alone. Unset: the Intel Arc test card (8086:e223) when this
 # machine has it, so test runs stay off the user's playtest card (kenshi-k16.2.207); else the default device.
 # HEADLESS_GPU=default forces the default device. `headless.sh --gpu` prints the card a run would use (empty = default).
+# HEADLESS_REFRESH=N: gamescope -r N, the nested display's refresh in Hz (kenshi-k16.2.418.1: vsync pacing at a fixed refresh); unset = gamescope's default.
 # HEADLESS_TIMEOUT (seconds, default 600, 0 = no bound) bounds the run: on expiry gamescope and the client are killed
 # together and headless.sh exits 124 with a "TIMEOUT" line, so a hung run ends the call instead of the job (kenshi-k16.2.219).
 W=1280
@@ -68,7 +69,7 @@ RC=$(mktemp /tmp/headless-rc.XXXXXX) || exit 1
 {
 	# HEADLESS_TIMEOUT: timeout puts gamescope in a process group of its own, so its TERM (and the KILL after
 	# --kill-after, for a child that ignores it) reaches the client gamescope started too, not just gamescope.
-	timeout --kill-after=10 "$TIMEOUT" gamescope "${PREFER[@]}" --backend headless -W "$W" -H "$H" -w "$W" -h "$H" -- \
+	timeout --kill-after=10 "$TIMEOUT" gamescope "${PREFER[@]}" --backend headless -W "$W" -H "$H" -w "$W" -h "$H" ${HEADLESS_REFRESH:+-r "$HEADLESS_REFRESH"} -- \
 		stdbuf -oL sh -c '"$@"; echo $? > "$0"' "$RC" "$@" 2>&1 1>&3 3>&- \
 		| grep --line-buffered -v -E '\[gamescope\].*(Info|Warn)|gamescopereaper|pipewire|PipeWire|without libei|Failed to bind socket|xkbcomp|^> Warning: +Could not resolve keysym|failed to read Wayland events: Broken pipe|vkCreateDevice failed with a high-priority queue|^\s*$' >&2
 	RUN=${PIPESTATUS[0]}	# gamescope's, or timeout's 124 / 137; grep's status says nothing

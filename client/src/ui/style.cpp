@@ -282,6 +282,9 @@ namespace ui
 					case Look::kPanelThin:
 						framed(r, s, edge, hair, times(c(l == Look::kWindow ? "Window" : "Panel"), k), l == Look::kSpeedPanel ? 15 * s : 0);
 						return;
+					case Look::kMapFrame:	// the panel's frame, its body only a band inside the hairline (user 2026-11-20, kenshi-k16.2.436.1)
+						framed(r, s, edge, hair, times(c("Panel"), k));
+						return;
 					case Look::kHeader:	// the window's header bar: a box of its own, lighter in its upper half
 					{
 						framed(r, s, edge, hair, times(c("Header"), k));
@@ -535,6 +538,7 @@ namespace ui
 			{
 				if (l == Look::kToggle) { const float lw = std::round(16 * s); return { px.x + lw, px.y, px.w - 2 * lw, px.h }; }	// centred on the button, clear of the light
 				if (l == Look::kTabSide) { const float in = std::round(14 * s); return { px.x + in, px.y, px.w - 2 * in, px.h }; }	// clear of the bar
+				if (l == Look::kMapFrame) { return px.inset(rimEdge(s) + 2 * rimLine(s)); }	// the band as wide as the hairline
 				return px;
 			}
 
@@ -656,6 +660,7 @@ namespace ui
 
 			Rect textArea(Look l, const Rect& px, float s, State st, bool checked) const override
 			{
+				if (l == Look::kMapFrame) { return px.inset(std::round(5 * s)); }	// inside the skin's rusted rim
 				Rect a = px;
 				Color c;
 				if (const Skin* k = skin(l)) { k->text(px, s, st == State::kDisabled ? State::kNormal : st, checked, a, c); }
@@ -700,7 +705,7 @@ namespace ui
 			static const Skin* skin(Look l)
 			{
 				static const std::map<Look, const char*> kSkins = {
-					{ Look::kWindow, "Kenshi_GenericWindowSkin" }, { Look::kPanel, "Kenshi_FloatingPanelSkin" }, { Look::kHudPanel, "Kenshi_TimeMoneyPanelSkin" }, { Look::kSpeedPanel, "Kenshi_TimeMoneyPanelSkin" }, { Look::kBuildPanel, "Kenshi_BuildPanelSkin" }, { Look::kMessage, "Kenshi_MessageSkin" }, { Look::kNamePlate, "Kenshi_NamePanelSkin" },
+					{ Look::kWindow, "Kenshi_GenericWindowSkin" }, { Look::kPanel, "Kenshi_FloatingPanelSkin" }, { Look::kMapFrame, "Kenshi_FloatingPanelSkin" }, { Look::kHudPanel, "Kenshi_TimeMoneyPanelSkin" }, { Look::kSpeedPanel, "Kenshi_TimeMoneyPanelSkin" }, { Look::kBuildPanel, "Kenshi_BuildPanelSkin" }, { Look::kMessage, "Kenshi_MessageSkin" }, { Look::kNamePlate, "Kenshi_NamePanelSkin" },
 					{ Look::kStatsPanel, "Kenshi_StatsPanelSkin" }, { Look::kExtStatsPanel, "Kenshi_ExtendedStatsPanelSkin" }, { Look::kExtStatsButton, "Kenshi_ExtendedStatsButton" },
 					{ Look::kInset, "Kenshi_GenericTextBoxSkin" }, { Look::kMenu, "Kenshi_GenericTextBoxSkin" }, { Look::kField, "Kenshi_GenericTextBoxFlatSkin" }, { Look::kSlotBox, "Kenshi_GenericTextBoxFlatSkin" },
 					{ Look::kInput, "Kenshi_GenericInputBoxSkin" }, { Look::kButton, "Kenshi_Button1Skin" }, { Look::kTabTop, "Kenshi_Button1Skin" }, { Look::kTabSide, "Kenshi_Button1Skin" }, { Look::kToggle, "Kenshi_TickButton1Skin" },

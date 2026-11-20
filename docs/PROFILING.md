@@ -337,6 +337,44 @@ Read: the tick mean does not separate from the noise (+17%, +1%, +2%, -16%, 0%: 
 
 **One search per route (kenshi-k16.7.64; branch ds/route-one-search).** `planPath`: the probe corridor's pulled length is computed once (was twice when the clearance search ran), and its polys / clearance corridor / straight / cornerRefs / refs / corners buffers are `NavQuery::scratch_` members (were seven 16-48 KB allocations per route). `routeToStand` ranks the stand points by straight distance from the walker and stops at the first one longer than the best route found (a route is never shorter than the line): same winner, ties to the old order, far-side candidates never searched. NOT done: dropping the probe-then-clearance pair itself (the roundabout comparison keeps the shorter of the two, so removing it could move routes) and a before/after Heft run. `ksim_route_corners` (57 routes, quick, box shared so noisy): before 174 / 269 / 183 us per route, after 267 / 178 us (no measurable change at this size); p99 not measured. Quick suite 204/204 (2 skipped / disabled), no result moved.
 
+**Measured later (kenshi-k16.7.92; branch ds/route-measure; `heft_run.sh` with the binary chosen, cage_prisoner at Heft, 5x, 300 s wall, `KSIM_PROFILE` builds; base 78ca5d04^1 and after 78ca5d04 started together, load 11 at the start, 8 at the end of other workers' jobs, so the pair shares its noise).** New KSIM_PROFILE counters (`knav/route_measure.hpp`: routeFrom time histogram, bucket upper bounds so p99 is good to about 9%; planPath clearance counts and time) print one cumulative line to stderr every 2000 routes; both builds carry the histogram, only the after build the planPath counters. Counts are since server start (the 25 s world load included), 142,000 routes at the last line, about 106,000 ticks in each run, about 1.3 routes per tick (a rate near 440 routes/s of wall). The three runs below all reached the same counts, so the sim is repeatable here.
+| run | routeFrom mean | p50 | p99 |
+|---|---|---|---|
+| base (before 7.64) | 163.1 us | 46.3 us | 2097 us |
+| after 78ca5d04 | 155.9 us | 42.5 us | 2097 us |
+| after 78ca5d04, rerun | 148.7 us | 39.0 us | 1923 us |
+
+Mean 4-9% lower after, p99 inside the bucket width: a small gain at most, the pair is within the box noise. Clearance search counts on 78ca5d04, over the 142,000 routes: 48,505 (34%) ran the clearance A* because the probe corridor did not fit; **7,225 (5.1%) ran it because the probe fit but was roundabout**; of those the clearance corridor won (shorter) **671 (9.3%)**. Time: all clearance searches 7.24 s of 21.1 s routeFrom (34%), but the roundabout ones only **80 ms (0.38% of routeFrom, 11 us each)**: they are short routes (`direct < kRefineRange`). **A single search would save under 1% of routeFrom time**, far under 10%; the clearance time is the probe-does-not-fit case, which a single search cannot drop. Keep the pair.
+
+**Two more measurements (kenshi-k16.7.92 additions, 2026-11-19; branch ds/route-measure rebased on ksim c42c91ec).**
+
+*Warm world load across k16.7.67 (4fe17d5b^1 vs 4fe17d5b).* `ksim_native_cache` (Release, Hub 3 x 3 zones, 2854 tiles), the warm open, 4 runs of each, alternating, box load 6-12 (the cold open is in the same range on both, 5.5-7.0 s). Before: 2122 / 1940 / 2584 / 2500 ms, median 2311. After: 2559 / 2556 / 2385 / 4999 ms (the last a one-off outlier), median 2556, mean without the outlier 2500. **About +9-10% (about +0.2 s) on the median, under the 20% threshold**; peak RSS +8 MB (518 -> 526 MB). The runs overlap in range, so the box noise is of the same size as the gain: no cheaper key is proposed. If it grows later: the digest cached beside the entry.
+
+*walkOrder after k16.8.23 (c9a56232 vs 896e541d).* Same Heft run as above (`heft_run.sh`, 5x, 300 s, both servers together, load 7.5 -> 5.6, `KSIM_PROFILE` builds with a `WalkTimer` around combat's `walkOrder`, roomAhead probes included; the counters are on the ROUTEMEASURE line). walkOrder has no sub mark, so it is timed here directly. Ticks after the first 100: 29,871 / 29,875.
+| | tick mean | p50 | p99 | walkOrder calls | per call | share of all tick time |
+|---|---|---|---|---|---|---|
+| c9a56232 | 5728 us | 5090 us | 15672 us | 939,598 | 3.4 us | 1.9% |
+| 896e541d | 5936 us | 5215 us | 15814 us | 916,471 | 6.0 us | 3.1% |
+
+walkOrder costs 76% more per call but is 3.1% of the tick (1.2 points more); the tick mean moved +3.6%, p99 +0.9% (inside the noise of a shared box). **Far under the 10%-of-tick threshold: no route-vertex cache needed.** The share counts the walkOrder time since server start (world load included) against all tick rows, so it is slightly low.
+
 ### Route spikes after k16.7.62 and k16.6.248 (kenshi-k16.6.319)
 
 `KSIM_SLOWQ=1` (a KSIM_PROFILE build) makes `MeshNavigator::routeFrom` print one `SLOWQ` line per query over 5 ms (from, to, radius, planned, failure index, clearance nodes). Heft 5x, 600 s wall (`tools/heft_run.sh`, box load ~30): 57,236 ticks, mean 7.1 ms, p99 22.9 ms; 1,114 ticks over 20 ms, of which combat section 38, residents 110, tasks 6 (k16.6.262 left 30 combat ticks). 691 slow queries, 15.8 s in all: **Closed** (search ran out of reachable polygons, 29,135-29,213 nodes, plain search would succeed) 132 queries, 11.7 s, up to 281 ms; **OutOfNodes** at radius 22 (~2,400-4,400 nodes) 324, 2.4 s, 5-35 ms each; found routes 235, 1.6 s, max 17 ms. Closed planned=0 (combat): 24 queries, 4.9 s, the cage goals (67370,-70706 x14), 9 start spots. Closed planned=1 (residents, up to 281 ms): 108 queries, 6.8 s, 104 distinct goals: a poly-pair memo would not hit them; a clearance component id per radius class answers all 132 in O(1).
+
+## walkOrder re-plans by reason (kenshi-k16.8.39; branch ds/replan-measure2)
+
+Dev counters (`dev::WalkStats`, `KSIM_DEV`): with `KSIM_WALK_STATS=1` a `WALKSTATS` line goes to stderr at the arena's end and every 600 sim s. A window re-plan (off the route window for 5 s) is split: **lost** = the walker was within `kOffPathReach` footprints of the WHOLE route (the window lost its place: routeNext ahead of or behind the walker), **real** = beyond that reach. Measured on ksim c42c91ec, Release, no behaviour change.
+
+| run | walker-min | re-plans (/min) | window (lost / real) | stuck | blocked | abandoned | arrivals | arrival gap over 1.0 u |
+|---|---|---|---|---|---|---|---|---|
+| ksim_route_corners | 0 (plans only, never walks) | 0 | 0 | 0 | 0 | 0 | 0 | n/a |
+| ksim_move_detour (16 short arenas) | ~0.4 | 0 | 0 | 0 | 0 | 0 | 16 | 0 (max 0.04) |
+| ksim_path_offroute | 0.31 | 1 (3.2) | 1 (0 / 1) | 0 | 0 | 0 | 2 | 0 |
+| ksim_town_soak | no walkOrder ticks, no output | | | | | | | |
+| Heft, heft_run.sh 200 s wall at 5x | 256.5 | 36 (0.14) | 31 (0 / 31) | 0 | 5 | 0 | 1260 | 0 (max 1.00) |
+
+- **Tracker drift is 0 % of re-plans** (0 of 32 window re-plans lost its place; 0 ahead, 0 behind). Every window re-plan had the walker more than 3 footprints from the whole route (pushed or displaced; path_offroute holds the walker off on purpose). Well under the 20 % bar: no corridor redesign or tracker fix is indicated by this data.
+- Window re-plans are 86 % of the Heft total (31 of 36); the rest are 5 blocked (edge block aimed at the waypoint). No stuck re-plans, none failed, none abandoned.
+- **Goal slack:** 1260 arrivals at Heft ended on average 0.13 u from the route's last point, max 1.00 (never over 1.0), so arrival fires. 3 walks ended by the stuck rule instead (held within 2 footprints, a crowd at the end): gap mean 2.75 u, max 4.75 u. The counters see the route's last point, not the order's goal, so the planner's up-to-1.5 u goal-to-last-point slack is not measured here.
+- Caveat: Heft is one scenario and 200 s; the tests are tiny. Rerun with `KSIM_WALK_STATS=1` on a longer Heft or soak for more walker-minutes.

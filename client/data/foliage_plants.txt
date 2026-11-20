@@ -1,0 +1,103 @@
+# The plant predicate's exceptions (kenshi-k16.2.420.6.1). The rule (client/src/world/plants.cpp) reads the FCS
+# record: a `leaves mesh` canopy, or the FOLIAGE material (material type / texture mode 4) with no `collision`
+# mesh, is a plant. The shipped data has no plant flag and the measured texture fields do not separate plants
+# from props (the diffuse alpha is a gloss mask; the FOLIAGE alpha test cuts on the normal map's alpha), so the
+# records the rule gets wrong are data, listed here. One line: <FCS string id> <0|1> <reason>.
+# 1 = a plant: render.leaf_sway bends it. 0 = static: rocks, props and dead trees never bend.
+# Read once at startup (host/session.cpp); `dump foliage` prints "sway 1|0 src data \"<reason>\"" for these.
+
+# --- plants the material rule misses (green things, no collision or solid geometry with a collision mesh) ---
+5814-Newwworld.mod 1 bark trunk tree: material type 1, no collision, no leaves mesh
+5816-Newwworld.mod 1 bark trunk tree: material type 1, no collision, no leaves mesh
+2739-Newwworld.mod 1 bean tree: material type 0, no collision, no leaves mesh
+1474-vurt.mod 1 cactus: material type 0, no collision, no leaves mesh
+1475-vurt.mod 1 cactus: material type 0, no collision, no leaves mesh
+5544-Newwworld.mod 1 cactus: material type 0, no collision, no leaves mesh
+5545-Newwworld.mod 1 cactus: material type 0, collision mesh, no leaves mesh
+5546-Newwworld.mod 1 cactus: material type 0, collision mesh, no leaves mesh
+5548-Newwworld.mod 1 cactus: material type 0, collision mesh, no leaves mesh
+5549-Newwworld.mod 1 cactus: material type 0, no collision, no leaves mesh
+5550-Newwworld.mod 1 cactus: material type 0, no collision, no leaves mesh
+5597-Newwworld.mod 1 cactus: material type 0, no collision, no leaves mesh
+5841-Newwworld.mod 1 cactus: material type 0, no collision, no leaves mesh
+5843-Newwworld.mod 1 cactus: material type 0, no collision, no leaves mesh
+5844-Newwworld.mod 1 cactus: material type 0, no collision, no leaves mesh
+47237-Newwworld.mod 1 cactus tree: material type 0, no collision, no leaves mesh
+47239-Newwworld.mod 1 cactus tree: material type 0, no collision, no leaves mesh
+47240-Newwworld.mod 1 cactus tree: material type 0, no collision, no leaves mesh
+5628-Newwworld.mod 1 cliff roots: material type 1, no collision, no leaves mesh
+5542-Newwworld.mod 1 clover plant: material type 0, no collision, no leaves mesh
+3208-Newwworld.mod 1 fan palm: material type 0, no collision, no leaves mesh
+3209-Newwworld.mod 1 fan palm: material type 0, no collision, no leaves mesh
+3210-Newwworld.mod 1 fan palm: material type 0, no collision, no leaves mesh
+3211-Newwworld.mod 1 fan palm: material type 0, no collision, no leaves mesh
+3212-Newwworld.mod 1 fan palm: material type 0, no collision, no leaves mesh
+3213-Newwworld.mod 1 fan palm: material type 0, no collision, no leaves mesh
+5602-Newwworld.mod 1 fern: material type 4, collision mesh, no leaves mesh
+57325-Newwworld.mod 1 glow plant: material type 0, no collision, no leaves mesh
+49571-Newwworld.mod 1 grass clump: material type 0, no collision, no leaves mesh
+51403-Newwworld.mod 1 grass clump: material type 0, no collision, no leaves mesh
+55235-Newwworld.mod 1 grass clump: material type 1, collision mesh, no leaves mesh
+55237-Newwworld.mod 1 grass clump: material type 1, collision mesh, no leaves mesh
+55238-Newwworld.mod 1 grass clump: material type 1, collision mesh, no leaves mesh
+55239-Newwworld.mod 1 grass clump: material type 1, collision mesh, no leaves mesh
+55240-Newwworld.mod 1 grass clump: material type 1, collision mesh, no leaves mesh
+55241-Newwworld.mod 1 grass clump: material type 1, collision mesh, no leaves mesh
+55242-Newwworld.mod 1 grass clump: material type 1, collision mesh, no leaves mesh
+55243-Newwworld.mod 1 grass clump: material type 1, collision mesh, no leaves mesh
+55244-Newwworld.mod 1 grass clump: material type 1, no collision, no leaves mesh
+55245-Newwworld.mod 1 grass clump: material type 1, collision mesh, no leaves mesh
+55246-Newwworld.mod 1 grass clump: material type 1, collision mesh, no leaves mesh
+5811-Newwworld.mod 1 grass clump: material type 0, no collision, no leaves mesh
+51387-Newwworld.mod 1 jungle plant: material type 0, no collision, no leaves mesh
+47180-Newwworld.mod 1 land trumpet: material type 0, no collision, no leaves mesh
+47181-Newwworld.mod 1 land trumpet: material type 0, no collision, no leaves mesh
+51417-Newwworld.mod 1 leaf plant: material type 0, no collision, no leaves mesh
+5522-Newwworld.mod 1 lichen: material type 0, no collision, no leaves mesh
+2733-Newwworld.mod 1 lily plant: material type 0, no collision, no leaves mesh
+2735-Newwworld.mod 1 lily plant: material type 0, no collision, no leaves mesh
+2736-Newwworld.mod 1 lily plant: material type 0, no collision, no leaves mesh
+2737-Newwworld.mod 1 lily plant: material type 0, no collision, no leaves mesh
+51399-Newwworld.mod 1 palm: material type 0, no collision, no leaves mesh
+5632-Newwworld.mod 1 palm: material type 0, no collision, no leaves mesh
+3446-D-Newwworld.mod 1 plant ball: material type 0, no collision, no leaves mesh
+52156-Newwworld.mod 1 rod tree: material type 0, no collision, no leaves mesh
+52158-Newwworld.mod 1 rod tree: material type 0, no collision, no leaves mesh
+52159-Newwworld.mod 1 rod tree: material type 0, no collision, no leaves mesh
+3118-Newwworld.mod 1 shoot cluster: material type 0, no collision, no leaves mesh
+3119-Newwworld.mod 1 shoot cluster: material type 0, no collision, no leaves mesh
+3120-Newwworld.mod 1 shoot cluster: material type 0, no collision, no leaves mesh
+3121-Newwworld.mod 1 shoot cluster: material type 0, no collision, no leaves mesh
+3122-Newwworld.mod 1 shoot cluster: material type 0, no collision, no leaves mesh
+3123-Newwworld.mod 1 shoot cluster: material type 0, no collision, no leaves mesh
+3124-Newwworld.mod 1 shoot cluster: material type 0, no collision, no leaves mesh
+3125-Newwworld.mod 1 shoot cluster: material type 0, no collision, no leaves mesh
+48709-Newwworld.mod 1 sponge plant: material type 0, no collision, no leaves mesh
+3117-Newwworld.mod 1 succulent: material type 0, no collision, no leaves mesh
+2968-Newwworld.mod 1 swamp plant: material type 0, no collision, no leaves mesh
+2969-Newwworld.mod 1 swamp plant: material type 0, no collision, no leaves mesh
+2970-Newwworld.mod 1 swamp plant: material type 0, no collision, no leaves mesh
+2972-Newwworld.mod 1 swamp plant: material type 0, no collision, no leaves mesh
+3425-Newwworld.mod 1 swamp twig plant: material type 2, collision mesh, no leaves mesh
+46970-Newwworld.mod 1 thorny plant: material type 0, no collision, no leaves mesh
+5574-Newwworld.mod 1 thorny plant: material type 0, no collision, no leaves mesh
+4502-Newwworld.mod 1 tree: material type 5, collision mesh, no leaves mesh
+51021-Newwworld.mod 1 tree: material type 5, no collision, no leaves mesh
+53191-Newwworld.mod 1 tree: material type 0, no collision, no leaves mesh
+55111-Newwworld.mod 1 tree: material type 0, no collision, no leaves mesh
+55112-Newwworld.mod 1 tree: material type 0, no collision, no leaves mesh
+55113-Newwworld.mod 1 tree: material type 0, no collision, no leaves mesh
+5563-Newwworld.mod 1 tree: material type 2, no collision, no leaves mesh
+5790-Newwworld.mod 1 tree: material type 0, collision mesh, no leaves mesh
+50643-Newwworld.mod 1 urchin plant: material type 0, no collision, no leaves mesh
+2963-Newwworld.mod 1 yucca: material type 0, no collision, no leaves mesh
+
+# --- props the material rule marks as plants, and the dead trees (static) ---
+14554-Newwworld.mod 0 cables, not a plant: material type 4 and no collision (the same fields a type-4 plant has)
+14559-Newwworld.mod 0 building ruins, not a plant: material type 4 and no collision
+1466-vurt.mod 0 dead tree: static, rigid is fine (the lead's call)
+1467-vurt.mod 0 dead tree: static, rigid is fine (the lead's call)
+2257-vurt.mod 0 a 2D card of rocks and plant: the rocks in it must not bend
+2980-Newwworld.mod 0 dead pine: static, rigid is fine (the lead's call)
+3374-Newwworld.mod 0 dead pine: static, rigid is fine (the lead's call)
+3382-Newwworld.mod 0 dead pine: static, rigid is fine (the lead's call)

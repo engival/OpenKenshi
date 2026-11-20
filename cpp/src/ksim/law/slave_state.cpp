@@ -126,6 +126,24 @@ std::uint64_t Simulation::slaveCaptor(std::uint64_t id) const
 	return track != slaveTrack_.end() ? track->second.captor : 0;
 }
 
+// Where a character that is not in the arena stands: its own Position, else its token squad's (a demoted member keeps its entity and MemberOf).
+std::optional<state::GroundPoint> Simulation::storedCharacterPoint(std::uint64_t id) const
+{
+	std::optional<state::GroundPoint> found;
+	world_.ecs().each([&](flecs::entity entity, const state::Id& key, const state::CharacterInstance&)
+	{
+		if (key.value != id || !entity.is_alive())
+			return;
+		const flecs::entity squad = entity.target<state::MemberOf>();
+		const state::Position* at = entity.get<state::Position>();
+		if (at == nullptr && squad.is_valid())
+			at = squad.get<state::Position>();
+		if (at != nullptr)
+			found = state::GroundPoint{at->x, at->z};
+	});
+	return found;
+}
+
 void Simulation::stepSlaveState()
 {
 	if (combat_ == nullptr)
@@ -190,6 +208,19 @@ void Simulation::stepSlaveState()
 		}
 		if (f->unconscious || f->down)
 			continue; // incapacitated: the per-frame test does not run
+		// No arena fighter for the captor: everything below runs once a second (the lookup walks the world).
+		if (now % kSquadIntervalTicks != 0)
+			continue;
+		// An out-of-detail captor (its squad a token: the area followed the slave away) is still the captor, at its squad token: the same
+		// leash applies from there, and it is not gone.
+		if (hand == nullptr)
+			if (const std::optional<state::GroundPoint> stored = storedCharacterPoint(track.captor))
+			{
+				track.goneSince = 0;
+				if (std::hypot(f->x - stored->x, f->z - stored->z) > kEscapeDistance)
+					setSlaveState(id, 2);
+				continue;
+			}
 		// The captor is gone (AI::syncCharacterState): a still-valid character of its squad takes the slave over, else 45 s and it escapes.
 		std::uint64_t heir = 0;
 		if (track.captorSquad != 0)

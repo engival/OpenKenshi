@@ -3,7 +3,8 @@
 #include <string>
 #include <vector>
 
-// Unified client options (docs/CLIENT.md "Options"): one file, $XDG_CONFIG_HOME/kclient/kclient.cfg (default ~/.config), "key=value" lines with dotted
+// Unified client options (docs/CLIENT.md "Options"): one file under the per-user config root (app/userdirs.hpp: $XDG_CONFIG_HOME/kclient/kclient.cfg,
+// default ~/.config; Windows %APPDATA%\OpenKenshi\kclient\kclient.cfg), "key=value" lines with dotted
 // keys by owner (`audio.music`, `ui.scale`, `mod.nicemap`). Every option is declared once, next to the code that uses it, as a static cfg::Bool / Int /
 // Float / Text with its default, range and help line; the registry is the list a future options screen shows. Saving rewrites the values in place,
 // drops a setting whose value equals its static compiled-in default (so it follows a future default change) and keeps comments, blank lines and

@@ -8,6 +8,7 @@
 #include "ksim/nav/navigator.hpp"
 #include "ksim/core/simulation.hpp"
 
+#include "knav/walk.hpp"
 #include "kworld/coords.hpp"
 #include "nav_source.hpp"
 
@@ -161,6 +162,7 @@ int main(int argc, char** argv)
 		// ---- a faster chaser (CODE-DERIVED in the original, rwh108 section 8: not captured live; this is our pin) ----
 		{
 			Rig rig(gd, data, argv[1], 30.0, 90.0, -8.0, 250.0);
+			rig.me(rig.chaser).yaw = kPi; // it stands facing the runner coming: the chase slews the velocity (k16.8.24), a body turned away would first turn round
 			rig.start();
 			const std::uint64_t t0 = rig.sim.clockTick();
 			double swingAt = -1.0;
@@ -214,6 +216,34 @@ int main(int argc, char** argv)
 			}
 			std::printf("lead gate: after the runner stopped, hold %.2f s\n", hold());
 			test::require(hold() < 1.5, "a target that stops closes the lead gate");
+		}
+
+		// ---- the chase turns by the walker's slew (k16.8.24): the velocity changes by at most the race's pathfind acceleration a tick ----
+		{
+			Rig rig(gd, data, argv[1], 90.0, 30.0, -150.0, 0.0);
+			const double accel = data->race(rig.me(rig.chaser).raceSid)->pathfindAcceleration * knav::kAccelerationScale;
+			rig.start();
+			double worst = 0.0;
+			double lastSpeed = 0.0;
+			int samples = 0;
+			bool routed = false; // the previous tick was a routed chase too (the direct steer and the footwork are other movers)
+			for (int i = 0; i < 20 * 8; ++i)
+			{
+				rig.drive(i < 20 * 3 ? 0.0 : kPi * 0.5); // the runner turns a right angle after 3 s: the chaser has to turn with it
+				rig.me(rig.runner).target = 0;
+				rig.sim.run(1);
+				const state::Fighter& c = rig.me(rig.chaser);
+				if (i > 20 && routed && c.routeChase && std::fabs(c.forwardSpeed) > 1.0)
+				{
+					worst = std::max(worst, std::fabs(c.forwardSpeed - lastSpeed) * 20.0); // the speed along the facing: the position follows the route's points, so the displacement's own direction turns at the corners
+					++samples;
+				}
+				lastSpeed = c.forwardSpeed;
+				routed = c.routeChase;
+			}
+			std::printf("chase slew: worst speed change %.1f u/s^2 over %d ticks, pathfind acceleration %.1f\n", worst, samples, accel);
+			test::require(samples >= 5, "the chaser ran for the samples");
+			test::require(worst <= accel * 1.2, "the chase's speed changes by no more than the pathfind acceleration");
 		}
 		return 0;
 	}

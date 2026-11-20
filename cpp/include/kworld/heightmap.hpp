@@ -3,6 +3,8 @@
 // data/newland/land/fullmap.tif reader (docs/formats/TERRAIN_FORMAT.md).
 // The 16-bit samples are memory-mapped; only touched pages are read.
 
+#include "kutil/platform/mapped_file.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -47,8 +49,7 @@ private:
 	Heightmap() = default;
 
 	std::string path_;
-	void* mapping_ = nullptr;
-	std::size_t mappingSize_ = 0;
+	kutil::MappedFile file_;
 	const std::uint8_t* pixels_ = nullptr;
 	std::size_t pixelOffset_ = 0;
 	int width_ = 0;

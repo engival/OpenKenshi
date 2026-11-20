@@ -11,6 +11,8 @@
 #include <mutex>
 #include <set>
 
+#include "app/userdirs.hpp"
+
 namespace fs = std::filesystem;
 
 namespace cfg
@@ -304,9 +306,7 @@ namespace cfg
 	{
 		const char* c = getenv("KCLIENT_CONFIG");
 		if (c && *c && std::string(c) != "none") { return c; }
-		const char* xdg = getenv("XDG_CONFIG_HOME");
-		const char* home = getenv("HOME");
-		return (xdg && *xdg ? std::string(xdg) : std::string(home ? home : ".") + "/.config") + "/kclient/kclient.cfg";
+		return plat::userConfigDir() + "/kclient/kclient.cfg";	// app/userdirs.hpp: XDG / macOS / %APPDATA%\OpenKenshi (kenshi-379.31.3)
 	}
 
 	void retire(const char* key, const char* message)
@@ -423,7 +423,7 @@ namespace cfg
 			{ "combat", "Game" }, { "squad", "Game" }, { "xp", "Game" }, { "ai", "Game" }, { "sim", "Game" }, { "session", "Game" }, { "orders", "Game" },
 			{ "audio", "Audio" }, { "drive", "Game" },
 			{ "mod", "Mods" },
-			{ "debug", "Debug" }, { "demo", "Debug" }, { "client", "Debug" },
+			{ "debug", "Debug" }, { "demo", "Debug" }, { "client", "Game" },
 		};
 		const auto it = m.find(key.substr(0, key.find('.')));
 		return it == m.end() ? "" : it->second;

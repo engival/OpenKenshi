@@ -208,10 +208,18 @@ void HullTree::buildNode(std::uint32_t node, std::uint32_t begin, std::uint32_t 
 	buildNode(left + 1, mid, end);
 }
 
+HullTree::Work& HullTree::work() noexcept
+{
+	static thread_local Work counted;
+	return counted;
+}
+
 void HullTree::traceNode(std::uint32_t node, const std::array<double, 3>& o,
 	const std::array<double, 3>& d, double& best) const
 {
 	const Node& n = nodes_[node];
+	Work& counted = work();
+	++counted.nodes;
 	const double entry = segmentBox(n.min, n.max, o, d);
 	if (entry > best || std::isnan(entry))
 		return;
@@ -221,6 +229,7 @@ void HullTree::traceNode(std::uint32_t node, const std::array<double, 3>& o,
 		traceNode(n.first + 1, o, d, best);
 		return;
 	}
+	counted.triangles += n.count;
 	for (std::uint32_t i = n.first; i < n.first + n.count; ++i)
 	{
 		const float* t = &tris_[static_cast<std::size_t>(order_[i]) * 9];

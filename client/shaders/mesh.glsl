@@ -58,7 +58,8 @@ layout(binding=0) uniform inst_vs_params
 	vec4 aim;       // a wind-aimed part or one nested in it: xyz = the pivot (mesh space), w = 1 (0: not aimed)
 	vec4 wind;      // a wind-aimed part's turn: xy = the world wind direction (toward) x, z it turns from, zw = the one it turns to
 	vec4 turn;      // x = game seconds since the turn began, y = the turn rate, rad/s (`rotation speed max`; 0: the turn takes one second)
-	vec4 limb;      // x = 1: a ground severed limb, so the cylindrical blood UVs of severed_limb_vs; 0 every other part
+	vec4 limb;      // x = 1: a ground severed limb, so the cylindrical blood UVs of severed_limb_vs; 0 every other part; y = 1: a tree's leaves mesh (frond motion)
+	vec4 sway;      // render.leaf_sway (tile.z > 0): x = the live wind strength (0 still), yz = its unit direction x, z, w = the integrated sway clock
 };
 
 in vec3 position;
@@ -82,7 +83,7 @@ out vec3 v_lpos;    // object-space position (scaled)
 out vec3 v_lnormal; // object-space normal
 out vec3 v_cpos;    // position relative to the camera (shadow lookup)
 out float v_row;    // biome table row, constant per instance
-out vec3 v_build;   // construction: x = progress 0..1 (< 0: complete), y = building-local height / building height H, z = H
+out vec3 v_build;   // construction: x = progress 0..1 (< 0: complete), y = building-local height / building height H, z = H; complete (x < 0): y = the building-local height itself (before the scale, the part's offset in), the foundation test of xray_fnd
 out float v_glass;  // the opacity of a peeked part (renderGlass), else 1
 out vec4 v_blood;   // a severed limb: the blood map's cylindrical UVs (severed_limb_vs: x = mesh x * 0.3, zw = the wrapped angle, w = mesh normal z)
 flat out vec2 v_oxz;	// the instance origin's world xz (the dust coat's biome)
@@ -129,15 +130,25 @@ void main()
 	}
 	vec3 local = (spin_rot(position) + yaw_rot(offset.xyz - pv) + pv) * inst_stretch.xyz;
 	vec3 p = inst_pos.xyz + base.xyz + qrot(inst_quat, local * inst_pos.w);
-	// The leaves of a tree sway (buildings.cpp / foliage.cpp set tile.z to the leaves mesh's top): the same wind as the shrubs (grass.glsl,
-	// the same ANIM time and direction), weighted by the vertex's height on the leaves mesh so the canopy moves and the trunk does not. This
-	// is a deliberate deviation: the original's leaves do not move (kinspect foliage_wind.md: a StaticObject clone, no shader reads wind).
-	if (tile.z > 0.0)
+	// render.leaf_sway (a deliberate deviation: the original's trees do not move). tile.z = the tree's height, the tallest mesh of its record, so the
+	// trunk and the leaves mesh take the same bend and stay joined. Every amplitude is the live wind strength (sway.x, 0 = still).
+	// 1 the main bend from the ground along the wind (height^2); 2 the fronds: the leaves mesh's vertices away from the trunk axis swing more;
+	// 3 a small fast flutter weighted like 2. kinspect: no authored per-vertex weights are used, the radial distance stands in.
+	if (tile.z > 0.0 && sway.x > 0.0)
 	{
-		vec2 wp = (p + camw.xyz).xz;
-		float sway = sin(camw.w * 1.9 + dot(wp, vec2(0.021, 0.013))) * 0.7 + sin(camw.w * 0.7 + wp.x * 0.004) * 0.3;
-		float h = clamp(local.y / tile.z, 0.0, 1.0);
-		p.xz += vec2(0.8, 0.6) * (tile.z * 0.05 * sway * h * h);   // 5% of the leaves height at the top
+		float H = tile.z;
+		vec2 wp = (inst_pos.xyz + base.xyz + camw.xyz).xz;	// the tree's own phase offset: neighbours do not move in step
+		float ph = sway.w * 1.9 + dot(wp, vec2(0.021, 0.013));
+		float gust = sin(ph) * 0.7 + sin(sway.w * 0.7 + wp.x * 0.004) * 0.3;
+		float hh = clamp(local.y / H, 0.0, 1.0);
+		vec2 off = sway.yz * (H * 0.05 * sway.x * (0.6 + 0.4 * gust) * hh * hh);
+		if (limb.y > 0.5)
+		{
+			float rw = clamp(length(local.xz) / (0.25 * H), 0.0, 1.0) * hh;	// frond weight: 0 at the trunk axis
+			off += sway.yz * (H * 0.02 * sway.x * sin(ph * 1.7 + local.y * 0.15) * rw);
+			off += vec2(sin(sway.w * 7.3 + local.x * 0.9), cos(sway.w * 6.1 + local.z * 0.9)) * (H * 0.004 * sway.x * rw);
+		}
+		p.xz += off * inst_pos.w;
 	}
 	vec3 ln = spin_rot(normal) / inst_stretch.xyz;
 	v_normal = qrot(inst_quat, ln);
@@ -154,8 +165,12 @@ void main()
 	v_row = max(inst_stretch.w, 0.0);
 	float h = floor(-inst_stretch.w);
 	// a glass part (worldbuildings.cpp kGlassBuild): complete
-	v_glass = inst_stretch.w <= -200000.0 ? clamp((-inst_stretch.w - 200000.0) / 1000.0, 0.0, 1.0) : 1.0;
-	v_build = inst_stretch.w <= -200000.0 ? vec3(-1.0, 0.0, 1.0) : inst_stretch.w < 0.0 ? vec3(-inst_stretch.w - h, local.y / h, h) : vec3(-1.0, 0.0, 1.0);
+	// a ghosted occluder's solid zone (wbdraw.cpp kGlassFndBuild / kFndOnlyBuild): -(210000 + opacity x 1000) its glass without the zone (v_build.z = 4),
+	// -220000 the zone alone, opaque (v_build.z = 3); the fragment shader splits them by the height under xray_fnd
+	float gw = -inst_stretch.w;
+	float gbase = gw >= 210000.0 ? 210000.0 : 200000.0;
+	v_glass = gw >= 220000.0 ? 1.0 : gw >= 200000.0 ? clamp((gw - gbase) / 1000.0, 0.0, 1.0) : 1.0;
+	v_build = gw >= 200000.0 ? vec3(-1.0, local.y, gw >= 220000.0 ? 3.0 : gw >= 210000.0 ? 4.0 : 2.0) : inst_stretch.w < 0.0 ? vec3(-inst_stretch.w - h, local.y / h, h) : vec3(-1.0, local.y, 1.0);
 	v_vcol = colour.rgb;
 	v_oxz = (inst_pos.xyz + base.xyz + camw.xyz).xz;
 	// a severed limb: severed_limb_vs (character.hlsl) maps the blood like a cylinder round the mesh's x axis, in the mesh (bind) frame
@@ -211,6 +226,9 @@ layout(binding=1) uniform inst_fs_params
 	vec4 tri;       // xy = tile X/Y, z = 1: map in object space instead of world space, w = world units per texture repeat at tile 1
 	vec4 fade;      // x = camera distance where the fade-out starts, y = where it ends (y = 0: no fade); z = how: 0 dithered, 1 the opaque pass (the band left out), 2 the band pass (blended)
 	vec4 xray;      // the occluder fade: xyz = the focus character relative to the camera, w = the cone's widest radius (0: off)
+	vec4 xray_ex0;  // the cone's exemption box (the building the camera is in / cut open): xyz = centre relative to the camera, w = 1 on
+	vec4 xray_ex1;  // xyz = half extents, w = the yaw (rad)
+	vec4 xray_fnd;  // x = the part's solid top, building-local height before scale: the foundation and the ground floor's slab (WorldBuildings::infoFor, interior bottom + kFloorTop); the fragments under it never fade (cone and glass); -1e30: none
 	vec4 skin;      // a severed limb: skinTone rgb (SeveredLimbItem custom 2 = 1 - the victim's Skin Tone, from the wire)
 	vec4 blood;     // a severed limb: bloodColour rgb (custom 3 = the race's `blood colour` 0..1, from the wire)
 	vec4 misc2;     // x = 1: an interior material (the exe's INTERIOR flag, objects.hlsl:213): the dust coat takes dustAmount.y = surf.w
@@ -275,13 +293,34 @@ void main()
 	if (fade.z == 0.0 ? ign(gl_FragCoord.xy) < fadeT : fade.z == 1.0 ? fadeT > 0.0 : fadeT <= 0.0 || fadeT >= 1.0) { discard; }
 	// the occluder fade (docs/CLIENT.md "Camera modes"; ours): a dithered see-through cone from the focus character to the camera, narrow at the character so
 	// the floor around it stays (the slope stays under the camera's pitch), nothing behind it
-	if (xray.w > 0.0)
+	bool xex = false;
+	if (xray.w > 0.0 && xray_ex0.w > 0.0)
+	{
+		vec3 e = v_cpos - xray_ex0.xyz;
+		float cy = cos(xray_ex1.w), sy = sin(xray_ex1.w);
+		xex = abs(cy * e.x - sy * e.z) <= xray_ex1.x && abs(e.y) <= xray_ex1.y && abs(sy * e.x + cy * e.z) <= xray_ex1.z;
+	}
+	// a building's foundation never fades (kenshi-k16.2.411.1, user 2026-11-19): the part's fragments under the ground floor skip the cone, and a ghosted
+	// occluder's glass draws them opaque; the base mesh holds foundation and ground walls in one, so this is per fragment, not per part
+	bool fnd = v_build.x < 0.0 && v_build.y < xray_fnd.x;
+	if (v_build.x < 0.0 && ((v_build.z > 2.5 && v_build.z < 3.5 && !fnd) || (v_build.z > 3.5 && fnd))) { discard; }	// the ghosted occluder's two draws: the solid zone opaque, the rest glass
+	if (xray.w > 0.0 && !xex && !fnd)
 	{
 		float t = dot(v_cpos, xray.xyz) / dot(xray.xyz, xray.xyz);
 		float back = (1.0 - t) * length(xray.xyz);	// distance from the character towards the camera
 		float r = min(xray.w, 0.35 * back);
 		float d = length(v_cpos - xray.xyz * t);
 		if (t < 1.0 && back > 8.0 && ign(gl_FragCoord.xy) < 0.85 * (1.0 - smoothstep(0.7 * r, r, d))) { discard; }
+	}
+	// the building loading stand-in (kenshi-k16.2.258.4, wbdraw.cpp; misc2.y): 1 = flat black, unlit, no texture, no fog (the character silhouette, char_standin_fs);
+	// the glass coding of the instance's stretch w carries the switch's cover in v_glass (the real look's share, 0..1): the black dithers away where
+	// ign < cover, 2 = the real look dithers in where ign < cover, so the two draws of one instance partition the pixels. 0 = neither (an ordinary draw).
+	if (misc2.y > 0.5)
+	{
+		bool real = misc2.y > 1.5;
+		float t = ign(gl_FragCoord.xy);
+		if (real ? t >= v_glass : t < v_glass) { discard; }
+		if (!real) { frag_color = vec4(0.0, 0.0, 0.0, 1.0); return; }
 	}
 	// construction (docs/CLIENT.md "Construction"; ours, not the game's scaffold lattice): above the cut at progress x H a dithered ghost (a third of the pixels)
 	// two-sided: the normal faces the viewer. gl_FrontFacing is not usable for this: the decoded meshes' winding is mirrored, so the outside of a roof reads as a back face
@@ -431,7 +470,7 @@ void main()
 	float sh = shadow_visibility(v_cpos, n);
 	vec4 ao = light_ao(v_cpos);
 	vec3 bounce;	// render.sun_bounce: the sun's indirect light along the normal
-	const vec2 vol = light_vol(v_cpos, ln, bounce);	// interior light: the factor on the ambient (diffuse along the normal, specular the mean)
+	const vec2 vol = light_vol(v_cpos, ln, ng, bounce);	// interior light: the factor on the ambient (diffuse along the normal, specular the mean); ng pushes the lookup off the surface
 	const float ao_spec = ao.a * vol.y;
 	const float ao_bounce = ao.a;
 	ao.a *= vol.x;

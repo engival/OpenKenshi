@@ -7,6 +7,7 @@
 #include "ksim/world/squad_alive.hpp"
 #include "ksim/world/buildings.hpp"
 #include "ksim/ai/gatebind.hpp"
+#include "ksim/ai/perception.hpp"
 #include "ksim/economy/inventory_grid.hpp"
 #include "ksim/nav/los.hpp"
 
@@ -184,6 +185,13 @@ Command Command::fighterMoveTo(state::Id subject, std::vector<state::GroundPoint
 	command.heights = std::move(heights);
 	command.object = clientSeq;
 	command.value = (queue ? 1 : 0) | (approach ? 2 : 0); // bit 0 queue, bit 1 approach point
+	return command;
+}
+
+Command Command::fighterMoveFar(state::Id subject, double goalX, double goalZ, double goalY, std::uint32_t clientSeq, bool queue)
+{
+	Command command = fighterMoveTo(subject, {{goalX, goalZ}}, {goalY}, clientSeq, queue, false);
+	command.value |= 4; // bit 2 far: the one point is the true goal, the route is planned when the order applies
 	return command;
 }
 
@@ -1158,9 +1166,15 @@ Simulation::ArenaMirror::ArenaMirror(const Simulation& simulation) : sim(simulat
 	held.reserve(members.size());
 	for (std::size_t i = 0; i < members.size(); ++i)
 	{
-		state::Fighter* copy = ecs.entity(sim.combatEntities_[i]).get_mut<state::Fighter>(); // no OnSet: nothing observes this
-		held.push_back(std::move(*copy));
+		// A listed entity can be dead or Fighter-less until dropGoneFighters runs: skip it, the slot stays so held[i] keeps its index.
+		const flecs::entity entity = ecs.entity(sim.combatEntities_[i]);
+		state::Fighter* copy = entity.is_alive() ? entity.get_mut<state::Fighter>() : nullptr; // no OnSet: nothing observes this
+		held.emplace_back();
+		if (copy == nullptr)
+			continue;
+		held.back() = std::move(*copy);
 		*copy = members[i].fighter;
+		copy->pathSamples = sim.combat_->pathSamplesOf(members[i].id);
 	}
 }
 
@@ -1170,7 +1184,11 @@ Simulation::ArenaMirror::~ArenaMirror()
 		return;
 	flecs::world& ecs = const_cast<flecs::world&>(sim.world_.ecs());
 	for (std::size_t i = 0; i < held.size(); ++i)
-		*ecs.entity(sim.combatEntities_[i]).get_mut<state::Fighter>() = std::move(held[i]);
+	{
+		const flecs::entity entity = ecs.entity(sim.combatEntities_[i]);
+		if (state::Fighter* copy = entity.is_alive() ? entity.get_mut<state::Fighter>() : nullptr)
+			*copy = std::move(held[i]);
+	}
 }
 
 void Simulation::save(std::ostream& out) const
@@ -1303,8 +1321,6 @@ void Simulation::tick()
 	KSIM_PROFILE_SUB(WorldTasks);
 	stepTorture();
 	KSIM_PROFILE_SUB(Torture);
-	stepGateCrews();
-	KSIM_PROFILE_SUB(GateCrews);
 	KSIM_PROFILE_MARK(Tasks);
 	stepPlayerAreas();
 	syncNavCoverage(); // before stepResidents builds anyone on the new areas
@@ -1326,6 +1342,7 @@ void Simulation::tick()
 	stepIndividualGoals();
 	stepProspect();
 	stepOrderQueues();
+	stepFarOrders();
 	stepJobs();
 	KSIM_PROFILE_MARK(Goals);
 	stepTraders();
@@ -1557,14 +1574,26 @@ void Simulation::adoptFighter(flecs::entity entity, state::Fighter fighter)
 			if (!piece.sid.empty())
 				inventory.add(piece.sid, 1, static_cast<std::uint8_t>(state::Inventory::kArmourBase + piece.slot), piece.quality);
 		}
+		if (!fighter.spawnBackpack.empty())
+			inventory.add(fighter.spawnBackpack, 1, state::Inventory::kBackpackSlot);
 		for (const auto& [sid, count] : fighter.spawnPack)
 			inventory.add(sid, count);
 		inventory.version = 1;
 		if (gameData_ != nullptr)
-			grid::settle(inventory, grid::Rules(*gameData_), id);
+		{
+			// The original's creation order (rwh.194): equipment, the fixed main grid, the worn backpack's contents, and what is left is
+			// destroyed (not dropped). The grid never grows.
+			const grid::Rules rules(*gameData_);
+			for (state::Inventory::Entry& entry : grid::settle(inventory, rules, id))
+			{
+				if (inventory.wornBackpack() != nullptr)
+					grid::autoplace(inventory, rules, std::move(entry), 1);
+			}
+		}
 		entity.set<state::Inventory>(std::move(inventory));
 	}
 	fighter.spawnPack.clear();
+	fighter.spawnBackpack.clear();
 	if (fighter.building == 0 && fighter.carriedBy == 0)
 	{
 		setLocation(fighter, buildingAt(fighter.x, fighter.y, fighter.z), fighter.y);
@@ -2369,19 +2398,30 @@ void Simulation::apply(const Command& command)
 				++badOrders_;
 				break;
 			}
-			std::vector<state::RoutePoint> route;
-			for (std::size_t i = 0; i < command.points.size(); ++i)
-				route.push_back({command.points[i].x, command.heights[i], command.points[i].z});
-			if (!f->route.empty())
-				f->clearWhy = state::Fighter::kClearNewOrder; // the order replaces a live route
-			f->route = std::move(route);
-			f->routeNext = 0;
-			++f->routeVersion;
-			f->routeSeq = static_cast<std::uint32_t>(command.object);
-			f->routeChase = false; // a move order replaces an attack chase's route; it must not inherit its flag
-			f->routeApproach = (command.value & 2) != 0;
-			f->routeSource = state::Fighter::PlanSource::Order;
-			f->routeTries = 0;
+			// A far goal (bit 2: its one point is the true goal, kenshi-k16.6.481) or a move over 1000 u that the roads serve walks in legs
+			// (far_orders.cpp); anything else is the route the server made.
+			const bool far = (command.value & 4) != 0;
+			const state::RoutePoint goal = {command.points.back().x, command.heights.back(), command.points.back().z};
+			const bool legs = (far || std::hypot(goal.x - f->x, goal.z - f->z) > kworld::RoadNetwork::kLongMove)
+				&& startMoveOrder(command.subject, *f, goal.x, goal.z, goal.y, static_cast<std::uint32_t>(command.object), far);
+			if (far && !legs)
+				break; // no first leg: the start is off the mesh, or no exit of its zone has ground
+			if (!legs)
+			{
+				std::vector<state::RoutePoint> route;
+				for (std::size_t i = 0; i < command.points.size(); ++i)
+					route.push_back({command.points[i].x, command.heights[i], command.points[i].z});
+				if (!f->route.empty())
+					f->clearWhy = state::Fighter::kClearNewOrder; // the order replaces a live route
+				f->route = std::move(route);
+				f->routeNext = 0;
+				++f->routeVersion;
+				f->routeSeq = static_cast<std::uint32_t>(command.object);
+				f->routeChase = false; // a move order replaces an attack chase's route; it must not inherit its flag
+				f->routeApproach = (command.value & 2) != 0;
+				f->routeSource = state::Fighter::PlanSource::Order;
+				f->routeTries = 0;
+			}
 			f->drive = state::DriveMode::Stop;
 			f->driveStrafe = 0;
 			f->orderTarget = 0;
@@ -2396,7 +2436,8 @@ void Simulation::apply(const Command& command)
 				break;
 			// A neutral target (the same team) takes the ordered character's squad as a personal hostile: onTargetedBy runs on the VICTIM
 			// (dt23), and the order's attack task holds the target. The ordered character's own map gets nothing.
-			if (target->team == f->team)
+			// An unsensed victim of a ranged attacker learns of it only from a hit (CombatArena setTarget, rwh.191).
+			if (target->team == f->team && !(f->gun().armed() && f->gun().ammo >= 1 && !perception::sensedWithin(*target, command.subject, perception::kRecordFresh)))
 				combat_->markHostile(command.object, command.subject);
 			f->orderTarget = command.object;
 			f->clearRoute(state::Fighter::kClearNewOrder);

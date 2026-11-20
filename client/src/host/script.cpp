@@ -82,7 +82,6 @@
 #include "kworld/towns.hpp"
 #include "render/navoverlay.hpp"
 #include "app/config.hpp"
-#include "platform/datadir.hpp"
 #include "platform/windowgeom.hpp"
 #include "platform/process.hpp"	// plat::unsetEnv
 #include "platform/windowgate.hpp"
@@ -419,6 +418,10 @@ void exec_cmd(const Cmd& c)
 			printf("%s", app.buildings.drawnFloorReport(ch.cur.building, feet[0], feet[2], feet[1] + 1.0, 6.0).c_str());
 		}
 	}
+	else if (c.op == "dump" && a.size() == 1 && a[0].starts_with("walkparts="))
+	{
+		printf("%s", app.buildings.walkableReport(a[0].substr(10)).c_str());	// dump walkparts=NAME: the walkable-part counts of the placed buildings named so (kenshi-k16.2.414.2)
+	}
 	else if (c.op == "dump" && a.size() == 2 && a[0] == "cut" && a[1].starts_with("id="))
 	{
 		// dump cut id=N: one character's two floor-cut inputs side by side (kenshi-k16.2.264.1): the drawn feet the name tag tests (SimView::placed,
@@ -544,7 +547,7 @@ void exec_cmd(const Cmd& c)
 		app.yaw = 0;
 		app.pitch = std::atan2(-35.0, 45.0);	// radians
 	}
-	else if (c.op == "creator" && !a.empty() && app.creator.active())	// creator list | race NAME... [female] | slider VALUE NAME... | head N | hair NAME...|none | beard NAME...|none | haircol NAME... | skin F | random SEED | wear ARMOUR | weapon WEAPON | clothes on|off | tab body|face|hair | turn DEG
+	else if (c.op == "creator" && !a.empty() && app.creator.active())	// creator list | race NAME... [female] | slider VALUE NAME... | head N | hair NAME...|none | beard NAME...|none | haircol NAME... | skin F | random SEED | wear ARMOUR | weapon WEAPON | clothes on|off | tab body|face|hair | reset | turn DEG | tilt DEG | zoom N [X Y] | point BONE
 	{
 		std::string rest, err;
 		for (size_t i = 1; i < a.size(); i++) { rest += (i > 1 ? " " : "") + a[i]; }
@@ -560,6 +563,8 @@ void exec_cmd(const Cmd& c)
 				for (const std::string& r : races) { printf(" [%s]", r.c_str()); }
 			}
 			printf("\ncreator: %s %s: %d heads, %zu hairs, %zu beards, %zu hair colours\n", s.race.c_str(), s.female ? "female" : "male", ch.heads[s.female ? 1 : 0], ch.hairs.size(), ch.beards.size(), ch.hairColours.size());
+			// the Skin Tone row the panel shows (its own, not a race xml Range), then the Ranges: its range is capped by the palette (k16.2.432.3)
+			printf("creator:   Body / Skin Tone 0..%d = %g (skin %.3f)\n", app.creator.skinMax(), app.creator.spec().skin * (float)app.creator.skinMax(), app.creator.spec().skin);
 			for (const Characters::EditorRange& r : app.creator.ranges()) { printf("creator:   %s / %s %g..%g = %g\n", r.category.c_str(), r.name.c_str(), r.min, r.max, app.creator.value(r.name)); }
 			for (size_t i = 0; i < ch.hairs.size(); i++) { printf("creator:   hair %s (weight %g)\n", ch.hairs[i].c_str(), ch.hairWeights[i]); }
 			for (size_t i = 0; i < ch.beards.size(); i++) { printf("creator:   beard %s (weight %g)\n", ch.beards[i].c_str(), ch.beardWeights[i]); }
@@ -588,7 +593,15 @@ void exec_cmd(const Cmd& c)
 		else if (a[0] == "haircol") { s.hairColour = rest; ok = app.creator.apply(err); }
 		else if (a[0] == "skin" && a.size() == 2) { s.skin = (float)atof(a[1].c_str()); ok = app.creator.apply(err); }
 		else if (a[0] == "random" && a.size() == 2) { app.creator.randomize((uint32_t)atoi(a[1].c_str())); ok = app.creator.apply(err); }
-		else if (a[0] == "turn" && a.size() == 2) { app.creator.turn((float)(atof(a[1].c_str()) * M_PI / 180.0)); }
+		else if (a[0] == "turn" && a.size() == 2) { creator_turn((float)(atof(a[1].c_str()) * M_PI / 180.0), 0); }	// the orbit's own path (k16.2.433.1)
+		else if (a[0] == "tilt" && a.size() == 2) { creator_turn(0, (float)(atof(a[1].c_str()) * M_PI / 180.0)); }
+		else if (a[0] == "zoom" && (a.size() == 2 || a.size() >= 4) && app.creatorUi)	// zoom N [X Y]: N wheel notches at the pointer (X Y, else where `point` left it)
+		{
+			const double x = a.size() >= 4 ? atof(a[2].c_str()) : app.mouseX, y = a.size() >= 4 ? atof(a[3].c_str()) : app.mouseY;
+			creator_zoom((float)atof(a[1].c_str()), x, y);
+		}
+		else if (a[0] == "point" && a.size() >= 2) { ok = creator_point_at(rest.c_str()); }	// point BONE...: the pointer onto a bone (a shot aims the wheel)
+
 		else if (a[0] == "wear") { s.wear.push_back(rest); ok = app.creator.apply(err); }
 		else if (a[0] == "weapon") { s.weapons.push_back(rest); ok = app.creator.apply(err); }
 		else if (a[0] == "clothes" && a.size() == 2) { app.creator.clothes = a[1] == "on"; ok = app.creator.apply(err); }
@@ -596,6 +609,11 @@ void exec_cmd(const Cmd& c)
 		{
 			const int page = a[1] == "face" ? ui::kCreatorFace : a[1] == "hair" ? ui::kCreatorHair : ui::kCreatorBody;
 			if (app.creatorUi && app.creatorUi->tab(page)) { static_cast<ui::Button*>(app.creatorUi->tab(page))->onClicked(); }
+		}
+		else if (a[0] == "reset")	// reset: the RESET button's own click (the race's default appearance), for a headless check of it
+		{
+			if (!app.creatorUi || !app.creatorUi->resetButton()) { err = "no RESET button"; ok = false; }
+			else { static_cast<ui::Button*>(app.creatorUi->resetButton())->onClicked(); }
 		}
 		else { script_error(c); }
 		if (!ok) { fprintf(stderr, "kclient: script: creator %s: %s\n", a[0].c_str(), err.c_str()); script_error(c); }
@@ -690,6 +708,7 @@ void exec_cmd(const Cmd& c)
 			teleport(x, z);
 		}
 		else if (a[0] == "alt") { free_camera(); app.pos[1] = ground + atof(a[1].c_str()); }
+		else if (a[0] == "rtsdist") { app.rtsDist = std::clamp(atof(a[1].c_str()), 10.0, 2000.0); }	// the floating camera's zoom (the wheel's), for the boom tests over hills (kenshi-k16.2.353.4)
 		else if (a[0] == "yaw") { app.yaw = atof(a[1].c_str()) * 3.14159265358979 / 180.0; }
 		else if (a[0] == "pitch") { app.pitch = atof(a[1].c_str()) * 3.14159265358979 / 180.0; }
 		else if (a[0] == "rtsboom") { app.rtsLog = atoi(a[1].c_str()) != 0; }	// update_rts prints pitch, boom length and eye height each frame
@@ -710,6 +729,7 @@ void exec_cmd(const Cmd& c)
 		else if (a[0] == "simspeed") { app.sim.setSpeed((float)atof(a[1].c_str())); }	// the sim's game speed (order SET_SPEED)
 		else if (a[0] == "day") { app.sky.clock.day = atoi(a[1].c_str()) - 1; }
 		else if (a[0] == "weather") { set_weather(a[1]); }
+		else if (a[0] == "windspeed") { if (!app.opt.debug) { script_needs_debug(c); } app.windSpeedForce = a[1] == "live" ? -1.0 : atof(a[1].c_str()); }	// set windspeed N|live: the foliage and blade wind speed (u/s)
 		else if (a[0] == "wind")	// set wind DEG|live: wind-aimed parts face (turn to) this wind, as a scene's wind=DEG; live = the sim's again
 		{
 			if (!app.opt.debug) { script_needs_debug(c); }
@@ -743,6 +763,17 @@ void exec_cmd(const Cmd& c)
 		if (!t || t->kind != simlink::Interactable::kProducer || !src || n >= src->items.size()) { script_error(c); }
 		const bool sent = app.sim.transfer(*own, app.machine, src->items[n].item, src->items[n].count, false);
 		printf("transfer put %zu into machine %llu: %s\n", n, (unsigned long long)app.machine, sent ? "sent" : "not sent");
+	}
+	else if (c.op == "drop" && a.size() >= 1)	// drop N [count]: order 61 for entry N of the selection's first player character's INVENTORY, dropped at its feet (kenshi-k16.2.412.4: a ground item to shoot)
+	{
+		const auto& sel = app.sim.selected();
+		const auto own = std::find_if(sel.begin(), sel.end(), [](uint64_t id) { return app.sim.isPlayer(id); });
+		const simlink::Inventory* src = own != sel.end() ? app.sim.inventory(*own) : nullptr;
+		const size_t n = (size_t)atoi(a[0].c_str());
+		if (!src || n >= src->items.size()) { printf("drop: %s, %zu entries\n", src ? "inventory known" : "no inventory (own selected: %d)", src ? src->items.size() : (size_t)0); script_error(c); }
+		const int count = a.size() > 1 ? atoi(a[1].c_str()) : 1;
+		const bool sent = app.sim.drop(*own, src->items[n].item, (uint16_t)std::min<int>(count, src->items[n].count));
+		printf("drop %zu: %s\n", n, sent ? "sent" : "not sent");
 	}
 	else if (c.op == "transfer" && a.size() == 2 && a[0] == "sell" && cont_scripted(true))	// transfer sell N: order 68 for the user's entry N into the open container, as the UI's move (a TRADE stock: a sale)
 	{
@@ -880,6 +911,16 @@ void exec_cmd(const Cmd& c)
 		{
 			sappcmd::post([w, h] { if (!windowgeom::resizeWindow(w, h)) { fprintf(stderr, "kclient: resize %dx%d: no X window\n", w, h); } });	// Xlib on the sapp thread (kenshi-k16.2.205.12.25)
 			printf("resize: asked for %dx%d\n", w, h);
+		}
+	}
+	else if (c.op == "dump" && a.size() == 1 && a[0] == "map")	// dump map: the MAP page's view (k16.2.435): zoom (pixels a map texel, 0 = fitted), the world
+	{	//                                                   point at its centre, the view's rect and whether the page shows (stdout)
+		if (!app.uiOn || !app.overview) { printf("map view: no UI\n"); }
+		else
+		{
+			const ui::MapView v = app.overview->mapView();
+			const ui::MapFrame f = app.overview->mapFrame();
+			printf("map view: zoom %.6f cx %.3f cz %.3f (view %.0f x %.0f, %s)\n", v.zoom, v.cx, v.cz, f.w, f.h, app.overview->shown(ui::OverviewPage::kMap) ? "shown" : "hidden");
 		}
 	}
 	else if (c.op == "dump" && a.size() == 1 && a[0] == "title")	// dump title: the title screen's state: its held click, the offline line and the new game panel (kenshi-k16.2.210.4; stdout)

@@ -27,15 +27,10 @@
 #include <string>
 #include <vector>
 #include "nav_source.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
-#endif
-#ifndef KSIM_SCENARIO
-#error KSIM_SCENARIO must be defined
 #endif
 
 using namespace ksim;
@@ -69,7 +64,7 @@ int main(int argc, char** argv)
 		sim.enableNavigation(test::openWorldNav(world, hubZones));
 		simlink::ServerContext context;
 		context.gameData = gameData;
-		const scenario::File file = scenario::parseFile(KSIM_SCENARIO);
+		const scenario::File file = scenario::parseFile(ksim::dev::srcPath("tests/data/scenario_residents.kscen"));
 		test::require(file.version == 2 && file.orders.size() == 1, "the file is KSCEN 2 with one order");
 		const scenario::Placed placed = scenario::apply(sim, *gameData, *combatData, context, file, 1);
 		test::require(placed.orders == 1, "the order is queued");

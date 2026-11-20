@@ -10,6 +10,7 @@
 
 #include "ksim/save/save.hpp"
 #include "ksim/combat/token_fight.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cstdio>
 #include <iostream>
@@ -17,9 +18,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_BINARY_DIR
-#error KSIM_BINARY_DIR must be defined
 #endif
 
 namespace {

@@ -12,6 +12,8 @@ std::uint16_t bitOfTask(std::uint16_t task) noexcept
 		return kAttackNeutrals;
 	case 15:
 		return kProtectAllies;
+	case 288:
+		return kProtectAlliesTown;
 	case 34:
 		return kTroubleMakers;
 	case 143:

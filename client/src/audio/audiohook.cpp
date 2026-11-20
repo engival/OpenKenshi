@@ -17,6 +17,7 @@
 #include <thread>
 #include <vector>
 
+#include "app/userdirs.hpp"
 #include "audio/mixer.hpp"
 #include "audio/music.hpp"
 #include "audio/sound.hpp"
@@ -353,9 +354,7 @@ void audiohook_init(const std::string& dataDir)
 	if (g_hook) { return; }
 	const char* off = getenv("KCLIENT_NOAUDIO");
 	if (off && *off && *off != '0') { fprintf(stderr, "audio: off (KCLIENT_NOAUDIO)\n"); return; }
-	const char* xdg = getenv("XDG_CONFIG_HOME");
-	const char* home = getenv("HOME");
-	const std::string old = (xdg && *xdg ? std::string(xdg) : std::string(home ? home : ".") + "/.config") + "/kclient/audio.cfg";
+	const std::string old = plat::userConfigDir() + "/kclient/audio.cfg";	// the pre-options file, app/userdirs.hpp (kenshi-379.31.3)
 	std::error_code ec;
 	if (std::filesystem::exists(old, ec)) { fprintf(stderr, "audio: %s is no longer read: set audio.master / music / environment / effects in %s, then delete it\n", old.c_str(), cfg::path().c_str()); }
 	g_hook = std::make_unique<Hook>();

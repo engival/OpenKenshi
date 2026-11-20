@@ -32,6 +32,11 @@
 #include "render/sky.hpp"
 #include "sokol_gfx.h"
 
+// near / far are empty macros once <windows.h> is in scope (it arrives through sokol_app.h, and libc++'s <locale> includes windows.h itself); the
+// members named near / far below are plain identifiers (kenshi-379.31.3, caught by the local llvm-mingw cross-check).
+#undef near
+#undef far
+
 // Streams and draws the placed buildings (M2b). Meshes and textures are cached by file and decoded on worker threads; the logic half (update, ensurePart,
 // drain, evict) takes the decodes under a per-frame count (unlimited when `blocking`, used by scripted runs) and queues their GPU creates and destroys
 // as render queue jobs (docs/RENDER_THREAD.md §7.2, kenshi-k16.2.205.12.35): the stream lane, whose jobs publish into an rq::Handle per mesh and texture,
@@ -58,6 +63,75 @@ public:
 	// cam: world position; mvp: projection * rotation-only view; radius: load radius in zone cells. shadowFar > 0: also collect the instances within that
 	// distance of the camera that are not visible (behind the camera, off screen) as shadow casters.
 	// The packet's part (render hook 7a pattern; RENDER_THREAD.md §7.1 rule 2): written on every update().
+	struct MeshGpu { sg_buffer vbuf = {}, ibuf = {}; };
+	struct TexGpu { sg_image img = {}; sg_view view = {}; };	// view invalid: sokol refused the image (drawn grey; the next drain marks it Failed)
+
+	// The resolved draw list (kenshi-k16.2.205.12.114, overlap review .85 T18 / section 1.4 A1): what the buildings' opaque and shadow draws need, by value,
+	// built by update() on the logic side at its end (resolveDraws) and carried in the packet. render() and renderShadow() replay it and read no building
+	// table (data_, partRt_, meshes_, textures_, groups_, active_, motion_). A GPU object is named by the rq::Handle that will hold it (the create is a
+	// resource job that may run after the list is built), kept in the list's own tables; a draw names a table slot (-1: the fallback). The uniform blocks
+	// are the shader's own layout (inst_vs_params_t, inst_fs_params_t, shadow_fs_params_t) without the matrix and light block the replay supplies.
+	// The same resolver is what the glass / mask / id draws (T19) and the foliage (T20) are to reuse: resolveDraw() / resolveShadow().
+	struct ResolvedDraw
+	{
+		int mesh = -1, ibuf = -1;	// DrawList::meshes slot; DrawList::ibufs slot (-1: the mesh's own index buffer)
+		int firstVertex = 0, firstIndex = 0, indexCount = 0, instOffset = 0, count = 0;	// the submesh's ranges; the instances' byte offset in `inst` and their number
+		sg_buffer inst = {};
+		int tex[5] = { -1, -1, -1, -1, -1 };	// DrawList::textures slots of inst_tex, inst_nrm, inst_tex2, inst_nrm2, inst_mask (-1: the slot's fallback)
+		int mode = 0;	// the shader mode (the stats' modeGroups index)
+		bool cull = false;	// cullsBackFaces: the pipeline
+		// The two fields a group sets and a part does not (kenshi-k16.2.205.12.119, as ResolvedShadow::base/fade): the replay writes them into vs.base and
+		// fs.fade, so a part's resolved draw can be kept as a template (Foliage's draw list) and each group only fills these in with its instances.
+		float base[3] = {};	// the group's origin, relative to the camera (instVsParams' base; 0 for the buildings' own world-space instances)
+		float fade[2] = {};	// fadeStart, fadeEnd (inst_fs_params' fade)
+		alignas(16) float vs[56];	// inst_vs_params_t, its mvp (the first 16 floats) set by the replay; base stays 0 in a template
+		alignas(16) float fs[76];	// inst_fs_params_t; fade stays 0 in a template ([2] is the fade mode, which a part does set)
+	};
+	struct ResolvedShadow	// one (part, submesh) depth draw into a shadow cascade (drawShadow)
+	{
+		int mesh = -1, ibuf = -1;
+		int firstVertex = 0, firstIndex = 0, indexCount = 0, instOffset = 0, count = 0;
+		sg_buffer inst = {};
+		int tex[2] = { -1, -1 };	// inst_tex, inst_nrm
+		bool animated = false;	// a spinner or wind-aimed part: drawn each frame over the cached tile (renderShadow `which`)
+		// The two fields a group sets and a part does not (kenshi-k16.2.205.12.119): the replay writes them into vs.base and fs.fade, so a part's resolved
+		// draw can be kept as a template (Foliage's shadow lists) and each group only fills these in.
+		float base[3] = {};	// the group's origin, relative to the camera (instVsParams' base)
+		float fade[2] = {};	// fadeStart, fadeEnd (shadow_fs_params' fade)
+		alignas(16) float vs[56];	// inst_vs_params_t, mvp set by the replay (the cascade matrix); base stays 0 in a template
+		alignas(16) float fs[12];	// shadow_fs_params_t: cut; the bias is the cascade's; fade stays 0 in a template
+	};
+	struct ResolvedMask	// one interior-mask (part, submesh) draw (renderMask: back faces then front faces)
+	{
+		int mesh = -1, ibuf = -1;
+		int firstVertex = 0, firstIndex = 0, indexCount = 0, instOffset = 0, count = 0;
+		sg_buffer inst = {};
+		float offset[4] = {}, spin[4] = {};	// imask_vs_params_t without the mvp
+	};
+	struct ResolvedId	// one cursor-id draw: `count` instances of a floored building's part (renderIds; one draw per run, kenshi-k16.2.205.12.119)
+	{
+		int mesh = -1, ibuf = -1;
+		int firstVertex = 0, firstIndex = 0, indexCount = 0, instOffset = 0, count = 1;
+		sg_buffer inst = {};
+		bool cull = false;
+		float owner = 0;	// the id the fragment writes (the owner + 1)
+		alignas(16) float vs[56];	// inst_vs_params_t, mvp set by the replay
+	};
+	struct DrawList
+	{
+		std::vector<ResolvedMask> mask;	// renderMask(): the interior hulls (update() collected them while maskWanted)
+		std::vector<ResolvedDraw> glass;	// renderGlass(): the peeked parts, drawn twice (depth then blended)
+		std::vector<ResolvedId> ids;	// renderIds()
+		std::vector<ResolvedDraw> flip;	// renderFlip(): the cut-away walls fading after a camera turn (empty unless the eye moved), their uniforms carry the flip eye ring
+		std::vector<ResolvedDraw> opaque;	// render(): the groups in order, each its opaque draw then its loading stand-in and fade draws
+		std::vector<ResolvedShadow> shadow;	// renderShadow(): the groups that cast shadows
+		std::vector<rq::Handle<MeshGpu>> meshes;
+		std::vector<rq::Handle<TexGpu>> textures;
+		std::vector<rq::Handle<sg_buffer>> ibufs;	// render.open_windows' patched index buffers
+		std::vector<int> meshAt, texAt, ibufAt;	// the resolver's per-frame dedupe: table id -> slot (-1 none); empty: no dedupe
+		void clear() { mask.clear(); glass.clear(); flip.clear(); ids.clear(); opaque.clear(); shadow.clear(); meshes.clear(); textures.clear(); ibufs.clear(); meshAt.clear(); texAt.clear(); ibufAt.clear(); }
+	};
+
 	struct FrameData
 	{
 		std::vector<float> inst;	// the instances of every group and mask group (kInstanceFloats each), as the groups' `first` index them
@@ -71,32 +145,34 @@ public:
 		// What the static groups' shadow draws read besides the camera (shadowSig), at update()'s end: the draw keys the shadow cache on this copy, never on
 		// the live cuts / ghosts / peeks that logic's next frame moves (overlap review .85 section 1.3, kenshi-k16.2.205.12.95).
 		uint64_t shadowSig = 0;
+		// render.interior_light / shafts / lamps (T19): the nearest baked buildings as volumes, collected by the logic side after update() (lightVolumes), never by the draw
+		std::vector<lightvol::Volume> volumes;
+		DrawList draws;	// the opaque and shadow draws of update()'s groups, resolved (render() / renderShadow() replay it)
 	};
 	void update(const double cam[3], const float mvp[16], float fogDist, bool blocking, double time, double shadowFar, FrameData& out);
 	void upload(const FrameData& d);	// render side, every draw of a packet (a write_transient buffer is written in each frame that draws it)
-	void render(const float mvp[16], const LightParams& light);
+	void render(const DrawList& list, const float mvp[16], const LightParams& light);
 	// The game's interior mask (materials/common/interiormask.material): the `interior mask` hulls (kind 2) of the buildings near the camera, back
 	// faces into G and front faces into R of the mask target (Hdr::maskPass), each fragment its view depth + 1. The terrain and grass clips
 	// (interiorclip.inc) and the particle clip (particles.glsl) read it. update() collects them only while `maskWanted` (render.interior_mask); drawn inside the mask pass,
 	// per view (the mvp is that view's).
 	bool maskWanted = false;
-	void renderMask(const float mvp[16]);
-	bool hasMask() const { return !maskGroups_.empty(); }	// update() collected hulls this frame
+	void renderMask(const DrawList& list, const float mvp[16]);	// hasMask: !list.mask.empty()
 	// CPU side of the same hulls (kenshi-kyat.2): is the world point inside an interior mask hull of a building near the camera (the buildings update() asked
 	// interior parts of; independent of maskWanted)? A vertical ray in the building's frame crosses a closed hull an odd number of times above the point.
 	// The kyat.2 floor-over-terrain rule's one query (kenshi-k16.2.254.1): inside a hull the terrain is the dune a sunk building sits in, clipped by the
 	// mask and not drawn (interiorclip.inc), so the floor is the ground there — a walker inside draws at the sim's y and a click must take the floor.
 	// With a ray (origin, dir) and exitT: where that ray leaves the hull's box, which the pick uses as its far bound so the buried terrain does not end the
 	// click's search for the drawn floor. exitT is written only when the point is in a hull, and as a maximum over the hulls that hold it.
-	bool insideInterior(const double p[3], const double* origin = nullptr, const double* dir = nullptr, double* exitT = nullptr) const;
+	bool insideInterior(const double p[3], const double* origin = nullptr, const double* dir = nullptr, double* exitT = nullptr, bool carveOnly = false) const;
 
 	// Sun shadows. `shadow` is the atlas the main pass samples (set once, must outlive render()). renderShadow draws the buildings and features of the last
 	// update() into one cascade (inside Shadow::beginPass/endPass); drawShadow is the per-group draw for Foliage's casters (after beginShadowDraws).
-	const Shadow* shadow = nullptr;
+	const Shadow::FrameData* sfd = nullptr;	// this frame's shadow data (the packet's; the render side points it there at the start of the draw)
 	// which: 0 every group, 1 the static ones (the shadow cache's tiles), 2 the animated ones (spinners and wind-aimed parts: drawn each frame over the restored tile).
 	// Returns whether anything was submitted. The static groups' signature is the packet's FrameData::shadowSig (kenshi-k16.2.205.12.2, .95).
-	bool renderShadow(const ShadowCascade& c, int which = 0);
-	void beginShadowDraws() { drawstats::pipeline(shadowPip_); }
+	bool renderShadow(const DrawList& list, const ShadowCascade& c, int which = 0);
+	void beginShadowDraws() { drawstats::pipeline(shadowPip_); shadowVsOk_ = shadowFsOk_ = false; }
 	void drawShadow(uint32_t pid, int sub, sg_buffer inst, int instByteOffset, int count, const float base[3], const float lvp[16], const float bias[4], float fadeStart = 0, float fadeEnd = 0);
 	// Light probes (kenshi-jj3.1.1, debug only: debug.light_probes, `dump light_bake`; nothing in the picture reads them). lightProbes() picks the building
 	// with interiors nearest the camera, starts its type's bake on a worker thread (or loads the cache) once its meshes are loaded, and fills `out` with
@@ -126,7 +202,11 @@ public:
 	// (beginDraws) inside a pass, the part's mesh Ready and ensurePart done; `inst` holds 12-float instances (position + scale, quaternion xyzw, stretch)
 	// with positions relative to `base` (itself relative to the camera). Returns the shader mode used.
 	uint32_t addPart(const BuildingPartDef& def);
-	void beginDraws(bool foliage = false) { drawstats::pipeline(pip_); foliagePass_ = foliage; culled_ = false; }
+	void beginDraws(bool foliage = false) { drawstats::pipeline(pip_); foliagePass_ = foliage; culled_ = false; drawVsOk_ = drawFsOk_ = false; }
+	// The four uniform blocks every draw of a building-shader pass shares (the light, the AO, the light volumes, this frame's shadow params): set them
+	// once per pass, after the pipeline is applied (sg_apply_uniforms needs one) and before the pass's draws (kenshi-k16.2.205.12.119). A pass that
+	// replays WorldBuildings::draw() itself (renderFlip) gets them from it.
+	void applyPassUniforms(const LightParams& light);
 	// Picks the back-face culling pipeline from the part's game material. The building materials inherit StaticObject, whose script has no cull_hardware, so the
 	// exe's rule is the only one (kenshi-rwh.131): a part is single-sided except BuildingShader FOLIAGE (`material type` 2, the one it marks DOUBLESIDED); a feature
 	// mesh, except MapFeatureMode FOLIAGE (4), whose foliage.material cull_hardware none keeps it two-sided. The mesh's own Ogre cull_hardware is ignored. Call
@@ -136,25 +216,82 @@ public:
 	// fadeMode (mesh.glsl inst_fs fade.z): 0 the dithered fade, 1 the opaque pass leaving the fade band out, 2 the band alone (beginFadeBand's pipelines)
 	// limbSkin / limbBlood: a severed limb group's wire tint (null: the part draws as before)
 	int draw(uint32_t pid, int sub, sg_buffer inst, int instByteOffset, int count, const float base[3], const float mvp[16], const LightParams& light, float fadeStart = 0, float fadeEnd = 0, int fadeMode = 0,
-		const float* limbSkin = nullptr, const float* limbBlood = nullptr);
+		const float* limbSkin = nullptr, const float* limbBlood = nullptr, int standin = 0);
 	// The fade band of Foliage: its nearest surface into depth (depthOnly), then blended over what is drawn at that depth, as renderGlass
-	void beginFadeBand(bool depthOnly) { drawstats::pipeline(depthOnly ? pipGlassDepth_ : pipGlass_); }
+	void beginFadeBand(bool depthOnly) { drawstats::pipeline(depthOnly ? pipGlassDepth_ : pipGlass_); drawVsOk_ = drawFsOk_ = false; }
 
 	struct Stats
 	{
 		size_t instancesDrawn = 0, submeshDraws = 0, realTextured = 0, groups = 0;	// last frame
+		size_t idDraws = 0, idInstances = 0;	// the cursor id pass's draws and the instances they carry (they merge into runs of consecutive instances)
 		size_t featuresDrawn = 0;			// of instancesDrawn: hand-placed features (rocks, formations)
 		size_t interiorsDrawn = 0;			// furniture instances drawn (not in instancesDrawn)
 		size_t modeGroups[8] = {}, dualNoColour = 0;	// groups drawn per shader mode (plain, ALPHA, EMISSIVE, DUAL, TRIPLANAR, TERRAIN, DUAL_TRIPLANAR, severed limb); DUAL groups left plain for lack of vertex colours
 		size_t meshesReady = 0, meshesFailed = 0, texturesReady = 0, texturesFailed = 0, pending = 0;
 		size_t uploadedMeshes = 0, uploadedTextures = 0;			// since start
+		size_t standing = 0, fading = 0, mixed = 0;	// instances drawn as the loading stand-in / in its switch this frame; instances that drew black and real parts together outside the switch (always 0)
 	};
 	Stats stats() const;
+#ifdef KCLIENT_DEV_TOOLS
+	// Building pop-in measurement (kenshi-k16.2.258.2, the report behind the user's "buildings pop-in" on the BDC fly launch): per placed
+	// building, when it entered the load radius, was first drawn and was fully textured; per mesh / texture, the read + parse on a worker (and
+	// the drawn-triangle BVH beside it) and the GPU create in the render queue. Off unless KCLIENT_POPIN is set at start or `dump popin` asked
+	// for it; a plain run costs one bool test an instance a frame. `dump popin` prints it: popinReport.
+	struct PopIn
+	{
+		bool on = false;
+		bool cold = false;			// KCLIENT_COLD_READ: each asset's pages dropped from the page cache before it is read (a cold disk)
+		bool blocking = false;		// the last update() waited for every decode (a scripted / --screenshot run, debug.stream_scripted off)
+		bool streaming = false;		// debug.stream_scripted: a scripted run that streams as a live one does
+		double clock0 = -1;			// steady-clock seconds at the first update (the timeline's zero)
+		double now = 0;				// this update's seconds since clock0
+		uint64_t frame = 0;
+		size_t inRange = 0, drawn = 0, full = 0;	// running counts over rows
+		double liftAt = -1;			// s since clock0 when the load screen lifted (the ready-set gate; kenshi-k16.2.258.3), -1 never
+		struct Row
+		{
+			uint32_t name = 0;			// BuildingSet::names index
+			double x = 0, z = 0;		// the instance origin
+			double dist = 0;			// camera distance when it entered the load radius
+			double in = -1, draw = -1, complete = -1;	// s since clock0
+			uint32_t parts = 0, shells = 0, interiors = 0;
+			uint32_t unlitAtDraw = 0;	// shell parts still without their textures when it was first drawn
+			double black = -1, swtch = -1;	// s since clock0: first drawn as the loading stand-in, the switch to the real look begun (kenshi-k16.2.258.4)
+			uint32_t mixedFrames = 0;	// packs that drew black and real parts of it together (the loading stand-in's contract: 0)
+		};
+		std::unordered_map<uint32_t, Row> rows;		// instance index -> timeline
+		struct Mesh
+		{
+			double decode = 0, pick = 0, create = 0;	// s: worker read+parse, worker pick BVH, GPU create (all jobs)
+			size_t fileBytes = 0, cpuBytes = 0;			// the .mesh file, the decoded vertices + indices
+			int tris = 0;
+		};
+		struct Tex
+		{
+			double decode = 0, create = 0;	// s: worker read (BC data kept as is), GPU create (all slices)
+			size_t fileBytes = 0, gpuBytes = 0;
+			int w = 0, h = 0, mips = 0;
+		};
+		std::unordered_map<std::string, Mesh> meshes;
+		std::unordered_map<std::string, Tex> textures;
+		std::mutex mu;				// the creates are timed on the render thread
+		struct Curve { double t; uint64_t f; size_t inRange, drawn, full, meshesReady, texturesReady, pending; };
+		std::vector<Curve> curve;	// one a frame while something changed
+		uint64_t mixedInstanceFrames = 0, standingInstanceFrames = 0, fadingInstanceFrames = 0;	// the loading stand-in (kenshi-k16.2.258.4): packs summed over instances; mixed must stay 0
+	};
+	PopIn popin;
+	std::string popinReport() const;	// `dump popin`: the timelines, the asset costs, the per-name precache table
+	void popinMark(uint32_t ii, const BuildingInstance& b);	// in range: the instance entered a load cell this frame
+	void popinLift() { if (popin.on) { popin.liftAt = popin.now; } }	// the load screen lifted: the pop-in after it is what a player sees
+	void popinDrawn(uint32_t ii);							// first drawn / fully textured (the cull pass's any)
+#endif
 	// One line: lowest mesh point of each drawn instance minus the terrain under its origin, and the record's relative y, as p10/p50/p90.
 	std::string fitReport() const;
 	// Meshes whose submeshes use a material name other than StaticObject (one line each), for the texture-rule review.
 	std::string materialReport() const;
 	int radius = 3;
+	bool streamPriority = true;	// render.stream_priority: the streams run in view and near first (false: submit order)
+	bool streamAll = false;	// the world is not on screen (the session load screen): every finished decode goes to the stream lane at once (kenshi-k16.2.258.3)
 
 	// Interiors: interior parts and layout furniture are resident and drawn by camera distance, never by "a character is inside" (the game's unload is a
 	// presentation limit we do not keep). Parts within interiorRadius world units of the camera load and draw; the last 20 % of it fades out with the
@@ -186,6 +323,9 @@ public:
 	double subjectPos[3] = {};
 	bool following = false;	// the camera follows a character: the auto floor follows `lead` (camera_rts.md 6); not following, the level is the player's alone
 	float xray[4] = {};	// the occluder cone, set per frame: the focus character relative to the camera, the cone's widest radius (0: off)
+	// The cone's exemption (kenshi-k16.2.405.1): the building the camera is in or that is cut open (sliced) never fades: its foundation, furniture and floor
+	// edge stay solid. A yaw-turned box in the world: xrayEx[0..2] centre, [3] 1 = on; [4..6] half extents, [7] yaw. Render only: the click ray keeps the cone (the cut-open building's near wall shape is not drawn there).
+	double xrayEx[8] = {};
 	// Occluders (ours; the original has none, camera_rts.md 7; user 2026-11-04): with autoGhost, a building between the camera and `seen` (the followed
 	// character) fades whole to glass (renderGlass, the base too) at the fadeGhosts rate while it blocks; the click ray passes it (cutAway).
 	bool autoGhost = false;
@@ -205,16 +345,18 @@ public:
 	bool peekPass = true;	// false: cutAway ignores the peeks (the camera's ground)
 	int floorAt(int building, const double p[3]);	// p's floor in the building (its floor starts), 0 below the first
 	int topFloor(int building) const;
-	bool hasGlass() const;	// a peeked part is visible (renderGlass would draw): the caller splits the scene pass before it (Hdr::copyOpaqueDepth)
-	void renderGlass(const float mvp[16], const LightParams& light);	// the peeked parts; after every opaque thing in the scene pass
+	// a peeked part is visible (!list.glass.empty()): the caller splits the scene pass before renderGlass (Hdr::copyOpaqueDepth)
+	void renderGlass(const DrawList& list, const float mvp[16], const LightParams& light);	// the peeked parts; after every opaque thing in the scene pass
 	// The cut-away flip fade (kenshi-k16.2.354.1): the back faces of a cut building's single-sided parts, blended over the scene while a wall turned away within the
 	// last kFlipFade seconds. Stateless per face: update() keeps a ring of past eye positions, the shader finds when the face last faced one. No depth write
 	// (the cursor ID pass and everything after see the solid scene); a still camera draws nothing.
-	void renderFlip(const float mvp[16], const LightParams& light);
+	void renderFlip(const DrawList& list, const float mvp[16], const LightParams& light);
 	// Cursor ID pass (idbuffer.hpp): the ray the next update() lists the buildings along (those with floors whose box it crosses); renderIds()
 	// draws what the scene drew of them, each with its id, in the ID pass.
 	void cursorRay(const double dir[3], bool on);
-	void renderIds(const float mvp[16]);
+	void renderIds(const DrawList& list, const float mvp[16]);
+	static constexpr double kFloorTop = 2;	// MINE: local units above the interior's bottom that the occluder fade keeps solid: the ground floor's slab (the Storm House floor is 0.3 thick, walks at +0.3)
+	static constexpr double kFoundSlab = 2;	// MINE: local units under the interior's bottom that still count as its floor (belowFloors; the foundation the occluder fade keeps)
 	bool belowFloors(int building, const double p[3]);	// p is under its ground floor (the base, a foundation, outside steps): not the building's inside
 	// the nearest building with an interior whose parts' box the ray enters; with at (a point on the ray: the pick's hit), the one whose box
 	// holds it, the last entered (a big neighbour's box the ray only crosses on the way does not win: Defensive Gate IV before the Storm House)
@@ -255,6 +397,7 @@ public:
 	// The camera subject's floor from the model (ff::FloorFollow::autoFloor), -1 when it is not followed or `id` is not the subject: char_cut_hidden asks it
 	// for the subject instead of the wire's floor (kenshi-k16.2.236.15), so a followed lead is hidden only by a manual step above its floor.
 	int modelFloor(uint64_t id) const { return view_.subject() == id ? view_.autoFloor() : -1; }
+	const ff::FloorFollow::LatchInfo& latchInfo() const { return view_.latchInfo(); }	// the stair latch's state for the F12 sidecar (k16.2.236.8.4.3)
 	int focus() const { return focus_; }	// the building named in floorStatus, -1 = none
 	// R = +1, F = -1. Always live (k16.2.24.1 / h2v.24: the original keeps the selector available at all times): with a sliced or peeked building it
 	// steps from the level clamped to that building's top, else the global level 0..3 alone; either way the level is what an order's click ray cuts at
@@ -283,6 +426,7 @@ public:
 	// floor's slab, so a click there passes through to what is drawn below. bottom (world y): the hit shape's low face; the floor
 	// test then takes the shape whole by where it starts, as the renderer hides a part by its floor (a staircase rising past the slab stays drawn).
 	// why (the F12 pick report, kenshi-k16.2.259): why it is not drawn there ("an occluder faded to glass", "above the floor cut of Longhouse"); empty drawn.
+	bool inSolidZone(const double p[3]);	// kenshi-k16.2.412.3
 	bool cutAway(const double p[3], double bottom = 1e30, std::string* why = nullptr);
 	// p is on a floor the cut hides (a sliced building, at or above the slab over the shown floor): its characters and items go. bottom: the solid
 	// shape p stands on, by its low face (the click pick's staircase rule), so a character climbing a stair keeps the stair's starting floor.
@@ -306,6 +450,8 @@ public:
 	bool night = false;
 	float wind[3] = {};	// set per frame: the live wind direction (toward) x, z, and 1 when known (rotation function 4 parts aim; 0: rest pose)
 	float windSpeed = -1;	// set per frame: the live wind speed (u/s) for rotation function 3's spin ramp; < 0 unknown (spins at full speed)
+	void setSwayMates(const std::vector<uint32_t>& ids);	// the parts of one tree record
+	float swayTop(uint32_t pid) const;	// render.leaf_sway: the tree's height (the tallest mesh of its record), 0 when the part does not bend
 	void resetTurns();	// wind-aimed parts face the wind at once (a scene change: no turn from the last scene's wind)
 	double lightMinutes = 0;
 	static void fillLights(const FrameData& d, LightParams& light, const lightvol::Volumes* vols = nullptr);	// vols: the live volumes (lamp codes)	// render side: reads the packet's copy only
@@ -341,6 +487,8 @@ public:
 	// `building`; 0 or unknown: the nearest building by origin), every drawn part's render triangles then their world y (the instance transform the
 	// shader uses), the highest at or below fromY within range; one line per part and the top overall. Kinds: 'cut' a part the floor cut hides (not
 	// drawn), 'spin' one that turns (its drawn pose needs the clock). Text only, no graphics (kenshi-k16.17.7.24.4).
+	// kenshi-k16.2.414.2: the walkable-surface bit per part of the placed buildings whose name contains `name`: parts walkable / not by kind (0 shell, 1 interior, 2 mask, 3 furniture), one line per distinct building
+	std::string walkableReport(const std::string& name) const;
 	std::string drawnFloorReport(uint64_t key, double x, double z, double fromY, double range) const;
 	// Read side of dump pickboxes (src/dev/pickboxes.cpp, kenshi-k16.2.260.1): an instance's part geometry and its mesh-to-world transform, the one
 	// the instance vertex shader draws with and instanceRay inverts. partGeometry: part k's mesh, uploaded bounds, toMesh(part offset) and (withVerts)
@@ -376,8 +524,10 @@ public:
 	// the pick uses too); a door not listed stays in its frame. Replaces the last call's; call before update().
 	// a moved door repacks: the leaf offsets are applied in the cull / pack pass the dirty tracking skips (kenshi-k16.2.205.11 x k16.2.241.1)
 	void setDoors(const std::unordered_map<uint64_t, std::array<double, 3>>& offsets) { if (offsets != doorOffsets_) { doorOffsets_ = offsets; packValid_ = false; doorGen_++; } }
-	// The character editor's platform mesh at pos (its origin; BuildingSet::editorPlatformRef), drawn with the props by the next setProps.
-	void setEditor(bool on, const double pos[3] = nullptr);
+	// The character editor's platform mesh at pos (its origin; BuildingSet::editorPlatformRef), turned by q (w, x, y, z; null = upright), drawn with
+	// the props by the next setProps. A moved or turned platform (the editor's orbit, k16.2.433.1) moves its instance in place instead: the props are
+	// rebuilt only when the sim's things change, so the instance setProps added is where the platform follows the character.
+	void setEditor(bool on, const double pos[3] = nullptr, const float q[4] = nullptr);
 	bool isShopCounter(const std::string& sid) const { return data_.shopCounters.count(sid) != 0; }
 	bool hasMesh(uint64_t id) const { return propMeshes_.count(id) != 0; }
 	int propInstance(uint64_t id) const { const auto it = propMeshes_.find(id); return it == propMeshes_.end() ? -1 : (int)it->second; }	// the instance a prop (or a player's building) is drawn by, -1 none
@@ -393,20 +543,45 @@ public:
 	bool propRay(uint64_t id, const double origin[3], const double dir[3], double& t, bool drawn = false) const;
 	// drawnHitIn: the nearest drawn triangle hit with t in [tMin, tMax] on the building shells and layout pieces near the world box lo..hi (the box of a collision
 	// solid): false = nothing is drawn along the ray inside that span, so the solid there is an undrawn proxy volume.
-	bool drawnHitIn(const double origin[3], const double dir[3], const double lo[3], const double hi[3], double tMin, double tMax, double& t) const;
+	bool drawnHitIn(const double origin[3], const double dir[3], const double lo[3], const double hi[3], double tMin, double tMax, double& t, bool walkableOnly = false) const;
+	// What walkableRay hit (the dev `dump pick` report, kenshi-k16.2.412.3 rework: the wall-right part's name)
+	struct WalkHit { uint32_t instance = 0; uint32_t part = 0; bool walkable = false; int kind = 0; std::string mesh; };
+	// kenshi-k16.2.412.3: the nearest drawn triangle of the walkable parts along a ray (the click's ground layer): any direction, no box; t in [tMin, tMax].
+	// Only a triangle at or under the bake's walk slope counts (knav::NavConfig::agentMaxSlope, 40 deg): the walkable bit is per part, so a house's walls carry it
+	// too, and a wall face is not ground a body stands on (the wall-right click).
+	// who: the part hit (its instance, part index, kind, walkable bit and mesh path), for the pick report.
+	bool walkableRay(const double origin[3], const double dir[3], double tMin, double tMax, double& t, WalkHit* who = nullptr) const;
 	// kenshi-k16.2.344: the drawn building surface nearest `wireY` under (x, z) within up above / down below: the standing ray's fallback where a part has no
-	// collision. The nearest of the first drawn triangle hit going down and going up. False: nothing drawn in the window.
-	bool groundDrawn(double x, double z, double wireY, double up, double down, double& y) const;
+	// collision. The nearest of the first drawn triangle hit going down and going up. 1: a drawn surface at y in the window; 0: none in the window but one within 12 u of the wire (a building covers x, z); 3: nothing
+	// drawn within 12 u (open ground); -1: none in the window but a building near x, z has a mesh still loading (kenshi-k16.2.382.2: the stand ray's only building source, collision meshes left it).
+	int groundDrawn(double x, double z, double wireY, double up, double down, double& y) const;
+	const void* groundDrawnGen() const;	// changes with the instance set and the Ready meshes (what groundDrawn reads): the per-character ray cache's key
 	// The world box of everything a prop draws (its parts' mesh boxes, this frame), grown by `grow`; false: no such prop or nothing drawn yet.
 	// pick_at: a click whose world hit point is on the prop's own drawn box is that prop (its collision proxy may sit just outside it)
 	bool propBox(uint64_t id, double lo[3], double hi[3], double grow = 0) const;
-	int bedRay(const double at[3], const double origin[3], const double dir[3], double& t) const;	// the layout furniture piece holding a bed's sleeping spot `at`: the ray's entry into its oriented mesh box (k16.2.220); -1: no piece holds it, 0: miss, 1: hit
+	int bedRay(const double at[3], const double origin[3], const double dir[3], double& t, bool drawn = false) const;	// drawn: the entry into the piece's drawn triangles, not its box (a character lying beside the bed, k16.2.224.3). The layout furniture piece holding a bed's sleeping spot `at`: the ray's entry into its oriented mesh box (k16.2.220); -1: no piece holds it, 0: miss, 1: hit
 
 private:
 	uint64_t shadowSig() const;	// update() writes it into FrameData::shadowSig on every return
-	bool instanceRay(uint32_t index, const double origin[3], const double dir[3], double& t, bool drawn = false, double tMin = 0, double tMax = 1e30) const;
-	bool triangleRay(int mesh, const double o[3], const double d[3], const double off[3], double& t, double tMin = 0, double tMax = 1e30) const;
-	mutable std::unordered_map<std::string, std::vector<float>> pickTris_;	// mesh path -> triangle corners (xyz x 3 per triangle), decoded on the first drawn pick
+	void refreshTopBoxes() const;
+	bool instanceRay(uint32_t index, const double origin[3], const double dir[3], double& t, bool drawn = false, double tMin = 0, double tMax = 1e30, bool walkableOnly = false, WalkHit* who = nullptr, double minUp = 0) const;
+	bool triangleRay(int mesh, const double o[3], const double d[3], const double off[3], double& t, double tMin = 0, double tMax = 1e30, double minUp = 0) const;
+	// A mesh's drawn triangles with a BVH over them (kenshi-k16.2.382.2): built on the worker beside the decode (buildPick), moved into pickTris_ by uploadMesh.
+	// tris: xyz x 3 per triangle, mesh units, in leaf order; node: its box, and for an inner node (count 0) its children, for a leaf the first triangle and the count.
+	struct PickNode { float lo[3], hi[3]; int32_t a, b, count; };
+	struct PickMesh { std::vector<float> tris; std::vector<PickNode> nodes; size_t bytes() const { return tris.size() * sizeof(float) + nodes.size() * sizeof(PickNode); } };
+	static void buildPick(PickMesh& out, const std::vector<float>& tris);
+	// The top-level instances' world boxes (what partWorldBox gives for their Ready parts), one per topLevel_ slot: drawnHitIn tests only the instances whose box
+	// the vertical window reaches (kenshi-k16.2.382.2: the per-query instance loop was the stand ray's cost). A new instance set rebuilds them all; after that a
+	// box is recomputed only when the stamp of its parts (each part's mesh and that mesh's load state) moved, so the set's streaming churn costs a walk of the
+	// parts, not a box per instance (the first cast's 2-4 ms; kenshi-k16.2.382.2).
+	struct TopBox { uint32_t index; float lo[3], hi[3]; uint64_t stamp = ~0ull; };
+	mutable std::vector<TopBox> topBoxes_;			// parallel to topLevel_; an instance with no Ready part has lo > hi and culls out
+	mutable uint64_t topBoxData_ = ~0ull, topBoxHold_ = ~0ull;	// the dataGen_ / holdGen_ the boxes were last checked against
+	void topBoxRebuild(uint32_t pos) const;		// one instance's box from its Ready parts' boxes
+	uint64_t topBoxStamp(const BuildingInstance& b) const;	// its parts' meshes and their load states: what its box depends on besides the instance transform
+	size_t pickBytes_ = 0;	// the total of pickTris_ (logged as evlog pickmem)
+	mutable std::unordered_map<std::string, PickMesh> pickTris_;	// mesh path -> triangle corners (xyz x 3 per triangle), filled by uploadMesh when the mesh loads (drawn picks and the standing ray)
 	// bedRay's piece search (bedPiece) by the bed's sleeping spot, kept while dataGen_ and holdGen_ stand (kenshi-k16.2.205.12.111): the search reads
 	// only furnGrid_ (setData), the instances (dataGen_) and which part meshes are Ready with their boxes (holdGen_). Not stateGen_: texture uploads
 	// bump it too, most frames while Heft streams. Logic thread only, like pickTris_: written and read by bedRay inside pick_at (hover, click, the
@@ -420,8 +595,6 @@ private:
 	// Loading: the decode is queued or running. Uploading: decoded (the CPU fields below are set), its create is a stream-lane job not run yet.
 	// Ready: drawable (its Handle is ready, or its create is a frame-lane job of the packet being filled).
 	enum State { Unloaded, Loading, Uploading, Ready, Failed };
-	struct MeshGpu { sg_buffer vbuf = {}, ibuf = {}; };
-	struct TexGpu { sg_image img = {}; sg_view view = {}; };	// view invalid: sokol refused the image (drawn grey; the next drain marks it Failed)
 	struct Sub
 	{
 		int firstVertex = 0, firstIndex = 0, indexCount = 0;
@@ -434,6 +607,9 @@ private:
 		State state = Unloaded;
 		rq::Handle<MeshGpu> gpu;	// a fresh one per load; the create's job publishes it, an evict's destroy job holds the old one
 		rq::Lane lane = rq::Lane::kStream;	// the lane of its create: its destroy goes there too
+		rq::PrioPtr prio = std::make_shared<rq::Prio>();	// the stream lane's order of its create (kenshi-k16.2.258.3); logic rewrites it each frame
+		float score = 1e30f;	// the lowest score of a part needing it this frame (scoreFrame): 0 in view and near, 1e5 in view and far, 2e5 + out of view; + distance
+		uint64_t scoreFrame = 0;
 		std::vector<Sub> subs;
 		std::vector<uint32_t> indices;	// the CPU index list, kept for a part's render.open_windows patch (eviction keeps it)
 		float bmin[3] = {}, bmax[3] = {}, center[3] = {}, radius = 0;
@@ -449,6 +625,9 @@ private:
 		State state = Unloaded;
 		rq::Handle<TexGpu> gpu;
 		rq::Lane lane = rq::Lane::kStream;
+		rq::PrioPtr prio = std::make_shared<rq::Prio>();	// as MeshEntry::prio
+		float score = 1e30f;
+		uint64_t scoreFrame = 0;
 		std::vector<uint8_t> thumb;	// render.open_windows: the albedo's luma at <= 128 px (openwindows::Texel), from the decode
 		int tw = 0, th = 0;
 		uint64_t lastUsed = 0;
@@ -483,6 +662,9 @@ private:
 		// by one (setData); a frame-lane job runs before the packet that names it is drawn.
 		rq::Handle<sg_buffer> openIbuf;
 		bool openDone = false, openHas = false, openHide = false;
+		// the occluder fade keeps the foundation and the ground floor solid (kenshi-k16.2.411.1): building-local height (mesh units, the part's offset in) under which this
+		// part's fragments never fade, the interior's bottom + kFloorTop; set by infoFor from the building that holds the part, -1e30 = none
+		float foundY = -1e30f;
 	};
 	struct MeshCpu
 	{
@@ -491,6 +673,7 @@ private:
 		std::vector<uint32_t> indices;
 		std::vector<Sub> subs;
 		float bmin[3] = {}, bmax[3] = {};
+		PickMesh pick;	// worker-built (buildPick)
 	};
 	// Building-local geometry (mesh units, before the instance scale) of a building with interiors, from its loaded meshes: bounds of the interior mask (else the interior and ground-floor parts) and
 	// the start height of each floor (its interior slab, else an even split), for the inside test and for placing furniture on floors.
@@ -500,6 +683,7 @@ private:
 		float mn[3] = {}, mx[3] = {};
 		float outerMn[3] = { 1e30f, 1e30f, 1e30f }, outerMx[3] = { -1e30f, -1e30f, -1e30f };	// every loaded part's bounds (walls and slabs reach past the mask)
 		float floorY[4] = { -1e30f, 1e30f, 1e30f, 1e30f };
+		float foundY = -1e30f;	// the solid zone's top (the parts' foundY): drawn opaque while the building is ghosted (kenshi-k16.2.412.3: the click ray hits it)
 	};
 	// A staircase's flight (kenshi-k16.2.236.3, the floor model's ff::Flight since kenshi-k16.2.236.14), built from the staircase's own mesh (`is stairs`,
 	// keepHull) in the building's local mesh units (before the instance scale, like BInfo). Measured on the Storm House's InteriorStairs mesh: tread
@@ -520,6 +704,7 @@ private:
 		bool isMesh;
 		int id;
 		std::string path;
+		float prio = 0;	// lower = sooner: the worker takes the best of the queue (rerank() rewrites it as the camera moves; kenshi-k16.2.258.3)
 	};
 	struct Result
 	{
@@ -528,6 +713,10 @@ private:
 		bool ok;
 		MeshCpu mesh;
 		DdsImage tex;
+#ifdef KCLIENT_DEV_TOOLS
+		double decodeS = 0, pickS = 0;	// the worker's read + parse, and its drawn-triangle BVH (popin)
+		size_t fileBytes = 0;
+#endif
 	};
 	struct Group
 	{
@@ -536,6 +725,8 @@ private:
 		std::vector<float> onlyShadow, inRange, outRange;	// 12 floats per instance (kInstanceFloats): shadow casters that are not visible; visible and within the shadow range; visible only
 		std::vector<float> glass;	// visible peeked parts (renderGlass), after outRange
 		std::vector<float> flip;	// visible single-sided parts of a cut building while the camera moves (renderFlip), after glass
+		std::vector<float> standin;	// the loading stand-in (kenshi-k16.2.258.4): visible parts of an instance whose textures are not all ready, drawn flat black; after flip
+		std::vector<float> fade;	// the real look dithering in over the stand-in's switch (the same instances' parts), after standin
 		int first = 0;			// instance index in the frame buffer: onlyShadow, inRange, outRange, glass in that order
 		// A ground severed limb's tint (one group per instance: it comes from the wire, per item); limb false draws the part as before
 		float skin[3] = { 0, 0, 0 }, blood[3] = { 0, 0, 0 };
@@ -543,6 +734,30 @@ private:
 	};
 
 	int modeFor(uint32_t pid) const;	// shader mode of a part (draw())
+	// The resolver (see ResolvedDraw): update()'s end builds `out.draws`; draw() / drawShadow() resolve one draw into scratch_ and replay it at once, so a
+	// caller that has not moved to a list (Foliage, the glass and flip passes) draws exactly as the list replays.
+	void resolveDraws(FrameData& out);
+	void resolveDraw(DrawList& L, ResolvedDraw& r, uint32_t pid, int sub, sg_buffer inst, int instByteOffset, int count, const float base[3], float fadeStart, float fadeEnd, int fadeMode,
+		const float* limbSkin, const float* limbBlood, int standin, bool flip = false) const;
+	void resolveShadow(DrawList& L, ResolvedShadow& r, uint32_t pid, int sub, sg_buffer inst, int instByteOffset, int count, const float base[3], float fadeStart, float fadeEnd) const;
+	int meshRef(DrawList& L, int mesh) const;
+	int texRef(DrawList& L, int t) const;	// -1 unless the texture is Ready (texView's first test)
+	int ibufRef(DrawList& L, uint32_t pid) const;	// -1: the mesh's own index buffer
+	sg_view viewOf(const DrawList& L, int slot, sg_view fallback) const;	// render side: texView on a list slot
+	int replayDraw(const DrawList& L, const ResolvedDraw& r, sg_buffer inst, const float mvp[16]);
+	void replayShadow(const DrawList& L, const ResolvedShadow& r, sg_buffer inst, const float lvp[16], const float bias[4]);
+	// The per-draw uniform blocks are uploaded only when they change: a group's submeshes (and the id pass's instances of one part) carry identical
+	// ones, and the upload is a glUniform call per block member on the GL backend. The last uploaded block, per shader program: the building shader's
+	// (drawVs/drawFs, reset by beginDraws / beginFadeBand / applyPassUniforms), the shadow shader's (shadowVs/shadowFs, by beginShadowDraws) and the
+	// id shader's (idVs by renderIds). The GL uniform state lives in the program, so what another program applied in between does not invalidate it.
+	alignas(16) float drawVs_[56] = {}, drawFs_[76] = {};	// ResolvedDraw::vs / ::fs's layout
+	bool drawVsOk_ = false, drawFsOk_ = false;
+	alignas(16) float shadowVs_[56] = {}, shadowFs_[12] = {};	// ResolvedShadow::vs / ::fs's layout
+	bool shadowVsOk_ = false, shadowFsOk_ = false;
+	alignas(16) float idVs_[56] = {};	// ResolvedId::vs's layout
+	float idOwner_ = -1;
+	bool idVsOk_ = false;
+	DrawList scratch_;	// draw() / drawShadow()'s one-draw list
 	float cutOf(uint32_t pid) const;	// alpha test cutoff of a part, 0..1 (0 = none)
 	void resolveOpenWindows(uint32_t pid);	// render.open_windows: classify a part's islands and build its patched index buffer
 	sg_buffer ibufFor(uint32_t pid) const;	// the index buffer a part draws with: its open_windows patch when the switch is on, else the mesh's
@@ -554,7 +769,7 @@ private:
 	std::string textureFile(const BuildingPartDef& def, const std::string& submeshMaterial, bool* scriptTexture = nullptr, bool missingAsBlack = true) const;
 	std::string recordTexture(const std::string& recordPath, bool missingAsBlack) const;	// a MATERIAL_SPEC texture path -> the file to bind
 	void ensurePart(uint32_t part);
-	void queue(bool isMesh, int id, const std::string& path);
+	void queue(bool isMesh, int id, const std::string& path, float prio);
 	void worker();
 	void drain(bool wait, int maxItems);
 	void uploadMesh(MeshEntry& m, MeshCpu& cpu, bool blocking);	// blocking: drain(wait), a blocking update's; the creates go to the frame lane
@@ -581,6 +796,12 @@ private:
 	BuildingSet data_;
 	std::vector<PartRt> partRt_;
 	std::vector<uint32_t> partStamp_;
+	std::vector<float> partScore_;	// parallel to partStamp_: valid when the stamp is this frame's
+	void noteScore(float& score, uint64_t& scoreFrame, rq::Prio& p, float s);
+	float streamScore(const BuildingInstance& b, const double cam[3], const float mvp[16]) const;
+	static constexpr double kNearView = 6000.0;	// in view and nearer than this: the first class
+	void rerank();	// the queued decodes' priorities from the entries' scores (update, once a frame)
+	float partPrio(uint32_t pid) const { return partStamp_[pid] == (uint32_t)frame_ ? partScore_[pid] : 3e5f; }
 	std::vector<MeshEntry> meshes_;
 	std::vector<TexEntry> textures_;
 	std::unordered_map<std::string, int> meshIds_, texIds_;
@@ -602,6 +823,8 @@ private:
 	std::vector<uint32_t> topLevel_, topFloors_;
 	bool editorOn_ = false;
 	double editorPos_[3] = {};
+	float editorQ_[4] = { 1, 0, 0, 0 };		// setEditor's rotation (w, x, y, z)
+	int editorInstance_ = -1;			// the instance setProps added for it, -1 = none in this instance set
 	std::vector<uint32_t> propList_;		// the prop instances, an extra cell list for update()
 	double farDist_ = 0;		// this frame's exterior draw distance (render.building_far, the fog, drawLimit; the load radius at least)
 	void fadeOf(uint32_t pid, float& start, float& end) const;
@@ -656,6 +879,17 @@ private:
 	bool packValid_ = false;
 	uint64_t dataGen_ = 0;		// setData / setProps / addPart: the instance and part set changed
 	uint64_t doorGen_ = 0;		// setDoors changed a door's pose (the shadow cache's key)
+	// The loading stand-in of a building instance (kenshi-k16.2.258.4; the character pattern, render.loading_standin): per instance, all or nothing.
+	// Its shell meshes not all through: nothing drawn. Meshes through, a texture still streaming: every part flat black (the Group::standin lists).
+	// The last texture ready: the whole instance switches to its real look over kStandinFade (the Group::fade lists beside the stand-in's, dithered
+	// against each other), never a frame of black and textured parts of one instance outside that switch.
+	struct Stand { bool stood = false; double readyAt = -1; };
+	std::unordered_map<uint32_t, Stand> stand_;	// instance index -> its switch (only instances that stood in; erased when the switch is done)
+	double standNow_ = 0;		// this update's clock for the switch: wall seconds, a scripted (blocking) run's frame / 60
+	double standT0_ = -1;		// standNow_ at the first update (dev.building_standin_hold counts from it)
+	bool standHeld_ = false;	// dev.building_standin_hold: every building's textures count as not ready
+	bool standFading_ = false;	// this pack has a switch under way: the next frame repacks (the cover moves with the clock)
+	int standMode_ = 0;			// render.loading_standin: 0 silhouette, 1 double (black too), 2 off
 	uint64_t stateGen_ = 0;		// a mesh or texture became ready, failed or was evicted
 	uint64_t holdGen_ = 0;		// a mesh's state moved or a part found its mesh: what instanceHolds sees changed (bedRay's memo, kenshi-k16.2.205.12.111). Logic thread
 	void addLight(const BuildingInstance& b, uint32_t ii, const BuildingPartDef& def, uint32_t li, const double cam[3], const float planes[4][4], double maxDist);
@@ -793,8 +1027,7 @@ private:
 	// the cut-away flip fade's eye ring (update()): the eye history in wall-clock seconds, and the eye at (k + 1) x kFlipFade / 8 seconds ago relative to the eye now
 	struct EyeSample { double t; double p[3]; };
 	std::deque<EyeSample> eyeHist_;
-	float flipEye_[8][4] = {};
-	bool flipMoving_ = false;
-	bool flipPass_ = false;	// draw() fills the flip uniforms
+	float flipEye_[8][4] = {};	// logic side only: update() writes it, resolveDraws() copies it into the flip draws' uniforms
+	bool flipMoving_ = false;	// logic side only
 	Stats stats_;
 };

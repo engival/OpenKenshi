@@ -348,22 +348,23 @@ int main(int argc, char** argv)
 			std::cout << "passive: stayed out while the control joined " << joined << " ticks after the pick\n";
 		}
 
-		// ---- 9. a HOLD member does not join an ally's fight, does not chase, and fights an attacker in close range ----
+		// ---- 9. (the holder stands 120 u out: the fight drifts toward it, the guard reached 40 u of a holder at 60 u and the join was then right, kenshi-k16.6.533) a HOLD member does not join an ally's fight, does not chase, and fights an attacker in close range ----
 		{
 			Rig rig(gd, data, nav);
 			const std::uint64_t thief = rig.add(0, 0.0, 0.0, true, 7);
-			const std::uint64_t holder = rig.add(0, 60.0, 0.0, true, 7);
+			const std::uint64_t holder = rig.add(0, 120.0, 0.0, true, 7);
 			const std::uint64_t guard = rig.add(0, 0.0, 30.0, false, 9);
 			rig.fighter(guard)->faction = 987654;
 			rig.fighter(holder)->holdPosition = true;
+			rig.fighter(holder)->ranged = state::FighterRanged{}; // melee only: out of close range it has nothing to act on
 			rig.tick(2);
 			rig.sim->enqueue(Command::fighterAttack(state::Id{guard}, state::Id{thief}));
 			const int aimed = rig.tickUntil(120, [&]() { return rig.fighter(guard)->target == thief; });
 			test::require(aimed >= 0, "the guard never set its target on the thief");
 			rig.tick(120);
-			test::require(rig.fighter(holder)->target == 0, "a holding squadmate ran off to its ally's fight");
+			test::require(rig.fighter(holder)->target == 0, "a melee-only holder joined an ally's fight out of close range");
 			// An enemy that attacks the holder from 20 u (inside the close range) is fought.
-			const std::uint64_t near = rig.add(1, 60.0, 20.0, false);
+			const std::uint64_t near = rig.add(1, 120.0, 20.0, false);
 			rig.sim->enqueue(Command::fighterAttack(state::Id{near}, state::Id{holder}));
 			const int answered = rig.tickUntil(240, [&]() { return rig.fighter(holder)->target == near; });
 			test::require(answered >= 0, "a holding member did not fight an attacker in close range");
@@ -391,6 +392,62 @@ int main(int argc, char** argv)
 			test::require(!engagedFar, "a holding member kept a target beyond close range");
 			test::require(std::abs(rig.fighter(holder)->z - z0) < 5.0, "a holding member walked towards a far attacker");
 			std::cout << "hold: no target and no walk toward an attacker 120 u away\n";
+		}
+
+		// Members stand 150 u out: at 300 u a member never sees the guard (perception), so no join is possible for anyone (kenshi-k16.6.533).
+		// ---- 10. HOLD joins an ally's fight (goal 15, rwh.179) but never leaves its anchor: a crossbow fires from there, a melee-only
+		// holder does not swing; a non-holder joins and runs; a passive one never joins (kenshi-k16.6.371) ----
+		{
+			const kdata::Record* crossbow = nullptr;
+			for (const kdata::Record* r : gd->byType(kworld::itemTypeByName("CROSSBOW")))
+				if (r->name == "Eagle's Cross")
+					crossbow = r;
+			test::require(crossbow != nullptr, "no Eagle's Cross");
+			Rig rig(gd, data, nav);
+			const std::uint64_t victim = rig.add(0, 0.0, 0.0, true, 7);
+			const std::uint64_t shooter = rig.add(0, 150.0, 0.0, true, 7);
+			const std::uint64_t melee = rig.add(0, -150.0, 0.0, true, 7);
+			const std::uint64_t runner = rig.add(0, 0.0, 150.0, true, 7);
+			const std::uint64_t passive = rig.add(0, 0.0, -150.0, true, 7);
+			const std::uint64_t guard = rig.add(0, 0.0, 30.0, false, 9);
+			rig.fighter(guard)->faction = 987654;
+			rig.fighter(shooter)->holdPosition = true;
+			rig.fighter(shooter)->ranged = data->makeRanged(*crossbow, 0.5);
+			rig.fighter(shooter)->skills.crossbows = 100.0;
+			rig.fighter(melee)->holdPosition = true;
+			rig.fighter(melee)->ranged = state::FighterRanged{};
+			rig.fighter(passive)->passive = true;
+			for (const std::uint64_t id : {victim, runner, passive})
+				rig.fighter(id)->ranged = state::FighterRanged{};
+			test::require(CombatArena::inRangedReach(*rig.fighter(shooter), *rig.fighter(guard)), "the crossbow does not reach 150 u: the test proves nothing");
+			rig.tick(2);
+			const double sx = rig.fighter(shooter)->x, sz = rig.fighter(shooter)->z;
+			const double mx = rig.fighter(melee)->x, mz = rig.fighter(melee)->z;
+			rig.sim->enqueue(Command::fighterAttack(state::Id{guard}, state::Id{victim}));
+			bool joined = false, fired = false, meleeSwung = false;
+			double shooterMoved = 0.0, meleeMoved = 0.0, runnerMoved = 0.0;
+			const double rx = rig.fighter(runner)->x, rz = rig.fighter(runner)->z;
+			const std::int32_t bolts = rig.fighter(shooter)->ranged.ammo;
+			for (int i = 0; i < 600; ++i)
+			{
+				rig.tick();
+				const state::Fighter* h = rig.fighter(shooter);
+				joined = joined || (h->target == guard && h->combatGoal == 15);
+				fired = fired || h->ranged.ammo < bolts;
+				shooterMoved = std::max(shooterMoved, std::hypot(h->x - sx, h->z - sz));
+				const state::Fighter* ml = rig.fighter(melee);
+				meleeMoved = std::max(meleeMoved, std::hypot(ml->x - mx, ml->z - mz));
+				meleeSwung = meleeSwung || ml->target != 0;
+				runnerMoved = std::max(runnerMoved, std::hypot(rig.fighter(runner)->x - rx, rig.fighter(runner)->z - rz));
+			}
+			test::require(joined, "the crossbow holder never took goal 15 on the attacker");
+			test::require(fired, "the crossbow holder never fired from its anchor");
+			test::require(shooterMoved < 1.0, "the crossbow holder left its anchor: " + std::to_string(shooterMoved));
+			test::require(!meleeSwung && meleeMoved < 1.0, "the melee-only holder joined or moved while the attacker stayed out of reach");
+			test::require(runnerMoved > 20.0, "the non-holder control did not run to the fight");
+			test::require(rig.fighter(passive)->target == 0, "a passive squadmate joined");
+			std::cout << "hold join: crossbow holder joined+fired, moved " << shooterMoved << " u; melee holder moved " << meleeMoved
+				<< " u; control ran " << runnerMoved << " u\n";
 		}
 
 		std::cout << "ksim_sneak_break: all checks passed\n";

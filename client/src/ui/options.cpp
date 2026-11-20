@@ -32,6 +32,17 @@ namespace ui
 
 		bool keyRow(const cfg::Info& i) { return i.key.compare(0, 4, "key.") == 0 && keys::find(i.key.substr(4)); }
 
+		constexpr const char* kDebugKeys = "Debug keys";	// the group of the development keys (keys.cpp): shown in the Keys tab, last
+
+		bool devBuild()
+		{
+#ifdef KCLIENT_DEV_TOOLS
+			return true;
+#else
+			return false;
+#endif
+		}
+
 		constexpr float kW = 960, kBodyH = 620, kMinW = 700, kMinH = 420, kRowH = 40, kHeaderH = 38, kNeedsH = 22;
 		constexpr const char* kPinnedTip = "set on the command line for this run; changing it here saves it";	// a --set row's tooltip (k16.2.303.1)
 
@@ -107,28 +118,34 @@ namespace ui
 			return s;
 		}
 
-		// q (lowercase) starts a word of s (lowercase): at its start or after a character that is not a letter or digit ("sun" in "render.sun_shafts").
-		bool wordStart(const std::string& s, const std::string& q)
+		// How q (lowercase) sits in s (lowercase), its best place: 0 a whole word ("sun" in "the sun's"), 1 a word's start ("Sunken"), 2 inside
+		// a word, -1 nowhere. A word is split on anything not a letter or digit ('_' and '.' split a key).
+		int wordTier(const std::string& s, const std::string& q)
 		{
+			int best = -1;
 			for (size_t p = s.find(q); p != std::string::npos; p = s.find(q, p + 1))
 			{
-				if (p == 0 || !isalnum((unsigned char)s[p - 1])) { return true; }
+				const size_t e = p + q.size();
+				if (p != 0 && isalnum((unsigned char)s[p - 1])) { best = best < 0 ? 2 : best; continue; }
+				if (e == s.size() || !isalnum((unsigned char)s[e])) { return 0; }
+				best = 1;
 			}
-			return false;
+			return best;
 		}
 
-		// How well an option matches the find (k16.2.227.5, user: "SCORE and SORT the matches"): 0 is best, -1 no match. The label first (equal,
-		// starts with, a word starts with, contains), then the cfg key's words, then the help's (a word starts with, contains), the key anywhere last.
+		// How well an option matches the find (k16.2.227.5, user: "SCORE and SORT the matches"; k16.2.227.4.1, user: "whole word vs substring-word
+		// scoring penalties"): 0 is best, -1 no match. The label equal to the text first, then three fields, best first: the label, the cfg key,
+		// the help; within each a whole word, a word's start, inside a word (wordTier).
 		int score(const std::string& label, const std::string& key, const std::string& help, const std::string& q)
 		{
 			if (label == q) { return 0; }
-			if (label.compare(0, q.size(), q) == 0) { return 1; }
-			if (wordStart(label, q)) { return 2; }
-			if (label.find(q) != std::string::npos) { return 3; }
-			if (wordStart(key, q)) { return 4; }
-			if (wordStart(help, q)) { return 5; }
-			if (help.find(q) != std::string::npos) { return 6; }
-			if (key.find(q) != std::string::npos) { return 7; }
+			int field = 0;
+			for (const std::string* s : { &label, &key, &help })
+			{
+				const int t = wordTier(*s, q);
+				if (t >= 0) { return 1 + field * 3 + t; }
+				field++;
+			}
 			return -1;
 		}
 
@@ -184,10 +201,35 @@ namespace ui
 		}
 	}
 
-	Options::Options()
+	bool Options::debugAvailable() { return devBuild() && keys::debug(); }
+
+	// The client's development options (the Debug section: debug.*, the debug keys, ...) show only with the debug gate (--debug), and never in a
+	// build without KCLIENT_DEV_TOOLS (kenshi-k16.2.153.2). The Debug keys group is a binding: the Keys tab's (kenshi-k16.2.419.1).
+	std::string Options::sectionOf(const cfg::Info& info) const
+	{
+		if (info.section != "Debug") { return scope_ == OptionsScope::kSettings ? info.section : ""; }
+		if (!debugAvailable()) { return ""; }
+		const bool binding = info.group == kDebugKeys;
+		if (scope_ == OptionsScope::kSettings) { return binding ? "Keys" : ""; }
+		return binding ? "" : "Debug";
+	}
+
+	bool Options::onTab(const cfg::Info& info, size_t t) const
+	{
+		return t < tabs_.size() && sectionOf(info) == tabs_[t].section && (tabs_[t].group.empty() || tabs_[t].group == info.group);
+	}
+
+	size_t Options::tabOf(const cfg::Info& info) const
+	{
+		size_t t = 0;
+		while (t < tabs_.size() && !onTab(info, t)) { t++; }
+		return t;
+	}
+
+	Options::Options(OptionsScope scope) : scope_(scope)
 	{
 		using A = Widget::Align;
-		window_ = &root().add<CaptionWindow>("OPTIONS", [this] { show(false); }, 16);
+		window_ = &root().add<CaptionWindow>(scope == OptionsScope::kDebug ? "DEBUG SETTINGS" : "OPTIONS", [this] { show(false); }, 16);
 		window_->halign = window_->valign = A::kCenter;
 		window_->rect = { 0, 0, kW, CaptionWindow::kHeaderH + kBodyH };
 		window_->resizable = true;
@@ -413,24 +455,27 @@ namespace ui
 		optionCount_ = all.size();
 		tabBar_->clear();
 		tabs_.clear();
-		// The client's development options (the Debug section: debug.*, the debug keys, ...): built only with the debug gate (--debug), and never in a
-		// build without KCLIENT_DEV_TOOLS (kenshi-k16.2.153.2).
-#ifdef KCLIENT_DEV_TOOLS
-		const bool devBuild = true;
-#else
-		const bool devBuild = false;
-#endif
-		const char* heading = nullptr;
-		for (const std::string& sec : cfg::sectionNames())
+		if (scope_ == OptionsScope::kDebug)	// a tab per Debug group, by name (the saved file's order)
 		{
-			const bool development = sec == "Debug";
-			if (development && (!devBuild || !keys::debug())) { continue; }
-			if (std::none_of(all.begin(), all.end(), [&](const cfg::Info& i) { return i.section == sec; })) { continue; }
-			const char* g = development ? "CLIENT" : "SETTINGS";	// the game's own options, then the client's development ones
-			if (g != heading) { tabBar_->heading(g); }
-			heading = g;
-			tabBar_->add(sec);
-			tabs_.push_back({ sec, sec, tabBar_->tab(tabs_.size()) });
+			std::vector<std::string> groups;
+			for (const cfg::Info& i : all) { if (sectionOf(i) == "Debug" && std::find(groups.begin(), groups.end(), i.group) == groups.end()) { groups.push_back(i.group); } }
+			std::sort(groups.begin(), groups.end());
+			if (!groups.empty()) { tabBar_->heading("DEBUG"); }
+			for (const std::string& g : groups)
+			{
+				tabBar_->add(g);
+				tabs_.push_back({ "Debug", g, g, tabBar_->tab(tabs_.size()) });
+			}
+		}
+		else
+		{
+			tabBar_->heading("SETTINGS");
+			for (const std::string& sec : cfg::sectionNames())
+			{
+				if (std::none_of(all.begin(), all.end(), [&](const cfg::Info& i) { return sectionOf(i) == sec; })) { continue; }
+				tabBar_->add(sec);
+				tabs_.push_back({ sec, "", sec, tabBar_->tab(tabs_.size()) });
+			}
 		}
 		if (tabs_.empty()) { select(0); }
 		else { tabBar_->select(std::min(current_, tabs_.size() - 1)); }
@@ -444,12 +489,13 @@ namespace ui
 		}
 	}
 
-	// The tab's rows: by group (by name, the order of the saved file and --print-defaults), then by key; key rows in the actions' order.
+	// The tab's rows: by group (by name, the order of the saved file and --print-defaults; the Debug keys after the game's), then by key; key rows
+	// in the actions' order.
 	std::vector<cfg::Info> Options::options(size_t t) const
 	{
 		std::vector<cfg::Info> infos;
 		if (t >= tabs_.size()) { return infos; }
-		for (const cfg::Info& info : cfg::list()) { if (info.section == tabs_[t].section) { infos.push_back(info); } }
+		for (const cfg::Info& info : cfg::list()) { if (onTab(info, t)) { infos.push_back(info); } }
 		const std::vector<keys::Action>& acts = keys::actions();
 		auto at = [&](const cfg::Info& i)
 		{
@@ -458,7 +504,11 @@ namespace ui
 		};
 		std::stable_sort(infos.begin(), infos.end(), [&](const cfg::Info& x, const cfg::Info& y)
 		{
-			if (x.group != y.group) { return x.group < y.group; }
+			if (x.group != y.group)
+			{
+				const bool dx = x.group == kDebugKeys, dy = y.group == kDebugKeys;
+				return dx != dy ? dy : x.group < y.group;
+			}
 			return at(x) < at(y);	// cfg::list() is in key order already
 		});
 		return infos;
@@ -618,10 +668,10 @@ namespace ui
 			else
 			{
 				out += label(*it);
-				if (t >= tabs_.size() || it->section != tabs_[t].section)
+				if (!onTab(*it, t))
 				{
-					const auto tab = std::find_if(tabs_.begin(), tabs_.end(), [&](const Tab& x) { return x.section == it->section; });
-					out += " (" + (tab == tabs_.end() ? it->section : tab->title) + ")";
+					const size_t tab = tabOf(*it);
+					out += " (" + (tab < tabs_.size() ? tabs_[tab].title : it->section) + ")";
 				}
 			}
 			out += tail;

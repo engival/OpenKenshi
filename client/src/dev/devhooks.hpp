@@ -16,17 +16,21 @@
 
 #include "frame/labframe.hpp"
 #include "net/simlink.hpp"
+
+#include "dev/launchguard.hpp"	// launchGuard: no window from a Claude session outside gamescope (kenshi-k16.2.392)
 #endif
 
 class SimView;
 namespace dev { struct Context; }
 namespace dbg { struct Tree; }
 class Characters;
+class CollisionPick;
 class MaterialLib;
 class ResourceIndex;
-class Shadow;
+#include "render/shadow.hpp"
 class GpuTimer;
 struct FramePacket;
+namespace kworld { class Heightmap; }
 
 namespace dev
 {
@@ -89,7 +93,7 @@ namespace dev
 	void cleanup();	// quitting: the run is rewritten, the queued --bead comments go first, the END's metrics are waited for (1.5 s); the windows go
 	// The animation lab (dev/animlab.*, its host side in dev/debughost.cpp): one character offscreen on a floor grid, one clip on loop, its own
 	// camera; the browser window shows it. The lab inits on its first open or `lab` op, so a game that never opens it pays nothing.
-	void labSetup(const ResourceIndex& res, const std::string& dataDir, const Shadow& shadow);	// the lazy init's inputs (the character's asset set)
+	void labSetup(const ResourceIndex& res, const std::string& dataDir);	// the lazy init's inputs (the character's asset set)
 	bool labScripted();	// the script holds a `lab` op (Env::labScripted)
 	bool labAvailable();	// set up: the debug panel's Animations row is enabled
 	bool labOpen();	// the lab's window is open (overlap: its frames run gated, logicthread::renderIdle)
@@ -102,7 +106,7 @@ namespace dev
 	// values into FramePacket::lab; labRender (render thread, every world frame after the shadow pass) draws from that copy alone, its own
 	// offscreen pass, when the frame's flag says so (only while open or scripted).
 	void labFrame(LabFrame& out);
-	void labRender(const LabFrame& f);
+	void labRender(const LabFrame& f, const Shadow::FrameData& shadow);
 	void labShutdown();	// quitting: its render target and character go, while sokol still is
 	void animationsCommand();	// the debug panel's Animations row: opens or closes the lab and its window
 	void createAnimBrowser();	// with the UI up: the lab's window, its actions bound to the lab
@@ -115,6 +119,13 @@ namespace dev
 	void toggleTrailsPanel();	// Shift+F6
 	void debugPanelFrame(const Context& cx);	// every frame: the debug view's reply line, the panel's state
 	void trailsPanelFrame(const Context& cx);	// every frame: the trails panel's view of the trails
+	// The collision debug overlay (dev/colloverlay.cpp; debug.collision, Ctrl+F7; kenshi-k16.2.383.1, wording kenshi-k16.2.382.4): the building collision
+	// shapes (the barricades that block movement and line of sight; bodies do not stand on them, k16.2.382.2) and the drawn terrain bodies stand on,
+	// round the camera focus. Toggled by its key and the debug panel's row; the draw runs in logicframe.cpp beside the navmesh overlay's, into the caller's list.
+	void collisionToggle();
+	bool collisionOn();	// the settings key (a dev key: --debug gates the draw, as the navmesh overlay's)
+	bool collisionLegend(std::string& line);	// the debug text's line while it is on (its last draw's counts): false when it is off
+	void collisionOverlay(const CollisionPick& pick, const kworld::Heightmap* hm, const double focus[3], const float mvp[16], const double cam[3], float width, float height);
 	bool dumpOp(const Context& cx, const std::vector<std::string>& args);	// the `dump` ops that read the sim, the buildings, the sky / weather / gpu / effects and the item windows (dev/debughost.cpp): false when args is not one of them
 	bool machineOp(const Context& cx, const std::vector<std::string>& args);	// the `machine id=N` script op: opens N's machine window (dev/debughost.cpp); false when args is not one
 	bool hintsOp(const Context& cx, const std::vector<std::string>& args);	// the `hints at X Y` / `hints kinds` script ops (dev/hintsop.cpp): the resolved control hints at a screen point, or the kind registry; false when args is not one
@@ -153,6 +164,8 @@ namespace dev
 	// The vertical height probe (dev/heightprobe.cpp, kenshi-k16.2.384.1): every surface the world-Y line through a point crosses, and the stand ray's window and pick.
 	bool heightProbeMode();	// probe mode (Ctrl+F10, --debug): a left click on the world sets the probe instead of acting
 	void heightProbeToggle();
+	bool heightProbeActive();	// a probe is set at a point (the panel's Clear command is enabled only then, kenshi-k16.2.413.1)
+	void heightProbeClear();	// forget the probe: no chart, no line, no sidecar lines
 	void heightProbeSet(const Context& cx, double x, double z, bool print);	// probe at x, z (print: the listing to stdout, the script op)
 	void heightProbeFrame(const Context& cx);	// every logic frame: the probe's character part (and the drawn meshes' late loads) refreshed
 	std::vector<std::string> heightProbeLines();	// the chart, for the debug text (empty with no probe)
@@ -160,6 +173,7 @@ namespace dev
 	void heightProbeDraw(const float mvp[16], const double camPos[3], float width, float height);	// the line and a tick per crossing, through ovl::
 	bool heightProbeOp(const Context& cx, const std::vector<std::string>& args);	// `probe height X Z`
 #else
+	inline void launchGuard(const char*) {}	// a release build has no guard (kenshi-k16.2.392)
 	inline bool parseArg(int, char**, int&, std::vector<std::string>&) { return false; }
 	inline void sgOwnerInstall() {}
 	inline void sgOwnerTake() {}
@@ -185,7 +199,7 @@ namespace dev
 	inline void leaveRun() {}
 	inline void poll() {}
 	inline void cleanup() {}
-	inline void labSetup(const ResourceIndex&, const std::string&, const Shadow&) {}
+	inline void labSetup(const ResourceIndex&, const std::string&) {}
 	inline bool labScripted() { return false; }
 	inline bool labAvailable() { return false; }
 	inline bool labOpen() { return false; }
@@ -203,6 +217,10 @@ namespace dev
 	inline void toggleTrailsPanel() {}
 	inline void debugPanelFrame(const Context&) {}
 	inline void trailsPanelFrame(const Context&) {}
+	inline void collisionToggle() {}
+	inline bool collisionOn() { return false; }
+	inline bool collisionLegend(std::string&) { return false; }
+	inline void collisionOverlay(const CollisionPick&, const kworld::Heightmap*, const double[3], const float[16], const double[3], float, float) {}
 	inline bool dumpOp(const Context&, const std::vector<std::string>&) { return false; }
 	inline bool machineOp(const Context&, const std::vector<std::string>&) { return false; }
 	inline bool hintsOp(const Context&, const std::vector<std::string>&) { return false; }
@@ -236,6 +254,8 @@ namespace dev
 	inline bool logOp(const Context&, const std::vector<std::string>&) { return false; }
 	inline bool heightProbeMode() { return false; }
 	inline void heightProbeToggle() {}
+	inline bool heightProbeActive() { return false; }
+	inline void heightProbeClear() {}
 	inline void heightProbeSet(const Context&, double, double, bool) {}
 	inline void heightProbeFrame(const Context&) {}
 	inline std::vector<std::string> heightProbeLines() { return {}; }

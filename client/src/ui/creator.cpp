@@ -58,27 +58,12 @@ namespace ui
 		}
 	}
 
-	// The area between the columns: the host draws the character there; a left-drag turns it.
+	// The area between the columns: the host draws the character there and reads its press / drag / wheel itself before ui::event
+	// (k16.2.433.1); solid so a click there doesn't reach the layer behind.
 	class Creator::Preview : public Widget
 	{
 	public:
-		explicit Preview(Creator& c) : c_(c) { solid = true; }
-		bool onPress(Btn b, float x, float) override
-		{
-			if (b != Btn::kLeft) { return false; }
-			lastX_ = x;
-			return true;
-		}
-		void onDrag(float x, float) override
-		{
-			const float dx = x - lastX_;
-			lastX_ = x;
-			if (dx != 0 && c_.act_.rotate) { c_.act_.rotate(dx); }
-		}
-
-	private:
-		Creator& c_;
-		float lastX_ = 0;
+		Preview() { solid = true; }
 	};
 
 	// A column; without a cancel action Escape is not ours: it goes on to the host (the new game's editor: the game menu).
@@ -95,7 +80,7 @@ namespace ui
 		screen_ = &sc;
 		sc.halign = sc.valign = A::kStretch;
 		sc.visible = false;
-		preview_ = &sc.add<Preview>(*this);
+		preview_ = &sc.add<Preview>();
 		preview_->halign = preview_->valign = A::kStretch;
 		preview_->rect = { kMargin + kLeftW + 20, 0, kMargin + kRightW + 20, 0 };
 
@@ -402,6 +387,10 @@ namespace ui
 		static const std::vector<std::string> kNoRaces;
 		setPicker(pickers_[kRace], s.race, s.group >= 0 && s.group < (int)s.groups.size() ? s.groups[s.group].races : kNoRaces);
 		setPicker(pickers_[kSex], s.sex, 2, s.sex == 1 ? "FEMALE" : "MALE", s.bothSexes);
+		// an animal in the squad names its own race (no group entry, no subrace, no sex): the state's text, else the list's
+		if (!s.raceText.empty()) { pickers_[kGroup].value->text = s.raceText; }
+		if (!s.subraceText.empty()) { pickers_[kRace].value->text = s.subraceText; }
+		if (!s.genderText.empty()) { pickers_[kSex].value->text = s.genderText; }
 		setPicker(pickers_[kCharacter], s.character, s.characters, std::to_string(s.character + 1) + "/" + std::to_string(std::max(s.characters, 1)), s.characters >= 2);
 		pickers_[kCharacter].prev->parent()->visible = s.characters >= 2;	// one character: no CHANGE CHARACTER at all
 		setPicker(pickers_[kHead], s.head, s.heads, s.heads > 0 ? std::to_string(s.head + 1) + " / " + std::to_string(s.heads) : "-", s.heads >= 2);

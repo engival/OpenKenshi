@@ -453,8 +453,9 @@ with its `serial`, a counter that logic increments for each packet it fills.
      readbacks. Only then does logic run N+1, with N's done callbacks first (hook 4). The render thread runs only
      while logic waits, so there is no data race by construction, and `render_frame`'s `app.` reads stay legal. In
      lockstep, rule 4's bounded wait does not redraw while logic runs, because a redraw would read `app.` during
-     logic's writes. When the bound runs out, the frame callback returns without a pass and logs the stall (see open
-     points). Rule 6's skip is never taken in lockstep. When the bound runs out, logic polls the sim link without
+     logic's writes. When the bound runs out, the frame callback returns without a pass and repeats the kept frame; a run
+     of such frames over 50 ms logs one line (`logicthread::kMissLogMs`), a shorter run only goes into the `pace:` line
+     (kenshi-k16.2.437.1; `client/README.md` "Vsync and present pacing"). Rule 6's skip is never taken in lockstep. When the bound runs out, logic polls the sim link without
      stepping the world and waits again: determinism comes before liveness.
    - *overlap*: **gated overlap** (overlap review kenshi-k16.2.205.12.85 section 1.1, stage 1; landed with
      kenshi-k16.2.205.12.96). Logic fills packet N, waits only until the render thread has *taken* it (rule 6's wait,

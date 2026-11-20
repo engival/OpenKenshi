@@ -1,6 +1,6 @@
 // Lockpick order sequence as the original (kenshi-k16.6.324 / .323; CRIME_STATIC.md "2 Burglary"): the order walks to the lock with no crime and
 // no witness reaction; the crime and the reaction start when picking starts; the reaction does not end the order; a 0% order walks to the lock, never starts
-// picking (no crime, no reaction) and ends refused there (kenshi-k16.6.366); a targeting stops the running task and the order restarts from its beginning, no fight alongside (kenshi-k16.6.335, rwh.165).
+// picking (no crime, no reaction) and ends refused there (kenshi-k16.6.366, event 13 result 8 k16.6.377); a targeting stops the running task and the order restarts from its beginning, no fight alongside (kenshi-k16.6.335, rwh.165).
 
 #include "ksim/core/clock.hpp"
 #include "ksim/law/crime.hpp"
@@ -230,10 +230,10 @@ void zeroChance(const Data& w, const std::shared_ptr<MeshNavigator>& nav, const 
 	for (const InteractEvent& e : rig.interacts)
 	{
 		rolled = rolled || e.kind == InteractEvent::Kind::LockRoll;
-		refused += e.kind == InteractEvent::Kind::Done && e.action == 3 && e.result == InteractEvent::kRefused;
+		refused += e.kind == InteractEvent::Kind::Done && e.action == 3 && e.result == 8 && e.result == InteractEvent::kTooHard; // 8 = the wire value (k16.6.377; the door and the wire: ksim_interact)
 	}
 	check(!rolled, "4: no LockRoll event");
-	check(refused == 1, "4: the order ended once, refused at the lock (event 13 result 1)");
+	check(refused == 1, "4: the order ended once, too hard at the lock (event 13 result 8)");
 	check(!rig.ordered() && !rig.picking(), "4: the order ended cleanly: no order, no pick step left");
 	check(!rig.f(rig.thief).walking(), "4: the character idles (no re-plan loop)");
 }

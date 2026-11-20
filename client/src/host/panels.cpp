@@ -82,7 +82,6 @@
 #include "kworld/towns.hpp"
 #include "render/navoverlay.hpp"
 #include "app/config.hpp"
-#include "platform/datadir.hpp"
 #include "platform/windowgeom.hpp"
 #include "platform/process.hpp"	// plat::unsetEnv
 #include "platform/windowgate.hpp"
@@ -207,6 +206,11 @@ ui::CreatorState creator_state()
 	}
 	st.sex = s.female ? 1 : 0;
 	st.bothSexes = !ch.ranges[0].empty() && !ch.ranges[1].empty();
+	if (!st.editable)	// an animal in the squad: its RACE record's name, no subrace, no sex; its description and stats are the record's own (choices())
+	{
+		st.raceText = s.race;
+		st.subraceText = st.genderText = "-";
+	}
 	st.clothes = app.creator.clothes;
 	st.description = ch.description;
 	st.stats.push_back({ "Hit Points:", std::to_string((int)(ch.hp + 0.01f)) });
@@ -238,7 +242,10 @@ ui::CreatorState creator_state()
 		const auto at = std::find(stances.begin(), stances.end(), s.stance);
 		st.sliders.push_back({ "Body", "Idle stance", 1, (float)stances.size(), at == stances.end() ? 1.0f : 1.0f + (float)(at - stances.begin()), 1 });
 	}
-	st.sliders.push_back({ "Body", "Skin Tone", 0, 100, s.skin * 100.0f, 0 });
+	// Skin Tone: the original's slider is 0..10*(palette swatches - 1), integers, so the human 6 swatches give 0..50 (Creator::skinMax); the value
+	// is the 0..1 palette position x the top, so a body saved above it (skin 0.69) keeps its colour and only the range is capped (kenshi-k16.2.432.3).
+	const float skinTop = (float)app.creator.skinMax();
+	st.sliders.push_back({ "Body", "Skin Tone", 0, skinTop, s.skin * skinTop, 1 });
 	for (const Characters::EditorRange& r : app.creator.ranges())
 	{
 		st.sliders.push_back({ r.category, r.name, std::min(r.min, r.max), std::max(r.min, r.max), app.creator.value(r.name), 0 });
@@ -622,6 +629,7 @@ namespace
 		it.tip.count = e.count;
 		const std::string gradeInk = q.grade >= 5 ? "ItemArtifact" : "ItemGrade" + std::to_string(std::max(q.grade, 0));
 		if (!q.grade_word.empty()) { it.tip.tags.push_back({ "[" + q.grade_word + " Grade]", gradeInk }); }
+		if (e.steal != 255) { it.tip.tags.push_back({ "Steal chance " + std::to_string((unsigned)e.steal) + "%", e.steal >= 50 ? "TipGood" : "TipBad" }); }	// ITEM_GRID steal tail: a foreign container's item for the take session's actor
 		if (trade.valid && trade.buybackCount > 0) { it.tip.tags.push_back({ trade.buybackCount > 1 ? "Buyback (" + std::to_string(trade.buybackCount) + ")" : std::string("Buyback"), "TipBad" }); }
 		if (info && info->armourClass >= 0 && !info->coverage.empty())
 		{

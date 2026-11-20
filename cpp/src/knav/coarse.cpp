@@ -515,7 +515,7 @@ Cluster::Crossing Cluster::crossing(std::size_t i, std::size_t j, const TravelFi
 		return best;
 	for (const DoorCross& door : edge->doors)
 	{
-		const DoorVerdict verdict = doors.book->get(door.door).verdict(doors.doorClass);
+		const DoorVerdict verdict = doors.book->get(door.door).verdict(doors.throughLocks);
 		if (verdict == DoorVerdict::Blocked)
 		{
 			best.cost = -1.0f;
@@ -678,7 +678,7 @@ PathResult CoarseGraph::refine(const NavMesh& mesh, const CoarseLeg& leg, const 
 		result.points = leg.points;
 	} else {
 		TravelFilter travel = travel_;
-		travel.doorClass = static_cast<std::uint8_t>(doors.doorClass);
+		travel.throughLocks = doors.throughLocks;
 		ClusterMesh scratch(mesh, leg.cluster, travel, doors.book);
 		float cost;
 		if (!scratch.path(leg.from, leg.to, result.points, cost))
@@ -702,13 +702,11 @@ CoarsePath CoarseGraph::findPath(const NavMesh& fromMesh, const NavMesh& toMesh,
 	CoarsePath result;
 	PolyLoc start;
 	PolyLoc end;
-	// The graph's filter, asking as the door class of the query. Locating the ends ignores doors
-	// (class out of range = nobody excluded), so the result does not depend on which door state
-	// the meshes happen to have applied.
+	// Locating the ends ignores locks, so the result does not depend on which door state the meshes happen to have applied.
 	TravelFilter travel = travel_;
-	travel.doorClass = static_cast<std::uint8_t>(doors.doorClass);
+	travel.throughLocks = doors.throughLocks;
 	TravelFilter locating = travel_;
-	locating.doorClass = kDoorClasses;
+	locating.throughLocks = true;
 	if (!NavQuery(fromMesh).locate(from, halfExtents, start, locating))
 	{
 		result.failure = CoarsePath::Failure::StartOffMesh;

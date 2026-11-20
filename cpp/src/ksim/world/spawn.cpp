@@ -817,7 +817,7 @@ private:
 				forEachRef(*biome, "nests", [&](const kdata::RefEntry& nestEntry)
 				{
 					const kdata::Record* nest = recordOf(nestEntry.targetID, townType_);
-					if (nest == nullptr)
+					if (nest == nullptr || !builder_.worldStateHolds(*nest))
 						return;
 					for (const std::string_view list : kNestLists)
 					{

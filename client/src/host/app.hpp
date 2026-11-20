@@ -41,6 +41,7 @@
 #include "kworld/collision.hpp"
 #include "kworld/coords.hpp"
 #include "kworld/heightmap.hpp"
+#include "kworld/ogreskeleton.hpp"	// SkelQuat (the creator's preview orbit)
 #include "net/simlink.hpp"
 #include "bridge/simview.hpp"
 #include "render/arrows.hpp"
@@ -83,6 +84,8 @@
 #include "ui/namelabels.hpp"
 #include "ui/newgame.hpp"
 #include "ui/options.hpp"
+#include "ui/minimap.hpp"
+#include "ui/statuspopup.hpp"
 #include "ui/overview.hpp"
 #include "ui/progressbars.hpp"
 #include "ui/prompt.hpp"
@@ -234,6 +237,10 @@ struct CameraState
 	uint64_t followId = 0;		// the followed character
 	double followDist = 60, followBase = 0, followOffset = 0;
 	int floorLevel = -1;		// the visible floor level 0..3 (WorldBuildings::level); -1 = an older sidecar without it: the start snaps
+	// The world map's view the save was made at (k16.2.435, a deliberate deviation): zoom in pixels a map texel (0 = fitted), the world point
+	// at the view's centre. An older sidecar has none: its load starts at the default overview.
+	bool hasMapView = false;
+	double mapZoom = 0, mapCx = 0, mapCz = 0;
 };
 
 // A load's camera restore in flight: armed when the load's reset is seen (update_ui), applied on the load's first snapshot after it.
@@ -264,6 +271,9 @@ struct App
 	uint64_t rowLoggedId = 0;	// the scripted `producer row ...` line's last row (id, version); once per change
 	uint32_t rowLoggedVersion = 0;
 	uint64_t gearChar = 0;	// the character the inventory window shows this frame (the dragging character of a machine output drop)
+	ui::MinimapState minimapState;	// what the host passes the minimap each frame (level / place from the saved settings, then its actions)
+	std::unique_ptr<ui::Minimap> minimap;	// the corner minimap window (ui.minimap; place and zoom saved as minimap.x / .y / .level)
+	std::unique_ptr<ui::StatusPopup> statusPopup;	// the top-right status lines (server not responding, link lost; kenshi-k16.2.445.3)
 	std::unique_ptr<ui::Overview> overview;	// the original's overview window (MAP / ... / SQUADS tabs); outlives squadsUi
 	std::unique_ptr<ui::Squads> squadsUi;	// U (MINE: the original's key for its SQUADS tab is not captured): PLAYER_SQUADS (SIMLINK 31) and orders 70-75
 	uint64_t activeSquad = 0;	// the HUD tab: the portrait bar shows its members (client-side, SIMLINK 31)
@@ -328,7 +338,7 @@ struct App
 	using DoorSlide = dev::DoorSlide;
 	std::unordered_map<std::string, DoorSlide> doorSlides;
 	// Each door's pose this frame (update_doors), by kworld::DoorKey: its interactable, openness 0 closed .. 1 open, the offset of its leaf and collision
-	struct DoorPoseNow { uint64_t thing = 0; double open = 0, off[3] = {}; bool exact = true, seen = false; };
+	struct DoorPoseNow { uint64_t thing = 0; double open = 0, off[3] = {}; bool exact = true, seen = false, drawn = false; };	// drawn: the leaf was in the gathered world a frame earlier (its first state then eases from the authored pose; kenshi-k16.2.258.10.1)
 	std::unordered_map<kworld::DoorKey, DoorPoseNow> doorPose;
 	std::shared_ptr<const std::vector<kworld::WorldShape>> doorShapes;	// the gather doorFirst indexes
 	std::unordered_map<kworld::DoorKey, size_t> doorFirst;	// a door's first collision shape (its frame)
@@ -374,7 +384,34 @@ struct App
 	bool menuUnpaused = false;	// the game menu just sent its unpause (EXIT GAME closes the menu, then pauses again before the clock shows it)
 	int quietPauseTo = -1;	// a menu sent this pause state (0 / 1): its clock flip plays no Pause_Game / Resume_Game (update_ui); -1 none
 	double creatorScene[3] = {};	// the editor scene's pivot origin (open_creator): the platform stands kCreatorPivot below it, the character kCreatorRoot
-	float creatorHead = 17;	// Bip01 Head above the preview's feet (Characters::headHeight; the FACE / HAIR pivot)
+	float creatorHead = 17;	// Bip01 Head above the preview's feet (Characters::headHeight; the FACE / HAIR pivot until the body is built)
+	// The creator preview's orbit (kenshi-k16.2.433.1, user 2026-11-20; main.cpp creator_frame / creator_drag / creator_zoom): the character and the
+	// platform are one assembly, drawn as p' = center + q x (p - center) + shift (Characters::setPreviewOrbit, WorldBuildings::setEditor), so a drag
+	// turns both about the pivot: yaw about +Y from its x, tilt about +X from its y, clamped short of flipping. The wheel moves the eye along the
+	// cursor's ray to the point of the model under it (Characters::skeletonRay, so that point stays put) and makes it the pivot; over the last 30% of
+	// the way out the pivot, the tilt and the eye drift back to the page's default framing of the whole character (the yaw stays).
+	struct CreatorOrbit
+	{
+		kworld::SkelQuat q;		// the assembly's rotation from its home pose (identity: as the scene builds it)
+		double shift[3] = {};		// the scene pivot's world displacement (the assembly's home is the scene itself)
+		double pivot[3] = {};		// the rotation point (world): a drag turns the assembly about it
+		double eye[3] = {};		// the camera's eye
+		float yaw = 0, tilt = 0;	// radians: the drag's yaw about +Y and tilt about +X (positive: the top towards the camera)
+		double zoom = 1;		// 1 = the page's default framing (full out), 0 = the closest
+		int page = -1;			// the creator page the framing was made for; a page change starts it over
+		// The SHOWN view (k16.2.433.4): a wheel step sets the fields above as the TARGET; these glide towards it each frame (exponential, dt-based),
+		// and the camera and the assembly draw from these. A drag snaps the target to them first (it acts on the shown view and ends the glide).
+		double sEye[3] = {}, sShift[3] = {};
+		float sYaw = 0, sTilt = 0;
+		double sZoom = 1;
+		bool gliding = false;
+		double tCursor[3] = {};	// the step's tracked point (target world) and the pointer it was taken at, for the settled check line
+		float curX = 0, curY = 0;
+		bool track = false;
+	};
+	CreatorOrbit creatorOrbit;
+	bool creatorDragging = false;	// a left button held from the preview area (creator_event)
+	float creatorDragX = 0, creatorDragY = 0;	// the drag's last pointer position
 	bool creatorWeatherAfter = false;	// the creator just closed: the next world frame logs the world's weather again (k16.17.6.1)
 	SkyWeather creatorWeatherSave;	// the world's weather while the creator's clear look stands in for it (a pinned weather is restored on close)
 	bool creatorWeatherHeld = false;
@@ -429,6 +466,7 @@ struct App
 	} seen;
 	// Session loading screen (begin_session_load): up until the world round the squad has streamed in; its own sim pause, undone only by itself
 	bool sessionLoad = false, sessionPaused = false;
+	bool offlineGateDone = false;	// the offline flight's load screen was begun (or not wanted): once per run (kenshi-k16.2.258.3)
 	int sessionQuiet = 0, sessionPending = 0, sessionPeak = 0;
 	double sessionTime = 0;
 	bool settledChars = false;	// the scene's characters had settle=SECONDS: its JSON reports the idle fit (foot_idle)
@@ -453,6 +491,8 @@ struct App
 	bool worldChosen = false;	// the player asked for a world and got it: a NEW_GAME result, a scenario started (status 0) or a load's reset. A local (title-started) session's
 								// pre-game world is nobody's: spectator mode is decided only after this (kenshi-k16.2.95)
 	uint32_t cagesSeen = 0;	// the last CAGES frame logged (--debug)
+	bool hoverHitOk = false;	// the cursor is over ground (hover_cursor's pick) and hoverHit is its point (the debug route preview)
+	double hoverHit[3] = {};
 	uint64_t hoverThing = 0;	// the ground item, container or door under the cursor (hover_cursor), 0 = none
 	// The open item windows besides the character's (kenshi-k16.20.13.2): opencont.hpp holds the record, the dev `dump windows` op reads it too.
 	using OpenCont = ::OpenCont;
@@ -476,9 +516,12 @@ struct App
 	std::vector<std::pair<GearOrder, double>> gearFollow;	// the second halves of chained moves (a take applied), waiting for the item to reach the user's pack
 	uint64_t gearGroup = 0;		// the last moveAll group's id
 	uint64_t clockTick = 0;	// the last sim CLOCK applied to sky.clock (live: the sim owns the time; the sky advances it between frames)
-	double followDist = 60, followBase = 0, followOffset = 0;	// camera distance; smoothed camera yaw behind the character; the user's orbit on top
-	double followPulled = 1e9, followHold = 0, followBoom = 0, rtsPulled = 1e9, rtsHold = 0, rtsBoom = 0;
-	bool rtsLog = false;	// script `rtsboom log`: update_rts prints its boom each frame	// the collision boom (update_follow): the length the world allows it (1e9: free), seconds left before it may ease out
+	double followDist = 100, followBase = 0, followOffset = 0;	// camera distance (kFollowDist, kenshi-k16.2.353.4); smoothed camera yaw behind the character; the user's orbit on top
+	double followEase = 1e9, followBoom = 0, followRise = 0, followPitchAdj = 0, followRide = 0, rtsEase = 1e9, rtsBoom = 0, rtsRide = 0;
+	unsigned followSnaps = 0, rtsSnaps = 0;	// the safety snap-ins (the direction window let the view's own allowed length through; kenshi-k16.2.353.4)
+	bool rtsLog = false;	// script `rtsboom log`: update_rts prints its boom each frame (the eased length above: the direction window's value, kenshi-k16.2.353.4)
+	double followPivotY = 0;	// kenshi-k16.2.395.1: the follow camera's boom pivot y (the smoothed drawn body y + kEye), lightly smoothed itself; followPivotOn = one follow frame has set it (an engage snaps it)
+	bool followPivotOn = false;
 	// The game camera (docs/CLIENT.md "Camera modes"): floating over the ground at rtsDist from focus, on yaw / pitch; centerId != 0 = auto-center on
 	// that character. Off = the debug free camera; follow (the hover / drive camera) overrides both.
 	bool rts = false;
@@ -487,6 +530,9 @@ struct App
 	double focus[3] = {}, rtsDist = 400;
 	const char* focusOn = "terrain";
 	CamRestore camRestore;	// the camera sidecar of the save being loaded (k16.2.134.1)
+	// The world map's default view (k16.2.435): a new game, or a load whose sidecar has no map view, starts at the overview once the MAP page has a
+	// rect (its height is the default's zoom) and the towns are in; the sidecar's own view lands with the camera and clears this.
+	bool mapViewPending = true;
 	std::string camLoadName;	// the save name the client last asked to load; its reset arms camRestore
 	int camLoadFrame = 0;		// app.frames at that request (a load that never resets expires it)
 	bool navTrace = false;	// script `dump navdraw`: the next navmesh overlay draw prints its stair polygons	// what the floating camera's focus rests on (ground_under)
@@ -516,6 +562,7 @@ struct App
 	uint32_t propsSerial = 0;
 	uint32_t propsBuildSerial = 0;
 	uint64_t propsCut = 0;
+	double propsThingY = 0;	// the sum of the items' and containers' drawn y at the last props build (k16.2.412.4)
 	bool propsValid = false;
 	bool propsLive = false;
 	GpuTimer gpu;
@@ -542,6 +589,7 @@ struct App
 	dl::TexId portraitsTex = 0;	// the portrait atlas's UI id, bound at Portraits::init (render hook 8's host half, kenshi-k16.2.205.12.39); 0: none
 	bool showPortraits = false;	// script `set portraits 1`: the atlas's first 4 cells drawn top-left at 2x (a check, until the HUD draws them)
 	float rainForce = -1, dustForce = -1, cloudsForce = -1;	// the scene's rain= / dust= / clouds= keys
+	double windSpeedForce = -1;	// `set windspeed`: the wind speed (u/s) a scene or script forces, -1: the live one
 	double windForce = -1;	// the scene's wind= key (degrees), -1: the live wind
 	int particlesDrawn = 0;
 	sg_environment_defaults swapFormat = {};	// the swapchain's formats; the scene pipelines default to RGBA16F (init)

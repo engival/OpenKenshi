@@ -2,7 +2,7 @@
 
 // Town gates in the simulation (docs/reference/DOORS.md, ARCHITECTURE.md "Pathfinding": gates
 // are operated, with access control). The nav layer (knav/door.hpp) has the mechanism: a DoorBook
-// of per-door state and denied traveller classes, repainted onto the baked door polygons. This
+// of per-door state, repainted onto the baked door polygons. This
 // is the owner of that book: it decides, per town, how its gates stand, from the town's data and
 // what the faction layer is doing, and hands the navigator the result.
 //
@@ -17,15 +17,13 @@
 //     belongs to the nearest town centre, no cutoff (gatebind.hpp, as the spawn rule). House
 //     doors stay as baked (open to all).
 //   - Default Open, for ever: the original never closes a gate (the Alert closing of the first slice is retired,
-//     retired/doors_alert_posture.txt). A town the data marks `is public` = false (military bases, prisons) refuses strangers
-//     (neutral and hostile travellers) always.
+//     retired/doors_alert_posture.txt). The original has no class, faction or owner test on a door (findings/rwh199_nav_validity_static.md
+//     section 2): a gate refuses nobody by who they are, so a private town's gates (`is public` = false) stay open too; the per-class
+//     refusal of the first slice is retired.
 //   - A command (SetDoorState) overrides one door's state, locked included.
 //
-// Traveller classes (knav door classes 0..7; four used): the stance of the traveller's faction
-// as the owner of the town it is going to sees it: Resident (same faction), Ally (relation >=
-// 50), Neutral, Hostile (relation <= -50); a factionless squad is Hostile (animals do not open
-// gates), a town with no owner treats everyone as Neutral. A squad standing inside a gate town
-// (within DoorTuning::insideReach of its centre) travels as Resident: leaving is never refused.
+// Stance (classOf): how the owner of a town sees a faction: Resident (same faction), Ally (relation >= 50), Neutral, Hostile
+// (relation <= -30); a factionless squad is Hostile, a town with no owner treats everyone as Neutral. It does not gate any door.
 //
 // Saved: the explicit door overrides (state::DoorOverrides). The book itself is derived from those, the world data and
 // the live relations, and rebuilt after a load. The crews' reopen timers are not saved (they restart after a load).
@@ -52,7 +50,7 @@ namespace ksim {
 class FactionBook;
 struct TownSite;
 
-// Traveller classes as the sim uses knav's eight.
+// A faction's stance toward a town's owner.
 enum class DoorClass : int
 {
 	Resident = 0,
@@ -60,11 +58,6 @@ enum class DoorClass : int
 	Neutral = 2,
 	Hostile = 3,
 };
-
-constexpr std::uint8_t doorClassBit(DoorClass doorClass) noexcept
-{
-	return static_cast<std::uint8_t>(1u << static_cast<int>(doorClass));
-}
 
 // The immutable inputs, from the world (Simulation::enableAi fills them).
 struct DoorData
@@ -92,8 +85,6 @@ struct DoorTuning
 	double hostileRelation = -30.0;
 };
 
-// What the group layer asks: the class a squad of `faction` (FactionState entity, 0 = none)
-// travels as on a trip from one point to another.
 // The gate a raid has to break to get into a town (DoorAccess::bashing).
 struct GateBash
 {
@@ -107,9 +98,7 @@ class DoorAccess
 {
 public:
 	virtual ~DoorAccess() = default;
-	virtual int travellerClass(flecs::entity_t faction, double fromX, double fromZ, double toX,
-		double toZ) const = 0;
-	// A raid of `faction` going to (toX, toZ) that the gates refuse bashes the first locked (or refusing) gate of that town
+	// A raid of `faction` going to (toX, toZ) that the gates refuse bashes the first locked gate of that town
 	// (DOORS.md section 6: raiders beat on a locked gate until it breaks). Nothing to break: key 0.
 	virtual GateBash bashing(flecs::entity_t faction, double toX, double toZ) const
 	{
@@ -147,11 +136,9 @@ public:
 	// (first step, a load, an override command, a reopen).
 	void sync(flecs::world& ecs, std::uint64_t tick, const std::vector<TownSite>& towns, const Navigator* navigator);
 
-	int travellerClass(flecs::entity_t faction, double fromX, double fromZ, double toX,
-		double toZ) const override;
 	GateBash bashing(flecs::entity_t faction, double toX, double toZ) const override;
 	// The bash on ONE gate (goal 270's resolved gate, task raid-goals): the same test as bashing's, for the door key the caller holds;
-	// key 0 when that gate does not refuse `faction` now (it is open, or shut and passable - the goal's way through).
+	// key 0 when that gate is not locked now (it is open, or shut and passable - the goal's way through).
 	GateBash bashFor(flecs::entity_t faction, std::uint64_t key) const;
 	// A bashed-down gate: an override with state 3 (broken: open for ever, no policy, never closed again). Called from the
 	// serial squad step.

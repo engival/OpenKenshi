@@ -12,6 +12,7 @@
 #include "scenario_rig.hpp"
 #include "sim_access.hpp"
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -20,12 +21,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
-#endif
-#ifndef KSIM_SCENARIO
-#error KSIM_SCENARIO must be defined
 #endif
 
 using namespace ksim;
@@ -43,7 +38,7 @@ int main(int argc, char** argv)
 {
 	try
 	{
-		const scenario::File file = scenario::parseFile(KSIM_SCENARIO);
+		const scenario::File file = scenario::parseFile(ksim::dev::srcPath("../scenarios/cage_prisoner.kscen"));
 		const std::string world = argc > 1 ? argv[1] : "";
 		if (world.empty() || !scenario_rig::hasRegion(file, world))
 		{

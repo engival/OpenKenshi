@@ -198,8 +198,23 @@ double factionRelation(const kdata::GameData& data, flecs::entity from, flecs::e
 	if (const state::Relation* relation = from.get<state::Relation>(to))
 		return relation->value;
 	const state::FactionState* state = from.get<state::FactionState>();
-	const kdata::Record* record = state != nullptr ? data.find(state->templateSid) : nullptr;
-	return record != nullptr ? record->intOr("default relation", 0) : 0.0;
+	const state::FactionState* other = to.get<state::FactionState>();
+	if (state == nullptr || other == nullptr)
+	{
+		const kdata::Record* record = state != nullptr ? data.find(state->templateSid) : nullptr;
+		return record != nullptr ? record->intOr("default relation", 0) : 0.0;
+	}
+	return seededRelation(data, state->templateSid, other->templateSid);
+}
+
+double seededRelation(const kdata::GameData& data, std::string_view fromSid, std::string_view toSid)
+{
+	const kdata::Record* from = data.find(std::string(fromSid));
+	if (from == nullptr)
+		return 0.0;
+	const kdata::Record* to = data.find(std::string(toSid));
+	const std::int64_t own = from->intOr("default relation", 0);
+	return static_cast<double>(to != nullptr ? std::min<std::int64_t>(own, to->intOr("default relation", 0)) : own);
 }
 
 bool factionsHostile(const kdata::GameData& data, flecs::entity from, flecs::entity to)
@@ -542,6 +557,13 @@ double relationOf(flecs::entity faction, flecs::entity other, double fallback)
 	return fallback;
 }
 
+// The seeded relation of the context's faction toward `owner` (min of the two defaults, FactionBook::faction's).
+double seededBetween(const FactionBook& book, const FactionContext& context, flecs::entity_t owner)
+{
+	const state::FactionState* other = flecs::entity(context.ecs.c_ptr(), owner).get<state::FactionState>();
+	return seededRelation(book.data(), context.faction.templateSid, other != nullptr ? other->templateSid : std::string());
+}
+
 void forget(std::vector<state::Cooldown>& list, std::uint64_t now)
 {
 	list.erase(std::remove_if(list.begin(), list.end(),
@@ -598,7 +620,7 @@ void UtilityFactionLayer::ensure(FactionContext& context, state::FactionAI& ai) 
 	for (const flecs::entity_t owner : owners)
 	{
 		hostile += relationOf(context.entity, flecs::entity(context.ecs.c_ptr(), owner),
-			info->defaultRelation) <= FactionBook::kHostile ? 1 : 0;
+			seededBetween(*book_, context, owner)) <= FactionBook::kHostile ? 1 : 0;
 	}
 	ai.aggression = kAggressionBase + kAggressionSpread
 		* (owners.empty() ? 0.0 : static_cast<double>(hostile) / owners.size());
@@ -840,7 +862,7 @@ std::vector<UtilityFactionLayer::Candidate> UtilityFactionLayer::candidates(
 		if (found != relations.end())
 			return found->second;
 		return relations.emplace(owner, relationOf(context.entity,
-			flecs::entity(context.ecs.c_ptr(), owner), info->defaultRelation)).first->second;
+			flecs::entity(context.ecs.c_ptr(), owner), seededBetween(*book_, context, owner))).first->second;
 	};
 
 	// A player town: a TownState whose owner is a player faction (an owned record town, `scenarioTownToPlayer`, a conquest). The player's own

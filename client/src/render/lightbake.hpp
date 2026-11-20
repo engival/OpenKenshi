@@ -85,7 +85,8 @@ Grid bakeSun(std::vector<Tri> tris, const float mn[3], const float mx[3], float 
 void cancel();
 bool cancelled();
 
-// The cache (derived data, never a repo): $XDG_CACHE_HOME/kclient/lightbake.<name>.<key>.bin, the key a content hash of the type's mesh files.
+// The cache (derived data, never a repo): the per-user cache root's kclient/lightbake.<name>.<key>.bin (app/userdirs.hpp: $XDG_CACHE_HOME or
+// ~/.cache; Windows %LOCALAPPDATA%\OpenKenshi\cache), the key a content hash of the type's mesh files.
 std::string cachePath(const std::string& name, uint64_t key);
 bool load(const std::string& path, Grid& out);
 bool save(const std::string& path, const Grid& g);

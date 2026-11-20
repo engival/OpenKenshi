@@ -2,6 +2,7 @@
 
 #include "kworld/coords.hpp"
 #include "kworld/error.hpp"
+#include "kutil/platform/mapped_file.hpp"
 #include "le.hpp"
 
 #include <algorithm>
@@ -12,11 +13,6 @@
 #include <utility>
 #include <vector>
 
-#include <cerrno>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 namespace kworld {
 
@@ -60,34 +56,12 @@ Heightmap Heightmap::open(const std::string& path)
 	Heightmap map;
 	map.path_ = path;
 
-	const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
-	if (fd < 0)
-		throw Error("cannot open " + path + ": " + std::strerror(errno));
+	std::string openError;
+	if (!map.file_.open(path, openError))
+		throw Error(openError);
+	const auto* bytes = static_cast<const std::byte*>(map.file_.data());
 
-	struct stat info {};
-	if (::fstat(fd, &info) != 0)
-	{
-		const std::string message = std::strerror(errno);
-		::close(fd);
-		throw Error("cannot stat " + path + ": " + message);
-	}
-	if (info.st_size <= 0)
-	{
-		::close(fd);
-		throw Error("empty heightmap " + path);
-	}
-
-	void* mapping = ::mmap(nullptr, static_cast<std::size_t>(info.st_size),
-		PROT_READ, MAP_PRIVATE, fd, 0);
-	::close(fd);
-	if (mapping == MAP_FAILED)
-		throw Error("cannot mmap " + path + ": " + std::strerror(errno));
-
-	map.mapping_ = mapping;
-	map.mappingSize_ = static_cast<std::size_t>(info.st_size);
-	const auto* bytes = static_cast<const std::byte*>(mapping);
-
-	if (map.mappingSize_ < 8)
+	if (map.file_.size() < 8)
 		throw Error("TIFF: file is too short");
 	if (std::to_integer<std::uint8_t>(bytes[0]) != 'I'
 		|| std::to_integer<std::uint8_t>(bytes[1]) != 'I'
@@ -96,12 +70,12 @@ Heightmap Heightmap::open(const std::string& path)
 		throw Error("TIFF: not a classic little-endian TIFF");
 
 	const std::uint32_t ifdOffset = detail::readU32(bytes + 4);
-	if (ifdOffset > map.mappingSize_ - 2)
+	if (ifdOffset > map.file_.size() - 2)
 		throw Error("TIFF: IFD offset past end of file");
 	const std::uint16_t entryCount = detail::readU16(bytes + ifdOffset);
 	const std::uint64_t entriesEnd = static_cast<std::uint64_t>(ifdOffset) + 2
 		+ 12ull * entryCount;
-	if (entriesEnd > map.mappingSize_)
+	if (entriesEnd > map.file_.size())
 		throw Error("TIFF: IFD past end of file");
 
 	std::vector<Tag> tags;
@@ -133,27 +107,24 @@ Heightmap Heightmap::open(const std::string& path)
 	const std::uint64_t expectedBytes = static_cast<std::uint64_t>(width) * rows * 2;
 	if (stripByteCount != expectedBytes)
 		throw Error("TIFF: strip byte count does not match width*height*2");
-	if (static_cast<std::uint64_t>(stripOffset) + stripByteCount > map.mappingSize_)
+	if (static_cast<std::uint64_t>(stripOffset) + stripByteCount > map.file_.size())
 		throw Error("TIFF: pixel strip past end of file");
 
 	map.width_ = static_cast<int>(width);
 	map.rows_ = static_cast<int>(rows);
 	map.pixelOffset_ = stripOffset;
-	map.pixels_ = reinterpret_cast<const std::uint8_t*>(mapping);
+	map.pixels_ = reinterpret_cast<const std::uint8_t*>(map.file_.data());
 	return map;
 }
 
 Heightmap::Heightmap(Heightmap&& other) noexcept
 	: path_(std::move(other.path_))
-	, mapping_(other.mapping_)
-	, mappingSize_(other.mappingSize_)
+	, file_(std::move(other.file_))
 	, pixels_(other.pixels_)
 	, pixelOffset_(other.pixelOffset_)
 	, width_(other.width_)
 	, rows_(other.rows_)
 {
-	other.mapping_ = nullptr;
-	other.mappingSize_ = 0;
 	other.pixels_ = nullptr;
 	other.pixelOffset_ = 0;
 	other.width_ = 0;
@@ -164,17 +135,12 @@ Heightmap& Heightmap::operator=(Heightmap&& other) noexcept
 {
 	if (this != &other)
 	{
-		if (mapping_ != nullptr)
-			::munmap(mapping_, mappingSize_);
 		path_ = std::move(other.path_);
-		mapping_ = other.mapping_;
-		mappingSize_ = other.mappingSize_;
+		file_ = std::move(other.file_);
 		pixels_ = other.pixels_;
 		pixelOffset_ = other.pixelOffset_;
 		width_ = other.width_;
 		rows_ = other.rows_;
-		other.mapping_ = nullptr;
-		other.mappingSize_ = 0;
 		other.pixels_ = nullptr;
 		other.pixelOffset_ = 0;
 		other.width_ = 0;
@@ -183,11 +149,7 @@ Heightmap& Heightmap::operator=(Heightmap&& other) noexcept
 	return *this;
 }
 
-Heightmap::~Heightmap()
-{
-	if (mapping_ != nullptr)
-		::munmap(mapping_, mappingSize_);
-}
+Heightmap::~Heightmap() = default;
 
 std::uint16_t Heightmap::rawSample(int col, int row) const
 {

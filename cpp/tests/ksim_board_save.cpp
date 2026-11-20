@@ -7,6 +7,7 @@
 #include "dt27_rig.hpp"
 
 #include "ksim/save/save.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cstdio>
 #include <sstream>

@@ -4,12 +4,20 @@
 //   ksim_server --listen 127.0.0.1:PORT [--scenario duel|duel_katana|duel_armour|squad|newgame [--start SID] [--stealth N]] [--seed N] [--wire-version] [--no-world] [--follow-heading-fix]
 //               [--run-without-clients] [--bake DIR [--regions RX0 RZ0 RX1 RZ1]] [--navmesh FILE | --navworld DIR] [--ai-routes] [--squad-limit N]
 //               [--log-world-squads N] [--place-squad TEMPLATE X Z]... [--force-dialogue CHARACTER DIALOGUE] [--own-container ID]... [--money N] [--give-item ITEM [COUNT]]... [--record FILE] [--order-log FILE] [--mods FILE] [--save-dir DIR]
-//               [--scenario-file PATH]
+//               [--scenario-file PATH] [--import-save SAVEDIR [--import-report PATH]] [--paused]
 //   ksim_server --dump-snapshot FILE [--dump-bin FILE] [--dump-ticks N] [--dump-script FILE]
 //               [--seed N] [--no-world] [--squad-limit N]
 //
 // --save-dir DIR: where orders 80-83 (save / load / delete / list) keep the saves; default
 // $XDG_DATA_HOME/ksim/saves, else ~/.local/share/ksim/saves; created if missing; refused inside the game install.
+// --import-save SAVEDIR: the session's world is the import of an original quick-save folder (quick.save and platoon/), the same importSave call and
+// Options as ksim_soak (docs/reference/SAVE_IMPORT.md); no scenario is spawned. A failed import prints the importer's message and exits 1: there is no
+// fallback to a new game. Not with --no-world or --scenario-file.
+// --paused: start with the admin pause set (CLOCK says paused), with or without --import-save. The first speed or pause order of a client releases it
+// (a pause 0 order, or a speed order, which also sets the speed); an admin pause order later works as ever.
+// --import-report PATH (needs --import-save): after the import, the id map as JSON, written atomically (tmp + rename): the original's platoon pool index
+// and member serial -> our entity ids, the selection, the camera and the counts (docs/formats/IMPORT_REPORT.md, format 1). The Report stays in the
+// server for CAMERA_START (kenshi-cym.39, not in this tree yet: the hook is runServer's `importReport` after the import).
 // --mods FILE: our mod list (kworld/loadorder.hpp grammar); without it the load order is vanilla.
 // The install's own data/mods.cfg is never read.
 // --no-world starts from the templates only (no default world, so no squads): quick to load.
@@ -101,6 +109,7 @@
 #include "ksim/nav/navigator.hpp"
 #include "ksim/net/simlink.hpp"
 #include "ksim/net/simlink_saves.hpp"
+#include "ksim/save/save_import.hpp"
 #include "ksim/save/scenario_file.hpp"
 #include "ksim/save/scenario_run.hpp"
 #include "ksim/ai/server_ai.hpp"
@@ -110,6 +119,7 @@
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -117,6 +127,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include "kdata/datadir.hpp"
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -130,9 +141,6 @@
 #ifndef KENSHI_DATA
 // A release build (KSIM_BAKE_DATA_PATH=OFF, kenshi-379.13): the game data dir arrives at runtime, --data from the client.
 #define KENSHI_DATA ""
-#endif
-#ifndef KSIM_SCENARIOS_DIR
-#define KSIM_SCENARIOS_DIR "" // a KSIM_DEV=OFF build has no default scenario directory (kenshi-379.13.3)
 #endif
 
 namespace {
@@ -250,7 +258,7 @@ int usage(std::ostream& err)
 {
 	err << "OpenKenshi server\nusage: OpenKenshi-server --listen HOST:PORT [--data DIR] [--sim-data DIR] [--scenario duel|duel_katana|duel_armour|squad|newgame [--start SID] [--stealth N]] [--seed N] [--no-world] [--follow-heading-fix [on|off]] [--fix-extra-attack-slots on|off] [--no-runaway-skills on|off]"
 		" [--run-without-clients] [--bake DIR [--regions RX0 RZ0 RX1 RZ1]] [--navmesh FILE | --navworld DIR] [--no-nav-cache] [--no-ai] [--ai-routes] [--debug-view] [--trace-member ID]... [--token-speeds on|off] [--squad-limit N]"
-		" [--dismemberment 0|1|2] [--dialogue 0|1] [--log-world-squads N] [--place-squad TEMPLATE X Z]... [--force-dialogue CHARACTER DIALOGUE] [--own-container ID]... [--money N] [--give-item ITEM [COUNT]]... [--record FILE] [--order-log FILE] [--mods FILE] [--save-dir DIR] [--crash-dir DIR]"
+		" [--dismemberment 0|1|2] [--dialogue 0|1] [--log-world-squads N] [--place-squad TEMPLATE X Z]... [--force-dialogue CHARACTER DIALOGUE] [--own-container ID]... [--money N] [--give-item ITEM [COUNT]]... [--record FILE] [--order-log FILE] [--mods FILE] [--save-dir DIR] [--crash-dir DIR] [--import-save SAVEDIR [--import-report PATH]] [--paused]"
 		" [--scenario-file PATH] [--scenarios DIR] [--combat-retarget-hold SECONDS] [--turret-manning on|off] [--offscreen-medical on|off] [--offscreen-fights on|off] [--campaign-victory-ai on|off] [--npc-raids on|off] [--dialogue-pause hold|freeze]\n"
 		"       OpenKenshi-server --dump-snapshot FILE [--dump-bin FILE] [--dump-ticks N] [--dump-script FILE]"
 		" [--seed N] [--no-world] [--squad-limit N]\n";
@@ -260,6 +268,75 @@ int usage(std::ostream& err)
 } // namespace
 
 namespace ksim {
+
+namespace
+{
+
+std::string jsonString(const std::string& text)
+{
+	std::string out = "\"";
+	for (const char c : text)
+	{
+		if (c == '"' || c == '\\')
+			out += std::string("\\") + c;
+		else if (static_cast<unsigned char>(c) < 0x20)
+		{
+			char code[8];
+			std::snprintf(code, sizeof code, "\\u%04x", c);
+			out += code;
+		} else
+			out += c;
+	}
+	return out + "\"";
+}
+
+std::string jsonNumber(double value)
+{
+	char text[40];
+	std::snprintf(text, sizeof text, "%.9g", value);
+	return text;
+}
+
+// The import's id map, format 1 (docs/formats/IMPORT_REPORT.md), written to PATH.tmp and renamed over PATH.
+void writeImportReport(const std::string& path, const std::string& save, const saveimport::Report& report)
+{
+	std::ostringstream json;
+	json << "{\"format\":1,\"save\":" << jsonString(save) << ",\"squads\":[";
+	bool first = true;
+	for (const auto& [pool, id] : report.squadOfPool)
+	{
+		json << (first ? "" : ",") << "{\"pool\":" << pool << ",\"id\":" << id << "}";
+		first = false;
+	}
+	json << "],\"members\":[";
+	first = true;
+	for (const auto& [handle, id] : report.memberOfHandle)
+	{
+		json << (first ? "" : ",") << "{\"pool\":" << handle.first << ",\"serial\":" << handle.second << ",\"id\":" << id << "}";
+		first = false;
+	}
+	json << "],\"selected\":" << report.selected << ",\"selection\":[";
+	for (std::size_t i = 0; i < report.selection.size(); ++i)
+		json << (i == 0 ? "" : ",") << report.selection[i];
+	json << "],\"camera\":{\"has\":" << (report.hasCamera ? "true" : "false") << ",\"pos\":[" << jsonNumber(report.cameraPos[0]) << "," << jsonNumber(report.cameraPos[1])
+		<< "," << jsonNumber(report.cameraPos[2]) << "],\"rot\":[" << jsonNumber(report.cameraRot[0]) << "," << jsonNumber(report.cameraRot[1]) << ","
+		<< jsonNumber(report.cameraRot[2]) << "," << jsonNumber(report.cameraRot[3]) << "],\"zoom\":" << jsonNumber(report.cameraZoom) << "},\"counts\":{\"members\":"
+		<< report.members << ",\"skipped\":" << report.membersSkipped << ",\"unresolvedHandles\":" << report.unresolvedHandles << "}}\n";
+	const std::string temp = path + ".tmp";
+	{
+		std::ofstream file(temp, std::ios::binary | std::ios::trunc);
+		file << json.str();
+		file.flush();
+		if (!file)
+			throw std::runtime_error("cannot write " + temp);
+	}
+	std::error_code ec;
+	std::filesystem::rename(temp, path, ec);
+	if (ec)
+		throw std::runtime_error("cannot rename " + temp + " to " + path + ": " + ec.message());
+}
+
+} // namespace
 
 ServerConfig::ServerConfig() : scenarios(KSIM_SCENARIOS_DIR) {}
 
@@ -418,6 +495,12 @@ int parseServerArgs(int argc, char** argv, ServerConfig& options)
 				options.orderLog = argv[++i];
 			else if (arg == "--save-dir" && hasValue)
 				options.saveDir = argv[++i];
+			else if (arg == "--import-save" && hasValue)
+				options.importSave = argv[++i];
+			else if (arg == "--import-report" && hasValue)
+				options.importReport = argv[++i];
+			else if (arg == "--paused")
+				options.paused = true;
 			else if (arg == "--crash-dir" && hasValue)
 				options.crashDir = argv[++i];
 			else if (arg == "--dump-snapshot" && hasValue)
@@ -443,6 +526,16 @@ int parseServerArgs(int argc, char** argv, ServerConfig& options)
 		err << "ksim_server: --scenario-file needs the default world (not --no-world)\n";
 		return 2;
 	}
+	if (!options.importSave.empty() && (options.noWorld || !options.scenarioFile.empty()))
+	{
+		err << "ksim_server: --import-save needs the default world and no --scenario-file\n";
+		return 2;
+	}
+	if (!options.importReport.empty() && options.importSave.empty())
+	{
+		err << "ksim_server: --import-report needs --import-save\n";
+		return 2;
+	}
 	if (options.scenarioFile.empty() && options.scenario != "duel" && options.scenario != "duel_katana" && options.scenario != "duel_armour" && options.scenario != "squad"
 		&& options.scenario != "newgame")
 	{
@@ -461,10 +554,20 @@ int runServer(const ServerConfig& options, std::atomic<bool>& stop)
 		using Wall = std::chrono::steady_clock;
 		const auto start = Wall::now();
 		const auto seconds = [&]() { return std::chrono::duration<double>(Wall::now() - start).count(); };
-		// --data, else the build's KENSHI_DATA (dev and test builds); a release build has neither and says so (kenshi-379.13).
-		const std::string dataDir = !options.data.empty() ? options.data : std::string(KENSHI_DATA);
+		// --data as given; else $KENSHI_DATA, the build's baked KENSHI_DATA (dev and test builds) and the game's default installs
+		// (kdata/datadir.hpp, kenshi-k16.6.421); no hit prints every place tried.
+		std::string dataDir = options.data;
 		if (dataDir.empty())
-			throw std::runtime_error("no game data directory: the client passes --data DIR, or start ksim_server with it");
+		{
+			std::vector<kdata::datadir::Place> baked;
+			if (std::string(KENSHI_DATA).size())
+				baked.push_back({"build default (KENSHI_DATA)", KENSHI_DATA});
+			const kdata::datadir::Result found = kdata::datadir::resolve("", baked);
+			if (!found.found)
+				throw std::runtime_error("no game data directory: " + found.message);
+			dataDir = found.dir;
+			err << "ksim_server: game data " << dataDir << " (found at " << found.matched << ")\n";
+		}
 
 		// The sim data (behaviour/, the AI table): --sim-data, else simdata/ beside the executable, else a dev build's source tree.
 		if (!options.simData.empty())
@@ -638,6 +741,27 @@ int runServer(const ServerConfig& options, std::atomic<bool>& stop)
 				<< stale.interiorsShipped << " shipped, " << stale.interiorsRebaked << " rebaked (stale hash), "
 				<< stale.interiorsNotComputable << " unverifiable; check " << stale.checkMs << " ms, bake " << stale.bakeMs << " ms\n";
 		}
+		// --import-save: the streaming mesh is up (the import snaps its Full members to the ground), the world has its combat data. No fallback.
+		std::optional<saveimport::Report> imported; // kept for CAMERA_START (kenshi-cym.39: send it from here once that lands)
+		if (!options.importSave.empty())
+		{
+			const double importStart = seconds();
+			imported = saveimport::importSave(sim, *context.gameData, *data, options.importSave);
+			err << "ksim_server: import " << options.importSave << ": clock day " << imported->world.day << " " << imported->world.hour << ":" << imported->world.minute << ", "
+				<< imported->platoons.size() << " platoons, " << imported->members << " members (player " << imported->membersPlayer << ", full " << imported->membersFull << ", token "
+				<< imported->membersToken << ", unplaced " << imported->unplaced << "), skipped " << imported->membersSkipped << ", " << seconds() - importStart << " s\n";
+			if (!options.importReport.empty())
+			{
+				writeImportReport(options.importReport, options.importSave, *imported);
+				err << "ksim_server: import report " << options.importReport << "\n";
+			}
+		}
+		if (options.paused)
+		{
+			context.paused = true;
+			context.pausedUntilOrder = true;
+			err << "ksim_server: --paused: the admin pause is set until a client's first speed or pause order\n";
+		}
 		context.sendAiRoutes = options.aiRoutes;
 		context.debugView = options.debugView; // the view itself answers only a loopback peer (Session::setDebugPeer)
 		if (options.logWorldSquads != 0)
@@ -677,7 +801,10 @@ int runServer(const ServerConfig& options, std::atomic<bool>& stop)
 			}
 		};
 		std::map<std::string, std::uint64_t> names; // the script's names for the scenario's characters
-		if (!options.scenarioFile.empty())
+		if (imported)
+		{
+			// The world is the import; no scenario is spawned (the player's members are the imported Fighters).
+		} else if (!options.scenarioFile.empty())
 		{
 			const scenario::File file = scenario::parseFile(options.scenarioFile);
 			const scenario::Placed placed = scenario::apply(sim, *context.gameData, *data, context, file, options.seed);

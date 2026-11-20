@@ -8,7 +8,7 @@
 #include "ui/widget.hpp"
 
 // The light debugger window (kenshi-jj3.27.3; docs/UI.md "lightspanel.*"): a see-through dev window over the scene, one row per light term of the host's
-// dev::lightTerms (client/src/dev/lightterms.hpp, kenshi-jj3.27.1; the UI never includes it): a tick (on / off) and SOLO per row, grouped under the host's
+// dev::lightTerms (client/src/knobs/lightterms.hpp, kenshi-jj3.27.1; the UI never includes it): a tick (on / off) and SOLO per row, grouped under the host's
 // groups (sun, ambient, lamps, emissive, fog, sky, air, post; any other after, as first seen), ALL ON at the top. The body is client/data/ui/lightspanel.layout.
 // Host-fed: the state in every frame while shown (the lamp rows change as lamps come into view), actions out.
 namespace ui

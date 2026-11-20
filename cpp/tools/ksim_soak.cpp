@@ -34,6 +34,7 @@
 #include "ksim/core/soak.hpp"
 
 #include "kworld/loadorder.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <chrono>
 #include <cstdint>

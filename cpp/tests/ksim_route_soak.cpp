@@ -113,6 +113,8 @@ int main(int argc, char** argv)
 		// (the merged data's human footprint, 4 u).
 		double worstMs = 0.0;
 		double worstFoundMs = 0.0;
+		std::uint64_t worstFoundNodes = 0;
+		std::uint64_t worstNodes = 0;
 		double totalMs = 0.0;
 		int asked = 0;
 		int found = 0;
@@ -121,9 +123,14 @@ int main(int argc, char** argv)
 		{
 			const Spot& from = points[i - 1];
 			const Spot& to = points[i];
+			const std::uint64_t nodes0 = nav->routeStats().routeClearanceNodes;
 			const double began = threadCpuMs();
 			const ksim::Route route = nav->routeFrom({ from.x, from.y, from.z }, to.x, to.z, to.y, false, 4.0);
 			const double ms = threadCpuMs() - began;
+			const std::uint64_t nodes = nav->routeStats().routeClearanceNodes - nodes0;
+			if (route.found && nodes > worstFoundNodes)
+				worstFoundNodes = nodes;
+			worstNodes = std::max(worstNodes, nodes);
 			++asked;
 			found += route.found ? 1 : 0;
 			totalMs += ms;
@@ -139,7 +146,7 @@ int main(int argc, char** argv)
 		}
 		std::cout << "routes at radius 4: " << asked << " asked, " << found << " found, mean " << totalMs / asked << " ms\n";
 		std::cout << "worst route: " << worstMs << " ms, " << worstText << "\n";
-		std::cout << "worst route that found a way: " << worstFoundMs << " ms\n";
+		std::cout << "worst route that found a way: " << worstFoundMs << " ms, " << worstFoundNodes << " clearance nodes (worst of any route: " << worstNodes << ")\n";
 		// Reachability first: with a fixed 2,400-node budget only 100 of these 239 pairs routed at radius 4 (the client's
 		// Hub-to-SW moves answered no_route); the probe-scaled budget and the corridor skip route 171.
 		test::require(found >= 160, "only " + std::to_string(found) + " of " + std::to_string(asked) + " routes found at radius 4 (171 expected)");
@@ -147,8 +154,12 @@ int main(int argc, char** argv)
 		// hopeless long pair pays up to 4x its radius-0 search before it answers OutOfNodes (~160-215 ms for 8 km, measured).
 		// Re-pinned from a flat 50 ms when the budget became probe-scaled (task U follow-up, 2026-11-05); measured as thread CPU time since
 		// kenshi-k16.15.12 (wall time hit 98.9 ms in a loaded full run; CPU time is 64 ms idle, about 74 ms with 32 spinners), limit 80 -> 110.
-		test::require(worstFoundMs < 110.0, "a found route took " + std::to_string(worstFoundMs) + " ms CPU (limit 110 ms)");
-		test::require(worstMs < 250.0, "a route took " + std::to_string(worstMs) + " ms (limit 250 ms for a hopeless pair)");
+		// The cost gate counts work, not time (kenshi-k16.6.452): CPU ms inflates under cache and memory-bandwidth contention (64 ms idle,
+		// 116-173 ms beside CI and gates), the clearance-search node count does not. Pinned over what the ctest world (the fixture's bake) costs: a found
+		// route about 45000 nodes (~20% headroom) and no route more than one capped search (65536); planPath skips the own-polygon
+		// replan after a refit that ran out of nodes. The ms stay printed as information.
+		test::require(worstFoundNodes <= 55000, "a found route expanded " + std::to_string(worstFoundNodes) + " clearance nodes (limit 55000)");
+		test::require(worstNodes <= 65536, "a route expanded " + std::to_string(worstNodes) + " clearance nodes (limit 65536: one capped search)");
 		std::cout << "ksim_route_soak: ok\n";
 		return 0;
 	} catch (const std::exception& e) {

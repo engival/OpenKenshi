@@ -88,7 +88,16 @@ namespace ksim {
 // load mid-run continues as the unbroken run; an older save loads them empty (an alarm gone, a 209 / 210 on it ends, a limb play re-picks).
 // 111: Fighter::driveStrafe (task ds/drive-strafe, k16.8.17): order 20's strafe i8, so a load mid-strafe continues the sidestep; an older save loads 0.
 // 112: Fighter::passive and Fighter::holdPosition (task ds/passive-hold, k16.6.267): the per-character passive and hold-position toggles; an older save loads both off.
-inline constexpr std::uint32_t kSaveVersion = 112;
+// 113: FighterSkills::perception (task ds/perception-aim-xp, k16.5.16): the Perception skill the ranged aim trains; an older save loads 1.
+// 114: Fighter::pathSamples (task ds/k16.8.50): the arena's pair-distance cache entries, so a load continues as the unbroken run (a dropped cache changed the
+// Hub's floor and reachability decisions after a save); an older save loads none.
+// 115: taken by the pending batch member k16.6.12.10 (ksim's call: this task takes 116 so the two do not collide).
+// 116: RunStates::farOrders (task ds/k16.6.483): the leg-by-leg far move orders (true goal, seq, road markers, the marker walked to), so a reloaded far walk
+// continues to its goal; an older save loads none (the walker stops at its current leg).
+// 117: BoardStates' occupancy map and each board's occupyTown (task ds/slice-load-parity, k16.6.403): the map the last second boundary built, so a load mid-second
+// answers 'the town is ours' as the unbroken run does; an older save rebuilds the map from the boards at its first tick.
+// 118: Fighter::fought (task ds/k16.6-fought-saved, k16.6.361): the has-fought mark behind the quiet-squad stand-down, saved with the character; MemberDelta bit kFought. An older save loads it false. (115 is reserved for k16.6.403.)
+inline constexpr std::uint32_t kSaveVersion = 118;
 
 class SaveError : public std::runtime_error
 {

@@ -1,0 +1,5 @@
+# Known-red ctest tests on ksim: test<TAB>bead<TAB>since (ksim rev8 first seen red).
+# This file may only shrink: a merge that fixes a test drops its line; a new failure is never added here,
+# it is bisected to the merge that caused it and fixed or reverted (review 2 rec 1, kenshi-rm3o,
+# docs/reviews/2026-11-19-bead-workflow in kenshi-ksim). CI reports failures NOT listed here as new,
+# and listed tests that pass as fixed.

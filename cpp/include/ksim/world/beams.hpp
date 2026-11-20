@@ -25,8 +25,14 @@ namespace ksim {
 
 // The lead: a beam goes to the client this many ticks before it strikes (3 s).
 inline constexpr std::uint64_t kBeamLeadTicks = 60;
-// A beam goes to a session when any point of its path lies within this many units of the session's camera or one of its characters.
-inline constexpr double kBeamRange = 40000.0;
+// The view range: a session whose camera or player character is inside the group's zone, or within this many units of a zone cell,
+// gets every live beam of the group (user 2026-11-19, h2v.14.14: the sim runs all 40 handlers zone-wide, the client draws the closest
+// few); no beam reaches a session farther out. A burn needs a beam within 283 u of a character, always inside the zone.
+inline constexpr double kBeamRange = 10000.0;
+// The visible burst of a beam (rwh.175 section 2.2): one per beam, 6.0 to 10.6 s from its spawn, whatever its time to live (the
+// damage window, 10 to 30 s). The burst rises ~5 s, holds ~1.5 s and fades ~2 s (the client's particle script owns the shape).
+inline constexpr double kBeamVisibleMinSeconds = 6.0;
+inline constexpr double kBeamVisibleMaxSeconds = 10.6;
 
 struct BeamSegment
 {
@@ -39,7 +45,8 @@ struct Beam
 	std::uint32_t id = 0; // slot << 16 | k, unique inside one weather instance of one group
 	const EffectDef* effect = nullptr; // null = no beam
 	std::uint64_t spawnTick = 0;
-	std::uint64_t endTick = 0; // the beam exists for spawnTick <= t < endTick
+	std::uint64_t endTick = 0; // the damage window: the beam burns for spawnTick <= t < endTick
+	std::uint16_t visibleTicks = 0; // the visible burst: shown for spawnTick <= t < spawnTick + visibleTicks (<= the life); on the wire after endTick (protocol 7)
 	float x = 0.0f; // the ground point at spawnTick
 	float z = 0.0f;
 	float speed = 0.0f; // u per sim-second
@@ -48,6 +55,11 @@ struct Beam
 	std::vector<BeamSegment> segments; // the ticks sum to endTick - spawnTick
 };
 
+// Whether the beam's burst is still on screen at `tick` (the damage window may run on after it).
+inline bool beamVisibleAt(const Beam& beam, std::uint64_t tick) noexcept
+{
+	return tick >= beam.spawnTick && tick < beam.spawnTick + beam.visibleTicks;
+}
 // One tick of the path: moves (x, z) by speed / 20 along the yaw (0 = +Z, positive toward +X).
 void beamStep(float& x, float& z, float speed, float yaw) noexcept;
 // The point at `tick` (spawnTick <= tick <= endTick), the same sum the BeamField keeps incrementally.
@@ -105,6 +117,9 @@ public:
 	// The strongest burn at a world point at the last stepped tick (0 = none); beams do not stack. `type` is the strongest beam's
 	// WeatherAffecting type (the protection and immunity type), 0 when none burns.
 	double burnAt(double x, double z, int& type) const noexcept;
+	// Whether (x, z) lies within `range` of any zone cell box of the group with this biome colour (inside the zone counts): the sessions
+	// that get every live beam of the group (kenshi-h2v.14.14).
+	bool nearZone(std::uint32_t colour, double x, double z, double range) const noexcept;
 
 private:
 	const std::vector<int>& cellsOf(std::uint32_t colour);
@@ -116,6 +131,7 @@ private:
 	std::vector<BeamGroup> groups_;
 	std::unordered_map<std::uint32_t, std::vector<int>> cells_;
 	std::uint64_t changes_ = 0;
+	std::uint64_t now_ = 0; // the last stepped tick: a staggered first beam burns only once it has spawned
 };
 
 } // namespace ksim

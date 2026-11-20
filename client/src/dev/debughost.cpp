@@ -6,6 +6,7 @@
 #include "dev/devhooks.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -56,6 +57,7 @@
 #include "sokol_app.h"
 #include "ui/dev/animbrowser.hpp"
 #include "ui/dev/debugpanel.hpp"
+#include "ui/options.hpp"
 #include "ui/dev/trailspanel.hpp"
 #include "world/squads.hpp"
 #include "world/towns.hpp"
@@ -93,7 +95,7 @@ std::string rest_of(const std::vector<std::string>& args)
 
 }	// namespace
 
-void labSetup(const ResourceIndex& res, const std::string& dataDir, const Shadow& shadow) { lab().setup(&res, dataDir, &shadow); }
+void labSetup(const ResourceIndex& res, const std::string& dataDir) { lab().setup(&res, dataDir); }
 
 bool labAvailable() { return lab().available(); }
 bool labOpen() { return lab().state().open; }
@@ -138,7 +140,7 @@ void labUpdate(double dt) { lab().update(dt); }
 
 void labFrame(LabFrame& out) { lab().frame(out); }	// logic thread
 
-void labRender(const LabFrame& f) { animlab::Lab::render(f); }	// render thread: the packet's copy only, never lab()
+void labRender(const LabFrame& f, const Shadow::FrameData& shadow) { animlab::Lab::render(f, shadow); }	// render thread: the packet's copy only, never lab()
 
 void labShutdown() { lab().shutdown(); }
 
@@ -292,21 +294,52 @@ void debugTime(const Context& cx, const std::string& preset)
 
 // A debug panel command. Spawn bandit patrol: Dust Bandits (the sim's default template) 900 u from the nearest town's centre, on the far side of the
 // first player character (MINE: outside the gate of a small town), raiding that town.
+struct WindowToggle
+{
+	const char* id;
+	std::function<bool()> isOpen;
+	std::function<void(bool)> set;
+	std::function<bool()> canOpen;	// null: always
+	const char* refusal;
+};
+
+// the commands pressed while their window is open close it; one table, the panel's G::kWindow buttons
+static std::vector<WindowToggle> windowTable(const Context& cx)
+{
+	std::vector<WindowToggle> t;
+	t.push_back({ "animations", [] { return labOpen(); }, [](bool) { animationsCommand(); }, nullptr, "" });
+	t.push_back({ "debug.lights", cx.lightsShown, cx.showLights, nullptr, "" });
+	t.push_back({ "debug.keys", cx.optionsKeysShown, cx.showOptionsKeys, nullptr, "" });
+	t.push_back({ "debug.full_map", [&cx] { return cx.fullMapShown(); }, [&cx](bool on) { if (on != cx.fullMapShown()) { cx.toggleFullMap(); } }, nullptr, "" });
+	t.push_back({ "debug.trails_window", [] { return trailsPanel && trailsPanel->shown(); }, [](bool on) { if (trailsPanel) { trailsPanel->show(on); } }, nullptr, "" });
+#ifdef KCLIENT_DEBUG_VIEW
+	t.push_back({ "debug.decisions", cx.debugTreeShown, [&cx](bool on) { if (on) { cx.debugTreeOpen(1, cx.infoChar); } else { cx.debugTreeClose(); } },
+		[&cx] { return cx.infoChar != 0; }, "no character in the status panel" });
+#endif
+	return t;
+}
+
+static void windowLog(const char* id, bool open) { printf("window %s: %s\n", id, open ? "open" : "closed"); fflush(stdout); }
+
 void debugCommand(const Context& cx, const std::string& id)
 {
-	if (id == "animations")	// the animation browser (CLIENT_GOALS "Animation lab"): the command opens and closes its window
+	// The WINDOWS buttons (G::kWindow) share one rule (k16.2.394.1): pressed while its window is open it closes it, else it opens it.
+	// A window added to the panel goes in windowTable(); no reply text, the window is the answer (k16.2.364).
+	for (const WindowToggle& w : windowTable(cx))
 	{
-		animationsCommand();
+		if (id != w.id) { continue; }
+		const bool open = w.isOpen();
+		if (!open && w.canOpen && !w.canOpen()) { debugReply = w.refusal; return; }
+		w.set(!open);
+		windowLog(w.id, !open);
 		return;
 	}
-	if (id == "debug.lights") { cx.openLights(); return; }	// window buttons: the window is the answer, no reply text (k16.2.364)
-	if (id == "debug.keys") { cx.openOptionsKeys(); return; }
-	if (id == "debug.full_map") { cx.toggleFullMap(); return; }
-	if (id == "debug.trails_window") { toggleTrailsPanel(); return; }
-	if (id == "debug.decisions")	// the DEBUG VIEW tree of the status panel's character, its decisions readable (k16.2.99)
+	// The height probe's own commands (kenshi-k16.2.413.1): enabled only while a probe is set; the toggle above is the panel's tick box.
+	if (id == "debug.clear_height_probe")
 	{
-		if (!cx.infoChar) { debugReply = "no character in the status panel"; return; }
-		cx.debugTreeOpen(1, cx.infoChar);
+		if (!dev::heightProbeActive()) { return; }
+		dev::heightProbeClear();
+		debugReply = "height probe cleared";
 		return;
 	}
 	// the cheat buttons (DEBUG_CHEAT 216): the status panel's character, 0 = the server's first player character
@@ -360,12 +393,32 @@ void replyFrame(const Context& cx)
 #endif
 }
 
+// The panel's rows that are plain on/off config keys (kenshi-k16.2.419.2): live on click, saved as the Options screen saves them.
+namespace
+{
+const struct { const char* key; const char* label; } kCfgToggles[] = {
+	{ "debug.hud_text", "Developer text (fps, timings)" }, { "debug.light_probes", "Light probes" },
+	{ "debug.pick_mask", "Pick mask" }, { "debug.route_preview", "Route preview" },
+};
+bool cfgOn(const char* key) { for (const cfg::Info& i : cfg::find(key)) { if (i.key == key) { return i.value == "on"; } } return false; }
+std::unique_ptr<ui::Options> debugOptions;	// the DEBUG SETTINGS window (k16.2.419.1), opened from the panel's Settings... button
+}
+
 void createDebugPanels(const Context& cx, bool debug)
 {
 	host = &cx;
 	if (!debug) { return; }	// the F8 debug panel is a development feature (--debug)
 	ui::DebugActions da;
-	da.toggle = [](const std::string& id) { host->debugToggle(id); };
+	da.toggle = [](const std::string& id)
+	{
+		for (const auto& t : kCfgToggles) { if (id == t.key) { cfg::setUser(t.key, cfgOn(t.key) ? "off" : "on"); return; } }
+		host->debugToggle(id);
+	};
+	if (ui::Options::debugAvailable())	// without --debug in a dev build the window is empty: no button
+	{
+		debugOptions = std::make_unique<ui::Options>(ui::OptionsScope::kDebug);
+		da.settings = [] { debugOptions->show(!debugOptions->shown()); };
+	}
 	da.scene = [](const std::string& name) { sceneSetName(*host, name); };	// dev/scenetest.cpp (offline only)
 #ifdef KCLIENT_DEBUG_VIEW
 	da.command = [](const std::string& id) { debugCommand(*host, id); };
@@ -420,11 +473,15 @@ void debugPanelFrame(const Context& cx)
 #ifdef KCLIENT_DEBUG_VIEW
 	replyFrame(cx);
 #endif
-	if (!debugPanel || !debugPanel->shown()) { return; }
+	if (debugOptions) { debugOptions->update(); }
+	if (!debugPanel || !debugPanel->wantsUpdate()) { return; }
 	ui::DebugState s;
 	const auto add = [&](const char* id, const char* label, bool on, bool keyed = true) { s.toggles.push_back({ id, label, on, keyed ? id : "" }); };
 	add("debug.navmesh", "Navmesh", cx.navOverlay.get());
+	add("debug.collision", "Collision (barricades + terrain)", collisionOn());	// dev/colloverlay.cpp
 	add("debug.navmesh_pruned", "Navmesh: pruned polygons", cx.navPruned.get(), false);	// a config key, no binding
+	add("debug.height_probe", "Height probe (Ctrl+F10)", dev::heightProbeMode(), false);	// Ctrl+F10 is hard-wired in host/events.cpp, not a keys:: action (kenshi-k16.2.413.1)
+	for (const auto& t : kCfgToggles) { add(t.key, t.label, cfgOn(t.key), false); }
 	add("debug.trails", "Trails", cx.trails.on());
 	add("debug.squad_overlay", "Squad overlay", cx.squads.on);
 	add("debug.shadows", "Shadows", cx.shadow.enabled != cx.shadowFlip);
@@ -443,6 +500,7 @@ void debugPanelFrame(const Context& cx)
 #ifdef KCLIENT_DEBUG_VIEW
 	using G = ui::DebugGroup;
 	s.commands.push_back({ "debug.spawn_bandits", "Spawn bandit patrol", cx.sim.active() && cx.townsReady });
+	s.commands.push_back({ "debug.clear_height_probe", "Clear height probe", dev::heightProbeActive() });	// only while one is set (kenshi-k16.2.413.1)
 	s.commands.push_back({ "animations", "Animations", labAvailable(), G::kWindow });	// the animation browser window
 	s.commands.push_back({ "debug.lights", "Lights", true, G::kWindow });	// the LIGHTS window (Shift+F7)
 	s.commands.push_back({ "debug.keys", "Keys", true, G::kWindow });	// Options at the Keys tab: the key list
@@ -534,6 +592,15 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 			bool wb = false;
 			if (cx.rayHit(from, dir, wh, &wb, cx.pos)) { printf("pick world at t %.3f (%.2f %.2f %.2f) building %d\n", std::sqrt(std::pow(wh[0] - from[0], 2) + std::pow(wh[1] - from[1], 2) + std::pow(wh[2] - from[2], 2)), wh[0], wh[1], wh[2], wb ? 1 : 0); }
 		}
+		{	// kenshi-k16.2.412.3 rework: the walkable part the click's ground layer meets (WalkHit: the wall-right case's identity), if any
+			WorldBuildings::WalkHit who;
+			double tw = 0;
+			if (cx.buildings.walkableRay(from, dir, 0, 20000, tw, &who))
+			{
+				printf("pick walk part \"%s\" instance %u part %u kind %d walkable %d at y %.2f (%s)\n", who.mesh.c_str(), (unsigned)who.instance, (unsigned)who.part, who.kind, (int)who.walkable,
+					from[1] + dir[1] * tw, cx.buildings.describe(who.instance).c_str());
+			}
+		}
 		for (const auto& [id, th] : sim.things())	// containers: the distance into the piece's box (propRay) against the world hit's
 		{
 			if (th.kind != simlink::Interactable::kContainer) { continue; }
@@ -599,6 +666,23 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 		}
 		return true;
 	}
+	if (a.size() == 1 && a[0] == "cover")	// dump cover: every drawn character's arrival / departure dither (render.char_fade): index, sim id, drawn fraction 0..1, departing, position; stdout
+	{
+		for (size_t i = 0; i < chars.size(); i++)
+		{
+			double at[3] = {};
+			chars.nodePos(i, at);
+			printf("cover %zu id %llu %.2f%s at %.0f %.0f %.0f\n", i, (unsigned long long)chars.live(i).id, chars.cover(i), chars.departing(i) ? " departing" : "", at[0], at[1], at[2]);
+		}
+		return true;
+	}
+	if (a.size() == 1 && a[0] == "bounds")	// dump bounds: the full-detail bounds the sim last sent (DETAIL_BOUNDS, SIMLINK 6): box count, each box and its centre; stdout
+	{
+		const auto& boxes = sim.decoder().bounds;
+		printf("bounds: %zu boxes%s\n", boxes.size(), boxes.empty() ? " (none sent yet)" : "");
+		for (const auto& b : boxes) { printf("  box %.0f %.0f .. %.0f %.0f centre %.0f %.0f\n", b.minX, b.minZ, b.maxX, b.maxZ, (b.minX + b.maxX) * 0.5, (b.minZ + b.maxZ) * 0.5); }
+		return true;
+	}
 	if (a.size() == 1 && a[0] == "things")	// dump things: every interactable the sim sent (id, kind, record, an item's or container's name, position, owner tail, a container's layout piece and whether one draws it; stdout)
 	{
 		printf("things: own faction \"%s\"\n", sim.decoder().str(sim.ownFaction()).c_str());
@@ -606,6 +690,7 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 		{
 			printf("thing %llu kind %u record %u \"%s\" at %.0f %.0f %.0f owner \"%s\"%s lock %u model \"%s\" yaw %.2f\n", (unsigned long long)id, t.kind, t.record, t.kind == simlink::Interactable::kItem || t.kind == simlink::Interactable::kContainer ? sim.nameOf(t.record, chars).c_str() : "", t.pos[0], t.pos[1], t.pos[2],
 				sim.decoder().str(t.owner).c_str(), sim.foreign(id) ? " FOREIGN" : "", t.lockLevel, sim.decoder().str(t.model).c_str(), t.yaw);
+			if (t.kind == simlink::Interactable::kItem || t.kind == simlink::Interactable::kContainer) { printf("  drawn y %.2f (wire %.2f, terrain %.2f)\n", sim.thingY(id, t), t.pos[1], cx.hm ? cx.hm->height(t.pos[0], t.pos[2]) : 0.0); }	// the ring / square / pick sphere's y (kenshi-k16.2.412.4)
 			if (t.kind == simlink::Interactable::kBed) { printf("  bed building %llu furniture %u \"%s\" occupant %llu version %u use %.3f %.3f %.3f\n", (unsigned long long)t.building, t.furniture, sim.decoder().str(t.furniture).c_str(), (unsigned long long)t.occupant, t.version, t.use[0], t.use[1], t.use[2]); }
 			if (t.kind == simlink::Interactable::kContainer) { printf("  container building %llu piece %u%s drawn %d piece-instance %d from-layout %d\n", (unsigned long long)t.building, (unsigned)t.piece, t.hasPiece ? "" : " (no tail)", cx.buildings.propInstance(id) >= 0 ? 1 : 0, cx.buildings.layoutPieceInstance(t.building, t.piece), cx.buildings.propFromLayout(id) ? 1 : 0); }
 		}
@@ -784,6 +869,11 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 		printf("%s\n", buildings.lightBakeLine().c_str());
 		return true;
 	}
+	if (a.size() == 1 && a[0] == "popin")	// dump popin: the building pop-in timelines and asset costs (kenshi-k16.2.258.2; stdout)
+	{
+		printf("%s", buildings.popinReport().c_str());
+		return true;
+	}
 	if (a.size() == 2 && a[0] == "light_slice")	// dump light_slice LAYER: one horizontal layer of the probes as text (stdout)
 	{
 		printf("%s", buildings.lightBakeSlice(atoi(a[1].c_str())).c_str());
@@ -792,6 +882,17 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 	if (a.size() >= 1 && a.size() <= 2 && a[0] == "open_windows")	// dump open_windows [MAXLUMA]: the barrier-quad survey of every building type with interiors (render.open_windows, kenshi-jj3.10.1; stdout)
 	{
 		printf("%s", buildings.openWindowsReport(a.size() == 2 ? (float)atof(a[1].c_str()) : 0.35f).c_str());
+		return true;
+	}
+	if (a.size() == 2 && a[0] == "inv")	// dump inv ID: the INVENTORY the sim last sent for a character, body or container: "inv ID: held total N: name xC ..." (kenshi-k16.2.443: stealcaught compares it before and after a take)
+	{
+		const uint64_t id = strtoull(a[1].c_str(), nullptr, 10);
+		const simlink::Inventory* inv = cx.sim.inventory(id);
+		unsigned total = 0;
+		if (inv) { for (const auto& e : inv->items) { total += e.count; } }
+		printf("inv %llu: %s total %u:", (unsigned long long)id, inv ? "held" : "none", total);
+		if (inv) { for (const auto& e : inv->items) { printf(" %s x%u", cx.sim.nameOf(e.item, cx.chars).c_str(), e.count); } }
+		printf("\n");
 		return true;
 	}
 	if (a.size() == 1 && a[0] == "windows")	// dump windows: the open item windows (kenshi-k16.20.13.2): the character's, each box / body / stock with its user, the target, where each is on screen (stdout)

@@ -41,6 +41,7 @@ int main(int argc, char** argv)
 		const kworld::InteriorLayouts layouts = kworld::InteriorLayouts::load(dataDir);
 		std::size_t checked = 0;
 		std::size_t cut = 0;
+		std::size_t notBaked = 0;
 		std::size_t buildings = 0;
 		std::string failures;
 		for (const kworld::AreaBuilding& building : area.buildings)
@@ -54,7 +55,14 @@ int main(int argc, char** argv)
 				const kworld::PlacedInstance piece = kworld::placeFurniture(building.placed, item, gameData);
 				std::vector<kworld::WorldShape> shapes;
 				kworld::CollisionCoverage coverage;
-				library.addBuilding(piece, shapes, coverage, false, true);
+				const auto pieceNav = library.addBuilding(piece, shapes, coverage, false, true);
+				// BUILDING path mode 0 is not baked in the original (rwh.199 §4: 43 + 11 + 24 shipped records): no shapes, so no hole.
+				if (pieceNav && pieceNav->pathMode == kworld::PathMode::Ignore)
+				{
+					test::require(shapes.empty(), "a path mode 0 piece contributes no shape: " + gameData.find(item.target)->name);
+					++notBaked;
+					continue;
+				}
 				if (shapes.empty() || std::any_of(shapes.begin(), shapes.end(), [](const kworld::WorldShape& s) { return s.use != kworld::NavUse::Obstacle; }))
 					continue;
 				knav::Point lo = { shapes[0].min[0], shapes[0].min[1], shapes[0].min[2] };
@@ -80,7 +88,7 @@ int main(int argc, char** argv)
 						+ std::to_string(static_cast<int>(centre[2]));
 			}
 		}
-		std::cout << buildings << " Hub buildings with a layout; " << checked << " pieces checked, " << cut << " cut out\n";
+		std::cout << buildings << " Hub buildings with a layout; " << checked << " pieces checked, " << cut << " cut out, " << notBaked << " path mode 0 (not baked)\n";
 		test::require(buildings > 0 && checked > 20, "the census found the Hub's tables and counters");
 		test::require(cut == checked, "walkable at the centre of" + failures);
 		std::cout << "knav_furniture ok\n";

@@ -10,6 +10,9 @@
 
 namespace {
 
+// The worn shackles' work value (live rwh62 section 7; lock_tasks.cpp kShackleHardness).
+constexpr double kShackleHardness = 20.0;
+
 using namespace ksim;
 using namespace dt27;
 
@@ -215,19 +218,19 @@ void shackleTasks()
 	test::require(rig.logged("has no tools"), "185: no 'has no tools' line");
 	give(rig, cutter, toolSid(rig), state::Inventory::kCarried);
 	rig.sim.orderLockTask(cutter, routines::task::CutShackles, 0);
-	test::require(rig.until(30.0 / 0.4 + 20.0, [&] { return !rig.sim.shacklesWorn(cutter); }), "185: the shackles were never cut");
+	test::require(rig.until(kShackleHardness / 0.4 + 20.0, [&] { return !rig.sim.shacklesWorn(cutter); }), "185: the shackles were never cut");
 	test::require(rig.fighterOf(cutter).slaveState == 2, "185: the freed slave is not ESCAPING");
-	// 186: instant when strength > 3 x hardness (30); the shackles stay on, open.
+	// 186: instant when strength > 3 x hardness (20, live rwh62 section 7); the shackles stay on, open.
 	const std::uint64_t weak = standAt(rig, 32.0, 20.0);
 	shackle(rig, weak);
-	rig.fighterOf(weak).skills.strength = 90.0;
+	rig.fighterOf(weak).skills.strength = kShackleHardness * 3.0;
 	rig.sim.orderLockTask(weak, routines::task::BruteForceShackles, 0);
 	rig.tick(4);
-	test::require(rig.sim.shacklesLocked(weak), "186: strength 90 broke hardness 30");
-	rig.fighterOf(weak).skills.strength = 91.0;
+	test::require(rig.sim.shacklesLocked(weak), "186: strength = 3 x shackle hardness broke the shackles");
+	rig.fighterOf(weak).skills.strength = kShackleHardness * 3.0 + 1.0;
 	rig.sim.orderLockTask(weak, routines::task::BruteForceShackles, 0);
 	rig.tick(4);
-	test::require(rig.sim.shacklesWorn(weak) && !rig.sim.shacklesLocked(weak), "186: strength 91 did not break the shackles (and leave them on)");
+	test::require(rig.sim.shacklesWorn(weak) && !rig.sim.shacklesLocked(weak), "186: strength above 3 x shackle hardness did not break the shackles (and leave them on)");
 	std::cout << "  201 / 219 / 185 / 186: pick, take off, cut, brute force on worn shackles\n";
 }
 

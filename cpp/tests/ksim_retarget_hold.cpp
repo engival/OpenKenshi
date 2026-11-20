@@ -10,6 +10,7 @@
 #include "kworld/gamedata.hpp"
 
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -18,9 +19,6 @@
 #include <string>
 #include <vector>
 
-#ifndef KSIM_SCENARIOS_DIR
-#error KSIM_SCENARIOS_DIR must be defined
-#endif
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
 #endif

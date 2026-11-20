@@ -9,6 +9,7 @@
 
 #include "ksim/combat/combat.hpp"
 #include "ksim/world/join_rules.hpp"
+#include "ksim/ai/goap.hpp"
 #include "ksim/ai/perception.hpp"
 #include "ksim/ai/routines.hpp"
 
@@ -476,6 +477,30 @@ void testTerritorial()
 	}
 }
 
+// 32 SELF_PRESERVATION and 288 PROTECT_ALLIES_STAY_IN_TOWN are goals of the generic path (k16.6.12.2): each has its GOAP row, the package row's
+// task maps to a join bit, and an attacker on me is taken through 32's plan [13, 32] (the pick reports goal 32).
+void testSelfPreservationAndTownGoals()
+{
+	bool has32 = false;
+	bool has288 = false;
+	for (const goap::TaskRow& row : goap::rows())
+	{
+		has32 = has32 || row.task == routines::task::SelfPreservation;
+		has288 = has288 || row.task == routines::task::ProtectAlliesStayInTown;
+	}
+	test::require(has32 && has288, "32 / 288: no GOAP row");
+	test::require(joins::bitOfTask(288) == joins::kProtectAlliesTown, "288: the package row maps to no join bit");
+	const kdata::GameData gd = kworld::loadMergedGameData(KENSHI_DATA);
+	Rig rig(gd, CombatData::build(gd, KENSHI_DATA), 41);
+	const std::uint64_t a = rig.spawn(0.0, 0.0, kMyFaction, 7, 0);
+	const std::uint64_t bandit = rig.spawn(20.0, 0.0, kFoeFaction, 9, 1);
+	rig.me(bandit).target = a;
+	seen(rig.me(a), bandit);
+	test::require(rig.arena.setJoinGoals(a, true, 0), "no member A");
+	rig.run(3);
+	test::require(rig.me(a).target == bandit && rig.firstPick(a) == 32, "32: the attacker on me was not taken as goal 32");
+}
+
 } // namespace
 
 int main()
@@ -492,6 +517,7 @@ int main()
 		testAttackNeutrals();
 		testTroubleMakers();
 		testTerritorial();
+		testSelfPreservationAndTownGoals();
 	} catch (const std::exception& e) {
 		std::cerr << "FAIL: " << e.what() << "\n";
 		return 1;

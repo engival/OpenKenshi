@@ -14,6 +14,7 @@ Rule: a merge that adds or changes something the player can see or press updates
 client/tools/get_shdc.sh                  # once: fetches the prebuilt sokol-shdc into client/bin/
 cmake -S client -B client/build -G Ninja  # -DKENSHI_GFX=vulkan builds the (experimental, untested) Vulkan backend
 nice -n 10 cmake --build client/build -j8
+# configure uses the shared ccache (CCACHE_DIR=/var/cache/kenshi-ccache) by itself when /var/cache/kenshi-ccache/ccache.conf exists and no CMAKE_CXX_COMPILER_LAUNCHER is set
 # git worktree (client/bin is gitignored, so sokol-shdc is missing): add -DKENSHI_SHDC=<main checkout>/client/bin/sokol-shdc to the configure line
 ```
 
@@ -77,13 +78,15 @@ multiplayer. The server's globals are shared with the client (crash recorder tic
 
 **No flags for a player (kenshi-379.13).** The game data is resolved at runtime (`src/platform/datadir.cpp`): `--data DIR`, then `$KENSHI_DATA`, then a
 saved `data=PATH` line in `$XDG_CONFIG_HOME/kenshi-client/data.conf` (`~/.config/kenshi-client/data.conf`; `~/Library/Application Support/kenshi-client/`
-on macOS, `%APPDATA%\kenshi-client\` on Windows), then the Steam/GOG default installs (Linux: `~/.steam/steam` and `~/.local/share/Steam`, plus
+on macOS, `%APPDATA%\OpenKenshi\kenshi-client\` on Windows), then the Steam/GOG default installs (Linux: `~/.steam/steam` and `~/.local/share/Steam`, plus
 their `libraryfolders.vdf` libraries; macOS: Steam's `common/Kenshi` and a `Kenshi` folder beside the binary; a copied Windows install works
 there, the game has no macOS build). A hit is saved; nothing found opens a native folder picker ("Where is Kenshi installed?", `src/app/datapicker.cpp`, tinyfiledialogs: zenity/kdialog/qarma on Linux, the shell dialog on Windows, osascript on macOS) before the window exists; the install folder or its `data/` folder is accepted and saved as `data=PATH` (a folder without `gamedata.base` reopens it with the reason in its title). Cancel, no dialog tool, no display (Linux: no `DISPLAY`/`WAYLAND_DISPLAY`), `KCLIENT_NO_DIALOG=1` or `KCLIENT_CONFIG=none` (headless.sh sets both) print every place it looked and the three ways to set one, then exit 1. A
 dev build searches the configure-time `KENSHI_DATA` first among the installs; a release build (dev tools OFF) carries no path, in the client or the
 in-process server (`KSIM_BAKE_DATA_PATH` follows `KCLIENT_DEV_TOOLS`, and the client passes the resolved `--data` to its server). `kenshi` with
 no options behaves as `play.sh title` — the title and its own server, also for a scripted/headless run; `--debug` keeps the offline fly-around
 and `--simlink` keeps joining a given server.
+
+**Windows log (kenshi-379.31.9.1).** `OpenKenshi.exe` is a GUI-subsystem program: no console window opens. Its stdout and stderr (client, embedded server, crash report) go to `%LOCALAPPDATA%\OpenKenshi\data\logs\openkenshi.log`; the previous run is kept as `openkenshi.log.1`. `--console` (or `KCLIENT_CONSOLE=1`) opts in to a console instead: the one it was started from (cmd, a terminal), else a new window (`src/platform/console.hpp`). Linux and macOS print to their terminal as before.
 
 ## Play
 
@@ -131,9 +134,9 @@ client/build/kclient [--data DIR] [--pos x,z] [--at PLACE|x,z] [--alt H] [--yaw 
 - `--map FILE` overrides the map image (8192^2 DXT1 DDS). Default: the `nicemap` mod's `GUI_Map.dds` if found and enabled, else `data/gui/gfx/GUI_Map.dds`.
 - Mods: `--list-mods` prints key, name, id, enabled, used/planned and where each supported mod was found, then exits;
   `--mod KEY=on|off` (repeatable) overrides for this run; `--save-mods` also writes the result to
-  `$XDG_CONFIG_HOME/kclient/kclient.cfg` (`~/.config/kclient/kclient.cfg`). Details: `MODS.md`.
+  `$XDG_CONFIG_HOME/kclient/kclient.cfg` (`~/.config/kclient/kclient.cfg`; `%APPDATA%\OpenKenshi\kclient\kclient.cfg` on Windows). Details: `MODS.md`.
 - Ground colour: `data/newland/land/overlaymaps/colour.X.Y.png` (X = column, Y = row, no flips). The first run builds
-  a BC1 + mips cache (170.7 MiB, ~2 s with 8 threads) in `$XDG_CACHE_HOME/kclient` (`~/.cache/kclient`), keyed by
+  a BC1 + mips cache (170.7 MiB, ~2 s with 8 threads) in `$XDG_CACHE_HOME/kclient` (`~/.cache/kclient`; `%LOCALAPPDATA%\OpenKenshi\cache\kclient` on Windows), keyed by
   the tiles' size+mtime; later runs only read it. Uploaded as one 16384^2 BC1 texture (drops top mips if the GPU
   limit is lower).
 - Water (M4): one plane at y = 100 over every terrain chunk that dips below it (colour `watercolourmap.png`, flow/scum `flowmap.png`, per biome from BIOMES: gloss, visibility, strength, glow, water/scum scales, distortion, the water normal map (default `materials/water.png`), turbulence and scum maps, none where the biome has none). `--no-water` skips it; `--water-flat` draws the unlit map colour only (debug).
@@ -242,6 +245,25 @@ Grass (GRASS records, `src/grass.*`, `shaders/grass.glsl`, docs/CLIENT.md "Grass
   the instance counts (children and top records) of the camera's cell.
 - The link adds `-Wl,--allow-multiple-definition` because `libkworld.a` (`biomemap.cpp`) and `stb_impl.cpp` both define stb_image.
 
+## Venge beams
+
+The sim runs every sky beam (SIMLINK "BEAMS"); the client draws only the `render.venge_beams_max` nearest the camera whose own zone cell is
+loaded (default 7; 0 = none, a large number = all the loaded ones; kenshi-k16.2.409.1). Distance is horizontal, from the `Camera` position. A
+drawn beam stays until it is 10% farther than the last one in the set; a beam joining or leaving fades over one second (the particle system's
+`fade`), it does not pop. The beam's particles follow the same set.
+
+The loaded-cell gate is the original's weather-handler gate (`140100ba0`, kenshi-rwh.211; kenshi-k16.2.409.3): a beam is drawn only if the zone
+cell under it (64x64 cells of 4608 u, `cell = clamp(int((x + 147465) / 4608), 0, 63)` per axis) is loaded. Loaded is the 3x3 block round the
+focus cell -- the cell under the camera, re-centred only past 0.9 cell (4147.2 u) from the focus cell's centre per axis -- plus every cell
+touched by a +-340 u box round each player-faction character (the "Fast zone hopping" radius is 0 in the default config). The cell's biome
+group == the handler's owner group half of the original's gate is the sim's population rule already (a beam starts in a random zone cell of its
+own group), so the client tests only the cell. A beam the gate shuts out leaves through the same one-second fade as one the cap drops.
+`debug.venge_beams_gate 0` (KCLIENT_DEV_TOOLS) bypasses the gate, the pre-409.3 look, for comparisons.
+
+`KBEAMSLOG=1` prints a line per second to stderr: `beamlog tick N wire W burst B drawn D inview V fading F ... focus X,Z cells C`
+(beams sent / inside their burst / in the drawn set / of the drawn set whose column, its foot to 16 000 u top, crosses the camera frustum /
+fading out of it; the gate's focus cell and its loaded-cell count).
+
 ## Sky, time and lighting (M3)
 
 Clock, sun, atmosphere, clouds, stars, moons, fog and the shared lighting block live in `sky.{hpp,cpp}`, `shaders/sky.glsl` and `shaders/lighting.inc` (included by `terrain.glsl`
@@ -320,6 +342,34 @@ With `KCLIENT_PROFILE` on (the default; `cmake -DKCLIENT_PROFILE=OFF` compiles t
 kclient exits non-zero on any `[sg][error]` or a scene that never finished loading. The wrapper then compares each PNG with the baseline in `~/.cache/kclient/scene-baseline/` (outside git; `KCLIENT_SCENE_BASELINE` overrides), ignoring the HUD box:
 RMSE and the percentage of pixels with a channel difference above 16. `pass` = at most 0.5 % changed, otherwise `changed` (reported, exit code stays 0); `new` = no baseline yet. `--bless` copies the current output over the baseline.
 It prints one line per scene and writes `NAME.sheet.png` (reference | baseline | current) and `overview.png` (all scenes) into OUTDIR (default: a fresh `/tmp/scene-test.*`). A full run takes about 10 s.
+
+### Vsync and present pacing (kenshi-k16.2.418.1)
+
+Every run prints one startup line (all builds): `kclient: swap interval asked 1 (gfx.vsync on, ...), in effect 1 via GLX_EXT_swap_control ...; render.thread=overlap, ...`.
+"In effect" is what the GLX driver reports for the window, so `0` there with `gfx.vsync` on means the driver or a layer overrode it.
+
+`KCLIENT_PACELOG=1` (dev builds) adds one `pace:` line a second, with no hook of libc, libGL or an overlay, so it reads the same with or without MangoHud:
+`cb/s` frame callbacks (sokol swaps after each, so a callback is a present), `drew/s` those that ran a pass, the interval between callback starts
+(mean, p50, p95, p99, max; steady clock), how many fell under 0.75 x or over 1.5 x the refresh period, and the vblank advance per callback from
+`glXGetSyncValuesOML` as `0:n 1:n 2:n 3+:n` (`n/a` without GLX_OML_sync_control). `0` = two presents inside one refresh: the over-refresh case.
+`1` everywhere = paced. To check on the real display:
+
+    KCLIENT_PACELOG=1 client/build/kclient --debug 2> pace.log                 # without an overlay
+    KCLIENT_PACELOG=1 mangohud client/build/kclient --debug 2> pace-mango.log  # with it
+
+Set `render.thread=overlap` in the config for the overlap case; read the startup line first, then the `pace:` lines after loading. The HUD's fps is an
+exponential average (0.95 / 0.05), so it hides spikes: judge by p50 / p99 / max and the `0:` count. `HEADLESS_REFRESH=N` (tools/headless.sh) pins
+the nested gamescope's refresh for a headless run.
+
+While `render.thread` runs a logic thread (lockstep or overlap) the line ends with two more sections (kenshi-k16.2.437.1):
+`lockstep repeats N (runs N, longest L frames / M ms, P over 50 ms printed)` and `logic ms L vs bound B`. `repeats` = callbacks that found no packet
+in time and blitted the kept frame back (`cb/s` minus `drew/s` is the same count), `runs` = runs of them, `longest` = the longest run and its wall
+time (a run still going at the report counts its length so far), `printed` = the runs that printed a `kclient: lockstep: no packet for ...` line.
+Only a run lasting over 50 ms prints, once, when it ends
+(`logicthread::kMissLogMs`; at 144 Hz one frame is 6.9 ms, so a shorter run is one or two repeated frames, which is why the log used to spam).
+`logic ms` is the mean of the world frames' logic half (`FramePacket::logicMs`, published by `logicthread::noteLogicMs`) against the bound the
+render thread waits for a packet (`lockstep_bound_ms`: the refresh period, or the cap's step under `gfx.fps_cap` with vsync off): logic time at or
+over the bound is why a packet arrives late.
 
 ### Per-frame profiling (dev builds)
 

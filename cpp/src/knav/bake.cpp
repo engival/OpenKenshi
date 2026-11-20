@@ -280,6 +280,8 @@ void splitOverlappingRegions(rcCompactHeightfield& chf)
 
 // A use node's reach: the spans this close to a prop's own use node stay walkable through the prop's body clearance.
 constexpr float kUseReach = 4.0f;
+constexpr int kGapCells = 4; // the least free lane (cells, 4 u) a furniture ring leaves between two blockers: the mesh is the walker's centre space already (walls eroded by the 4 u radius), and a 1-cell lane collapses in the contour simplification
+
 
 constexpr float kRockMaxSpan = 750.0f; // a shell wider than this (either axis) is cut per triangle height (kenshi-k16.7.59)
 
@@ -321,6 +323,21 @@ bool leansOver(const kworld::WorldShape& shape)
 			return true;
 	}
 	return false;
+}
+
+// A closed walkable furniture hull (a wall piece, shelf, table, counter top: never stepped onto from the ground) whose footprint fill
+// (fillShapes) cuts exactly the cells whose centre lies inside it. Rasterising its side sheets as well takes every floor cell the sheet
+// merely touches, up to one 2 u cell on each side of a gap between two hulls: an 11 u passage between a wall (2172) and a shelf (2594) came
+// out 6.75 u wide (Heft Noble House, kenshi-k16.7.71). The centre-based fill is then the single rule: the hull keeps its top faces and loses
+// its side sheets. A hull under two cells in x or z may have no cell centre inside it, so it keeps its sheets. Not for any other closed
+// hull. A building's floor slab (Squin Bar, General Shop) is walked onto, and its sheets are the step from the ground to its top face:
+// dropping them cut the doorstep off. A closed obstacle hull keeps its sheets as the keep-out of a solid: without them fighters stood
+// inside props (ksim_fight_prop, ksim_route_corners, ksim_storm_door), though dropping them also opens the Slave Shop's listed door.
+bool sheetsCoveredByFill(const kworld::WorldShape& shape, float cellSize)
+{
+	if (!shape.furniture || !shape.closed || shape.solid || shape.foliage || shape.use != kworld::NavUse::Walkable)
+		return false;
+	return std::min(shape.max[0] - shape.min[0], shape.max[2] - shape.min[2]) >= 2.0f * cellSize;
 }
 
 // The steepest face a walkable shape's surface may carry: a stair or ramp slab (a closed solid hull) is climbable to kStairSlopeDegrees.
@@ -954,6 +971,8 @@ std::optional<BuiltTile> buildTile(const NavConfig& c,
 		return std::nullopt;
 
 	std::vector<unsigned char> areas;
+	bool dropSides = false;
+	std::vector<int> topFaces;
 	const auto rasterize = [&](const float* verts, int vertCount, const int* tris, int triCount, float slope, const std::vector<char>& ramp = {})
 	{
 		areas.assign(static_cast<std::size_t>(triCount), RC_NULL_AREA);
@@ -961,6 +980,17 @@ std::optional<BuiltTile> buildTile(const NavConfig& c,
 		for (std::size_t t = 0; t < ramp.size(); ++t)
 			if (ramp[t])
 				areas[t] = RC_WALKABLE_AREA;
+		if (dropSides)
+		{
+			// Only the walkable faces (the top): the side sheets are the fill's.
+			topFaces.clear();
+			for (int t = 0; t < triCount; ++t)
+				if (areas[static_cast<std::size_t>(t)] != RC_NULL_AREA)
+					topFaces.insert(topFaces.end(), { tris[3 * t], tris[3 * t + 1], tris[3 * t + 2] });
+			areas.assign(topFaces.size() / 3, RC_WALKABLE_AREA);
+			rcRasterizeTriangles(&ctx, verts, vertCount, topFaces.data(), areas.data(), static_cast<int>(topFaces.size() / 3), *hf, cfg.walkableClimb);
+			return;
+		}
 		rcRasterizeTriangles(&ctx, verts, vertCount, tris, areas.data(), triCount, *hf, cfg.walkableClimb);
 	};
 	rasterize(in.terrainVerts.data(), static_cast<int>(in.terrainVerts.size() / 3),
@@ -975,6 +1005,7 @@ std::optional<BuiltTile> buildTile(const NavConfig& c,
 		tris.assign(shape->indices.begin(), shape->indices.end());
 		const int vertCount = static_cast<int>(shape->vertices.size() / 3);
 		const int triCount = static_cast<int>(tris.size() / 3);
+		const bool coveredByFill = sheetsCoveredByFill(*shape, cfg.cs);
 		if (shape->use == kworld::NavUse::Obstacle)
 		{
 			// Solid, never standable: every triangle is unwalkable.
@@ -982,8 +1013,10 @@ std::optional<BuiltTile> buildTile(const NavConfig& c,
 			rcRasterizeTriangles(&ctx, shape->vertices.data(), vertCount, tris.data(), areas.data(),
 				triCount, *hf, cfg.walkableClimb);
 		} else {
+			dropSides = coveredByFill;
 			rasterize(shape->vertices.data(), vertCount, tris.data(), triCount,
 				shapeSlope(*shape, cfg.walkableSlopeAngle), rampTriangles(*shape, cfg.walkableSlopeAngle));
+			dropSides = false;
 		}
 	}
 
@@ -1296,6 +1329,79 @@ std::optional<BuiltTile> buildTile(const NavConfig& c,
 				rcMarkConvexPolyArea(&ctx, hull.data(), static_cast<int>(hull.size() / 3), projected ? in.bmin[1] - 1.0f : shape->min[1] - c.cellHeight,
 					projected ? in.bmax[1] + 1.0f : shape->max[1] + 2 * c.cellHeight, RC_NULL_AREA, *chf);
 		}
+		// The ring never narrows a gap between two blockers (furniture footprints, walls) below the walker's width: along each axis, a
+		// run of spans between two blockers that was wide enough before the ring but keeps fewer than kGapCells free after it gets ring
+		// spans back (low side first) until it keeps that many. A narrower gap stays as the ring left it (kenshi-k16.7.102).
+		{
+			const std::vector<unsigned char> ringAreas(chf->areas, chf->areas + chf->spanCount);
+			std::copy(beforeProps.begin(), beforeProps.end(), chf->areas);
+			for (const kworld::WorldShape* shape : in.shapes)
+			{
+				if (!propClearanceShape(*shape))
+					continue;
+				propClearanceHull(*shape, 0.5f * c.cellSize, hull);
+				if (!hull.empty())
+					rcMarkConvexPolyArea(&ctx, hull.data(), static_cast<int>(hull.size() / 3), shape->use == kworld::NavUse::Projected ? in.bmin[1] - 1.0f : shape->min[1] - c.cellHeight,
+						shape->use == kworld::NavUse::Projected ? in.bmax[1] + 1.0f : shape->max[1] + 2 * c.cellHeight, RC_NULL_AREA, *chf);
+			}
+			std::vector<unsigned char> blocked(static_cast<std::size_t>(chf->spanCount));
+			for (int i = 0; i < chf->spanCount; ++i)
+				blocked[static_cast<std::size_t>(i)] = chf->areas[i] == RC_NULL_AREA;
+			std::copy(ringAreas.begin(), ringAreas.end(), chf->areas);
+			const int limit = kGapCells + 2; // a longer run is wide enough as it is
+			std::vector<int> run;
+			for (int z = 0; z < chf->height; ++z)
+				for (int x = 0; x < chf->width; ++x)
+				{
+					const rcCompactCell& cell = chf->cells[x + z * chf->width];
+					for (unsigned int i = cell.index; i < cell.index + static_cast<unsigned int>(cell.count); ++i)
+					{
+						if (chf->areas[i] != RC_NULL_AREA || blocked[i])
+							continue;
+						for (int axis = 0; axis < 2; ++axis)
+						{
+							// Walk to the blockers on both sides along dirs `axis` and `axis + 2`; an open end (a longer run, a ledge) skips the run.
+							run.assign(1, static_cast<int>(i));
+							bool bounded = true;
+							for (int side = 0; side < 2 && bounded; ++side)
+							{
+								const int dir = axis + 2 * side;
+								int at = static_cast<int>(i), ax = x, az = z;
+								std::vector<int> half;
+								for (int step = 0;; ++step)
+								{
+									const rcCompactSpan& span = chf->spans[at];
+									if (step > limit || rcGetCon(span, dir) == RC_NOT_CONNECTED)
+										break;
+									ax += rcGetDirOffsetX(dir);
+									az += rcGetDirOffsetY(dir);
+									at = static_cast<int>(chf->cells[ax + az * chf->width].index) + rcGetCon(span, dir);
+									if (blocked[static_cast<std::size_t>(at)])
+										break;
+									half.push_back(at);
+								}
+								if (static_cast<int>(half.size()) > limit)
+									bounded = false;
+								else if (side == 0)
+									run.insert(run.begin(), half.rbegin(), half.rend());
+								else
+									run.insert(run.end(), half.begin(), half.end());
+							}
+							int free = 0;
+							for (const int j : run)
+								free += chf->areas[j] != RC_NULL_AREA;
+							if (!bounded || free >= kGapCells || static_cast<int>(run.size()) < kGapCells)
+								continue;
+							for (std::size_t k = 0; k < run.size() && free < kGapCells; ++k)
+								if (chf->areas[run[k]] == RC_NULL_AREA)
+								{
+									chf->areas[run[k]] = beforeProps[static_cast<std::size_t>(run[k])];
+									++free;
+								}
+						}
+					}
+				}
+		}
 		// A stair or ramp is never cut by a ring: a span the ring nulled stays walkable where the surface around it (same
 		// storey, within the ring's reach) rises or falls by more than the step height, so a furniture ring cannot slice a
 		// stair into a gap the walker falls through (k16.7.89, fight_levels at the Hub bar stair).
@@ -1364,6 +1470,35 @@ std::optional<BuiltTile> buildTile(const NavConfig& c,
 		|| contours->nconts == 0)
 		return std::nullopt;
 	lap(StContours);
+	// A wall-band (Edge) piece whose contour simplifies away (under 3 vertices: a strip one or two cells wide, which the watershed cuts
+	// into small pieces beside a Land strip) leaves no polygon, and the mesh wall moves in by the band's width. Such a piece is
+	// relabelled Land and the regions and contours are built again: it joins the Land region beside it (kenshi-k16.7.71).
+	{
+		constexpr unsigned char kEdgeId = static_cast<unsigned char>(Area::Edge) + 1;
+		std::vector<char> hasContour(RC_BORDER_REG, 0);
+		for (int ci = 0; ci < contours->nconts; ++ci)
+			if (contours->conts[ci].nverts >= 3)
+				hasContour[contours->conts[ci].reg] = 1;
+		bool relabelled = false;
+		for (int i = 0; i < chf->spanCount; ++i)
+		{
+			const unsigned short region = chf->spans[i].reg;
+			if (region != 0 && !(region & RC_BORDER_REG) && chf->areas[i] == kEdgeId && !hasContour[region])
+			{
+				chf->areas[i] = static_cast<unsigned char>(static_cast<int>(Area::Land) + 1);
+				relabelled = true;
+			}
+		}
+		if (relabelled)
+		{
+			if (!rcBuildDistanceField(&ctx, *chf) || !rcBuildRegions(&ctx, *chf, cfg.borderSize, cfg.minRegionArea, cfg.mergeRegionArea))
+				return std::nullopt;
+			splitOverlappingRegions(*chf);
+			contours.reset(rcAllocContourSet());
+			if (!rcBuildContours(&ctx, *chf, cfg.maxSimplificationError, cfg.maxEdgeLen, *contours) || contours->nconts == 0)
+				return std::nullopt;
+		}
+	}
 	PolyMeshPtr pmesh(rcAllocPolyMesh());
 	if (!rcBuildPolyMesh(&ctx, *contours, cfg.maxVertsPerPoly, *pmesh) || pmesh->npolys == 0)
 		return std::nullopt;

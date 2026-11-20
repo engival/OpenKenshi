@@ -48,6 +48,25 @@ public:
 	static constexpr int kSets = 2;
 	static constexpr double kRadius[kCascades] = { 120.0, 400.0, 1400.0, 5000.0 };	// ball radius = outer camera distance of each cascade, in world units (10 per metre); the last is the game's Shadow Range 5000 (settings.cfg:47)
 
+	// The frame's shadow data, written by logic (snapshot(), at the end of the frame's first half) into the render packet; the draw and every receiver read
+	// only this (kenshi-k16.2.205.12.113, overlap review T17). The atlas, the cache slots and liveClean_ stay render-owned (resolve / restoreCascade / markDirty).
+	struct FrameData
+	{
+		ShadowParams params = {};
+		ShadowCascade cascade[kCascades];
+		double geom[kCascades][9] = {};	// the cache keys of the cascades that render
+		bool render[kCascades] = {};	// update() decided to redraw cascade i
+		bool enabled = true, cacheOn = false;
+		int set = 0;			// the atlas set being drawn
+		int staticBudget = 1;
+		sg_view view = {};		// the atlas, fixed after init
+		sg_sampler sampler = {}, rawSampler = {};
+		bool active() const { return enabled && params.sinfo[0] > 0; }
+		bool renders(int i) const { return render[i]; }
+		const ShadowCascade& casc(int i) const { return cascade[i]; }
+	};
+	void snapshot(FrameData& out) const;
+
 	void init();
 	void shutdown();
 
@@ -71,12 +90,13 @@ public:
 	// One depth-only pass over the whole atlas: beginPass(), then per cascade with renders(i) selectCascade(i) (which clears the tile) and the casters' draws,
 	// then endPass(). The tiles keep their contents between passes, so a cascade that is not redrawn is looked up with the matrices of its last redraw.
 	void beginPass();
-	bool renders(int i) const { return render_[i]; }	// this frame's update() decided to redraw cascade i
-	void selectCascade(int i);
+	bool renders(int i) const { return render_[i]; }	// this frame's update() decided to redraw cascade i (logic side)
+	void selectCascade(const FrameData& fd, int i);
 	// viewport and scissor of cascade i with no clear (kenshi-k16.2.101.1): the characters redraw their cascade's tile after the world's casters
-	void selectTile(int i);
+	void selectTile(const FrameData& fd, int i);
 	void endPass();
-	void invalidate();	// the atlas contents are not trustworthy (shadows were off): redraw every cascade next frame
+	void invalidate();	// logic side of "the atlas is not trustworthy (shadows were off)": redraw every cascade next frame, no crossfade into the old set
+	void invalidateAtlas();	// render side: forget the cache slots and the clean flags
 
 	// The static-caster cache (render.shadow_cache, kenshi-k16.2.205.12.2). The static casters (terrain, buildings, features, foliage) of each (atlas set, cascade) are drawn into a
 	// second atlas of the same layout (the cache) only when the tile's key changes: the cascade's snapped centre and depth range in absolute space, the light basis, the bias cap
@@ -92,13 +112,13 @@ public:
 	// casters) and the oldest waiting goes first, nearest cascade on a tie. One waiting since kCascades - 1 frames redraws regardless, so a new
 	// building's shadow is at most kCascades - 1 frames late. 0: no limit (every changed tile in the frame of the change, the old behaviour).
 	int staticBudget = 1;
-	void resolve(uint64_t contentSig);
+	void resolve(const FrameData& fd, uint64_t contentSig);
 	bool staticDraw(int i) const { return staticDraw_[i]; }
 	void beginStaticPass();
-	void selectStatic(int i);	// viewport and scissor of cascade i's cache tile, cleared
+	void selectStatic(const FrameData& fd, int i);	// viewport and scissor of cascade i's cache tile, cleared
 	void endStaticPass();
-	void restoreCascade(int i);	// live tile of cascade i := the cache's, unless it already is; leaves the viewport on the tile
-	void markDirty(int i) { liveClean_[set_][i] = false; }	// something was drawn over the restored tile
+	void restoreCascade(const FrameData& fd, int i);	// live tile of cascade i := the cache's, unless it already is; leaves the viewport on the tile
+	void markDirty(const FrameData& fd, int i) { liveClean_[fd.set][i] = false; }	// something was drawn over the restored tile
 	bool anyStaticDraw() const { return staticAny_; }
 
 	// Cascades 1-3 are redrawn every kPeriod[i] frames (staggered) unless the camera has moved enough to matter; off (every cascade every frame) by default.

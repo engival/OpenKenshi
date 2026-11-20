@@ -90,6 +90,8 @@ inline kworld::SkelQuat qexp(const kworld::SkelVec3& v)
 
 // The editor's sliders for one gender (defined in charload.cpp)
 std::vector<Characters::EditorRange> readRanges(const std::string& path, bool female);
+// The <Colour> count of one gender's "Skin Tone" ColourRange (defined in charload.cpp): the slider runs 0..10*(n-1)
+int readSkinStops(const std::string& path, bool female);
 
 }
 

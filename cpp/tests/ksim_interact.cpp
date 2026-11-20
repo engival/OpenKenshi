@@ -21,6 +21,7 @@
 #include "kworld/loadorder.hpp"
 
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <DetourCommon.h>
 #include <DetourNavMesh.h>
@@ -35,9 +36,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_BINARY_DIR
-#error KSIM_BINARY_DIR must be defined
 #endif
 
 namespace {
@@ -1463,6 +1461,32 @@ int main(int argc, char** argv)
 			test::require(tookKatana == 1 && tookBread == 1, "each item must be taken by exactly one of the two characters");
 			std::cout << "queue: Katana then Bread for two characters, " << tookKatana << " + " << tookBread << " taken, the others got target_gone\n";
 		}
+		// EVENT 13 is for a player-controlled actor only (k16.6.429): the same pick-up order sends exactly one for the player and none
+		// for the character once it is an NPC (the planner's own interact).
+		{
+			Rig n(gd, data, nav, order, true);
+			n.farItems();
+			std::uint64_t kat = 0;
+			std::uint64_t bre = 0;
+			for (const auto& [id, i] : n.inters)
+			{
+				if (i.kind == ks::kInteractableItem && i.count == 1)
+					kat = id;
+				if (i.kind == ks::kInteractableItem && i.count == 3)
+					bre = id;
+			}
+			test::require(kat != 0 && bre != 0, "the squad scenario's items are missing");
+			n.expectApplied(n.interact(n.duel.player, kat, 7));
+			n.expectApplied(n.interactGroup({n.second}, bre, 7, 0));
+			n.tick();
+			n.mutableFighter(n.second).playerControlled = false; // ordered as a player, then the actor is an NPC when the order ends
+			int waited = 0;
+			while ((n.resultsOf(n.duel.player, kat).empty() || waited < 600) && waited++ < 6000)
+				n.tick();
+			test::require(n.resultsOf(n.duel.player, kat).size() == 1, "the player's interact did not send exactly one event 13");
+			test::require(n.resultsOf(n.second, bre).empty(), "an NPC's interact sent an event 13");
+			std::cout << "event 13: one for the player's interact, none for an NPC's\n";
+		}
 		// A queue that is not a queue: an ordinary order cancels the running interact and every queued one, once each.
 		{
 			Rig c(gd, data, nav, order, true);
@@ -1995,6 +2019,21 @@ int main(int argc, char** argv)
 			test::require(writable->lockAttempts == 0, "the resumed pick rolled before the shared 5 s was up");
 			d.run(20); // past 5 s: the attempt is made
 			test::require(writable->lockAttempts == 1, "the resumed pick did not roll at 5 s of shared time");
+			// Below the skill floor (k16.6.377): walked to, no roll, event 13 result 8 on the wire.
+			writable->state = 2;
+			writable->lockLevel = p.skills.lockpicking + 60.0; // level - skill > 41.7: chance < 5%
+			writable->lockElapsed = 0.0;
+			writable->lockAttempts = 0;
+			++writable->version;
+			const std::size_t fromHard = d.done.size();
+			d.expectApplied(d.interact(pid, doorId, 3));
+			// The resumed pick above is still running: the new order cancels it (result 5) before this one ends.
+			const auto endedHard = [&] { for (std::size_t i = fromHard; i < d.done.size(); ++i) if (d.done[i].target == doorId && d.done[i].result != InteractEvent::kCancelled) return std::optional<Rig::Done>(d.done[i]); return std::optional<Rig::Done>(); };
+			for (int waited = 0; !endedHard() && waited < 800; ++waited)
+				d.tick();
+			const auto hard = endedHard();
+			test::require(hard && hard->action == 3 && hard->result == 8, "a door lock below the skill floor did not end with event 13 result 8");
+			test::require(writable->lockAttempts == 0 && writable->state == 2, "a too-hard door pick rolled or unlocked");
 			std::cout << "lockpick: an interrupted pick keeps its elapsed time on the lock\n";
 		}
 
@@ -2588,6 +2627,22 @@ int main(int argc, char** argv)
 					d.tick();
 				const auto none = d.doneFor(full, from3);
 				test::require(none && none->result == InteractEvent::kRefused && container(full).get<state::Inventory>()->carried(katanaSid) == 1, "a loot with no room did not end with result 1");
+				// A lock below the skill floor (k16.6.377): the order walks to the box and ends event 13 result 8 (too hard) on the wire, no roll.
+				{
+					state::Container* lockedBox = const_cast<state::Container*>(container(full).get<state::Container>());
+					lockedBox->locked = true;
+					lockedBox->lockLevel = static_cast<std::int32_t>(d.mutableFighter(pid).skills.lockpicking + 60.0); // level - skill > 41.7: chance < 5%
+					lockedBox->lockAttempts = 0;
+					stand(full, 2.0);
+					const std::size_t from4 = d.done.size();
+					d.expectApplied(d.interact(pid, full, 3));
+					for (int waited = 0; !d.doneFor(full, from4) && waited < 400; ++waited)
+						d.tick();
+					const auto hard = d.doneFor(full, from4);
+					test::require(hard && hard->action == 3 && hard->result == 8 && hard->result == InteractEvent::kTooHard, "a container lock below the skill floor did not end with event 13 result 8");
+					test::require(lockedBox->lockAttempts == 0 && lockedBox->locked, "a too-hard container pick rolled or unlocked");
+					lockedBox->locked = false;
+				}
 				state::GroundItem lying;
 				lying.itemSid = katanaSid;
 				lying.count = 1;

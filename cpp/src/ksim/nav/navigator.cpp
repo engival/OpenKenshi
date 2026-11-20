@@ -33,6 +33,9 @@
 #include <vector>
 
 #include <unistd.h>
+#if defined(KSIM_PROFILE) && KSIM_PROFILE
+#include "knav/route_measure.hpp"
+#endif
 
 namespace ksim {
 
@@ -292,16 +295,16 @@ struct KnavNavigator::Impl
 		}
 	}
 
-	// The set label a traveller class stands in, given the doors of the book: the sets joined by
-	// a door it may use share one representative. Only sets beside a door ever differ from their
-	// own label, so a table of the few hundred of them is all there is (built per class, on use).
-	std::uint32_t classRep(std::uint32_t label, int doorClass) const
+	// The set label a traveller stands in, given the doors of the book: the sets joined by
+	// a door that is not locked share one representative. Only sets beside a door ever differ from their
+	// own label, so a table of the few hundred of them is all there is (built on use).
+	std::uint32_t classRep(std::uint32_t label) const
 	{
 		if (label == knav::PolyComponents::kNone)
 			return label;
-		ClassTable& slot = classes[static_cast<std::size_t>(doorClass) % classes.size()];
+		ClassTable& slot = classes;
 		if (!slot.valid)
-			buildClass(slot, doorClass, false);
+			buildClass(slot, false);
 		const auto found = slot.rep.find(label);
 		return found == slot.rep.end() ? label : found->second;
 	}
@@ -312,7 +315,7 @@ struct KnavNavigator::Impl
 		if (label == knav::PolyComponents::kNone)
 			return label;
 		if (!open.valid)
-			buildClass(open, 0, true);
+			buildClass(open, true);
 		const auto found = open.rep.find(label);
 		return found == open.rep.end() ? label : found->second;
 	}
@@ -323,7 +326,7 @@ struct KnavNavigator::Impl
 		std::unordered_map<std::uint32_t, std::uint32_t> rep;
 	};
 
-	void buildClass(ClassTable& slot, int doorClass, bool everyDoorOpen) const
+	void buildClass(ClassTable& slot, bool everyDoorOpen) const
 	{
 		std::unordered_map<std::uint32_t, std::uint32_t> parent;
 		const auto find = [&](std::uint32_t a)
@@ -338,7 +341,7 @@ struct KnavNavigator::Impl
 		};
 		for (const auto& [door, labels] : doorSets)
 		{
-			if (!everyDoorOpen && book.get(door).verdict(doorClass) == knav::DoorVerdict::Blocked)
+			if (!everyDoorOpen && book.get(door).verdict() == knav::DoorVerdict::Blocked)
 				continue;
 			for (std::size_t i = 1; i < labels.size(); ++i)
 			{
@@ -377,7 +380,7 @@ struct KnavNavigator::Impl
 	// The sets beside each door (labelComponents), the book in force, and the per-class view of it.
 	std::map<knav::DoorKey, std::vector<std::uint32_t>> doorSets;
 	knav::DoorBook book;
-	mutable std::array<ClassTable, knav::kDoorClasses> classes;
+	mutable ClassTable classes;
 	mutable ClassTable open;
 	mutable std::map<RegionKey, std::unique_ptr<knav::NavQuery>> queries;
 	knav::CoarseGraph graph;
@@ -483,7 +486,7 @@ std::optional<state::GroundPoint> KnavNavigator::nearestReachableFor(const Trave
 	double z, double reach, double fromX, double fromZ) const
 {
 	const knav::NavMesh* mesh = impl_->meshAt(x, z);
-	const std::uint32_t set = impl_->classRep(impl_->componentAt(fromX, fromZ, kReach), who.doorClass);
+	const std::uint32_t set = impl_->classRep(impl_->componentAt(fromX, fromZ, kReach));
 	if (mesh == nullptr || set == knav::PolyComponents::kNone)
 		return nearestWalkable(x, z, reach);
 	const std::uint64_t began = nowNs();
@@ -495,7 +498,7 @@ std::optional<state::GroundPoint> KnavNavigator::nearestReachableFor(const Trave
 	{
 		const std::uint32_t label = impl_->components.at(Impl::tileRegion(loc.tileX, loc.tileZ))
 			.at(loc.tileX, loc.tileZ, loc.poly);
-		if (impl_->classRep(label, who.doorClass) == set)
+		if (impl_->classRep(label) == set)
 			return true;
 		// Beyond a gate this class may not pass, though the ground is connected.
 		if (!impl_->book.settings().empty() && label != knav::PolyComponents::kNone
@@ -549,7 +552,7 @@ Route KnavNavigator::localRouteFor(const Traveller& who, double fromX, double fr
 	double toZ) const
 {
 	knav::TravelFilter travel = impl_->graph.travel();
-	travel.doorClass = static_cast<std::uint8_t>(who.doorClass);
+	travel.throughLocks = who.bash;
 	travel.radius = who.footprint;
 	const RegionKey key = regionOf(fromX, fromZ);
 	const knav::NavMesh* mesh = impl_->meshAt(fromX, fromZ);
@@ -657,7 +660,7 @@ Route KnavNavigator::routeUntimed(const Traveller& who, double fromX, double fro
 	const std::uint32_t fromLabel = impl_->componentAt(fromX, fromZ, kReach);
 	const std::uint32_t toLabel = impl_->componentAt(toX, toZ, kReach);
 	if (!who.bash && fromLabel != knav::PolyComponents::kNone && toLabel != knav::PolyComponents::kNone
-		&& impl_->classRep(fromLabel, who.doorClass) != impl_->classRep(toLabel, who.doorClass))
+		&& impl_->classRep(fromLabel) != impl_->classRep(toLabel))
 	{
 		const bool gate = impl_->openRep(fromLabel) == impl_->openRep(toLabel);
 		route.failure = gate ? state::AiReason::DoorRefused : state::AiReason::NoRoute;
@@ -670,7 +673,7 @@ Route KnavNavigator::routeUntimed(const Traveller& who, double fromX, double fro
 	const bool gated = !impl_->book.settings().empty() && !who.bash;
 	const knav::CoarsePath path = impl_->graph.findPath(*fromMesh, *toMesh,
 		impl_->ground(fromX, fromZ), impl_->ground(toX, toZ), kReach,
-		knav::DoorQuery{gated ? &impl_->book : nullptr, who.bash ? knav::kDoorClasses : who.doorClass});
+		knav::DoorQuery{gated ? &impl_->book : nullptr, who.bash});
 	if (!path.found)
 	{
 		route.failure = path.failure == knav::CoarsePath::Failure::NoRoute
@@ -706,8 +709,7 @@ void KnavNavigator::applyDoors(const knav::DoorBook& book) const
 	impl_->book = book;
 	for (auto& [key, mesh] : impl_->meshes)
 		mesh.applyDoors(book);
-	for (Impl::ClassTable& table : impl_->classes)
-		table.valid = false;
+	impl_->classes.valid = false;
 	++stats_.doorApplies;
 	stats_.doorApplyNs += nowNs() - began;
 }
@@ -717,10 +719,10 @@ const knav::DoorBook& KnavNavigator::doors() const noexcept
 	return impl_->book;
 }
 
-std::uint32_t KnavNavigator::reachSet(const Traveller& who, double x, double z) const
+std::uint32_t KnavNavigator::reachSet(const Traveller& /*who*/, double x, double z) const
 {
 	const std::uint32_t label = impl_->componentAt(x, z, kReach);
-	return label == knav::PolyComponents::kNone ? kNoSet : impl_->classRep(label, who.doorClass);
+	return label == knav::PolyComponents::kNone ? kNoSet : impl_->classRep(label);
 }
 
 MeshNavigator::MeshNavigator(knav::NavMesh mesh)
@@ -818,7 +820,7 @@ std::vector<knav::TileCoord> meshTileCoords(const knav::NavConfig& config, kworl
 
 // The entry layout's recipe version: bump with any change to the conversion, the bake recipe or its tuning, or an entry's
 // layout. The .knav cache version and the Detour version are checked by NavMesh itself.
-constexpr std::uint32_t kNativeCacheRecipe = 21; // 21: furniture body ring (footprint + clearance + margin nulled, stairs and use-node paths spared) and the slide height fallback (kenshi-k16.7.89); 20: a detail vertex more than the climb off a level polygon's corners takes the nearest corner height, so a slab edge band over a stair well has no skirt down to the stair (Hub bar stair, kenshi-k16.8.41); 12-19: unused (stale ring-branch caches on dev); 11: the zone key folds the gathered geometry digest and the heightmap file stamp (kenshi-k16.7.67); 10: k16.7.50 made bakes deterministic (Recast read unwritten heap bytes in rcBuildContours); caches baked before it are rebuilt, no mesh rule change; 9: the zone is pruned with its own seeds (zone probes or seeds.def, building origins, door outside points), keeping every set that touches the zone's outer border (kenshi-k16.6.270); 8: a foliage shell wider than 750 u cuts only its own triangle heights, not the whole shell height (kenshi-k16.7.59); 7: a ramp strip of an open walkable building sheet (faces 40-55 degrees joining flat walkable faces at both ends) is walkable, so a wall-walk's 47 degree ramp is (kenshi-k16.7.58); 6: unused (k16.7.59 before its merge); 5: the door mat gives back a stair slope more under the door, the stair joins the doorway (kenshi-k16.6.229); 4: walkable surfaces at their exact collision height, not the voxel top (kenshi-k16.7.36); 3: terrain inside an interior volume is carved, interior terrain 0 (kenshi-k16.7.18); 2: a rock shell cuts per triangle (kenshi-k16.19.4)
+constexpr std::uint32_t kNativeCacheRecipe = 40; // 40: the furniture ring keeps a 4-cell (8 u, the human body at r 4) lane in a doorway gap, not 2 cells (kenshi-k16.7.106); 35: the furniture ring never narrows a gap between two blockers below a 2-cell lane (kenshi-k16.7.102); 30: 24 and 25 together (k16.7.71's bake with k16.7.95's clearance; 25 alone was 7.95 without 24's rules, and its caches are not this bake; 27 has stale caches on dev from an earlier branch, 29 is left free); 25: the furniture body clearance 0.75 u, off the cell-centre tie of 1.0 (kenshi-k16.7.95); 26 and 28 are taken by k16.7.74 and k16.7.87 in flight; 24: (1) a closed walkable furniture hull (2 cells or more) keeps its top faces and loses its side sheets, so the centre-based fill is its one rule and a gap between two hulls keeps its width (obstacle hulls and building slabs keep their sheets); (2) a wall-band (Edge) piece whose contour simplifies away is relabelled Land and the regions and contours are built again, so the band does not drop out of the mesh (Heft Noble House, Farm Shop, kenshi-k16.7.71; 22 and 23 are taken by k16.7.74 and k16.7.94 in flight; 21: furniture body ring (footprint + clearance + margin nulled, stairs and use-node paths spared) and the slide height fallback (kenshi-k16.7.89); 20: a detail vertex more than the climb off a level polygon's corners takes the nearest corner height, so a slab edge band over a stair well has no skirt down to the stair (Hub bar stair, kenshi-k16.8.41); 12-19: unused (stale ring-branch caches on dev); 11: the zone key folds the gathered geometry digest and the heightmap file stamp (kenshi-k16.7.67); 10: k16.7.50 made bakes deterministic (Recast read unwritten heap bytes in rcBuildContours); caches baked before it are rebuilt, no mesh rule change; 9: the zone is pruned with its own seeds (zone probes or seeds.def, building origins, door outside points), keeping every set that touches the zone's outer border (kenshi-k16.6.270); 8: a foliage shell wider than 750 u cuts only its own triangle heights, not the whole shell height (kenshi-k16.7.59); 7: a ramp strip of an open walkable building sheet (faces 40-55 degrees joining flat walkable faces at both ends) is walkable, so a wall-walk's 47 degree ramp is (kenshi-k16.7.58); 6: unused (k16.7.59 before its merge); 5: the door mat gives back a stair slope more under the door, the stair joins the doorway (kenshi-k16.6.229); 4: walkable surfaces at their exact collision height, not the voxel top (kenshi-k16.7.36); 3: terrain inside an interior volume is carved, interior terrain 0 (kenshi-k16.7.18); 2: a rock shell cuts per triangle (kenshi-k16.19.4)
 
 std::uint64_t cacheMix(std::uint64_t hash, const void* data, std::size_t size)
 {
@@ -1519,6 +1521,79 @@ MeshNavigator::CoverageChange MeshNavigator::setCoverage(const std::vector<kworl
 	return change;
 }
 
+bool MeshNavigator::zoneLoaded(kworld::ZoneCell zone) const
+{
+	if (!validZone(zone))
+		return false;
+	if (streaming())
+		return zones_.count(kworld::zoneIndexOf(zone)) != 0;
+	const knav::TileRect rect = zoneTiles(mesh_.config(), zone);
+	for (int z = rect.z0; z <= rect.z1; ++z)
+	{
+		for (int x = rect.x0; x <= rect.x1; ++x)
+		{
+			if (mesh_.tile(x, z) != nullptr)
+				return true;
+		}
+	}
+	return false;
+}
+
+bool MeshNavigator::farGoal(double fromX, double fromZ, double toX, double toZ) const
+{
+	const kworld::ZoneCell goal = kworld::zoneCellOf(toX, toZ);
+	// A goal outside the world's 64 x 64 zones has no zone to walk to: the plain route answers it (the exe clamps the map click into the image).
+	return validZone(goal) && !(goal == kworld::zoneCellOf(fromX, fromZ)) && !zoneLoaded(goal);
+}
+
+Route MeshNavigator::routeFarFrom(const knav::Position& from, double toX, double toZ, std::optional<double> toY, bool planned, Body body,
+	bool straighten, bool clickGoal) const
+{
+	if (!farGoal(from.x, from.z, toX, toZ))
+		return routeFrom(from, toX, toZ, toY, planned, body, straighten, clickGoal);
+	const kworld::ZoneCell cell = kworld::zoneCellOf(from.x, from.z);
+	const double dx = toX - from.x;
+	const double dz = toZ - from.z;
+	const double toGoal = std::hypot(dx, dz);
+	Route last;
+	for (int widen = 0; widen < 4; ++widen)
+	{
+		const double margin = kZoneMargin + 300.0 * widen;
+		// The nearest positive crossing of the line with the grown box of the walker's zone; the axis it crossed.
+		const double minX = kworld::zoneMinX(cell.x) - margin;
+		const double maxX = kworld::zoneMinX(cell.x) + kworld::kZoneSize + margin;
+		const double minZ = kworld::zoneMinZ(cell.z) - margin;
+		const double maxZ = kworld::zoneMinZ(cell.z) + kworld::kZoneSize + margin;
+		const double tx = dx > 0.0 ? (maxX - from.x) / dx : dx < 0.0 ? (minX - from.x) / dx : 1.0e30;
+		const double tz = dz > 0.0 ? (maxZ - from.z) / dz : dz < 0.0 ? (minZ - from.z) / dz : 1.0e30;
+		const bool crossedX = tx < tz;
+		const double t = std::max(0.0, std::min(tx, tz));
+		const double ex = from.x + dx * t;
+		const double ez = from.z + dz * t;
+		// The retry offsets on the crossed axis: 100 n (1 + 0.2 n), inward first, then outward (the exe's alternating sign, D8).
+		const double outward = crossedX ? (dx > 0.0 ? 1.0 : -1.0) : (dz > 0.0 ? 1.0 : -1.0);
+		for (int n = 0; n <= 6; ++n)
+		{
+			const double offset = n == 0 ? 0.0 : (n % 2 == 1 ? -1.0 : 1.0) * outward * 100.0 * ((n + 1) / 2) * (1.0 + 0.2 * ((n + 1) / 2));
+			const double px = crossedX ? ex + offset : ex;
+			const double pz = crossedX ? ez : ez + offset;
+			Route leg = routeFrom(from, px, pz, std::nullopt, planned, body, straighten, false);
+			last = leg;
+			if (!leg.found || leg.points.empty())
+				continue;
+			const state::GroundPoint& end = leg.points.back();
+			// Progress: the end is nearer the goal than the start by more than a few units (a snap back over the border is none).
+			if (std::hypot(toX - end.x, toZ - end.z) < toGoal - 10.0)
+			{
+				leg.clamped = true;
+				return leg;
+			}
+		}
+	}
+	last.found = false;
+	return last;
+}
+
 bool MeshNavigator::covers(double x, double z) const
 {
 	const knav::NavConfig& config = mesh_.config();
@@ -1539,6 +1614,19 @@ Route MeshNavigator::route(double fromX, double fromZ, double toX, double toZ) c
 	}
 	const auto y = walker_.surfaceY(at->x, 0.0, at->z, 1.0e5);
 	return routeFrom({at->x, y.value_or(0.0), at->z}, toX, toZ);
+}
+
+Route MeshNavigator::farRouteFor(const Traveller&, double fromX, double fromZ, double toX, double toZ) const
+{
+	const auto at = nearestWalkable(fromX, fromZ, kEndReach);
+	if (!at)
+	{
+		Route none;
+		none.failure = state::AiReason::OffMesh;
+		return none;
+	}
+	const auto y = walker_.surfaceY(at->x, 0.0, at->z, 1.0e5);
+	return routeFarFrom({at->x, y.value_or(0.0), at->z}, toX, toZ);
 }
 
 std::optional<state::GroundPoint> MeshNavigator::nearestWalkable(double x, double z, double reach, double radius) const
@@ -1574,6 +1662,7 @@ Route MeshNavigator::routeFrom(const knav::Position& from, double toX, double to
 	stats_.routeFound += route.found ? 1 : 0;
 	const std::uint64_t took = nowNs() - began;
 	stats_.routeNs += took;
+	knav::measure::noteRoute(took);
 	if (took > 5'000'000 && std::getenv("KSIM_SLOWQ"))
 	{
 		// SLOWQ (kenshi-k16.6.319): one line per route query over 5 ms; failure is the knav::PathResult::Failure index (0 = found).
@@ -1659,6 +1748,13 @@ bool MeshNavigator::lineClear(double ax, double ay, double az, double tx, double
 	const knav::Point to{static_cast<float>(tx), static_cast<float>(ty), static_cast<float>(tz)};
 	const knav::PathResult path = query_.findPath(from, to, {6.0f, 20.0f, 6.0f});
 	return path.found && path.complete && path.length <= kDetourRatio * length + kDetourSlack;
+}
+
+bool MeshNavigator::straightWalk(double ax, double ay, double az, double tx, double ty, double tz) const
+{
+	const knav::Point from{static_cast<float>(ax), static_cast<float>(ay), static_cast<float>(az)};
+	const knav::Point to{static_cast<float>(tx), static_cast<float>(ty), static_cast<float>(tz)};
+	return query_.walkLeg(from, to, 0.0f);
 }
 
 Route MeshNavigator::routeToStand(const knav::Position& from, double tx, double ty, double tz, double reach, bool planned,

@@ -20,6 +20,7 @@
 #include "kworld/gamedata.hpp"
 #include "kworld/heightmap.hpp"
 #include "kworld/zones.hpp"
+#include "world/plants.hpp"
 
 namespace
 {
@@ -120,7 +121,7 @@ struct Resolver
 {
 	const kdata::GameData& gd;
 	BuildingSet& out;
-	std::map<std::tuple<std::string, std::string, float, float, int, float, float, float, bool, int, int, float, bool, float, float, float, float, float, float, int, int, bool, uint32_t, uint32_t>, uint32_t> partIds;
+	std::map<std::tuple<std::string, std::string, float, float, int, float, float, float, bool, int, int, float, bool, float, float, float, float, float, float, int, int, bool, bool, bool, int, uint32_t, uint32_t>, uint32_t> partIds;
 	std::unordered_map<std::string, std::pair<uint32_t, uint32_t>> partLights;	// part record stringID -> its range in BuildingSet::lights
 	std::unordered_map<std::string, std::pair<uint32_t, uint32_t>> partEffects;	// part record stringID -> its range in BuildingSet::effects
 	int kind = 0;		// BuildingPartDef::kind of the parts being added
@@ -290,9 +291,12 @@ struct Resolver
 		d.blackCap = kind == 0 && lowered.find("black", lowered.find_last_of("/\\") + 1) != std::string::npos;	// the file name, not a directory (buildings/blackmarket/)
 		d.sign = kind == 0 && (lowered.find("/signs/") != std::string::npos || lowered.find("\\signs\\") != std::string::npos || lowered.find("misc/signboard") != std::string::npos);
 		d.stairs = part.boolOr("is stairs", false);
+		d.pathMode = building.intOr("path mode", 2);
+		d.walkable = (kind == 0 || kind == 1) && building.intOr("path mode", 2) == 3 && !part.boolOr("is unwalkable roof", false) && !part.boolOr("passable", false) && !part.boolOr("no collision", false);
+		d.carve = kind == 2 && !building.boolOr("interior terrain", false);
 		std::tie(d.firstLight, d.lightCount) = lightsOf(part);
 		std::tie(d.firstEffect, d.effectCount) = effectsOf(part);
-		const auto key = std::make_tuple(d.mesh, d.texture, d.tileX, d.tileY, d.materialType, d.offset[0], d.offset[1], d.offset[2], d.marker, d.rotFunction, d.rotAxis, d.rotSpeed, d.aimed, d.aimPivot[0], d.aimPivot[1], d.aimPivot[2], d.aimSpeed, d.windMin, d.windMax, d.kind, d.floor, d.stairs,
+		const auto key = std::make_tuple(d.mesh, d.texture, d.tileX, d.tileY, d.materialType, d.offset[0], d.offset[1], d.offset[2], d.marker, d.rotFunction, d.rotAxis, d.rotSpeed, d.aimed, d.aimPivot[0], d.aimPivot[1], d.aimPivot[2], d.aimSpeed, d.windMin, d.windMax, d.kind, d.floor, d.stairs, d.walkable, d.carve, d.pathMode,
 			d.lightCount ? d.firstLight : 0u, d.effectCount ? d.firstEffect : 0u);
 		auto [it, fresh] = partIds.emplace(key, (uint32_t)out.parts.size());
 		if (fresh) { out.parts.push_back(d); }
@@ -385,10 +389,11 @@ struct Resolver
 void addFeatures(BuildingSet& set, const kdata::GameData& gd, const kworld::Heightmap& terrain, const std::string& dataDir)
 {
 	const kworld::Features features = kworld::Features::join(gd, dataDir);
-	std::map<std::tuple<std::string, std::string, std::string, std::string, float, float, int, int, bool>, uint32_t> partIds;
+	std::map<std::tuple<std::string, std::string, std::string, std::string, float, float, int, int, bool, bool>, uint32_t> partIds;
 	std::vector<std::vector<uint32_t>> recordParts(features.records().size());
 	for (size_t r = 0; r < features.records().size(); r++)
 	{
+		const bool plant = plants::isPlant(gd, features.records()[r].recordID);	// the one plant predicate (kenshi-k16.2.420.6.1)
 		for (const kworld::FeatureMesh& m : features.records()[r].meshes)
 		{
 			BuildingPartDef d;
@@ -400,13 +405,15 @@ void addFeatures(BuildingSet& set, const kdata::GameData& gd, const kworld::Heig
 			d.tileY = m.tileY;
 			d.featureMode = (int)m.mode;
 			d.alphaCut = m.alphaThreshold;
-			d.sway = m.leaves;	// hand-placed trees sway too (mesh.glsl inst_vs)
+			d.plant = plant;	// hand-placed plants bend too (mesh.glsl inst_vs), and the occluder fade exempts them
+			d.leavesPart = m.leaves;
 			d.localCoords = features.records()[r].localCoordinates;
-			const auto key = std::make_tuple(d.mesh, d.texture, d.normal, d.texture2, d.tileX, d.tileY, d.featureMode, d.alphaCut, d.localCoords);
+			const auto key = std::make_tuple(d.mesh, d.texture, d.normal, d.texture2, d.tileX, d.tileY, d.featureMode, d.alphaCut, d.localCoords, d.plant);
 			auto [it, fresh] = partIds.emplace(key, (uint32_t)set.parts.size());
 			if (fresh) { set.parts.push_back(d); }
 			recordParts[r].push_back(it->second);
 		}
+		if (plant) { for (const uint32_t id : recordParts[r]) { set.parts[id].swayMates = recordParts[r]; } }
 	}
 	set.featurePlacements = features.placements().size();
 	set.roadFoliage = features.roadFoliage().size();

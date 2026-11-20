@@ -19,7 +19,25 @@
 
 #include <fcntl.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
+
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 0 // Windows has none; its handles are not inherited without an explicit request
+#endif
+#ifdef _WIN32
+#define KSIM_O_BINARY _O_BINARY
+#else
+#define KSIM_O_BINARY 0
+#endif
+#ifdef _WIN32
+#define KSIM_FSYNC(fd) ::_commit(fd)
+#else
+#define KSIM_FSYNC(fd) ::fsync(fd)
+#endif
 
 namespace ksim::simlink {
 
@@ -102,6 +120,11 @@ std::string defaultSaveDir()
 	const char* xdg = std::getenv("XDG_DATA_HOME");
 	if (xdg != nullptr && xdg[0] != '\0')
 		return std::string(xdg) + "/ksim/saves";
+#ifdef _WIN32
+	const char* appdata = std::getenv("APPDATA");
+	if (appdata != nullptr && appdata[0] != '\0')
+		return std::string(appdata) + "/ksim/saves";
+#endif
 	const char* home = std::getenv("HOME");
 	if (home != nullptr && home[0] != '\0')
 		return std::string(home) + "/.local/share/ksim/saves";
@@ -147,7 +170,7 @@ std::vector<SaveEntry> listSaves(const std::string& dir)
 		if (it->symlink_status(error).type() != fs::file_type::regular)
 			continue;
 		struct stat info;
-		if (::stat(it->path().c_str(), &info) != 0)
+		if (::stat(it->path().string().c_str(), &info) != 0)
 			continue;
 		SaveEntry entry;
 		entry.name = name;
@@ -170,7 +193,7 @@ void writeFileAtomic(const std::string& path, const std::string& bytes)
 {
 	const fs::path target(path);
 	const std::string temp = (target.parent_path() / ("." + target.filename().string() + ".tmp")).string();
-	const int fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+	const int fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | KSIM_O_BINARY, 0644);
 	if (fd < 0)
 		throw std::runtime_error("cannot write " + temp + ": " + std::strerror(errno));
 	std::size_t done = 0;
@@ -183,11 +206,14 @@ void writeFileAtomic(const std::string& path, const std::string& bytes)
 		else
 			done += static_cast<std::size_t>(n);
 	}
-	ok = ok && ::fsync(fd) == 0;
+	ok = ok && KSIM_FSYNC(fd) == 0;
 	ok = ::close(fd) == 0 && ok;
-	if (!ok || ::rename(temp.c_str(), path.c_str()) != 0)
+	std::error_code renameError;
+	if (ok)
+		fs::rename(temp, path, renameError); // replaces an existing target on Windows too (::rename does not)
+	if (!ok || renameError)
 	{
-		const std::string why = std::strerror(errno);
+		const std::string why = ok ? renameError.message() : std::strerror(errno);
 		::unlink(temp.c_str());
 		throw std::runtime_error("cannot write " + path + ": " + why);
 	}

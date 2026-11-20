@@ -10,6 +10,7 @@
 
 #include "test_util.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -195,6 +196,7 @@ struct Take
 	bool taken;
 	bool theft;
 	std::uint64_t event8;
+	std::uint8_t percent; // Simulation::stealPercent before the take (SIMLINK ITEM_GRID's steal tail)
 };
 
 // The thief (player, `thievery`) takes the one item from a Holy Nation box with its guard standing at it.
@@ -207,11 +209,13 @@ Take take(const Rig& shared, std::uint64_t seed, double thievery, double* chance
 	const std::uint64_t id = rig.box(thief, rig.holy);
 	if (chance != nullptr)
 		*chance = rig.sim->stealChance(thief, id, rig.item);
+	const std::uint8_t percent = rig.sim->stealPercent(thief, id, rig.item);
 	rig.sim->enqueue(Command::containerTransfer(state::Id{thief}, id, rig.item, 1, true, 1));
 	rig.tick(1);
 	const state::CrimeRecord* r = rig.sim->crimeRecord(thief);
 	(void)guard;
 	Take t;
+	t.percent = percent;
 	t.taken = rig.carried(thief) == 1;
 	t.theft = r != nullptr && r->crime == cr::kTheft;
 	t.event8 = rig.sim->dialogueEventCount(cr::kEvThiefCaughtStealingFromMe);
@@ -226,6 +230,7 @@ void roll(const Rig& shared)
 	for (std::uint64_t seed = 1; seed <= 3; ++seed)
 	{
 		const Take t = take(shared, seed, 100.0, &chance);
+		check(t.percent == 100, "a 127.5% chance is sent as 100 (clamped)");
 		check(near(chance, 1.275) && t.taken && t.theft && t.event8 == 0, "seed " + std::to_string(seed) + ": a sure take passes, records theft 3, fires no event 8");
 	}
 	// Thievery 0: 30%. Some seed fails and some passes; a failure aborts the take, records theft 3 and fires event 8.
@@ -234,7 +239,7 @@ void roll(const Rig& shared)
 	for (std::uint64_t seed = 1; seed <= 16; ++seed)
 	{
 		const Take t = take(shared, seed, 0.0, &chance);
-		test::require(near(chance, 0.3), "thievery 0 at the box is not 30%");
+		test::require(near(chance, 0.3) && t.percent == 30, "thievery 0 at the box is not 30% (percent 30)");
 		if (t.taken)
 		{
 			++passes;
@@ -244,7 +249,73 @@ void roll(const Rig& shared)
 			test::require(t.theft && t.event8 >= 1, "a failed roll did not record theft 3 and fire event 8");
 		}
 	}
+	{
+		// No roll: an own box, and a taker that is not a player (255, the steal tail's "no roll").
+		Rig rig(1, shared.gd, shared.data);
+		const std::uint64_t guard = rig.add(rig.holy, 1, 0.0, 0.0, false);
+		const std::uint64_t thief = rig.add(rig.nameless, 9, 0.0, 0.0, true);
+		check(rig.sim->stealPercent(thief, rig.box(thief, rig.nameless), rig.item) == 255, "an own container: 255 (no roll)");
+		check(rig.sim->stealPercent(guard, rig.box(thief, rig.nameless), rig.item) == 255, "a non-player taker: 255 (no roll)");
+		check(rig.sim->stealPercent(thief, 999999, rig.item) == 255, "no such container: 255");
+	}
 	check(fails > 0 && passes > 0, "a 30% chance fails " + std::to_string(fails) + " and passes " + std::to_string(passes) + " of 16 seeds");
+}
+
+// The failed roll's other effects (FUN_140794810, rwh.163 section 1), found by sweeping seeds at thievery 0 (30%): the victim tags the
+// thief TEMP_ENEMY 4 and stands up, the thief gains 160 thievery XP (a pass: 40); a sleeping victim may fire event 0x2f; the distance is
+// measured from the nearest player-squad character.
+void effects(const Rig& shared)
+{
+	bool sawCaught = false;
+	bool sawPass = false;
+	for (std::uint64_t seed = 1; seed <= 16 && !(sawCaught && sawPass); ++seed)
+	{
+		Rig rig(seed, shared.gd, shared.data);
+		const std::uint64_t guard = rig.add(rig.holy, 1, 0.0, 0.0, false);
+		const std::uint64_t thief = rig.add(rig.nameless, 9, 0.0, 0.0, true);
+		rig.f(thief).skills.thievery = 0.0;
+		rig.f(guard).crouched = true;
+		const std::uint64_t id = rig.box(thief, rig.holy);
+		rig.sim->enqueue(Command::containerTransfer(state::Id{thief}, id, rig.item, 1, true, 1));
+		rig.tick(1);
+		const bool taken = rig.carried(thief) == 1;
+		const double xp = rig.f(thief).skills.thievery;
+		const auto& hostile = rig.f(guard).hostileSquads;
+		const bool tagged = std::find(hostile.begin(), hostile.end(), rig.f(thief).squad) != hostile.end();
+		if (taken)
+		{
+			sawPass = true;
+			check(xp > 0.0 && !tagged && rig.f(guard).crouched, "a passed roll: thievery XP, no TEMP_ENEMY, the victim keeps its posture");
+		} else {
+			sawCaught = true;
+			check(tagged && !rig.f(guard).crouched, "a failed roll: the victim lists the thief's squad as TEMP_ENEMY 4 and stands up");
+			check(xp > 0.0, "a failed roll grants thievery XP");
+		}
+	}
+	check(sawCaught && sawPass, "the seed sweep saw both a pass and a catch");
+
+	// No XP at chance >= 0.98 (thievery 100: 127.5%).
+	Rig sure(2, shared.gd, shared.data);
+	sure.add(sure.holy, 1, 0.0, 0.0, false);
+	const std::uint64_t thief = sure.add(sure.nameless, 9, 0.0, 0.0, true);
+	sure.f(thief).skills.thievery = 100.0;
+	const double before = sure.f(thief).skills.thievery;
+	const std::uint64_t id = sure.box(thief, sure.holy);
+	sure.sim->enqueue(Command::containerTransfer(state::Id{thief}, id, sure.item, 1, true, 1));
+	sure.tick(1);
+	check(sure.f(thief).skills.thievery == before, "no thievery XP at a chance of 0.98 or more");
+
+	// The distance input: the nearest player-squad character to the box, not the taker.
+	Rig far(3, shared.gd, shared.data);
+	const std::uint64_t guard = far.add(far.holy, 1, 0.0, 0.0, false);
+	const std::uint64_t taker = far.add(far.nameless, 9, 200.0, 0.0, true);
+	const std::uint64_t mate = far.add(far.nameless, 9, 0.0, 0.0, true);
+	far.f(taker).skills.thievery = 50.0;
+	const std::uint64_t farBox = far.box(guard, far.holy);
+	far.f(mate).squad = far.f(taker).squad + 1; // another squad: does not count
+	check(near(far.sim->stealChance(taker, farBox, far.item), 0.3 + 1.95 * 0.5), "the taker 200 u away, no squad mate near: distance factor 1.0");
+	far.f(mate).squad = far.f(taker).squad;
+	check(near(far.sim->stealChance(taker, farBox, far.item), 0.3 + 1.95 * 0.25), "a player-squad mate at the box: the distance is the mate's (factor 0.5)");
 }
 
 } // namespace
@@ -255,6 +326,7 @@ int main()
 	Rig shared(1);
 	inspect(shared);
 	roll(shared);
+	effects(shared);
 	std::printf("ksim_steal_chance: all checks passed\n");
 	return 0;
 }

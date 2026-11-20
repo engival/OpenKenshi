@@ -98,7 +98,11 @@ int main()
 			require(arena->rangedFire(1, 2, gun.reloadMin) == Shot::Hit, "the shot after the reload did not fire");
 			auto slow = fresh(300.0, 0.0, 0.0);
 			slow->rangedFire(1, 2, 0.1);
-			require(std::fabs(slow->find(1)->ranged.timer - gun.reloadMax) < 1e-9, "the reload at skill 0 is `reload time max`");
+			// The aim XP of that tick (rwh.166) lifts the skill off 0 before the timer is set: the timer is `reload time max` at that skill.
+			const double trained = slow->find(1)->skills.crossbows;
+			require(trained > 0.0 && trained < 1.0, "the aim tick trained Crossbows a little");
+			require(std::fabs(slow->find(1)->ranged.timer - (gun.reloadMax + (gun.reloadMin - gun.reloadMax) * trained * 0.01)) < 1e-9,
+				"the reload at skill 0 is `reload time max` (at the skill the aim tick left)");
 		}
 		// ---- 2. the range test: `range` x the height factor (target above: down to 0.4, below: up to 1.5; y 0 is 1) ----
 		{
@@ -188,6 +192,65 @@ int main()
 				else
 					require(arena->find(1)->ranged.ammo < gun.ammo, "a crossbowman shoots the same body uncaged");
 			}
+		}
+		// ---- 8. the aim XP (rwh.166, k16.5.16): Perception + Crossbows every tick the range test passes with a bolt loaded, a wall or not ----
+		{
+			const double unit = 0.02 * 0.25 * data->k.expGainMultiplier;
+			const RaceCombat* race = data->race(fresh(300.0)->find(1)->raceSid);
+			test::require(race != nullptr, "the shooter's race is not in the data");
+			const double dt = 0.05;
+			const int ticks = 200;
+			// The per-tick recurrence, and the closed form of dL/dt = ((101 - L) / 101)^2 c: 1 / u = 1 / u0 + c t / 101^2 with u = 101 - L.
+			const auto euler = [&](double level, double c)
+			{
+				for (int i = 0; i < ticks; ++i)
+					level += std::pow((101.0 - level) / 101.0, 2.0) * c * dt;
+				return level;
+			};
+			const auto closed = [&](double level, double c) { return 101.0 - 1.0 / (1.0 / (101.0 - level) + c * dt * ticks / (101.0 * 101.0)); };
+			const auto close = [](double a, double b, double tol) { return std::fabs(a - b) <= tol * std::fabs(b); };
+			const auto run = [&](double dist, std::int32_t ammo)
+			{
+				auto arena = fresh(dist);
+				arena->environmentMutable().shotBlocker = [](const std::array<double, 3>&, const state::Fighter&) { return 0.5; }; // a wall
+				state::Fighter& shooter = *arena->find(1);
+				shooter.skills.perception = 50.0;
+				shooter.skills.crossbows = 50.0;
+				shooter.ranged.ammo = ammo;
+				for (int i = 0; i < ticks; ++i)
+					test::require(arena->rangedFire(1, 2, dt) != Shot::Hit, "a bolt left through the wall");
+				return arena;
+			};
+			auto arena = run(300.0, gun.ammo);
+			const state::Fighter& shooter = *arena->find(1);
+			const double cPerception = unit * 3.0 * race->xpRate(0x18);
+			const double cCrossbows = unit * 1.2 * race->xpRate(0x23);
+			require(close(shooter.skills.perception, euler(50.0, cPerception), 1e-6), "Perception rose by the per-tick formula behind a wall");
+			require(close(shooter.skills.crossbows, euler(50.0, cCrossbows), 1e-6), "Crossbows rose by the per-tick formula behind a wall");
+			require(close(shooter.skills.perception, closed(50.0, cPerception), 1e-3), "Perception matches the closed form");
+			require(shooter.skills.perception > 50.0 && shooter.ranged.ammo == gun.ammo, "no bolt left the gun");
+			if (race->xpRate(0x18) == race->xpRate(0x23))
+			{
+				// The 2.5 ratio holds per tick (the curve bends it over a long run, the faster stat rising slower per point): one tick.
+				auto once = fresh(300.0);
+				once->environmentMutable().shotBlocker = [](const std::array<double, 3>&, const state::Fighter&) { return 0.5; };
+				state::Fighter& first = *once->find(1);
+				first.skills.perception = 50.0;
+				first.skills.crossbows = 50.0;
+				once->rangedFire(1, 2, dt);
+				require(close((first.skills.perception - 50.0) / (first.skills.crossbows - 50.0), 2.5, 1e-9), "Perception / Crossbows gain is 2.5 at equal level (one tick)");
+			}
+			auto empty = run(300.0, 0);
+			require(empty->find(1)->skills.perception == 50.0 && empty->find(1)->skills.crossbows == 50.0, "no loaded bolt pays nothing");
+			auto far = run(gun.range + 100.0, gun.ammo);
+			require(far->find(1)->skills.perception == 50.0 && far->find(1)->skills.crossbows == 50.0, "out of range pays nothing");
+			// The auto-engage task 266 pays no gun XP (k16.6.433; live: Perception / Crossbows flat for 3.3 h): the caller's `aimXp` = false.
+			auto auto266 = fresh(300.0);
+			auto266->find(1)->skills.perception = 50.0;
+			auto266->find(1)->skills.crossbows = 50.0;
+			for (int i = 0; i < ticks; ++i)
+				auto266->rangedFire(1, 2, dt, false);
+			require(auto266->find(1)->skills.perception == 50.0 && auto266->find(1)->skills.crossbows == 50.0, "the auto-engage task 266 pays no aim XP");
 		}
 		std::printf("ksim_ranged_fire: ok\n");
 		return 0;

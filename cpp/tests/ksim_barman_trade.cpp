@@ -9,6 +9,7 @@
 #include "ksim/dialogue/dialogue_book.hpp"
 
 #include "trade_rig.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 namespace
 {

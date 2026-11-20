@@ -54,7 +54,8 @@ namespace ff
 
 	// A frame's sample. building is the building pos and flights are measured in: the caller's pick, the model's latched flight
 	// building while it is on a flight (latchBuilding()), else the wire's building, else the roof's. -1 = none. pos is the
-	// subject's sim position in that building's local mesh units, never its drawn position.
+	// subject's sim position in that building's local mesh units, never its drawn (interpolated) one: x, z are the wire's, y is the standing
+	// ray's ground under them since kenshi-k16.2.344 (SimView::simPos stores it), so the rule compares the drawn feet height.
 	struct Sample
 	{
 		bool following = false;				// the camera follows a character this frame
@@ -110,6 +111,15 @@ namespace ff
 		uint64_t subject() const { return subject_; }	// the subject the manual level and the latch belong to (0: none)
 		int latchBuilding() const { return latch_.building; }	// the building whose flight the subject is on, -1 none (the next sample's frame)
 
+		// The latch as of the last update, for the trace and the F12 sidecar's floor line (kenshi-k16.2.236.8.4.3).
+		struct LatchInfo
+		{
+			bool on = false, fired = false;	// on a flight; fired: the latch flipped away from its origin floor and is consumed
+			int origin = 0, side = 0;
+			double y = 0, upperLine = 0, lowerLine = 0, rearmY = 0;	// the feet's local y, the two switch lines, the y that re-arms (fired only)
+		};
+		const LatchInfo& latchInfo() const { return info_; }
+
 	private:
 		struct Resolved
 		{
@@ -118,6 +128,7 @@ namespace ff
 		};
 		Resolved resolve(const Sample& s);
 		static int onFlight(const Sample& s);		// the flight the feet are on, -1 none
+		static double rearmY(const Flight& f, int originSide);	// the feet's y past which a fired hotspot is hot again
 		static int sideOnFlight(const Flight& f, int origin, int prev, double y);	// the latch's level, with the half-rise hold
 		void resetLatch();
 
@@ -131,6 +142,7 @@ namespace ff
 		int pairBuilding_ = -1, pairFloor_ = 0;
 		bool settledValid_ = false;			// settled_ is the floor the subject was settled on (the next flight's origin)
 		int settled_ = 0;
+		LatchInfo info_;
 		struct Latch
 		{
 			bool on = false;

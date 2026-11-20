@@ -44,7 +44,8 @@ void forEachRef(const kdata::Record& record, std::string_view category, Func&& f
 
 bool isCharacterType(std::int32_t type)
 {
-	return type == kworld::itemTypeByName("CHARACTER") || type == kworld::itemTypeByName("HUMAN_CHARACTER");
+	// ANIMAL_CHARACTER too (the dog of Guy with a Dog): the world spawner's character types (spawn.cpp).
+	return type == kworld::itemTypeByName("CHARACTER") || type == kworld::itemTypeByName("HUMAN_CHARACTER") || type == kworld::itemTypeByName("ANIMAL_CHARACTER");
 }
 
 const kdata::Record* namelessFaction(const kdata::GameData& gameData)
@@ -256,6 +257,17 @@ std::vector<StartMember> startMembers(const kdata::GameData& gameData, const Sta
 					pick -= weight;
 				}
 			}
+		}
+		// `animals`, `animals2` (Guy with a Dog's puppy): the same min..max draw as the default-world spawner (spawn.cpp spawnMembers). The animal
+		// is a squad member like the rest; the player squad gives it no AI of its own.
+		for (const std::string_view list : {"animals", "animals2"})
+		{
+			forEachRef(*record, list, [&](const kdata::RefEntry& entry)
+			{
+				const std::int64_t count = entry.v1 == 0 || rng == nullptr ? entry.v0 : rng->between(entry.v0, std::max(entry.v0, entry.v1));
+				for (std::int64_t i = 0; i < count; ++i)
+					add(entry.targetID, ref.sid);
+			});
 		}
 	}
 	return members;

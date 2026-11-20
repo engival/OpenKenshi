@@ -19,6 +19,7 @@
 #include "kworld/loadorder.hpp"
 
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -32,11 +33,13 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+static int setenv(const char* name, const char* value, int) { return _putenv_s(name, value); }
+static int unsetenv(const char* name) { return _putenv_s(name, ""); }
+#endif
+
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_BINARY_DIR
-#error KSIM_BINARY_DIR must be defined
 #endif
 
 namespace {
@@ -681,8 +684,13 @@ int main(int argc, char** argv)
 			::setenv("XDG_DATA_HOME", (base + "/xdg").c_str(), 1);
 			test::require(ks::defaultSaveDir() == base + "/xdg/ksim/saves", "XDG_DATA_HOME default");
 			::unsetenv("XDG_DATA_HOME");
+#ifdef _WIN32
+			::setenv("APPDATA", (base + "/hm").c_str(), 1);
+			test::require(ks::defaultSaveDir() == base + "/hm/ksim/saves", "APPDATA default");
+#else
 			::setenv("HOME", (base + "/hm").c_str(), 1);
 			test::require(ks::defaultSaveDir() == base + "/hm/.local/share/ksim/saves", "HOME default");
+#endif
 		}
 
 		// ---- no save directory: the orders are unsupported ----

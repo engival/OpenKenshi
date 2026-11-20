@@ -35,11 +35,7 @@
 
 #include "test_util.hpp"
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "test_net.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -302,7 +298,7 @@ struct Client
 	void close()
 	{
 		if (fd >= 0)
-			::close(fd);
+			test_net::close(fd);
 		fd = -1;
 	}
 
@@ -311,7 +307,7 @@ struct Client
 		std::size_t at = 0;
 		while (at < bytes.size())
 		{
-			const ssize_t n = ::send(fd, bytes.data() + at, bytes.size() - at, MSG_NOSIGNAL);
+			const auto n = test_net::send(fd, bytes.data() + at, bytes.size() - at, test_net::kMsgNoSignal);
 			test::require(n > 0, "client send");
 			at += static_cast<std::size_t>(n);
 		}
@@ -371,10 +367,10 @@ struct Client
 			if (Wall::now() > end)
 				return false;
 			pollfd p{fd, POLLIN, 0};
-			if (::poll(&p, 1, 20) <= 0)
+			if (test_net::poll(&p, 1, 20) <= 0)
 				continue;
 			std::uint8_t block[65536];
-			const ssize_t n = ::recv(fd, block, sizeof(block), 0);
+			const auto n = test_net::recv(fd, block, sizeof(block), 0);
 			if (n <= 0)
 				return pred();
 			raw.insert(raw.end(), block, block + n);

@@ -35,6 +35,7 @@
 #include "DetourNavMesh.h"
 
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <algorithm>
 #include <array>
@@ -56,9 +57,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_SHIPPED_GATE_BASELINE
-#error KSIM_SHIPPED_GATE_BASELINE must be defined
 #endif
 
 namespace

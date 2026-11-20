@@ -173,13 +173,14 @@ double stagger(std::uint64_t diceKey) noexcept
 	return unit01(diceKey ^ 0x73656e7365ULL);
 }
 
-bool notice(Fighter& observer, std::uint64_t target)
+bool notice(Fighter& observer, std::uint64_t target, bool known)
 {
 	SightRecord& r = obtain(observer, target);
 	r.sinceSeen = 0.0;
 	r.sinceNoticed = 0.0;
 	const bool was = r.seen && r.state == 1;
 	r.seen = true;
+	r.knownNow = r.knownNow || known;
 	r.state = 1; // 140858f40 writes +0x38 = 1 on every call: a yellow (state 2) record turns red
 	return !was;
 }
@@ -195,6 +196,18 @@ bool aware(const Fighter& observer, std::uint64_t target) noexcept
 {
 	const SightRecord* r = find(observer, target);
 	return r != nullptr && r->seen;
+}
+
+bool knownNow(const Fighter& observer, std::uint64_t target) noexcept
+{
+	const SightRecord* r = find(observer, target);
+	return r != nullptr && r->knownNow;
+}
+
+bool sensedNow(const Fighter& observer, std::uint64_t target) noexcept
+{
+	const SightRecord* r = find(observer, target);
+	return r != nullptr && r->seen && (r->knownNow || r->sinceSensed <= kScanMax);
 }
 
 bool seenWithin(const Fighter& observer, std::uint64_t target, double maxAge) noexcept
@@ -342,7 +355,11 @@ void scan(std::uint64_t observerId, Fighter& obs, double visionMult, double dt, 
 				sighted = rec->sighted;
 			} else if (tgtMoving || tgtCombat) {
 				const bool building = sameBuilding || (tgtCombat && (obs.building == 0 || tgt.building == 0));
-				if (building)
+				// rwh.191: the noise of a combatant standing still (an aimed shot held from behind a wall, hours, the gorillo never heard it) does not
+				// cross a wall: outside one building (id != 0 on both sides) the roll needs a clear line. UNSURE: the live check is one stationary shooter
+				// at 154 u; a walking or running target keeps the roll through walls as before (the Hub bar lure).
+				const bool wallStops = tgtCombat && !tgtMoving && !(sameBuilding && obs.building != 0);
+				if (building && (!wallStops || !env.lineOfSight || env.lineOfSight(observerId, obs, other.id, tgt)))
 				{
 					const double noise = noiseRange(tgt, env, tgtMoving, tgtCombat) * (obs.asleep ? 1.0 : kSightedAwake);
 					// UNSURE: the visibility curve of the roll was dropped by the decompiler (static 2.7); an inverse lerp
@@ -374,6 +391,7 @@ void scan(std::uint64_t observerId, Fighter& obs, double visionMult, double dt, 
 		{
 			if (rec == nullptr)
 				rec = &obtain(obs, other.id);
+			rec->knownNow = known;
 			const bool firstSight = !rec->seen;
 			if (firstSight)
 				noticed.push_back({observerId, other.id});
@@ -387,7 +405,9 @@ void scan(std::uint64_t observerId, Fighter& obs, double visionMult, double dt, 
 			// original's order UNCERTAIN).
 			if (!firstSight)
 				obs.rememberMet(other.id, env.tick);
-		} else if (rec == nullptr) {
+		} else if (rec != nullptr) {
+			rec->knownNow = false; // 140859010: a scan with neither sight nor hearing clears seen_now
+		} else {
 			// The exe's sensor list is the radius query's result: a record exists for every character inside the scan range, seen or
 			// not (s59 bit 8 "remembered"; the capture resolver's masks do not exclude it). sinceSensed keeps its old value, so the
 			// record reads "not currently seen".

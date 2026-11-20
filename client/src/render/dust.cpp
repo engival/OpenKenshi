@@ -51,7 +51,7 @@ void Dust::shutdown()
 	shd_ = {};
 }
 
-int Dust::render(const Camera& c, const LightParams& light, const Shadow& shadow, float scale, float lampScale, float sunY, double time, sg_view depth)
+int Dust::render(const Camera& c, const LightParams& light, const Shadow::FrameData& shadow, float scale, float lampScale, float sunY, double time, sg_view depth)
 {
 	const lightvol::Binding& lv = lightvol::binding();
 	const bool sunLit = shadow.active() && sunY > 0.0f;	// the sun lights a mote only where its beam reaches (kenshi-jj3.8.11); the lamps' cones are the other light
@@ -121,14 +121,14 @@ int Dust::render(const Camera& c, const LightParams& light, const Shadow& shadow
 	sg_bindings bd = {};
 	bd.views[VIEW_depth_tex] = depth;
 	bd.samplers[SMP_depth_smp] = smp_;
-	bd.views[VIEW_shadow_tex] = shadow.view();
-	bd.samplers[SMP_shadow_smp] = shadow.sampler();
+	bd.views[VIEW_shadow_tex] = shadow.view;
+	bd.samplers[SMP_shadow_smp] = shadow.sampler;
 	bd.views[VIEW_vol_use] = lv.use;
 	bd.views[VIEW_vol_lamp] = lv.lamp;	// lamp_vis (render.lamp_beams): without it sokol skips the whole draw (a missing view binding) and no mote is ever drawn (kenshi-jj3.8.13)
 	bd.samplers[SMP_vol_smp] = lv.smp;
 	drawstats::bindings(&bd);
 	sg_apply_uniforms(UB_light_params, { &light, sizeof light });
-	sg_apply_uniforms(UB_shadow_params, { &shadow.params(), sizeof(ShadowParams) });
+	sg_apply_uniforms(UB_shadow_params, { &shadow.params, sizeof(ShadowParams) });
 	sg_apply_uniforms(UB_light_volumes, { lv.params, sizeof lv.params });
 	sg_apply_uniforms(UB_dust_vs_params, SG_RANGE(p));
 	sg_apply_uniforms(UB_dust_fs_params, SG_RANGE(fp));

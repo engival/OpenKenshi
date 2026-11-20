@@ -16,6 +16,7 @@ constexpr double kMaxHop = 8.0;
 // A hop's height change beyond this plus kMaxGradient per unit walked is a cliff the mesh's polygon links cross (a ledge's edge links to the floor below
 // across a drop of 30-66 u), not a stair or ramp: stair risers measure up to about 8 u within 0.3 u walked (k16.8.27), and the hop stops at the edge.
 constexpr double kHopRise = 20.0;
+constexpr double kHopOvershoot = 1.5; // the start snaps to the mesh by up to kStand (1 u a side, 1.42 diagonal) before the slide, which a hop may walk back; the float32 mesh blurs a few hundredths more
 constexpr double kMaxGradient = 3.0;
 
 Point toPoint(const Position& p)
@@ -51,6 +52,13 @@ StepResult Walker::step(const Position& from, double dx, double dz) const
 			return result;
 		}
 		const double walked = std::hypot(out[0] - result.at.x, out[2] - result.at.z);
+		// A hop never walks farther than it was aimed: the slide from a polygon corner has returned a point 8 u off a 0.7 u hop (ksim_fight_levels
+		// seed 5, a backpedal into the Hub bar's ledge corner, k16.8.50); that result is a block at where the hop started.
+		if (walked > std::hypot(target[0] - result.at.x, target[2] - result.at.z) + kHopOvershoot)
+		{
+			result.blocked = true;
+			break;
+		}
 		if (std::fabs(out[1] - result.at.y) > kHopRise + kMaxGradient * walked)
 		{
 			result.blocked = true;
@@ -178,9 +186,10 @@ StepResult Walker::drive(const Position& from, Drive mode, double heading, doubl
 	}
 	const double sn = std::sin(heading);
 	const double cs = std::cos(heading);
-	// Heading 0 = +z, increasing towards +x: forward = (sin, cos), right = (cos, -sin).
-	const double dx = (sn * local.forward + cs * local.side) * speed * dt;
-	const double dz = (cs * local.forward - sn * local.side) * speed * dt;
+	// Heading 0 = +z, increasing towards +x: forward = (sin, cos), and the body's right
+	// (forward x up, Y-up right-handed) = (-cos, sin): -x at heading 0.
+	const double dx = (sn * local.forward - cs * local.side) * speed * dt;
+	const double dz = (cs * local.forward + sn * local.side) * speed * dt;
 	return step(from, dx, dz);
 }
 

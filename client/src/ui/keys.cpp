@@ -102,6 +102,7 @@ namespace ui::keys
 			{ "debug.shadows", "Ctrl+F3", "Debug: shadows", Group::kDebug },
 			{ "debug.squad_overlay", "Ctrl+F4", "Debug: squad overlay", Group::kDebug },
 			{ "debug.navmesh", "Ctrl+F5", "Debug: navmesh overlay", Group::kDebug },
+			{ "debug.collision", "Ctrl+F7", "Debug: collision overlay (barricades + terrain stood on)", Group::kDebug },
 			{ "debug.trails", "Ctrl+F6", "Debug: trails (the last 30 s)", Group::kDebug },
 			{ "debug.trails_panel", "Shift+F6", "Debug: the trails panel", Group::kDebug },
 			{ "debug.lights_panel", "Shift+F7", "Debug: the light debugger window", Group::kDebug },
@@ -123,8 +124,6 @@ namespace ui::keys
 			{ "debug.clock_forward_far", "Ctrl+Shift+RBracket", "Debug: sky clock forward 3 hours", Group::kDebug },
 			{ "debug.weather_prev", "Ctrl+Comma", "Debug: previous weather", Group::kDebug },
 			{ "debug.weather_next", "Ctrl+Period", "Debug: next weather", Group::kDebug },
-			{ "debug.map_zoom_in", "Ctrl+Equals", "Debug: map zoom in", Group::kDebug },
-			{ "debug.map_zoom_out", "Ctrl+Minus", "Debug: map zoom out", Group::kDebug },
 			{ "debug.full_map", "Ctrl+M", "Debug: full-screen world map (click teleports)", Group::kDebug },
 		};
 

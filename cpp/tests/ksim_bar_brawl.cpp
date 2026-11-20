@@ -25,6 +25,7 @@
 
 #include "test_util.hpp"
 #include "nav_source.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -194,13 +195,36 @@ int main(int argc, char** argv)
 		const_cast<CombatArena*>(sim.combat())->setFightTrace([](std::uint64_t) { return true; },
 			[&](const CombatArena::FightPick& pick) { picks.emplace_back(clock, pick); });
 		const std::uint64_t attackTick = sim.clockTick();
+		// The KO clears the player's attack order and target (rwh.195, kenshi-k16.6.443): nothing re-commits it on waking, so the whole run is one chain.
+		double knockedOutAt = 1.0e9;
+		sim.setCombatObserver([&](const CombatEvent& e)
+		{
+			if (e.kind == CombatEvent::Kind::Knockout && e.who == game.player && knockedOutAt > 1.0e8)
+				knockedOutAt = clock;
+		});
 		sim.enqueue(Command::fighterAttack(state::Id{game.player}, state::Id{patron}));
+		double wokeAt = 1.0e9;
+		double stumbleFor = 0.0;
 		for (int i = 0; i < 20 * 90; ++i)
 		{
 			sim.run(1);
 			clock += 0.05;
+			const state::Fighter* me = sim.combat()->find(game.player);
+			if (knockedOutAt < 1.0e8 && me != nullptr)
+			{
+				test::require((me->orderTarget == 0 && me->target == 0) || (!me->unconscious && clock > wokeAt), "the KO'd player holds no order and no target");
+				// State 8 is animation-only: it ends with its clip (the heavy reaction is 4.63 s), a KO'd body never sits in it. The conscious down crawl
+				// pose is state 8 by design (client pose, BAR_FIGHT_LOOP "KO clears the orders"): a woken, still-down body is not counted.
+				const bool crawling = me->down && !me->unconscious;
+				stumbleFor = me->state == state::CombatState::Stumble && !crawling ? stumbleFor + 0.05 : 0.0;
+				test::require(stumbleFor < 5.0, "the player does not stay in state 8 past its animation");
+				if (!me->unconscious && wokeAt > 1.0e8)
+					wokeAt = clock;
+			}
 		}
 		const_cast<CombatArena*>(sim.combat())->setFightTrace({}, {});
+		for (const auto& [at, pick] : picks)
+			test::require(!(pick.member == game.player && pick.order && at > knockedOutAt), "no second assault: the player re-commits no order after its KO");
 		for (const DialoguePick& pick : sim.dialogue()->log())
 		{
 			if (pick.result != DialoguePick::Result::Picked || pick.event.speaker == game.player || pick.event.tick < attackTick)

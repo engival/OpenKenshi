@@ -10,8 +10,10 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#ifndef _WIN32
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 #include <vector>
 
 #include "test_util.hpp"
@@ -31,6 +33,13 @@ bool holds(const std::string& text, const std::string& what)
 
 } // namespace
 
+#ifdef _WIN32
+int main()
+{
+	std::printf("kutil_crashlog: skipped on Windows (the check forks and reads signals)\n");
+	return 0;
+}
+#else
 int main(int argc, char** argv)
 {
 	try
@@ -83,3 +92,4 @@ int main(int argc, char** argv)
 		return 1;
 	}
 }
+#endif

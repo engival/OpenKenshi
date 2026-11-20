@@ -10,12 +10,10 @@
 #include "dt27_rig.hpp"
 
 #include "ksim/save/save.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cstdio>
 
-#ifndef KSIM_BINARY_DIR
-#error KSIM_BINARY_DIR must be defined
-#endif
 
 namespace {
 

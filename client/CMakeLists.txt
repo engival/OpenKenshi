@@ -116,6 +116,9 @@ option(KCLIENT_DEV_TOOLS "Build the dev-only tools (src/dev/, the dev tool execu
 # A release binary carries no developer path (kenshi-379.13): the game data is resolved at runtime, so the cpp/ server's built-in KENSHI_DATA
 # fallback follows the dev tools. Not a user option here: it is exactly this build's fence.
 set(KSIM_BAKE_DATA_PATH ${KCLIENT_DEV_TOOLS} CACHE BOOL "Compile KENSHI_DATA into runServer's fallback (follows KCLIENT_DEV_TOOLS)" FORCE)
+# Shared kenshi ccache: the one copy of the logic lives in cpp/cmake/kenshi_ccache.cmake (kenshi-okpn.3); hosts without its ccache.conf see no change.
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cpp/cmake/kenshi_ccache.cmake)
+
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../cpp ${CMAKE_CURRENT_BINARY_DIR}/cpp EXCLUDE_FROM_ALL)
 
 # Jolt Physics v5.6.0 (third_party/JoltPhysics, MIT): client ragdolls only (src/characters/physics.cpp, docs/reference/PHYSICS.md 2). The vendored tree is the
@@ -151,163 +154,219 @@ else()
 	set(KCLIENT_SOKOL_IMPL src/platform/sokol_impl.cpp)
 	set(KCLIENT_WINDOWGEOM src/platform/linux/windowgeom.cpp)
 endif()
-# KCLIENT_PLATFORM: the rest of the OS layer (src/platform/*.hpp): the simlink socket and the local server child (POSIX on Linux and macOS,
-# Winsock / CreateProcess on Windows), the default game installs (installs.hpp, one per OS) and, on Windows, the GL loader (gl.hpp).
+# KCLIENT_PLATFORM: the rest of the OS layer (src/platform/*.hpp): the local server child (POSIX on Linux and macOS,
+# Winsock / CreateProcess on Windows), the per-user dirs (app/userdirs.hpp, one file per OS) and, on Windows, the GL loader (gl.hpp).
 if(WIN32)
-	set(KCLIENT_PLATFORM src/platform/windows/socket.cpp src/platform/windows/process.cpp src/platform/windows/installs.cpp
-		src/platform/windows/gl.cpp)	# gl.cpp: the GL entry points past 1.1 (platform/gl.hpp)
+	set(KCLIENT_PLATFORM src/platform/windows/process.cpp src/platform/windows/userdirs.cpp src/platform/windows/console.cpp
+		src/platform/windows/gl.cpp src/platform/swapinfo_stub.cpp)	# gl.cpp: the GL entry points past 1.1 (platform/gl.hpp)
 	# sokol_app / sokol_gfx (GL) / sokol_audio (WASAPI) system libraries: MSVC takes them from the headers' #pragma comment, MinGW needs them
-	# listed (sokol_app.h "with MINGW/MSYS2 gcc"); ws2_32: the simlink socket; advapi32: the registry (installs.cpp).
+	# listed (sokol_app.h "with MINGW/MSYS2 gcc"); ws2_32: the simlink socket; advapi32: the registry.
 	set(KCLIENT_WIN32_LIBS kernel32 user32 shell32 gdi32 ole32 advapi32 ws2_32)
 elseif(APPLE)
-	set(KCLIENT_PLATFORM src/platform/posix/socket.cpp src/platform/posix/process.cpp src/platform/macos/installs.cpp)
+	set(KCLIENT_PLATFORM src/platform/posix/process.cpp src/platform/posix/console.cpp src/platform/macos/userdirs.cpp src/platform/swapinfo_stub.cpp)
 	set(KCLIENT_WIN32_LIBS)
 else()
-	set(KCLIENT_PLATFORM src/platform/posix/socket.cpp src/platform/posix/process.cpp src/platform/linux/installs.cpp)
+	set(KCLIENT_PLATFORM src/platform/posix/process.cpp src/platform/posix/console.cpp src/platform/linux/userdirs.cpp src/platform/linux/swapinfo.cpp)
 	set(KCLIENT_WIN32_LIBS)
 endif()
 
-# The client sources, compiled once into this OBJECT library and shared by kclient and OpenKenshi (kenshi-379.6.2.1). Only the files that
-# depend on KENSHI_EMBED_SERVER (main.cpp, localserver.cpp; the only includers of localserver.hpp) compile per executable, below.
-add_library(kclient_obj OBJECT
-	src/render/ao.cpp
-	src/render/lightvol.cpp
-	src/world/buildings.cpp
-	src/render/camera.cpp
-	src/characters/characters.cpp
-	src/characters/charload.cpp
-	src/characters/charanim.cpp
-	src/characters/chardraw.cpp
-	src/characters/creator.cpp
-	src/app/eventlog.cpp
-	src/net/simlink.cpp
-	src/bridge/simview.cpp
-	src/platform/datadir.cpp
-	src/app/steamvdf.cpp
-	src/app/datapicker.cpp
-	third_party/tinyfiledialogs/tinyfiledialogs.c
-	src/frame/trails.cpp
-	src/world/clientnav.cpp
-	src/render/navoverlay.cpp
-	src/input/collisionpick.cpp
-	src/input/pick.cpp
-	src/input/controlhints.cpp
-	src/input/cursors.cpp
-	src/app/sappcmd.cpp
-	src/app/logicthread.cpp
-	src/frame/lastframe.cpp
-	src/render/colourmap.cpp
-	src/render/blooddecals.cpp
-	src/render/renderqueue.cpp
-	src/render/drawlist_gpu.cpp
-	src/render/overlaylist.cpp
-	src/characters/portraits.cpp
-	src/assets/dds.cpp
-	src/render/detail.cpp
-	src/world/foliage.cpp
-	src/world/floorfollow.cpp
-	src/render/fogvolume.cpp
-	src/render/sunshafts.cpp
-	src/render/dust.cpp
-	src/world/grass.cpp
-	src/render/gputimer.cpp
-	src/render/hdr.cpp
-	src/render/reflection.cpp
-	src/render/idbuffer.cpp
-	src/render/readback.cpp
-	src/frame/renderframe.cpp
-	src/render/post.cpp
-	src/render/smaa_lut.cpp
-	src/assets/materials.cpp
-	src/assets/mods.cpp
-	src/assets/ogremesh.cpp
-	src/render/openwindows.cpp
-	src/render/particles.cpp
-	src/world/particleworld.cpp
-	src/frame/beamfield.cpp
-	src/characters/physics.cpp
-	src/bridge/ragdolldrive.cpp
-	src/characters/ragdoll.cpp
-	src/assets/resources.cpp
-	src/render/shadow.cpp
-	src/render/sky.cpp
-	src/characters/creatorscene.cpp
-	src/render/speccube.cpp
-	src/world/weatherinstances.cpp
-	src/render/weathermap.cpp
-	src/world/squads.cpp
-	src/render/arrows.cpp
-	src/render/terrain.cpp
-	src/world/towns.cpp
-	src/render/water.cpp
-	src/render/lightbake.cpp
-	src/world/worldbuildings.cpp
-	src/world/wbload.cpp
-	src/world/wbfloors.cpp
-	src/world/wbdraw.cpp
-	src/frame/loadscreen.cpp
-	src/host/pick.cpp
-	src/host/orders.cpp
-	src/host/script.cpp
-	src/host/session.cpp
-	src/host/uihost.cpp
-	src/host/panels.cpp
-	src/world/worldmap.cpp
-	${KCLIENT_SOKOL_IMPL}
-	src/audio/audiohook.cpp
-	src/app/config.cpp
-	${KCLIENT_WINDOWGEOM}
-	${KCLIENT_PLATFORM}
-	src/platform/windowgate.cpp
-	src/app/serverrows.cpp
-	src/app/workpool.cpp
-	src/assets/stb_impl.cpp
-)
-add_dependencies(kclient_obj kclient_shaders)
+# The client is one STATIC library per src/ directory (kenshi-k16.2.369.15.1; docs/CLIENT.md "Code map"): kc_<dir>, plus kui (src/ui) and kaudio
+# (src/audio). Each declares the libraries below it and nothing else, so a layering break fails to link, and tools/layer_check.py (run by every
+# build) fails an #include that is not a declared edge. Layers, low to high (a library links only the ones above it in this list):
+#   kc_app (config, eventlog, workpool, logicthread ...)   kc_knobs (dev knobs read low: ablate, lightterms)   kc_net (the SIMLINK wire types and decode)
+#   kc_platform (sokol, OS socket / process / user dirs, windowgeom, datadir)   kc_assets (mods, ogre meshes, materials, dds, stb)
+#   kc_render (render core: passes, draw lists, GPU resources)   kc_world (buildings, foliage, grass, nav, weather instances)   kaudio   kui
+#   kc_characters   kc_bridge (SimView: the wire -> Characters bridge; ragdoll driver)   kc_input   kc_frame (render_frame, trails, load screen)
+#   kc_debug   kc_dev   kc_host (host/ + main.cpp and its per-target files)
+# Add a library with kc_layer(name DIR dir SOURCES ... DEPS ...); list the directory in tools/layer_check.py's view through DIR.
+
+# Python for the generators and the layering check.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
 # The sim's DEBUG VIEW (docs/formats/SIMLINK.md "DEBUG VIEW"): src/debug/. ON by default in every build type (a small decoder; the data flows
 # only from a server built with KSIM_DEBUG_VIEW and run with --debug-view)
 option(KCLIENT_DEBUG_VIEW "Build the sim debug view (src/debug/)" ON)
-if(KCLIENT_DEBUG_VIEW)
-	target_sources(kclient_obj PRIVATE src/debug/debugview.cpp)
-	target_compile_definitions(kclient_obj PRIVATE KCLIENT_DEBUG_VIEW)
-endif()
 # Profiling (kenshi-k16.2.101): the GPU pass timers (src/gputimer) and the per-pass submit counters (src/drawstats), reported per scene in the
 # scene test JSON. OFF compiles all of it out: GPU_BEGIN/GPU_END are empty statements, the draw wrappers are plain pass-throughs and the JSON
 # has none of the profile fields.
 option(KCLIENT_PROFILE "GPU pass timers and per-pass submit counters (scene test JSON)" ON)
-target_compile_definitions(kclient_obj PRIVATE KCLIENT_PROFILE=$<BOOL:${KCLIENT_PROFILE}>)
-if(KCLIENT_DEV_TOOLS)
-	# one source per line, so two branches adding dev tools do not touch the same line (render hook 10)
-	target_sources(kclient_obj PRIVATE
-		src/dev/devhost.cpp
-		src/dev/debughost.cpp
-		src/dev/gaitlog.cpp
-		src/dev/poslog.cpp
-		src/dev/playtest.cpp
-		src/dev/beadpost.cpp
-		src/dev/animlab.cpp
-		src/dev/charops.cpp
-		src/dev/sgowner.cpp
-		src/dev/pickboxes.cpp
-		src/dev/pickmask.cpp
-		src/dev/scenetest.cpp
-		src/dev/probe.cpp
-		src/dev/heightprobe.cpp
-		src/dev/scriptlog.cpp
-		src/dev/viewmesh.cpp
-		src/dev/hintsop.cpp
-		src/knobs/lightterms.cpp
-		src/dev/packetdigest.cpp
-		src/dev/shotsidecars.cpp
-	)
-	target_compile_definitions(kclient_obj PRIVATE KCLIENT_DEV_TOOLS)
+
+# What every layer shares: defines, include roots, the system libraries, the cpp/ libraries.
+add_library(kclient_base INTERFACE)
+target_include_directories(kclient_base INTERFACE src ${SHADER_DIR})
+target_include_directories(kclient_base SYSTEM INTERFACE third_party third_party/sokol)
+target_compile_definitions(kclient_base INTERFACE ${GFX_DEFINE} KCLIENT_PROFILE=$<BOOL:${KCLIENT_PROFILE}>)
+if(KCLIENT_DEBUG_VIEW)
+	target_compile_definitions(kclient_base INTERFACE KCLIENT_DEBUG_VIEW)
 endif()
-# tinyfiledialogs is C that compiles as C++ (upstream: "rename this .c file as .cpp"); the project is CXX only. Vendored untouched, so no warnings from it.
-set_source_files_properties(third_party/tinyfiledialogs/tinyfiledialogs.c PROPERTIES LANGUAGE CXX COMPILE_OPTIONS -w)
-# the SMAA tables must match upstream bit for bit: no fused multiply-adds
-set_source_files_properties(src/render/smaa_lut.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
-target_include_directories(kclient_obj PRIVATE src ${SHADER_DIR})
-target_include_directories(kclient_obj SYSTEM PRIVATE third_party third_party/sokol)
+if(KCLIENT_DEV_TOOLS)
+	# The build's own data dir as datasetting.cpp's extra search place: a dev build only (kenshi-379.13). A release resolves the game data at runtime,
+	# and a shipped binary must not carry the developer's home path (client/tools/dev_off_check.sh).
+	target_compile_definitions(kclient_base INTERFACE KCLIENT_DEV_TOOLS KENSHI_DATA="${KENSHI_DATA}")
+endif()
+target_compile_options(kclient_base INTERFACE -Wall -Wextra)
+target_link_libraries(kclient_base INTERFACE kworld knav kdata kutil RecastNavigation::Detour Jolt Threads::Threads ${CMAKE_DL_LIBS} m ${KCLIENT_WIN32_LIBS})
+if(WIN32)
+	target_link_libraries(kclient_base INTERFACE comdlg32 ole32)	# comdlg32: tinyfiledialogs' native folder dialog
+endif()
+if(UNIX AND NOT APPLE)
+	target_link_libraries(kclient_base INTERFACE PkgConfig::X11)
+endif()
+if(KENSHI_GFX STREQUAL "glcore")
+	find_package(OpenGL REQUIRED)
+	target_link_libraries(kclient_base INTERFACE OpenGL::GL)
+elseif(KENSHI_GFX STREQUAL "metal")
+	target_link_libraries(kclient_base INTERFACE "-framework Cocoa" "-framework QuartzCore" "-framework Metal" "-framework MetalKit")
+else()
+	find_package(Vulkan REQUIRED)
+	target_compile_definitions(kclient_base INTERFACE VK_USE_PLATFORM_XLIB_KHR)
+	target_link_libraries(kclient_base INTERFACE Vulkan::Vulkan)
+endif()
+
+# The layering check (tools/layer_check.py): every cross-directory #include of src/ must be a declared edge of kc_layer / kc_edges. The edges are
+# written to ${CMAKE_CURRENT_BINARY_DIR}/layers.txt at the end of configure; the check runs before any layer builds.
+add_custom_target(kclient_layers
+	COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/layer_check.py ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/layers.txt
+	COMMENT "layering check" VERBATIM)
+set_property(GLOBAL PROPERTY KC_LAYER_ROWS "")
+# kc_edges(lib DIR dir DEPS libs...): records a library's directory and its declared dependencies for the check.
+function(kc_edges lib)
+	cmake_parse_arguments(E "" "DIR" "DEPS" ${ARGN})
+	string(REPLACE ";" "," deps "${E_DEPS}")
+	set_property(GLOBAL APPEND PROPERTY KC_LAYER_ROWS "${E_DIR}:${lib}:${deps}")
+endfunction()
+# kc_layer(lib DIR dir SOURCES ... DEPS libs...): a STATIC library of the sources, or an INTERFACE one (headers only) when there are none.
+function(kc_layer lib)
+	cmake_parse_arguments(L "" "DIR" "SOURCES;DEPS" ${ARGN})
+	if(L_SOURCES)
+		add_library(${lib} STATIC ${L_SOURCES})
+		add_dependencies(${lib} kclient_shaders kclient_layers)
+		target_link_libraries(${lib} PUBLIC kclient_base ${L_DEPS})
+	else()
+		add_library(${lib} INTERFACE)
+		target_link_libraries(${lib} INTERFACE kclient_base ${L_DEPS})
+	endif()
+	kc_edges(${lib} DIR ${L_DIR} DEPS ${L_DEPS})
+endfunction()
+
+set(KC_SRC_APP
+	src/app/config.cpp
+	src/app/datapicker.cpp
+	src/app/eventlog.cpp
+	src/app/logicthread.cpp
+	src/app/sappcmd.cpp
+	src/app/serverrows.cpp
+	src/app/workpool.cpp
+	third_party/tinyfiledialogs/tinyfiledialogs.c
+)
+set(KC_SRC_ASSETS
+	src/assets/dds.cpp
+	src/assets/materials.cpp
+	src/assets/mods.cpp
+	src/assets/ogremesh.cpp
+	src/assets/resources.cpp
+	src/assets/stb_impl.cpp
+)
+set(KC_SRC_AUDIO
+	src/audio/audiohook.cpp
+)
+set(KC_SRC_BRIDGE
+	src/bridge/ragdolldrive.cpp
+	src/bridge/simview.cpp
+)
+set(KC_SRC_CHARACTERS
+	src/characters/characters.cpp
+	src/characters/charanim.cpp
+	src/characters/chardraw.cpp
+	src/characters/charload.cpp
+	src/characters/creator.cpp
+	src/characters/creatorscene.cpp
+	src/characters/physics.cpp
+	src/characters/portraits.cpp
+	src/characters/ragdoll.cpp
+)
+set(KC_SRC_FRAME
+	src/frame/beamfield.cpp
+	src/frame/lastframe.cpp
+	src/frame/loadscreen.cpp
+	src/frame/renderframe.cpp
+	src/frame/trails.cpp
+)
+set(KC_SRC_HOST
+	src/host/orders.cpp
+	src/host/panels.cpp
+	src/host/pick.cpp
+	src/host/script.cpp
+	src/host/session.cpp
+	src/host/uihost.cpp
+)
+set(KC_SRC_INPUT
+	src/input/collisionpick.cpp
+	src/input/controlhints.cpp
+	src/input/cursors.cpp
+	src/input/pick.cpp
+)
+set(KC_SRC_NET
+	src/net/simlink.cpp
+)
+set(KC_SRC_PLATFORM
+	${KCLIENT_PLATFORM}
+	${KCLIENT_SOKOL_IMPL}
+	${KCLIENT_WINDOWGEOM}
+	src/platform/datasetting.cpp
+	src/platform/windowgate.cpp
+)
+set(KC_SRC_RENDER
+	src/render/ao.cpp
+	src/render/arrows.cpp
+	src/render/blooddecals.cpp
+	src/render/camera.cpp
+	src/render/colourmap.cpp
+	src/render/detail.cpp
+	src/render/drawlist_gpu.cpp
+	src/render/dust.cpp
+	src/render/fogvolume.cpp
+	src/render/gputimer.cpp
+	src/render/hdr.cpp
+	src/render/idbuffer.cpp
+	src/render/lightbake.cpp
+	src/render/lightvol.cpp
+	src/render/navoverlay.cpp
+	src/render/openwindows.cpp
+	src/render/overlaylist.cpp
+	src/render/particles.cpp
+	src/render/post.cpp
+	src/render/readback.cpp
+	src/render/reflection.cpp
+	src/render/renderqueue.cpp
+	src/render/shadow.cpp
+	src/render/sky.cpp
+	src/render/smaa_lut.cpp
+	src/render/speccube.cpp
+	src/render/sunshafts.cpp
+	src/render/terrain.cpp
+	src/render/water.cpp
+	src/render/weathermap.cpp
+)
+set(KC_SRC_WORLD
+	src/world/buildings.cpp
+	src/world/clientnav.cpp
+	src/world/floorfollow.cpp
+	src/world/foliage.cpp
+	src/world/grass.cpp
+	src/world/particleworld.cpp
+	src/world/plants.cpp
+	src/world/squads.cpp
+	src/world/towns.cpp
+	src/world/wbdraw.cpp
+	src/world/wbfloors.cpp
+	src/world/wbload.cpp
+	src/world/wbpopin.cpp
+	src/world/weatherinstances.cpp
+	src/world/worldbuildings.cpp
+	src/world/worldmap.cpp
+)
+
 # The build's git hash: --help shows it and every playtest run records it (src/playtest.cpp, src/app/githash.hpp). tools/githash.cmake writes
 # githash.cpp in the build tree on every build, so a commit shows without a reconfigure; the file changes only when the hash does, so an
 # unchanged hash rebuilds nothing. "-dirty" counts client/ paths only (the shared tree holds other sessions' work); no git says "unknown".
@@ -323,12 +382,9 @@ add_custom_target(kclient_githash
 		-P ${CMAKE_CURRENT_SOURCE_DIR}/tools/githash.cmake
 	BYPRODUCTS "${KCLIENT_GITHASH_CPP}"
 	COMMENT "kclient git hash")
-add_dependencies(kclient_obj kclient_githash)
-target_sources(kclient_obj PRIVATE ${KCLIENT_GITHASH_CPP})
 
 # The AI task names for CHAR_STATS' AI tail (rows 16 / 18; src/net/aitask.hpp, main.cpp): generated from the docs' table at build time, so no
 # name is typed in the client and a doc rerun shows without a client edit. Rebuilt only when the doc or the generator changes.
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(KCLIENT_AI_TASK_NAMES_CPP "${CMAKE_CURRENT_BINARY_DIR}/gen/ai_task_names.cpp")
 add_custom_command(
 	OUTPUT ${KCLIENT_AI_TASK_NAMES_CPP}
@@ -338,59 +394,91 @@ add_custom_command(
 	DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../docs/formats/AI_TASK_ENUMS.md ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_ai_task_names.py
 	COMMENT "generate ai_task_names.cpp"
 	VERBATIM)
-target_sources(kclient_obj PRIVATE ${KCLIENT_AI_TASK_NAMES_CPP})
 
-target_compile_definitions(kclient_obj PRIVATE ${GFX_DEFINE})
-# The build's own data dir as datadir.cpp's last search place: a dev build only (kenshi-379.13). A release resolves the game data at runtime,
-# and a shipped binary must not carry the developer's home path (client/tools/dev_off_check.sh).
+# tinyfiledialogs is C that compiles as C++ (upstream: "rename this .c file as .cpp"); the project is CXX only. Vendored untouched, so no warnings from it.
+set_source_files_properties(third_party/tinyfiledialogs/tinyfiledialogs.c PROPERTIES LANGUAGE CXX COMPILE_OPTIONS -w)
+# the SMAA tables must match upstream bit for bit: no fused multiply-adds
+set_source_files_properties(src/render/smaa_lut.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
+
+# Dev-only sources: one source per line, so two branches adding dev tools do not touch the same line (render hook 10)
+set(KC_SRC_DEV)
+set(KC_SRC_KNOBS)
 if(KCLIENT_DEV_TOOLS)
-	target_compile_definitions(kclient_obj PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+	set(KC_SRC_KNOBS src/knobs/lightterms.cpp)
+	set(KC_SRC_DEV
+		src/dev/devhost.cpp
+		src/dev/debughost.cpp
+		src/dev/gaitlog.cpp
+		src/dev/poslog.cpp
+		src/dev/pacelog.cpp
+		src/dev/playtest.cpp
+		src/dev/beadpost.cpp
+		src/dev/animlab.cpp
+		src/dev/charops.cpp
+		src/dev/sgowner.cpp
+		src/dev/pickboxes.cpp
+		src/dev/pickmask.cpp
+		src/dev/routepreview.cpp
+		src/dev/scenetest.cpp
+		src/dev/probe.cpp
+		src/dev/heightprobe.cpp
+		src/dev/scriptlog.cpp
+		src/dev/viewmesh.cpp
+		src/dev/hintsop.cpp
+		src/dev/packetdigest.cpp
+		src/dev/shotsidecars.cpp
+		src/dev/colloverlay.cpp
+		src/dev/launchguard.cpp
+	)
 endif()
-target_compile_options(kclient_obj PRIVATE -Wall -Wextra)
-if(WIN32)
-	target_link_libraries(kclient_obj PRIVATE comdlg32 ole32 ${KCLIENT_WIN32_LIBS})	# comdlg32: tinyfiledialogs' native folder dialog
+# The sim's DEBUG VIEW (docs/formats/SIMLINK.md "DEBUG VIEW"): src/debug/.
+set(KC_SRC_DEBUG)
+if(KCLIENT_DEBUG_VIEW)
+	set(KC_SRC_DEBUG src/debug/debugview.cpp)
 endif()
-target_link_libraries(kclient_obj PRIVATE kworld knav kutil RecastNavigation::Detour kaudio kui Jolt Threads::Threads ${CMAKE_DL_LIBS} m)
-if(UNIX AND NOT APPLE)
-	target_link_libraries(kclient_obj PRIVATE PkgConfig::X11)
-endif()
-if(KENSHI_GFX STREQUAL "glcore")
-	find_package(OpenGL REQUIRED)
-	target_link_libraries(kclient_obj PRIVATE OpenGL::GL)
-elseif(KENSHI_GFX STREQUAL "metal")
-	target_link_libraries(kclient_obj PRIVATE "-framework Cocoa" "-framework QuartzCore" "-framework Metal" "-framework MetalKit")
-else()
-	find_package(Vulkan REQUIRED)
-	target_compile_definitions(kclient_obj PRIVATE VK_USE_PLATFORM_XLIB_KHR)
-	target_link_libraries(kclient_obj PRIVATE Vulkan::Vulkan)
-endif()
+
+# The layers, low to high.
+kc_layer(kc_app DIR app SOURCES ${KC_SRC_APP} ${KCLIENT_GITHASH_CPP})
+add_dependencies(kc_app kclient_githash)
+kc_layer(kc_knobs DIR knobs SOURCES ${KC_SRC_KNOBS})
+kc_layer(kc_net DIR net SOURCES ${KC_SRC_NET} ${KCLIENT_AI_TASK_NAMES_CPP})
+kc_layer(kc_platform DIR platform SOURCES ${KC_SRC_PLATFORM} DEPS kc_app)
+kc_layer(kc_assets DIR assets SOURCES ${KC_SRC_ASSETS} DEPS kc_app)
+kc_layer(kc_render DIR render SOURCES ${KC_SRC_RENDER} src/render/drawlist.cpp DEPS kc_app kc_assets kc_knobs kc_net kc_platform)
+kc_layer(kc_world DIR world SOURCES ${KC_SRC_WORLD} DEPS kc_app kc_assets kc_knobs kc_net kc_platform kc_render)
+kc_layer(kc_characters DIR characters SOURCES ${KC_SRC_CHARACTERS} DEPS kc_app kc_assets kc_knobs kc_render)
+kc_layer(kc_bridge DIR bridge SOURCES ${KC_SRC_BRIDGE} DEPS kc_app kc_characters kc_net kc_platform)
+kc_layer(kc_input DIR input SOURCES ${KC_SRC_INPUT} DEPS kc_app kc_bridge kc_characters kc_net kc_render)
+kc_layer(kc_frame DIR frame SOURCES ${KC_SRC_FRAME} DEPS kc_app kc_assets kc_bridge kc_characters kc_input kc_knobs kc_net kc_platform kc_render kc_world kui)
+kc_layer(kc_debug DIR debug SOURCES ${KC_SRC_DEBUG} DEPS kc_net)
+kc_layer(kc_dev DIR dev SOURCES ${KC_SRC_DEV}
+	DEPS kc_app kc_assets kaudio kc_bridge kc_characters kc_debug kc_frame kc_input kc_knobs kc_net kc_platform kc_render kui kc_world)
+kc_layer(kc_host DIR host SOURCES ${KC_SRC_HOST}
+	DEPS kc_app kc_assets kaudio kc_bridge kc_characters kc_debug kc_dev kc_frame kc_input kc_knobs kc_net kc_platform kc_render kui kc_world)
 
 # UI layer (src/ui/, docs/UI.md): widgets drawn with the game's skins and fonts. The host supplies the sokol, stb_image and stb_truetype
-# implementations and config.cpp (kclient: sokol_impl, stb_impl, loadscreen).
-add_library(kui STATIC src/render/drawlist.cpp src/ui/xml.cpp src/ui/gfx.cpp src/ui/skin.cpp src/ui/font.cpp src/ui/widget.cpp src/ui/ui.cpp src/ui/hud.cpp src/ui/diamond.cpp src/ui/statgrid.cpp src/ui/options.cpp src/ui/keys.cpp src/ui/creator.cpp src/ui/stats.cpp src/ui/prompt.cpp src/ui/squads.cpp src/ui/overview.cpp src/ui/savepanel.cpp src/ui/menus.cpp src/ui/newgame.cpp src/ui/tutorials.cpp src/ui/jobs.cpp src/ui/prospecting.cpp src/ui/advanced.cpp src/ui/build.cpp src/ui/research.cpp src/ui/crafting.cpp src/ui/faction.cpp src/ui/trade.cpp src/ui/icons.cpp src/ui/itemgrid.cpp src/ui/gear.cpp src/ui/itemwindows.cpp src/ui/dialogue.cpp src/ui/bubbles.cpp src/ui/progressbars.cpp src/ui/namelabels.cpp src/ui/buildingwindow.cpp src/ui/cast.cpp src/ui/layout.cpp src/ui/style.cpp)
-target_include_directories(kui PUBLIC src)
-# the UI counts its sgl batches for the Ui GPU section (kenshi-k16.2.101.1); compiled out with KCLIENT_PROFILE=OFF
-target_compile_definitions(kui PRIVATE KCLIENT_PROFILE=$<BOOL:${KCLIENT_PROFILE}>)
+# implementations (kc_platform, kc_assets) and config.cpp (kc_app); the draw list it records into is kc_render's.
+add_library(kui STATIC src/ui/xml.cpp src/ui/gfx.cpp src/ui/skin.cpp src/ui/font.cpp src/ui/widget.cpp src/ui/ui.cpp src/ui/hud.cpp src/ui/diamond.cpp src/ui/statgrid.cpp src/ui/options.cpp src/ui/keys.cpp src/ui/creator.cpp src/ui/stats.cpp src/ui/prompt.cpp src/ui/squads.cpp src/ui/overview.cpp src/ui/savepanel.cpp src/ui/menus.cpp src/ui/newgame.cpp src/ui/tutorials.cpp src/ui/jobs.cpp src/ui/prospecting.cpp src/ui/minimap.cpp src/ui/statuspopup.cpp src/ui/advanced.cpp src/ui/build.cpp src/ui/research.cpp src/ui/crafting.cpp src/ui/faction.cpp src/ui/trade.cpp src/ui/icons.cpp src/ui/itemgrid.cpp src/ui/gear.cpp src/ui/itemwindows.cpp src/ui/dialogue.cpp src/ui/bubbles.cpp src/ui/progressbars.cpp src/ui/namelabels.cpp src/ui/buildingwindow.cpp src/ui/cast.cpp src/ui/layout.cpp src/ui/style.cpp)
 # The dev-only screens (src/ui/dev/, kenshi-k16.2.153.2): the playtest windows, the debug panel, trails panel and animation browser. The debug
 # view's decision tree (debugtree) comes with either option: main.cpp uses it under KCLIENT_DEBUG_VIEW.
 if(KCLIENT_DEV_TOOLS)
 	target_sources(kui PRIVATE src/ui/dev/debugpanel.cpp src/ui/dev/trailspanel.cpp src/ui/dev/lightspanel.cpp src/ui/dev/animbrowser.cpp src/ui/dev/scenarios.cpp src/ui/dev/notes.cpp)
-	target_compile_definitions(kui PUBLIC KCLIENT_DEV_TOOLS)
 endif()
 if(KCLIENT_DEV_TOOLS OR KCLIENT_DEBUG_VIEW)
 	target_sources(kui PRIVATE src/ui/dev/debugtree.cpp)
 endif()
-target_include_directories(kui SYSTEM PUBLIC third_party third_party/sokol)
-target_compile_definitions(kui PUBLIC ${GFX_DEFINE})
-target_compile_options(kui PRIVATE -Wall -Wextra)
+add_dependencies(kui kclient_shaders kclient_layers)
+target_link_libraries(kui PUBLIC kclient_base kc_app kc_render)
+kc_edges(kui DIR ui DEPS kc_app kc_render)
 
 # The dev tool executables (kenshi-k16.2.153): built only with KCLIENT_DEV_TOOLS, sources in src/dev/tools/.
 if(KCLIENT_DEV_TOOLS)
-	# Every widget on one screen (interactive, or --screenshot under tools/headless.sh).
-	add_executable(kui_demo src/dev/tools/kui_demo.cpp src/render/drawlist_gpu.cpp src/assets/dds.cpp src/app/config.cpp src/app/serverrows.cpp ${KCLIENT_SOKOL_IMPL} src/assets/stb_impl.cpp)
+	# Every widget on one screen (interactive, or --screenshot under tools/headless.sh). launchguard.cpp is compiled in directly: the demo does
+	# not link kc_dev, and the guard is the one dev file it needs (kenshi-k16.2.392).
+	add_executable(kui_demo src/dev/tools/kui_demo.cpp src/dev/launchguard.cpp)
 	target_compile_options(kui_demo PRIVATE -Wall -Wextra)
 	target_compile_definitions(kui_demo PRIVATE KENSHI_DATA="${KENSHI_DATA}")
-	target_link_libraries(kui_demo PRIVATE kui Threads::Threads ${CMAKE_DL_LIBS} m)
+	target_link_libraries(kui_demo PRIVATE kui kc_platform kc_assets kc_app Threads::Threads ${CMAKE_DL_LIBS} m)
 	target_include_directories(kui_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../cpp/include)	# kutil/executable.hpp (header only)
 	if(UNIX AND NOT APPLE)
 		target_link_libraries(kui_demo PRIVATE PkgConfig::X11)
@@ -432,12 +520,6 @@ if(KCLIENT_DEV_TOOLS)
 	target_include_directories(kfloor_test PRIVATE src)
 	target_compile_options(kfloor_test PRIVATE -Wall -Wextra)
 
-	# The Steam VDF parsing behind the data-dir discovery (steamvdf.hpp): libraryfolders.vdf nesting, escapes, appmanifest installdir. ctest: kdatadir.
-	add_executable(kdatadir_test src/dev/tools/kdatadir_test.cpp src/app/steamvdf.cpp)
-	target_include_directories(kdatadir_test PRIVATE src)
-	target_compile_options(kdatadir_test PRIVATE -Wall -Wextra)
-	enable_testing()
-	add_test(NAME kdatadir COMMAND kdatadir_test)
 
 	# SIMLINK decoder test CLI (docs/formats/SIMLINK.md): decodes a recorded server stream, or --selftest.
 	add_executable(ksimlink_dump src/dev/tools/ksimlink_dump.cpp src/net/simlink.cpp)
@@ -446,7 +528,19 @@ if(KCLIENT_DEV_TOOLS)
 endif()
 
 # Audio (src/audio/, docs/AUDIO_ENGINE.md): Wwise banks, Wwise Vorbis decoder (headers rebuilt on load) over system libvorbis, mixer, music player.
+if(MINGW)
+	# MinGW: the .dll.a import library sorts before the .a archive in a full-path lookup, so the exe would import libvorbis-0.dll / libogg-0.dll.
+	# Prefer archives for this lookup and ask pkg-config for the static closure (--static), so libogg follows libvorbis.
+	set(_kc_saved_suffixes "${CMAKE_FIND_LIBRARY_SUFFIXES}")
+	set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+	set(_kc_saved_argn "${PKG_CONFIG_ARGN}")
+	set(PKG_CONFIG_ARGN --static)
+endif()
 pkg_check_modules(VORBIS REQUIRED IMPORTED_TARGET vorbis ogg)
+if(MINGW)
+	set(CMAKE_FIND_LIBRARY_SUFFIXES "${_kc_saved_suffixes}")
+	set(PKG_CONFIG_ARGN "${_kc_saved_argn}")
+endif()
 if(UNIX AND NOT APPLE)
 	pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse-simple libpulse)	# sokol_audio's Linux backend (macOS: CoreAudio, below)
 endif()
@@ -458,11 +552,13 @@ add_custom_command(
 	DEPENDS ${CODEBOOKS_BIN} ${CMAKE_CURRENT_SOURCE_DIR}/tools/bin2inc.cmake
 	COMMENT "embed Wwise codebooks"
 	VERBATIM)
-add_library(kaudio STATIC src/audio/wwbank.cpp src/audio/wwvorbis.cpp src/audio/wwhirc.cpp src/audio/mixer.cpp src/audio/music.cpp src/audio/sound.cpp src/audio/sokol_audio_impl.cpp ${CODEBOOKS_INC})
+add_library(kaudio STATIC src/audio/wwbank.cpp src/audio/wwvorbis.cpp src/audio/wwhirc.cpp src/audio/mixer.cpp src/audio/music.cpp src/audio/sound.cpp src/audio/sokol_audio_impl.cpp src/audio/audiohook.cpp ${CODEBOOKS_INC})
 target_include_directories(kaudio PUBLIC src PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen)
 target_include_directories(kaudio SYSTEM PRIVATE third_party/sokol)
 target_compile_options(kaudio PRIVATE -Wall -Wextra)
-target_link_libraries(kaudio PUBLIC PkgConfig::VORBIS PRIVATE Threads::Threads)
+target_link_libraries(kaudio PUBLIC PkgConfig::VORBIS kclient_base kc_app kc_platform kc_render PRIVATE Threads::Threads)
+add_dependencies(kaudio kclient_shaders kclient_layers)
+kc_edges(kaudio DIR audio DEPS kc_app kc_platform kc_render)
 if(APPLE)
 	target_link_libraries(kaudio PRIVATE "-framework AudioToolbox")
 elseif(WIN32)
@@ -478,28 +574,25 @@ if(KCLIENT_DEV_TOOLS)
 	target_link_libraries(kaudio_dump PRIVATE kaudio)
 endif()
 
-# The two executables (client/README.md "Release targets"): both link the kclient_obj objects; main.cpp and localserver.cpp compile per target.
+# The two executables (client/README.md "Release targets"): main.cpp and localserver.cpp (and host/hud, logicframe, events, which see
+# KENSHI_EMBED_SERVER through app.hpp) compile per target; everything else is the kc_* libraries, linked through kc_host.
 # kclient is the client only (LocalServer fork()+execv of OpenKenshi-server); OpenKenshi is the full single-player target, with LocalServer running
-# ksim::runServer on a std::thread (KENSHI_EMBED_SERVER, src/platform/localserver.cpp), joined over loopback TCP, plus the ksim library. Defines, includes
-# and libraries are taken from kclient_obj at the end of this file, so every later option reaches both. OpenKenshi stays out of the default build
-# (cmake --build ... --target OpenKenshi).
-get_target_property(KENSHI_DEFS kclient_obj COMPILE_DEFINITIONS)
-get_target_property(KENSHI_LIBS kclient_obj LINK_LIBRARIES)
+# ksim::runServer on a std::thread (KENSHI_EMBED_SERVER, src/platform/localserver.cpp), joined over loopback TCP, plus the ksim library. OpenKenshi
+# stays out of the default build (cmake --build ... --target OpenKenshi).
 set(KENSHI_PER_TARGET_SOURCES src/main.cpp src/platform/localserver.cpp src/host/hud.cpp src/host/logicframe.cpp src/host/events.cpp)
 foreach(tgt kclient OpenKenshi)
 	if(tgt STREQUAL "kclient")
-		add_executable(kclient ${KENSHI_PER_TARGET_SOURCES} $<TARGET_OBJECTS:kclient_obj>)
+		add_executable(kclient ${KENSHI_PER_TARGET_SOURCES})
 	else()
-		add_executable(OpenKenshi EXCLUDE_FROM_ALL ${KENSHI_PER_TARGET_SOURCES} $<TARGET_OBJECTS:kclient_obj>)
+		add_executable(OpenKenshi EXCLUDE_FROM_ALL ${KENSHI_PER_TARGET_SOURCES})
 		target_compile_definitions(OpenKenshi PRIVATE KENSHI_EMBED_SERVER)
 		target_link_libraries(OpenKenshi PRIVATE ksim)
 	endif()
-	add_dependencies(${tgt} kclient_obj kclient_shaders kclient_githash)
-	target_include_directories(${tgt} PRIVATE src ${SHADER_DIR})
-	target_include_directories(${tgt} SYSTEM PRIVATE third_party third_party/sokol)
-	target_compile_definitions(${tgt} PRIVATE ${KENSHI_DEFS})
-	target_compile_options(${tgt} PRIVATE -Wall -Wextra)
-	target_link_libraries(${tgt} PRIVATE ${KENSHI_LIBS})
+	add_dependencies(${tgt} kclient_shaders kclient_githash kclient_layers)
+	target_link_libraries(${tgt} PRIVATE kc_host)
+	if(MINGW)
+		target_link_options(${tgt} PRIVATE -mwindows)	# GUI subsystem: no console window; the log goes to a file (platform/console.hpp, kenshi-379.31.9.1)
+	endif()
 endforeach()
 # A dev-off OpenKenshi runs its embedded server's sim data from simdata/ beside it (cpp/src/ksim/core/simdata.cpp), as ksim_server does in cpp/
 # (the macOS tester's patch, kenshi-379.32.13; same copy as cpp/CMakeLists.txt's ksim_server POST_BUILD).
@@ -515,3 +608,8 @@ endif()
 if(NOT KCLIENT_DEV_TOOLS)
 	set_target_properties(kclient PROPERTIES OUTPUT_NAME OpenKenshi-client)
 endif()
+
+# The declared edges for tools/layer_check.py (every kc_layer / kc_edges call above)
+get_property(KC_LAYER_ROWS_ALL GLOBAL PROPERTY KC_LAYER_ROWS)
+string(REPLACE ";" "\n" KC_LAYER_TEXT "${KC_LAYER_ROWS_ALL}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/layers.txt" "${KC_LAYER_TEXT}\n")

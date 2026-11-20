@@ -108,6 +108,13 @@ std::vector<Characters::EditorRange> readRanges(const std::string& path, bool fe
 	return out;
 }
 
+// The gender's <Colour> count: the parse stores (count-1)*10 as the ColourRange's slider max (140077090; kinspect rwh47_skin_tone_scale_static.md).
+int readSkinStops(const std::string& path, bool female)
+{
+	float swatches[8][3];
+	return readSkinRange(path, female, swatches);
+}
+
 }
 
 namespace
@@ -301,12 +308,18 @@ void Characters::init(const ResourceIndex* res, const kdata::GameData& gd, bool 
 		ri.bleedRate = r->floatOr("bleed rate", 1.0f);
 		ri.sounds = r->intOr("sounds", 0);
 		ri.accel = r->floatOr("pathfind acceleration", 15.0f) * 10.0f;	// ARCHITECTURE "Acceleration": the sim's u/s^2 (Human 20 -> 200)
+		ri.footprint = r->floatOr("pathfind footprint radius", 2.6f);
+		{
+			const float avoidance = r->floatOr("water avoidance", 0.0f);	// ksim combat_data.cpp: 1 + a for a >= 0, else 1 / (1 - a)
+			ri.waterCost = avoidance >= 0.0f ? 1.0f + avoidance : 1.0f / (1.0f - avoidance);
+		}
 		ri.attach = r->fileOr("attachment points");
 		// AppearanceHuman vf13 (140533b50): bloodColour = `blood colour` as ARGB with alpha 1, bloodScale = (`blood horizontal`, `blood vertical`)
 		const uint32_t bc = (uint32_t)r->intOr("blood colour", 0x800000);
 		for (int k = 0; k < 3; k++) { ri.bloodCol[k] = (float)((bc >> (16 - 8 * k)) & 0xff) / 255.0f; }
 		ri.bloodScale[0] = (float)r->intOr("blood horizontal", 1);
 		ri.bloodScale[1] = r->floatOr("blood vertical", 0.15f);
+		ri.portraitSet = r->findFloat("portrait distance") != nullptr;	// the record's framing; finishBody clears it for an animal (the head part's bounds frame those)
 		ri.portrait[0] = r->floatOr("portrait distance", 10);
 		ri.portrait[1] = r->floatOr("portrait offset x", 0);
 		ri.portrait[2] = r->floatOr("portrait offset y", 0.5f);
@@ -1515,6 +1528,9 @@ const Characters::Body* Characters::finishBody(const std::string& key, const Rac
 	// part per bone (140075600): the part naming the bone, else its nearest ancestor's, else part 1
 	memcpy(b->bloodCol, ri->bloodCol, sizeof b->bloodCol);
 	memcpy(b->portrait, ri->portrait, sizeof b->portrait);
+	// The RACE's own portrait framing, for a humanoid. An animal's RACE carries the fields too (Bonedog: distance 15), but its portrait is framed on its
+	// head bone's bounds instead (kenshi-k16.2.390): those fields are the main view's. An animal: ANIMAL_CHARACTER's animations, or the animal voice set.
+	b->portraitSet = ri->portraitSet && ri->animalAnims.empty() && ri->sounds < 4;
 	memcpy(b->bloodScale, ri->bloodScale, sizeof b->bloodScale);
 	for (int k = 0; k < 4; k++) { b->stump[k] = ri->stump[k][g]; }
 	b->bonePart.assign(b->skel.bones.size(), -1.0f);
@@ -2078,6 +2094,9 @@ bool Characters::add(const Spec& in, std::string& err, bool* notReady)
 		}
 	}
 	CPUSTAGE_OPT(lap, "char.add.push");
+	// a new sim character dithers in (render.char_fade, kenshi-k16.2.258.10.1); a build that replaces one on screen takes that one's place (swapIn). A
+	// scene / offline body (no sim id: --character, a scene's char=, a preview) is placed whole: it is not an arrival.
+	c.cover = c.spec.id ? 0.0f : 1.0f;
 	chars_.push_back(std::move(c));
 	return true;
 }

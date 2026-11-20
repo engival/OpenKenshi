@@ -202,6 +202,15 @@ std::uint64_t Simulation::createPlayerFaction(const std::string& factionSid)
 	return found.get<state::Id>()->value;
 }
 
+void Simulation::markPlayerFactionLive()
+{
+	FactionHandle handle = firstPlayerFaction(ecsMutable());
+	if (handle.id == 0 || !handle.faction.startoff.empty())
+		return;
+	handle.faction.startoff = std::string(state::kScenarioStartoff);
+	handle.entity.set<state::PlayerFaction>(std::move(handle.faction));
+}
+
 std::uint64_t Simulation::addPlayerSquad(const std::optional<std::string>& name)
 {
 	flecs::world& ecs = ecsMutable();

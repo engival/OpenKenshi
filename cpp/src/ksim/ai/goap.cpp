@@ -333,6 +333,17 @@ const std::vector<TaskRow>& table()
 				out.push_back(row);
 			}
 		}
+		// MAN_THE_GATE (dt24_180): a goal with no effect and no goal state, held open by its preconditions (DOOR_IS_OPEN; the exe's other,
+		// AT_LOCATION_FORTIFICATION_GATE, is the stand point the executor walks to). Its utility is not in the decode: 1.0 (UNSURE).
+		{
+			TaskRow row;
+			row.task = routines::task::ManTheGate;
+			row.name = "MAN_THE_GATE";
+			row.pre[0] = {Sym::DoorIsOpen, true};
+			row.preCount = 1;
+			row.utility = 1.0;
+			out.push_back(row);
+		}
 		{
 			TaskRow row;
 			row.task = routines::task::TakeIntruderOutsideTown;
@@ -578,6 +589,26 @@ const std::vector<TaskRow>& table()
 			row.name = "PROTECT_ALLIES";
 			row.utility = 0.5;
 			row.goalState = {Sym::IsAlliesFighting, false};
+			row.hasGoalState = true;
+			out.push_back(row);
+		}
+		{
+			// 288 (AI_COVERAGE): 15's row; the town leash is the resolver's admission, not the plan's.
+			TaskRow row;
+			row.task = routines::task::ProtectAlliesStayInTown;
+			row.name = "PROTECT_ALLIES_STAY_IN_TOWN";
+			row.utility = 0.5;
+			row.goalState = {Sym::IsAlliesFighting, false};
+			row.hasGoalState = true;
+			out.push_back(row);
+		}
+		{
+			// 32 (dt35 / dt37 live): the plan is [13 ATTACK_ATTACKERS_OF, 32], our fight-back; no flee provider (35 is never planned).
+			TaskRow row;
+			row.task = routines::task::SelfPreservation;
+			row.name = "SELF_PRESERVATION";
+			row.utility = 1.0;
+			row.goalState = {Sym::IsAggressionTowards, false};
 			row.hasGoalState = true;
 			out.push_back(row);
 		}
@@ -1129,8 +1160,8 @@ const std::vector<TaskRow>& table()
 				else if (spec.task == kLockDoorFromOutside) row.eff[row.effCount++] = {Sym::DoorLockedOutside, true};
 				out.push_back(row);
 			}
-			// The bash: BASH_DOOR 81 / BASH_DOOR_HERE 287 / BASH_DOOR_PLAYER_ORDER 226 swing a weapon (the planner equips one); BASH_GATE 123
-			// is the fortification gate's, any hands, with the 8-mate crowd limit.
+			// The bash: BASH_DOOR 81 / BASH_DOOR_HERE 287 / BASH_DOOR_PLAYER_ORDER 226 and BASH_GATE 123 (the fortification gate's, with the 8-mate
+			// crowd limit) all need hasWeaponEquipped = 1 (the planner equips one).
 			for (const DoorRow& spec : {DoorRow{kBashDoor, "BASH_DOOR", false}, DoorRow{kBashDoorHere, "BASH_DOOR_HERE", true},
 					 DoorRow{kBashDoorOrder, "BASH_DOOR_PLAYER_ORDER", false}, DoorRow{kBashGate, "BASH_GATE", false}})
 			{
@@ -1139,10 +1170,8 @@ const std::vector<TaskRow>& table()
 				row.name = spec.name;
 				row.orderOnly = spec.task == kBashDoorOrder;
 				row.pre[row.preCount++] = {Sym::DoorBashable, true};
-				if (spec.task == kBashGate)
-					row.pre[row.preCount++] = {Sym::GateBashOpen, true};
-				else
-					row.pre[row.preCount++] = {Sym::HasWeaponEquipped, true};
+				if (spec.task == kBashGate) row.pre[row.preCount++] = {Sym::GateBashOpen, true};
+				row.pre[row.preCount++] = {Sym::HasWeaponEquipped, true}; // rows 81 / 123 / 226 / 287 / 290 all carry hasWeaponEquipped = 1 (rwh.199)
 				atDoor(row, spec.here);
 				row.eff[row.effCount++] = {Sym::DoorIsOpen, true}; // a broken door is open; the lock needs no separate step
 				out.push_back(row);

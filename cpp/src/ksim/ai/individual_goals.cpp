@@ -110,6 +110,15 @@ bool moving(const state::Fighter& f)
 
 } // namespace
 
+void Simulation::ensureRoads()
+{
+	if (!roadsTried_)
+	{
+		roadsTried_ = true;
+		roads_ = navigation_ != nullptr ? sharedRoadNetwork(world_.dataDir()) : nullptr;
+	}
+}
+
 Route Simulation::routeRetry(std::uint64_t id, const state::Fighter& f, double toX, double toZ, std::optional<double> toY, bool planned)
 {
 	// A door or gate changed state since the last ask: routability changed, every ladder starts over (the exe's invalidate, C57; ksim 2026-11-10).
@@ -119,11 +128,7 @@ Route Simulation::routeRetry(std::uint64_t id, const state::Fighter& f, double t
 		pathRetries_.resetAll();
 	}
 	const PathRetries::Ask ask = pathRetries_.ask(id, f.x, f.z, toX, toZ);
-	if (!roadsTried_)
-	{
-		roadsTried_ = true;
-		roads_ = navigation_ != nullptr ? sharedRoadNetwork(world_.dataDir()) : nullptr;
-	}
+	ensureRoads();
 	Route route;
 	if (navigation_ == nullptr || ask.step == PathRetries::Step::Stuck)
 	{
@@ -134,9 +139,10 @@ Route Simulation::routeRetry(std::uint64_t id, const state::Fighter& f, double t
 		// A move over 1000 u takes the road shortcut first (the exe's 14065f940); when no road serves it, or a leg fails, the plain search.
 		if (std::hypot(ask.x - f.x, ask.z - f.z) > kworld::RoadNetwork::kLongMove)
 			route = roadNetworkRoute(f, ask.x, ask.z, ask.step == PathRetries::Step::Direct ? toY : std::nullopt, planned, kworld::RoadNetwork::kDefaultFactor);
-		// A sideways goal has no known height: the walker's own level is the fallback.
+		// A goal in a zone that is not loaded is clamped to the exit of the walker's zone (D9): the route is found, ends there, and the owner's next ask
+		// goes on from it. A sideways goal has no known height: the walker's own level is the fallback.
 		if (!route.found)
-			route = navigation_->routeFrom({f.x, f.y, f.z}, ask.x, ask.z, ask.step == PathRetries::Step::Direct ? toY : std::nullopt, planned, body(f));
+			route = navigation_->routeFarFrom({f.x, f.y, f.z}, ask.x, ask.z, ask.step == PathRetries::Step::Direct ? toY : std::nullopt, planned, body(f));
 	}
 	pathRetries_.result(id, route.found);
 	// PATHFINDING_STATIC 1.11: the walker was off the mesh or stranded; the route starts on the ground it is re-seated on.
@@ -177,16 +183,27 @@ Route Simulation::roadNetworkRoute(const state::Fighter& f, double toX, double t
 	{
 		if (std::hypot(m.x - at.x, m.z - at.z) < 1.0)
 			continue;
-		const Route leg = navigation_->routeFrom(at, m.x, m.z, std::nullopt, planned, traveller);
-		if (leg.found && !leg.points.empty() && !leg.approach)
+		// Each leg goes through the zone clamp (D9): a marker outside the loaded zones is not a failure, the route ends at the exit of the zone
+		// the walker is in and its owner asks again from there. No leg beyond a clamp is planned (its ground is not loaded).
+		const Route leg = navigation_->routeFarFrom(at, m.x, m.z, std::nullopt, planned, traveller);
+		if (leg.found && !leg.points.empty() && (!leg.approach || leg.clamped))
+		{
 			append(leg);
+			if (leg.clamped)
+			{
+				whole.found = true;
+				whole.clamped = true;
+				return whole;
+			}
+		}
 	}
-	const Route last = navigation_->routeFrom(at, toX, toZ, toY, planned, traveller);
+	const Route last = navigation_->routeFarFrom(at, toX, toZ, toY, planned, traveller);
 	if (!last.found || last.points.empty())
 		return none;
 	append(last);
 	whole.found = true;
 	whole.approach = last.approach;
+	whole.clamped = last.clamped;
 	return whole;
 }
 

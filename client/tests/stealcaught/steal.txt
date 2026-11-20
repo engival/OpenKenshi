@@ -1,0 +1,41 @@
+# stealcaught (kenshi-k16.2.300.6.1): a witnessed take from a foreign bar container and the original's message bar line.
+# The camera on the basket (a bar NPC in sight), the selection walked there; the 300.4 recipe: ALT held, right click on
+# the basket (the server's take window), transfer take 0 (order 63 off the basket's first entry). The message lasts 4 s
+# (ui::message), so a shot every 30 frames (0.5 s) follows the take.
+# Placeholders: OUTDIR (run.sh), @Wanderer@ and @Basket@ (the probe run's ids, charids-style).
+100 portrait Wanderer
+110 camera thing id=@Basket@
+200 open id=@Basket@
+# the walk: the window opens once a selected player character is within 16 u (kContainerOpen)
+600 screenshot OUTDIR/01_walk.png
+1500 screenshot OUTDIR/02_walk.png
+2400 screenshot OUTDIR/03_arrived.png
+# ALT held, right click on the basket at mid-screen (camera thing frames it there)
+2500 mouse pos 640 360
+2510 key ALT down
+2520 mouse down right
+2540 mouse up right
+2550 key ALT up
+2600 screenshot OUTDIR/04_altclick.png
+# the take: the theft (event 14) and, witnessed, caught stealing (event 51) and the HUD message box
+2990 dump inv @Basket@
+2991 dump inv @Wanderer@
+3000 transfer take 0
+3010 screenshot OUTDIR/05_take.png
+3040 screenshot OUTDIR/06_take.png
+3070 screenshot OUTDIR/07_take.png
+3100 screenshot OUTDIR/08_take.png
+3130 screenshot OUTDIR/09_take.png
+3160 screenshot OUTDIR/10_take.png
+3190 screenshot OUTDIR/11_take.png
+3220 screenshot OUTDIR/12_take.png
+3250 screenshot OUTDIR/13_take.png
+3280 screenshot OUTDIR/14_take.png
+3310 screenshot OUTDIR/15_take.png
+3340 screenshot OUTDIR/16_take.png
+3370 screenshot OUTDIR/17_take.png
+3400 screenshot OUTDIR/18_take.png
+3450 screenshot OUTDIR/19_after.png
+3460 dump inv @Basket@
+3461 dump inv @Wanderer@
+3600 quit

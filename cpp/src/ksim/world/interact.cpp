@@ -1133,6 +1133,7 @@ void Simulation::reportInteract(std::uint64_t who, std::uint64_t target, std::ui
 
 void Simulation::cancelOrders(std::uint64_t id)
 {
+	farOrders_.erase(id); // a leg-by-leg move order (far_orders.cpp) ends with any replacing order
 	flecs::entity entity = fighterEntity(id);
 	if (const state::InteractTask* task = entity.get<state::InteractTask>())
 	{
@@ -1200,6 +1201,9 @@ void Simulation::stepOrderQueues()
 	for (std::size_t i = 0; i < members.size(); ++i)
 	{
 		const flecs::entity actor = ecs.entity(combatEntities_[i]);
+		// A KO clears the character's orders (rwh.195, AITaskSytem::clearOrders): the queue and the running interact / door / prospect / carry step.
+		if (members[i].fighter.unconscious && !members[i].fighter.dead)
+			cancelOrders(members[i].id);
 		if (!actor.has<state::OrderQueue>())
 			continue;
 		const std::uint64_t id = members[i].id;
@@ -1222,6 +1226,21 @@ void Simulation::stepOrderQueues()
 				actor.remove<state::OrderQueue>();
 			else
 				actor.set<state::OrderQueue>(std::move(queue));
+			// A far goal or a road move walks in legs (far_orders.cpp); a near one is one route.
+			if (next.kind == 1)
+			{
+				const bool far = navigation_->farGoal(fighter.x, fighter.z, next.x, next.z);
+				if ((far || std::hypot(next.x - fighter.x, next.z - fighter.z) > kworld::RoadNetwork::kLongMove)
+					&& startMoveOrder(id, fighter, next.x, next.z, next.y, next.seq, far))
+				{
+					fighter.drive = state::DriveMode::Stop;
+					fighter.driveStrafe = 0;
+					fighter.orderTarget = 0;
+					fighter.orderStop = true;
+					fighter.hold = false;
+					break;
+				}
+			}
 			const Route route = [&]
 			{
 				if (next.kind == 1)
@@ -1426,7 +1445,10 @@ Simulation::LootResult Simulation::lootBody(std::uint64_t to, std::uint64_t from
 		body.set<state::Inventory>(std::move(source));
 		// Task_Loot_AI (140355ad0 L113): looting a body that is not the looter's own faction's is crime 10 (reportCrime refuses a law looter).
 		if (const state::Allegiance* side = body.get<state::Allegiance>(); side != nullptr && isForeignOwner(world_.ecs(), to, side->factionSid))
+		{
 			reportCrime(to, crime::kLooting, side->factionSid, from);
+			noteCaughtAct(to, 1, from);
+		}
 	}
 	return result;
 }
@@ -1677,20 +1699,28 @@ void Simulation::syncDoorPaint()
 
 bool Simulation::orderLockDoor(std::uint64_t actor, std::uint64_t door, DoorSide side)
 {
-	if (combat_ == nullptr || navigation_ == nullptr)
+	return orderShutDoor(actor, door, side, true);
+}
+
+bool Simulation::orderShutDoor(std::uint64_t actor, std::uint64_t door, DoorSide side, bool lock)
+{
+	if (combat_ == nullptr)
 		return false;
 	state::Fighter* f = combat_->find(actor);
 	if (f == nullptr || f->dead || f->unconscious)
 		return false;
 	const InteractTarget target = findInteractTarget(ecsMutable(), combat_.get(), door, this);
 	const auto action = static_cast<std::uint8_t>(InteractAction::Close);
+	const std::uint8_t flags = lock ? kInteractFlagLock : 0;
 	if (target.kind != InteractKind::Door
-		|| !checkInteract(ecsMutable(), *combat_, actor, target, action, kInteractFlagLock, gameData_.get(), this).empty())
+		|| !checkInteract(ecsMutable(), *combat_, actor, target, action, flags, gameData_.get(), this).empty())
 		return false;
 	std::vector<state::RoutePoint> points;
 	bool approach = false;
 	if (!target.within(*f))
 	{
+		if (navigation_ == nullptr)
+			return false; // no mesh to route on; a door within reach needs none
 		Route route;
 		if (side == DoorSide::Near)
 		{
@@ -1709,7 +1739,7 @@ bool Simulation::orderLockDoor(std::uint64_t actor, std::uint64_t door, DoorSide
 			points.push_back({route.points[k].x, route.heights[k], route.points[k].z});
 		approach = route.approach;
 	}
-	beginInteract(actor, door, action, 0, std::move(points), approach, kInteractFlagLock);
+	beginInteract(actor, door, action, 0, std::move(points), approach, flags);
 	return true;
 }
 
@@ -1951,7 +1981,7 @@ void Simulation::stepDoorSteps()
 				if (!sufficientLockSkill(box->lockLevel, fighter.skills.lockpicking, false))
 				{
 					logTask("lock_too_hard member " + std::to_string(id) + " container " + std::to_string(step.door)); // no crime, no roll (k16.6.366)
-					end(InteractEvent::kRefused, true);
+					end(InteractEvent::kTooHard, true);
 					continue;
 				}
 				// Task_PickLock's base tick records crime 2 every tick before the roll (dt24_picklock section 7.2).
@@ -2063,7 +2093,7 @@ void Simulation::stepDoorSteps()
 					if (!sufficientLockSkill(door->lockLevel, fighter.skills.lockpicking, false))
 					{
 						logTask("lock_too_hard member " + std::to_string(id) + " door " + std::to_string(step.door)); // no crime, no roll (k16.6.366)
-						end(InteractEvent::kRefused, true);
+						end(InteractEvent::kTooHard, true);
 						running = false;
 						break;
 					}

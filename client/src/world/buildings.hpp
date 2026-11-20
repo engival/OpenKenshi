@@ -35,7 +35,10 @@ struct BuildingPartDef
 	// normal map (only read for EMISSIVE), `texture2` / `normal2` the second texture and normal map of the dual modes.
 	int featureMode = -1;
 	int alphaCut = 0;		// 0-255 alpha test threshold on the texture alpha (features; leaves meshes), 0 = none
-	bool sway = false;		// a FOLIAGE_MESH `leaves mesh`: the canopy sways in the wind, the trunk stays (foliage.cpp, mesh.glsl inst_vs)
+	bool plant = false;		// the record is a plant (plants::isPlant): render.leaf_sway bends it, trunk and canopy as one (mesh.glsl inst_vs; a deliberate
+							// deviation, the original's trees are static), and the occluder fade exempts it (kenshi-k16.2.411.4.1). Rocks, wrecks, ruins, props: false
+	std::vector<uint32_t> swayMates;	// the part ids of the same FOLIAGE_MESH record (trunk + leaves): a bending tree takes one height from all of them, so the parts bend as one
+	bool leavesPart = false;	// the `leaves mesh` (frond motion and flutter); the trunk only bends
 	bool localCoords = false;	// triplanar/terrain mapping in object space instead of world space
 	// Interiors (docs/reference/INTERIORS.md). kind: 0 shell (BUILDING `parts`), 1 interior part (`interior`), 2 interior mask (`interior mask`: only its
 	// bounds are used, never drawn), 3 furniture from an interiors.level layout. floor: BUILDING_PART `building floor` (a nested part takes the larger of its own
@@ -55,6 +58,13 @@ struct BuildingPartDef
 	// BUILDING_PART `is stairs`: the staircase (else a ramp) from `floor` up to the next one. WorldBuildings reads its mesh for the floor hotspot at the
 	// top step (kenshi-k16.2.236.3): the level goes up there when the followed character arrives, and back down at a click on that step.
 	bool stairs = false;
+	// The navmesh bake's own walkable-surface set (kenshi-k16.2.414.2; NAVMESH_CACHE.md "Bake", COLLISION_FORMAT.md 3.3), decided once at load: a shell or interior part
+	// of a BUILDING whose `path mode` is WALKABLE (3), not flagged `is unwalkable roof`, `passable` or `no collision`. PROJECTED (1) rasterises nothing, OBSTACLE (2) every
+	// triangle unwalkable, IGNORE (0) nothing: none of the three is ground. Furniture (kind 3), masks, features and props never. WorldBuildings::groundDrawn reads only these.
+	bool walkable = false;
+	int pathMode = 2;	// the BUILDING's `path mode` (0 IGNORE, 1 PROJECTED, 2 OBSTACLE, 3 WALKABLE; default OBSTACLE, as the bake reads it): why `walkable` is false (WorldBuildings::walkableReport)
+	// An interior mask part (kind 2) of a BUILDING with `interior terrain` 0: the bake leaves the terrain inside this volume out of the mesh, so a sunk building's floor is the ground there
+	bool carve = false;
 	uint32_t firstLight = 0, lightCount = 0;	// the part record's `lights` in BuildingSet::lights
 	uint32_t firstEffect = 0, effectCount = 0;	// the part record's `effects` (EFFECT instances) in BuildingSet::effects
 };

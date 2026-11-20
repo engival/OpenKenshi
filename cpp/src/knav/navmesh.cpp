@@ -24,6 +24,9 @@
 #include <tuple>
 #include <unordered_map>
 #include <utility>
+#if defined(KSIM_PROFILE) && KSIM_PROFILE
+#include "knav/route_measure.hpp"
+#endif
 
 namespace knav {
 
@@ -729,6 +732,7 @@ namespace {
 // fits, the start is pushed off the walls by r + 0.1 Havok, the goal by r + 0.05, the straight path's corners by r + 0.5.
 constexpr float kStartPush = 1.0f;
 constexpr float kGoalPush = 0.5f;
+constexpr float kStraightGoal = 10.0f; // the shortcut's goal tolerance: 1.0 Havok (rwh.144 DAT_14167c308)
 constexpr float kCornerPush = 5.0f;
 constexpr float kShrinkShare = 0.5f; // shrunkFunnel moves a portal end inward by at most this share of the portal's width
 constexpr float kBodyHop = 4.0f; // walkLeg's hop for a body
@@ -882,7 +886,7 @@ Point crossingOn(const float* left, const float* right, const Point& from, const
 // node nearest the end when it is out of reach; empty when nothing was searched.
 void clearanceCorridor(const dtNavMeshQuery& query, ClearanceMap& cache, dtPolyRef startRef, dtPolyRef endRef,
 	const Point& start, const Point& end, const dtQueryFilter& filter, const TravelFilter& travel, int maxNodes,
-	std::vector<dtPolyRef>& polys, bool& outOfNodes, bool onTheWay, int& expanded, bool exemptFirst)
+	std::vector<dtPolyRef>& polys, bool& outOfNodes, bool onTheWay, int& expanded, bool exemptFirst, float squeezeReach)
 {
 	struct Node
 	{
@@ -895,6 +899,7 @@ void clearanceCorridor(const dtNavMeshQuery& query, ClearanceMap& cache, dtPolyR
 	};
 	const dtNavMesh& nav = *query.getAttachedNavMesh();
 	const float scale = kHeuristicScale * std::min(1.0f, travel.minCost());
+	float dummyT = 0.0f;
 	std::vector<Node> nodes{ { startRef, -1, 0.0f, distance(start, end) * scale, start, false } };
 	std::unordered_map<dtPolyRef, int> seen{ { startRef, 0 } };
 	using Entry = std::pair<float, int>;
@@ -938,7 +943,12 @@ void clearanceCorridor(const dtNavMeshQuery& query, ClearanceMap& cache, dtPolyR
 			portalOf(*tile, *poly, link, left, right);
 			// The last hop into the goal's polygon is exempt: a goal against a wall, on a lip or in a narrow doorway is reached by
 			// clamping (the shrunk funnel keeps the corner off the wall), not refused after the whole budget (kenshi-k16.7.62).
-			if (link.ref != endRef && !(exemptFirst && at == 0) && !fits(query, cache, current.ref, i, left, right, travel.radius))
+			// squeezeReach > 0 (the retry of a refused goal, planPathFrom): the portals that close to the goal are exempt too, so a body
+			// squeezes only its last step onto a spot a standing character already holds, never through a gap mid-route; only through wall-band (Area::Edge)
+			// polygons, the strip the mesh already calls walkable floor too close to a wall for a body (a bare 7 u pinch between two walls stays shut).
+			const bool nearGoal = squeezeReach > 0.0f && (poly->getArea() == static_cast<unsigned char>(Area::Edge) || nextPoly->getArea() == static_cast<unsigned char>(Area::Edge))
+				&& dtDistancePtSegSqr2D(end.data(), left, right, dummyT) <= squeezeReach * squeezeReach;
+			if (link.ref != endRef && !nearGoal && !(exemptFirst && at == 0) && !fits(query, cache, current.ref, i, left, right, travel.radius))
 				continue;
 			Point mid;
 			if (onTheWay)
@@ -1504,7 +1514,7 @@ float NavQuery::wallDistance(const PolyLoc& loc, float limit) const
 void configureFilter(dtQueryFilter& out, const TravelFilter& travel)
 {
 	out.setIncludeFlags(travel.allowed);
-	out.setExcludeFlags(travel.doorClass < kDoorClasses ? 1u << (kDoorDeniedShift + travel.doorClass) : 0u);
+	out.setExcludeFlags(travel.throughLocks ? 0u : kDoorLockedFlag);
 	for (int i = 0; i < kAreaCount; ++i)
 		out.setAreaCost(i, travel.cost[static_cast<std::size_t>(i)]);
 }
@@ -1555,6 +1565,37 @@ bool NavQuery::walkLeg(const Point& from, const Point& to, float radius, const T
 	return true;
 }
 
+// The body's width walk for the straight-walk shortcut: the goal is ground the body fits on (no wall or ledge within r: a chaser's exact goal on
+// a ledge edge walked a fighter off the upper floor, ksim_fight_levels; such a click keeps the snap and push), and the leg walks clear for the
+// whole body. One polygon-corridor ray with the same filter confirms the walk crosses no door polygon (water and closed doors are the filter's).
+bool NavQuery::straightWalk(const Point& from, const Point& to, const TravelFilter& travel) const
+{
+	PolyLoc at;
+	if (distance(from, to) < 1e-3f || !locate(to, { 1.0f, 12.0f, 1.0f }, at, travel) || wallDistance(at, travel.radius) < travel.radius
+		|| !walkLeg(from, to, travel.radius, travel))
+		return false;
+	dtQueryFilter filter;
+	configureFilter(filter, travel);
+	const float extents[3] = { 1.0f, 12.0f, 1.0f };
+	dtPolyRef a = 0;
+	dtPolyRef b = 0;
+	float nearA[3];
+	float nearB[3];
+	if (dtStatusFailed(query_->findNearestPoly(from.data(), extents, &filter, &a, nearA)) || a == 0
+		|| dtStatusFailed(query_->findNearestPoly(to.data(), extents, &filter, &b, nearB)) || b == 0)
+		return false;
+	std::vector<dtPolyRef> hit(kMaxPathPolys);
+	float t = 0.0f;
+	float normal[3];
+	int count = 0;
+	if (dtStatusFailed(query_->raycast(a, nearA, nearB, &filter, &t, normal, hit.data(), &count, kMaxPathPolys)) || t < 1.0f - 0.3f / distance(from, to)) // the ray may stop a hair short on a boundary click
+		return false;
+	for (int i = 0; i < count; ++i)
+		if (mesh_.doorOfRef_.count(hit[static_cast<std::size_t>(i)]) != 0)
+			return false;
+	return true;
+}
+
 NavQuery::ClearanceCache& NavQuery::clearanceFor() const
 {
 	// Keys are polygon refs and link indices: replaceTiles re-links neighbour tiles (an index can name another portal) and a
@@ -1599,10 +1640,17 @@ PathResult NavQuery::planPath(const Point& from, const Point& to, const Point& h
 	{
 		return route.length + (route.points.empty() ? 0.0 : std::hypot(route.points[0][0] - from[0], route.points[0][2] - from[2]));
 	};
-	if (!banded || !refit.found || walked(refit) <= kBandDetour * direct + kBandSlack)
+	// A refit whose first point the walker cannot reach from where the body stands (a wall corner between: the Hub bar foyer, k16.8.54) is no
+	// route at all: the body slides to a halt on it and the walk is abandoned unseen. The start's own polygon is planned instead, whatever it walks.
+	const bool leadShut = banded && refit.found && !refit.points.empty() && !walkLeg(from, refit.points[0], 0.0f, travel);
+	// A refit that ran out of nodes is a hopeless pair: a second search from the own polygon would spend a second budget on it.
+	if (!banded || refit.failure == PathResult::Failure::OutOfNodes || !refit.found || (!leadShut && walked(refit) <= kBandDetour * direct + kBandSlack))
 		return refit;
 	PathResult own = planPathFrom(from, to, halfExtents, travel, nullptr, true, &banded);
-	if (!own.found || !own.complete || walked(own) >= kBandSaving * walked(refit))
+	// Both searches' work is the call's work, whichever route stays (the deterministic cost count the route soak gates on).
+	own.clearanceNodes += refit.clearanceNodes;
+	refit.clearanceNodes = own.clearanceNodes;
+	if (!own.found || !own.complete || (!leadShut && walked(own) >= kBandSaving * walked(refit)))
 		return refit;
 	// The exempt first hop may cut a corner: the walk keeps every sample at least as far from the walls as the body's own spot is (or r).
 	const float r = travel.radius;
@@ -1650,6 +1698,21 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 	if (!snapToMesh(*query_, to, halfExtents, endRef, end, filter))
 	{
 		result.failure = PathResult::Failure::EndOffMesh;
+		return result;
+	}
+	// Straight-walk shortcut first (rwh.144 section 1d.2, exe 1403aaa90; PATHFINDING_STATIC section 1.8): a width-aware walk along the mesh from
+	// the start to the raw goal, accepted when it ends within kStraightGoal of the goal; then no goal snap, no wall push and no search. The body
+	// walks clear for the whole body and the goal is ground it fits on (straightWalk); a click inside r of a wall keeps the snap and push.
+	// A walk through a door polygon is refused (the door's own routing, throughDoorMiddle, needs the corridor).
+	if (travel.radius > 0.0f && distance(end, to) <= kStraightGoal && straightWalk(start, end, travel))
+	{
+		result.found = true;
+		result.complete = true;
+		result.points = { start, end };
+		result.length = distance(start, end);
+		result.cost = result.length;
+		if (snappedStart != nullptr)
+			*snappedStart = start;
 		return result;
 	}
 	const dtPolyRef plainStart = startRef; // before a refit onto ground the body fits
@@ -1742,12 +1805,28 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 		const bool roundabout = probeFits && shortWay && probeLength > kRefineRatio * direct;
 		if (!probeClosed && (!probeFits || roundabout))
 		{
+#if defined(KSIM_PROFILE) && KSIM_PROFILE
+			const std::uint64_t clearBegan = measure::now();
+			(roundabout ? measure::counters.probeFitsRoundabout : measure::counters.clearanceNoFit).fetch_add(1, std::memory_order_relaxed);
+#endif
 			bool outOfNodes = false;
 			std::vector<dtPolyRef>& clear = sc.clear;
 			clear.clear();
 			clearanceCorridor(*query_, clearance, startRef, endRef, start, end, filter, travel,
 				std::min(maxNodes_, std::max(kClearanceNodes, kClearanceProbeScale * probed)), clear, outOfNodes, shortWay,
-				result.clearanceNodes, exemptFirst);
+				result.clearanceNodes, exemptFirst, 0.0f);
+			// The strict search refused a goal the plain search reaches (the Hub bar foyer: the last portals before the barman's spot are
+			// furniture-ring gaps no body fits, so the search floods its budget, kenshi-k16.8.46). Run once more with the portals within
+			// a body diameter of the goal exempt. Only after a refusal, so a successful search costs nothing extra.
+			if (!roundabout && polys[0] == startRef && polys[static_cast<std::size_t>(polyCount - 1)] == endRef
+				&& (outOfNodes || clear.empty() || clear.back() != endRef))
+			{
+				int again = 0;
+				clearanceCorridor(*query_, clearance, startRef, endRef, start, end, filter, travel,
+					std::min(maxNodes_, std::max(kClearanceNodes, kClearanceProbeScale * probed)), clear, outOfNodes, shortWay,
+					again, exemptFirst, 2.0f * travel.radius);
+				result.clearanceNodes += again;
+			}
 			// A copy, never a move: `polys` is also the buffer the probe above hands Detour with a capacity of kMaxPathPolys
 			// (`polys.data()`), and a moved-from vector drops to the corridor's own size. A second search from a shrunk buffer was
 			// a heap overflow (a retry-after-failure variant of the start refit, 2026-11-07: Detour wrote its whole path over the
@@ -1756,11 +1835,21 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 			if (!roundabout || (!outOfNodes && !clear.empty() && clear.back() == endRef
 					&& pulledLength(clear, static_cast<int>(clear.size())) < probeLength))
 			{
+#if defined(KSIM_PROFILE) && KSIM_PROFILE
+				if (roundabout)
+					measure::counters.clearanceWon.fetch_add(1, std::memory_order_relaxed);
+#endif
 				polys.assign(clear.begin(), clear.end());
 				polyCount = static_cast<int>(polys.size());
 			}
 			if (outOfNodes && !roundabout)
 				searched |= DT_OUT_OF_NODES;
+#if defined(KSIM_PROFILE) && KSIM_PROFILE
+			const std::uint64_t clearTook = measure::now() - clearBegan;
+			measure::counters.clearanceNs.fetch_add(clearTook, std::memory_order_relaxed);
+			if (roundabout)
+				measure::counters.roundaboutNs.fetch_add(clearTook, std::memory_order_relaxed);
+#endif
 		}
 	} else {
 		searched = query_->findPath(startRef, endRef, start.data(), end.data(), &filter, polys.data(), &polyCount,
@@ -1805,6 +1894,24 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 		std::vector<Point> shrunk = shrunkFunnel(*query_, polys, polyCount, start, end, travel.radius + kCornerPush);
 		if (shrunk.size() >= 2)
 			result.points = std::move(shrunk);
+		// A start in a wall's band can leave the shrunken portals' funnel a jog back past itself (Storm House pocket, -50584, -1214: 3 u
+		// out and back, k16.7.103). A corner is no corner when the points on either side of it walk to each other for the whole body plus
+		// its push: from each kept point, the farthest later point it walks to takes the string tight (Heft Longhouse, k16.6.460: the
+		// corners 1 and 2 of a 10-point route lay inside a straight walk from point 0 to point 3, which no neighbour test sees).
+		for (std::size_t i = 0; i + 2 < result.points.size(); ++i)
+			for (std::size_t j = result.points.size() - 1; j >= i + 2; --j)
+				if (walkLeg(result.points[i], result.points[j], travel.radius + kCornerPush, travel))
+				{
+					// A loop back onto its own start (the same point twice): the repeat goes with it, no zero-length leg is left.
+					const std::size_t last = result.points[j] == result.points[i] ? j + 1 : j;
+					result.points.erase(result.points.begin() + static_cast<std::ptrdiff_t>(i + 1), result.points.begin() + static_cast<std::ptrdiff_t>(last));
+					break;
+				}
+		for (std::size_t i = 1; i + 1 < result.points.size();)
+			if (walkLeg(result.points[i - 1], result.points[i + 1], travel.radius + kCornerPush, travel))
+				result.points.erase(result.points.begin() + static_cast<std::ptrdiff_t>(i));
+			else
+				++i;
 	}
 	for (std::size_t i = 1; i < result.points.size(); ++i)
 		result.length += distance(result.points[i - 1], result.points[i]);

@@ -79,7 +79,6 @@
 #include "kworld/towns.hpp"
 #include "render/navoverlay.hpp"
 #include "app/config.hpp"
-#include "platform/datadir.hpp"
 #include "platform/windowgeom.hpp"
 #include "platform/windowgate.hpp"
 #include "render/readback.hpp"
@@ -219,31 +218,45 @@ static bool ray_shapes(const double origin[3], const double dir[3], double far, 
 // of sim.peek+hover on a camera jump to a fresh zone cell, Hub 22k shapes ~170 ms).
 const cfg::Bool kPickWait{ cfg::Group{ "Scripted runs" }, "debug.pick_wait", true, "Scripted runs: wait for the collision gather before each pick (deterministic clicks). Off: pick with the shapes at hand, as the player does" };
 
-// The click ray's world hit: the nearer of the terrain and the collision shapes round the camera (SIMLINK 13: the picker's bottom layer), passing
-// through the shapes where they are see_through (a click there is on what shows behind; user 2026-11-03). False: neither. building: the hit is a
-// building's shape. kenshi-k16.2.259: origin is the near-plane start of the pick ray, eye the camera's position (ray_shapes), skipped the report's shapes.
+// The click ray's world hit (SIMLINK 13: the picker's bottom layer). Ground layer (kenshi-k16.2.412.3, CLIENT.md "One ground solver, both directions"): the nearer
+// of the drawn walkable parts (BuildingPartDef::walkable, the stand solver's set; the cut and the ghost pass what they hide) and the terrain under the carve rule
+// (a hit inside a carved interior is the dune the interior mask clips, not drawn: SimView::setTerrainFn's masked). The collision shapes come first only where they are
+// nearer than that ground: a wall or an object, passed where they are see_through (a click there is on what shows behind; user 2026-11-03). False: nothing.
+// building: the hit is a building's (a shape, or a walkable part). kenshi-k16.2.259: origin is the near-plane start of the pick ray, eye the camera's position
+// (ray_shapes), skipped the report's shapes.
 bool ray_hit(const double origin[3], const double dir[3], double hit[3], bool* building, const double* eye, std::vector<PickSkip>* skipped, float* hitBox)
 {
 	*building = false;
 	if (app.scripted() && kPickWait.get()) { app.collide.wait(); }
-	const bool ground = ray_ground(origin, dir, hit);
-	double far = 20000;
-	if (ground)
-	{
-		far = std::sqrt(std::pow(hit[0] - origin[0], 2) + std::pow(hit[1] - origin[1], 2) + std::pow(hit[2] - origin[2], 2));
-		// kenshi-k16.2.254.1: the terrain inside a carved interior is the dune a sunk building sits in — the interior mask clips it and it is not drawn
-		// (interiorclip.inc) — so it is not the click's ground: the floor is, the same rule the walkers draw by (kyat.2, WorldBuildings::insideInterior).
-		// The ray goes on to the drawn floor inside the hull, out to where it leaves the hull's box; an outdoor click ends on the terrain as before.
-		double exitT = 0;
-		if (app.buildings.insideInterior(hit, app.pos, dir, &exitT) && exitT > far) { far = exitT + 1.0; }
-	}
 	const bool prevCuts = app.buildings.levelCuts;
 	app.buildings.levelCuts = true;	// the click pick: buildings nobody is in are cut at the floor selector's level (WorldBuildings::levelCuts)
+	double terrain[3], groundT = 1e30;
+	const bool onTerrain = ray_ground(origin, dir, terrain);
+	const bool carved = onTerrain && app.buildings.insideInterior(terrain, nullptr, nullptr, nullptr, true);
+	if (onTerrain && !carved) { groundT = std::sqrt(std::pow(terrain[0] - origin[0], 2) + std::pow(terrain[1] - origin[1], 2) + std::pow(terrain[2] - origin[2], 2)); }
+	double walkT = 1e30;
+	bool walk = false;
+	for (double from = 0; from < std::min(groundT, 20000.0);)	// the nearest walkable part the view draws: a hit the cut / ghost hides is passed
+	{
+		double t;
+		if (!app.buildings.walkableRay(origin, dir, from, std::min(groundT, 20000.0), t)) { break; }
+		const double at[3] = { origin[0] + dir[0] * t, origin[1] + dir[1] * t, origin[2] + dir[2] * t };
+		if (!see_through(at)) { walkT = t; walk = true; break; }
+		from = t + 0.5;
+	}
+	const double far = std::min(walk ? walkT : groundT, 20000.0);
 	const bool shape = ray_shapes(origin, dir, far, hit, building, eye, skipped, hitBox);
 	app.buildings.levelCuts = prevCuts;
 	if (shape) { return true; }
 	*building = false;
-	return ground;
+	if (walk)
+	{
+		for (int k = 0; k < 3; k++) { hit[k] = origin[k] + dir[k] * walkT; }
+		*building = true;
+		return true;
+	}
+	if (onTerrain) { std::copy(terrain, terrain + 3, hit); }	// a carved hit nothing else answers: the terrain as before
+	return onTerrain;
 }
 
 // The floating camera's ground at (x, z): the highest surface drawn there, a building floor or roof (cut-away ones pass) or a rock, else the
@@ -328,9 +341,10 @@ std::vector<ItemLabel> item_labels(bool all, const float* cam)	// cam: the mvp t
 	{
 		const bool producer = th.kind == simlink::Interactable::kProducer;	// labelled only while hovered (MINE)
 		if ((th.kind != simlink::Interactable::kItem && th.kind != simlink::Interactable::kContainer && !producer) || ((!all || producer) && id != app.hoverThing)) { continue; }
-		if (const double at[3] = { th.pos[0], th.pos[1], th.pos[2] }; cut_hidden(at)) { continue; }	// on a floor the cut hides
+		const double thY = producer ? th.pos[1] : app.sim.thingY(id, th);	// items and containers: the drawn ground (k16.2.412.4)
+		if (const double at[3] = { th.pos[0], thY, th.pos[2] }; cut_hidden(at)) { continue; }	// on a floor the cut hides
 		const double lift = producer ? kProducerLabelLift : th.kind == simlink::Interactable::kContainer ? kContainerLabelLift : kLabelLift;
-		const float p[3] = { (float)(th.pos[0] - app.pos[0]), (float)(th.pos[1] + lift - app.pos[1]), (float)(th.pos[2] - app.pos[2]) };
+		const float p[3] = { (float)(th.pos[0] - app.pos[0]), (float)(thY + lift - app.pos[1]), (float)(th.pos[2] - app.pos[2]) };
 		if (all && id != app.hoverThing && std::hypot(p[0], p[1], p[2]) > kLabelRange) { continue; }
 		float c[4];
 		for (int i = 0; i < 4; i++) { c[i] = mvp[i] * p[0] + mvp[4 + i] * p[1] + mvp[8 + i] * p[2] + mvp[12 + i]; }
@@ -470,7 +484,7 @@ Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped)
 		const simlink::Interactable* th = app.sim.thing(id);
 		if (!th) { return true; }
 		if (th->kind == simlink::Interactable::kContainer && app.buildings.hasMesh(id)) { return true; }	// a drawn container: its mesh box picks, below
-		const double at[3] = { th->pos[0], th->pos[1], th->pos[2] };
+		const double at[3] = { th->pos[0], app.sim.thingY(id, *th), th->pos[2] };
 		std::string why;
 		if (!pick_hidden(at, &why)) { return false; }
 		const bool box = th->kind == simlink::Interactable::kContainer;
@@ -607,7 +621,15 @@ Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped)
 	{
 		bool inBed = false;	// the character lies in the picked bed: its sim position is on the sleeping spot
 		if (double cp[3]; p.kind == Pick::Bed && app.sim.simPos(id, cp)) { inBed = std::hypot(cp[0] - bedAt[0], cp[2] - bedAt[2]) < kBedReach && std::fabs(cp[1] - bedAt[1]) < 4; }
-		if (t <= (inBed ? std::max(best, world) + 2 * kBedReach : std::min(best, world + 3)))
+		// a character drawn beside the bed (a KO'd body on the floor next to it) is not the bed's: the bed's box reaches 8-11 u above the floor and takes its
+		// pixels. Its own drawn triangles decide: the bed holds the click only when the ray meets them before the body (k16.2.224.3)
+		bool beside = false;
+		if (p.kind == Pick::Bed && !inBed && t > best && t <= world + 3)
+		{
+			double td = 0;
+			beside = app.buildings.bedRay(bedAt, from, dir, td, true) != 1 || td > t;
+		}
+		if (beside || t <= (inBed ? std::max(best, world) + 2 * kBedReach : std::min(best, world + 3)))
 		{
 			p.kind = Pick::Character;
 			p.id = id;

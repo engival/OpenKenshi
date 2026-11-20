@@ -48,7 +48,7 @@ struct RouteRequest
 	double toX = 0.0;
 	double toZ = 0.0;
 	std::optional<double> toY; // the click's height, when the caller has one
-	// The door class is none (kDoorClasses): no denied-door bit is excluded, so locked doors stay in the search.
+	// Locked doors stay in the search.
 	bool planned = false;
 	// Body: clearance from the walls (0 = none) and the race's water cost scale (empty = the filter's default).
 	double radius = 0.0;

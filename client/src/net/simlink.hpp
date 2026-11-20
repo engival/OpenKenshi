@@ -15,7 +15,7 @@
 namespace simlink
 {
 	constexpr uint32_t kMagic = 0x4D49534B;	// 'KSIM'
-	constexpr uint16_t kProtocol = 6;
+	constexpr uint16_t kProtocol = 8;
 	enum FrameType : uint16_t { kHello = 1, kStrtab = 2, kError = 3, kPing = 4, kSnapBegin = 10, kSnapEnd = 11, kAppearance = 20, kDynamic = 21, kMedical = 22, kRoute = 23, kInteractable = 24, kInventory = 25, kDetect = 26, kItemQuality = 27, kItemGrid = 28, kItemStats = 29, kSquads = 30, kPlayerSquads = 31, kSaves = 32, kStarts = 33, kJobs = 34, kProspect = 35, kUnlocks = 36, kDiscovered = 37, kFactionRelations = 38, kTaskProgress = 39, kBuilding = 47, kBuildingGrid = 48, kCharStats = 49,
 		kClock = 40, kWeather = 41, kBounds = 42, kNavParams = 43, kNavTile = 44, kNavPolyFlags = 45, kEvent = 50, kTrade = 53, kScenarioList = 54, kScenarioStarted = 55, kScenarioMetrics = 56, kItemLock = 57, kBeams = 58, kSeenBy = 59, kDetectedBy = 60, kMenuEntries = 61, kNewGameResult = 62, kResearchState = 63, kCages = 64, kProfile = 70, kOrder = 100, kScenarioListReq = 102, kScenarioLoad = 103, kScenarioEnd = 104, kNewGame = 111 };
 	enum Flag : uint32_t { kCombat = 1, kStealth = 2, kDrawn = 4, kKO = 8, kDead = 16, kProne = 32, kPlayer = 64, kCarryL = 128, kCarryR = 256, kYValid = 512,
@@ -139,6 +139,7 @@ namespace simlink
 		{
 			uint32_t item = 0, count = 0; uint8_t slot = 0; bool hasQuality = false; uint32_t maker = 0, model = 0; float level = 0; uint8_t grade = 255;
 			uint8_t section = 255, x = 0, y = 0; uint32_t material = 0, colour = 0;
+			uint8_t steal = 255;	// ITEM_GRID steal tail (kenshi-k16.6.392): the take session's steal chance in percent for this entry, 255 = no roll (own item, or no tail)
 		};
 		// ITEM_LOCK (57, after ITEM_GRID; SIMLINK "ITEM_LOCK"): the worn shackles' lock. index = their entry; locked: bit 0 (a picked or broken pair stays worn,
 		// open); canCut: the wearer carries a tool; canBreak: strength beats 3 x hardness; chance: the wearer's own pick chance per roll, 0..0.9; hardness
@@ -176,7 +177,7 @@ namespace simlink
 		struct Bounty { uint32_t faction = 0; int32_t amount = 0; };
 		struct SkillProgress { uint8_t skill = 0; float progress = 0; };
 		uint64_t tick = 0;
-		uint8_t state = 0, lockLevel = 0, extraKind = 0, weaponClass = 0;	// extraKind 1 Stealth, 2 Athletics; weaponClass 0 martial arts, 1 attack + defence, 2 crossbows
+		uint8_t state = 0, lockLevel = 0, extraKind = 0, extraSkill = 0xFF, weaponClass = 0;	// extraKind 1 Stealth, 2 Athletics, 3-6 job/ranged/melee/swimming (not drawn yet); extraSkill 0xFF = none; weaponClass 0 martial arts, 1 attack + defence, 2 crossbows
 		uint32_t goal = 0;
 		float encumbrance = 0, extra = 0;
 		std::vector<SkillRow> skills;
@@ -224,7 +225,7 @@ namespace simlink
 		uint32_t localFaction = 0;	// the owner of the town the character stands in; 0 = none / outdoors
 		std::vector<BountyTag> bountyTags;	// one per bounties entry, same order
 	};
-	// CHAR_DETECT (SIMLINK 6): the detection meter of a player-controlled character; state 0 none, 2 being noticed, 1 noticed (meter 1); by = the observer
+	// CHAR_DETECT (SIMLINK 6): the detection meter of a player-controlled character; state 0 none, 2 being noticed, 1 noticed (meter 1); by = the observer (any non-allied observer, sensor::ally, not only a hostile team: kenshi-rquo)
 	struct Detect
 	{
 		enum State : uint8_t { kNone = 0, kNoticed = 1, kNoticing = 2 };
@@ -232,8 +233,8 @@ namespace simlink
 		float meter = 0;
 		uint8_t state = 0;
 	};
-	// SEEN_BY (SIMLINK 6): for a sneaking player-controlled character in view, the hostile observers in view that know it, sorted by id. It is
-	// exactly the stealth KO's abort test (a hostile absent is one the KO does not abort on); n = 0 (an empty set) erases the entry.
+	// SEEN_BY (SIMLINK 6): for a sneaking player-controlled character in view, the non-allied observers (sensor::ally, hostile or neutral) in view that know it, sorted by id. It is
+	// exactly the stealth KO's abort test (a non-allied observer absent is one the KO does not abort on); n = 0 (an empty set) erases the entry.
 	struct SeenBy { uint64_t tick = 0; std::vector<uint64_t> by; };
 	// DETECTED_BY (SIMLINK 60): a sneaking player character's detection records, one entry per observer (the original's per-pair notice meter):
 	// state 1 noticed (red), 2 being noticed (yellow), friendly = a friend force-noticed it (green). n = 0 (an empty set) erases the entry.
@@ -268,6 +269,7 @@ namespace simlink
 		uint32_t id = 0;	// unique inside one weather instance of one group
 		uint32_t effect = 0, particles = 0, sound = 0;	// strids
 		uint64_t spawnTick = 0, endTick = 0;
+		uint16_t visibleTicks = 0;	// ticks from spawnTick the beam is seen; 0 = all its life (h2v.14.11)
 		float x = 0, z = 0;	// the ground point at spawnTick
 		float speed = 0, radius = 0, strength = 0;
 		std::vector<BeamSegment> segments;	// they cover the whole life: the ticks sum to endTick - spawnTick

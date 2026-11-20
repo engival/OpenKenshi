@@ -21,6 +21,7 @@
 
 #include "kworld/coords.hpp"
 #include "kworld/loadorder.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cmath>
 #include <fstream>
@@ -33,12 +34,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
-#endif
-#ifndef KSIM_SCENARIOS_DIR
-#error KSIM_SCENARIOS_DIR must be defined
 #endif
 
 using namespace ksim;

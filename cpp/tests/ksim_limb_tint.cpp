@@ -12,13 +12,11 @@
 #include "ksim/save/save.hpp"
 #include "ksim/net/simlink.hpp"
 #include "ksim/net/simlink_scenario.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cstdio>
 #include <cstring>
 
-#ifndef KSIM_BINARY_DIR
-#error KSIM_BINARY_DIR must be defined
-#endif
 
 namespace {
 

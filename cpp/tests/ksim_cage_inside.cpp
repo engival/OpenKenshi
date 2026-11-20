@@ -8,14 +8,12 @@
 #include "prop_clip.hpp"
 #include "scenario_rig.hpp"
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cmath>
 #include <iostream>
 #include <string>
 
-#ifndef KSIM_SCENARIO
-#error KSIM_SCENARIO must be defined
-#endif
 
 using namespace ksim;
 
@@ -23,7 +21,7 @@ int main(int argc, char** argv)
 {
 	try
 	{
-		const scenario::File file = scenario::parseFile(KSIM_SCENARIO);
+		const scenario::File file = scenario::parseFile(ksim::dev::srcPath("../scenarios/cage_prisoner.kscen"));
 		const std::string world = argc > 1 ? argv[1] : "";
 		if (world.empty() || !scenario_rig::hasRegion(file, world))
 		{

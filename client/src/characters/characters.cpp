@@ -77,6 +77,10 @@ const cfg::Bool kInertialize{ cfg::Group{ "Locomotion" }, "anim.inertialize", tr
 // double: the race body in a plain neutral material; off: nothing drawn (the behaviour before this).
 const cfg::Text kLoadingStandin{ cfg::Group{ "Character loading" }, "render.loading_standin", "silhouette", { "silhouette", "double", "off" },
 	"Characters still uploading draw as their race's body: silhouette = flat black, unlit (the default); double = a plain neutral body; off = not drawn" };
+// render.char_fade (kenshi-k16.2.258.10.1, the user's "the units popped in" on the town approach): a character that first appears in the drawn set
+// dithers in over this many seconds through the look's coverage, and one that leaves the set dithers out over the same, so a whole body never pops in
+// or out in one frame. 0 = the old pop.
+const cfg::Float kCharFade{ cfg::Group{ "Character loading" }, "render.char_fade", 1.0, 0.0, 5.0, "Characters: the seconds a character takes to dither in when it first appears in the drawn area, and out when it leaves (0 = the old one-frame pop)" };
 #ifdef KCLIENT_DEV_TOOLS
 // dev.standin_hold (KCLIENT_DEV_TOOLS, kenshi-k16.2.258.1): hold every non-squad character in its stand-in for this many seconds after its build, so
 // the A/B and the switch can be seen live and in a script (a script sets it to 0 on a frame to release the whole crowd into the fade at once).
@@ -246,6 +250,7 @@ void Characters::swapIn(size_t i)
 	// replacement does not skip the stand-in. The replacement stands in on the same clock until its whole look is ready.
 	const bool standing = standinLive(old);
 	const float standAge = old.standAge;
+	const float cover = old.cover;	// a rebuild is not an arrival: it keeps the fade's place (kenshi-k16.2.258.10.1)
 	std::shared_ptr<const Char> was = standing ? nullptr : drawable(old) ? nullptr : old.was;
 	if (!standing && !was && drawable(old))
 	{
@@ -257,9 +262,11 @@ void Characters::swapIn(size_t i)
 	if (standing)
 	{
 		chars_[i].standAge = standAge;
+		chars_[i].cover = cover;
 		return;
 	}
 	if (!drawable(chars_[i])) { chars_[i].was = std::move(was); }
+	chars_[i].cover = cover;
 	chars_[i].replaced = true;	// a build over one already on screen: it appears without the loading stand-in's fade (kenshi-k16.2.258.1)
 }
 
@@ -394,11 +401,11 @@ bool Characters::riseLive(size_t i, const Spec& s, std::string& err)
 	return true;
 }
 
-void Characters::keep(const std::vector<int>& from)
+void Characters::keep(const std::vector<int>& from, const std::vector<int>& departing)
 {
 	// the common case (a burst adds, nobody left or moved): from is 0..n-1, so the first n stay where they are and only the rest go, without moving
 	// every character (0.2-0.7 ms a rebuild frame for a crowd; kenshi-k16.2.205.12.77)
-	bool prefix = from.size() <= chars_.size();
+	bool prefix = departing.empty() && from.size() <= chars_.size();
 	for (size_t i = 0; i < from.size() && prefix; i++) { prefix = from[i] == (int)i; }
 	if (prefix)
 	{
@@ -412,6 +419,16 @@ void Characters::keep(const std::vector<int>& from)
 	for (const int i : from) { to[(size_t)i] = (int)kept.size(); kept.push_back(std::move(chars_[(size_t)i])); }
 	// a carrier that went: carriedBy -1, drawn on its own until the sim view replaces it
 	for (Char& c : kept) { if (c.spec.carriedBy >= 0) { c.spec.carriedBy = to[(size_t)c.spec.carriedBy]; } }
+	// the characters that left the drawn set: kept after the shown ones, frozen in their last pose and dithered out (kenshi-k16.2.258.10.1)
+	for (const int i : departing)
+	{
+		if (i < 0 || (size_t)i >= chars_.size()) { continue; }
+		Char c = std::move(chars_[(size_t)i]);
+		c.departing = true;
+		c.spec.speed = 0;	// the clip holds its last frame while the body dithers out
+		c.spec.carriedBy = c.spec.carriedBy >= 0 ? to[(size_t)c.spec.carriedBy] : -1;
+		kept.push_back(std::move(c));
+	}
 	chars_ = std::move(kept);
 }
 
@@ -472,7 +489,7 @@ Characters::RaceChoices Characters::choices(const std::string& race) const
 	for (int g = 0; g < 2; g++)
 	{
 		out.heads[g] = (int)ri->heads[g].size();
-		if (!editor.empty()) { out.ranges[g] = readRanges(editor, g == 1); }
+		if (!editor.empty()) { out.ranges[g] = readRanges(editor, g == 1); out.skinStops[g] = readSkinStops(editor, g == 1); }
 	}
 	return out;
 }
@@ -542,6 +559,14 @@ void Characters::hull(const std::string& race, float out[3]) const
 	const float* h = kHuman;
 	for (const RaceInfo& r : races_) { if (folded(r.name) == folded(race)) { h = r.hull; } }
 	for (int k = 0; k < 3; k++) { out[k] = h[k]; }
+}
+
+bool Characters::pathBody(const std::string& race, double& radius, float& water) const
+{
+	radius = 2.6;
+	water = 1.0f;
+	for (const RaceInfo& r : races_) { if (folded(r.name) == folded(race)) { radius = r.footprint; water = r.waterCost; return true; } }
+	return false;
 }
 
 int Characters::limbSlot(const std::string& race, const std::string& part) const
@@ -673,9 +698,18 @@ void Characters::update(double dt, double fadeDt)
 		cfgGen_ = cfg::generation(); strideWarp_ = kStrideWarp.get(); stopContact_ = kStopContact.get(); footLock_ = kFootLock.get(); footTerrain_ = kFootTerrain.get(); actionRoot_ = kActionRoot.get(); inertOn_ = kInertialize.get();
 		const std::string m = kLoadingStandin.get();	// render.loading_standin
 		standin_ = m == "double" ? kStandinDouble : m == "off" ? kStandinOff : kStandinSilhouette;
+		charFade_ = kCharFade.get();	// render.char_fade
 	}
 	for (Char& c : chars_)
 	{
+		// the arrival / departure dither (render.char_fade, kenshi-k16.2.258.10.1), on the frame's own dt like the stand-in's clocks; a body with no
+		// sim id (a scene's, the creator's) is never an arrival and stays whole
+		if (c.departing)
+		{
+			c.cover = charFade_ > 0 ? std::max(0.0f, c.cover - (float)(fadeDt / charFade_)) : 0.0f;
+			if (c.cover <= 0) { departDone_ = true; }
+		}
+		else if (c.cover < 1 && c.spec.id) { c.cover = charFade_ > 0 ? std::min(1.0f, c.cover + (float)(fadeDt / charFade_)) : 1.0f; }
 		// the loading stand-in's clocks (kenshi-k16.2.258.1), on the frame's own dt: it stands in while the build's GPU objects are queued (or the dev
 		// hold keeps it), then the shape morph (stage 1) and the look's dither fade (stage 2) run on. A build that replaced one already on screen
 		// (swapIn) appears without either: it had a body drawn a frame ago (standinStage reads that).
@@ -766,6 +800,14 @@ void Characters::update(double dt, double fadeDt)
 		for (int k = 0; k < 3; k++) { c.pos[k] = c.spec.pos[k]; }
 		c.pos[1] += c.rootShift - (c.spec.loco ? c.soleLift : 0.0f);	// normal locomotion only: carried (carryPlace) bypasses it, as 1405c84e0 does
 		c.orient = { std::cos(c.spec.yaw * 0.5f), 0, std::sin(c.spec.yaw * 0.5f), 0 };
+		if (previewOrbit_ && i == previewIndex_)	// the creator's assembly (setPreviewOrbit): p' = center + q x (p - center) + shift, the platform draws with the same q
+		{
+			const kworld::SkelVec3 r = kworld::rotate(previewQ_, { (float)(c.pos[0] - previewCenter_[0]), (float)(c.pos[1] - previewCenter_[1]), (float)(c.pos[2] - previewCenter_[2]) });
+			c.pos[0] = previewCenter_[0] + previewShift_[0] + r.x;
+			c.pos[1] = previewCenter_[1] + previewShift_[1] + r.y;
+			c.pos[2] = previewCenter_[2] + previewShift_[2] + r.z;
+			c.orient = kworld::multiply(previewQ_, c.orient);
+		}
 		// anim.action_root (fix 2): an action draws along its clip root; once it is not, the hand-off offset eases onto the wire
 		if (actionPath(c, (float)dt)) { }
 		else if (c.actWas)
@@ -930,6 +972,36 @@ bool Characters::boneWorld(size_t i, const char* name, double out[3]) const
 	return true;
 }
 
+void Characters::setPreviewOrbit(size_t i, const double center[3], const kworld::SkelQuat& q, const double shift[3])
+{
+	previewOrbit_ = true;
+	previewIndex_ = i;
+	previewQ_ = q;
+	for (int k = 0; k < 3; k++) { previewCenter_[k] = center[k]; previewShift_[k] = shift[k]; }
+}
+
+// The ray's nearest point to a bone inside `radius` (see the header): bones are the skeleton's own joints, so the ray through a hand picks the hand.
+bool Characters::skeletonRay(size_t i, const double origin[3], const double dir[3], double hit[3], double radius) const
+{
+	if (i >= chars_.size()) { return false; }
+	const Char& c = chars_[i];
+	double best = radius * radius;
+	bool any = false;
+	for (const kworld::SkelTransform& b : c.model)
+	{
+		const kworld::SkelVec3 o = kworld::rotate(c.orient, b.pos);
+		const double w[3] = { c.pos[0] + o.x - origin[0], c.pos[1] + o.y - origin[1], c.pos[2] + o.z - origin[2] };
+		const double t = w[0] * dir[0] + w[1] * dir[1] + w[2] * dir[2];
+		if (t <= 0) { continue; }
+		const double d2 = w[0] * w[0] + w[1] * w[1] + w[2] * w[2] - t * t;
+		if (d2 >= best) { continue; }
+		best = d2;
+		any = true;
+		for (int k = 0; k < 3; k++) { hit[k] = origin[k] + dir[k] * t; }
+	}
+	return any;
+}
+
 std::vector<std::pair<std::string, std::string>> Characters::animationRecords() const
 {
 	std::vector<std::pair<std::string, std::string>> out;
@@ -1004,6 +1076,57 @@ bool Characters::solesOf(const Char& c, double out[2][3])
 	if (c.body->src.hasShared) { scan(c.body->src.shared); }
 	for (const ogre::Submesh& sm : c.body->src.submeshes) { if (!sm.shared) { scan(sm.geometry); } }
 	return out[0][1] < 1e29 && out[1][1] < 1e29;
+}
+
+// The world box of the posed character's vertices that the heaviest bone of each picks: one body part's (byPart: the part map's own rule, baked
+// per vertex) or one bone's own (byPart false). The animal portrait's frame: its head's own size, so no per-race offset table is needed.
+bool Characters::boundsOf(const Char& c, bool byPart, int index, double lo[3], double hi[3])
+{
+	if (!c.body || c.palette.empty() || index < 0) { return false; }
+	for (int k = 0; k < 3; k++) { lo[k] = 1e30; hi[k] = -1e30; }
+	auto scan = [&](const ogre::Geometry& g)
+	{
+		if (g.boneIndex.empty()) { return; }
+		for (uint32_t v = 0; v < g.count; v++)
+		{
+			int heaviest = -1;
+			float top = 0;
+			double p[3] = {};
+			for (int k = 0; k < 4; k++)
+			{
+				const uint8_t b = g.boneIndex[v * 4 + k];
+				const float w = g.boneWeight[v * 4 + k];
+				if (w <= 0) { continue; }
+				if (w > top) { top = w; heaviest = (int)b; }
+				const float* m = &c.palette[(size_t)b * 12];
+				for (int r = 0; r < 3; r++) { p[r] += w * (m[r * 4] * g.pos[v * 3] + m[r * 4 + 1] * g.pos[v * 3 + 1] + m[r * 4 + 2] * g.pos[v * 3 + 2] + m[r * 4 + 3]); }
+			}
+			if (heaviest < 0) { continue; }
+			if (byPart) { if ((size_t)heaviest >= c.body->bonePart.size() || (int)c.body->bonePart[(size_t)heaviest] != index) { continue; } }
+			else if (heaviest != index) { continue; }
+			for (int r = 0; r < 3; r++) { lo[r] = std::min(lo[r], c.pos[r] + p[r]); hi[r] = std::max(hi[r], c.pos[r] + p[r]); }
+		}
+	};
+	if (c.body->src.hasShared) { scan(c.body->src.shared); }
+	for (const ogre::Submesh& sm : c.body->src.submeshes) { if (!sm.shared) { scan(sm.geometry); } }
+	return lo[1] < 1e29;
+}
+
+bool Characters::partBox(const Char& c, int part, double lo[3], double hi[3]) { return boundsOf(c, true, part, lo, hi); }
+
+bool Characters::boneBox(const Char& c, int bone, double lo[3], double hi[3]) { return boundsOf(c, false, bone, lo, hi); }
+
+// The skeleton's head bone. Every race the client loads (humans and the animals, `Bip01`-named rigs) has `Bip01 Head`; a rig named otherwise
+// still portraits on its head: the first bone named like one.
+int Characters::headBone(const kworld::Skeleton& sk)
+{
+	if (const int b = sk.bone("Bip01 Head"); b >= 0) { return b; }
+	for (size_t b = 0; b < sk.bones.size(); b++)
+	{
+		const std::string n = folded(sk.bones[b].name);
+		if (n.find("head") != std::string::npos && n.find("nub") == std::string::npos) { return (int)b; }
+	}
+	return -1;
 }
 
 float Characters::restLift(const Char& c)

@@ -16,6 +16,7 @@
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -29,19 +30,16 @@
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
 #endif
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
-#endif
-#ifndef KSIM_SCENARIOS_DIR
-#error KSIM_SCENARIOS_DIR must be defined
-#endif
 
 using namespace ksim;
 
 namespace
 {
 
-int play(const std::uint64_t seed)
+constexpr std::int64_t kForceTicks = 400; // the forced aid's span (20 s) after the cuff
+constexpr std::int64_t kLiftBoundTicks = 1200; // the lift starts within 60 s of the aid's end
+
+int play(const std::uint64_t seed, const bool forceAid = false)
 {
 	const kworld::LoadOrder order = kworld::resolveLoadOrder(KENSHI_DATA, {});
 	SpawnOptions spawn;
@@ -83,6 +81,7 @@ int play(const std::uint64_t seed)
 	};
 	// The capturer's action per tick once the strip is logged: the 'medic' ticks and what the lift shows.
 	std::uint64_t capturer = 0;
+	std::uint64_t bodyId = 0;
 	std::int64_t medicTicks = 0;
 	std::uint64_t medicStart = 0;
 	std::int64_t liftTicks = 0;
@@ -96,10 +95,27 @@ int play(const std::uint64_t seed)
 		{
 			for (const auto& [tick, line] : lines)
 				if (const std::size_t at = line.find("capture 181 strip member "); at != std::string::npos)
+				{
 					capturer = std::stoull(line.substr(at + 25));
+					bodyId = std::stoull(line.substr(line.find(" body ") + 6));
+				}
 		}
 		if (capturer == 0)
 			continue;
+		if (forceAid)
+		{
+			// The interruption set directly, not left to a seed's phase: from the cuff the body is held down (the squad's medics treat it on 58,
+			// the lift waits on the aid) for kForceTicks, then let go still unconscious; the lift must follow through 168 (a capture an aid
+			// interrupted is not a dead end).
+			const std::int64_t cuffed = when("capture 166 restrain done");
+			if (cuffed >= 0 && static_cast<std::int64_t>(sim.clockTick()) < cuffed + kForceTicks)
+			{
+				state::Fighter* body = const_cast<CombatArena*>(sim.combat())->find(bodyId);
+				body->unconscious = true;
+				body->down = true;
+				body->koTimer = 1.0e6;
+			}
+		}
 		if (const std::optional<Simulation::CaptureAction> action = sim.captureAction(capturer))
 		{
 			if (action->clip == "medic")
@@ -138,6 +154,14 @@ int play(const std::uint64_t seed)
 		test::require(attachTick >= 0 && std::fabs(static_cast<double>(attachTick - static_cast<std::int64_t>(liftStart)) * kTickSeconds - kLiftAttachSeconds) <= 2.0 * kTickSeconds,
 			"the body attaches at 0.987 s of the lift" + tag);
 	}
+	if (forceAid)
+	{
+		test::require(when("goal Medic member " + std::to_string(capturer) + " target " + std::to_string(bodyId)) >= done
+				|| when(" target " + std::to_string(bodyId) + " score") >= done, "the squad's medics took the cuffed body on goal 58 after the cuff" + tag);
+		test::require(liftTicks > 0, "a capture interrupted by an aid still lifts" + tag);
+		test::require(liftTicks > 0 && static_cast<std::int64_t>(liftStart) <= done + kForceTicks + kLiftBoundTicks,
+			"the lift follows the aid's end within " + std::to_string(kLiftBoundTicks) + " ticks (started " + std::to_string(static_cast<std::int64_t>(liftStart) - done - kForceTicks) + ")" + tag);
+	}
 	return liftTicks > 0 ? 1 : 0; // lifted on this seed
 }
 
@@ -152,10 +176,13 @@ int main()
 			std::cerr << "ksim_capture_actions: SKIPPED: no shipped navtiles in " << KENSHI_DATA << "\n";
 			return 77;
 		}
+		// Recipe 30's ring (k16.7.95) moved the fights: seeds 1, 2, 3, 7, 101, 706960716 and 1151889715 show no lift (the slave is up and follows after the aid);
+		// 4, 6, 100, 103 and 104 are carried (survey 2026-11-19, kenshi-k16.7.104). The forced aid below still runs on seed 1.
 		int lifted = 0;
-		for (const std::uint64_t seed : {std::uint64_t{1}, std::uint64_t{706960716}, std::uint64_t{1151889715}})
+		for (const std::uint64_t seed : {std::uint64_t{4}, std::uint64_t{6}, std::uint64_t{100}})
 			lifted += play(seed);
 		test::require(lifted >= 1, "at least one seed shows the capture's lift");
+		play(1, true);
 		std::cout << "ksim_capture_actions ok\n";
 	} catch (const std::exception& e) {
 		std::cerr << "ksim_capture_actions: " << e.what() << "\n";

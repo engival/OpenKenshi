@@ -1,11 +1,19 @@
 #include "world/worldbuildings.hpp"
 #include "world/worldbuildings_internal.hpp"
+#include "app/eventlog.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <system_error>
+#ifdef __linux__
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 #include "interiormask.glsl.h"
 #include "kworld/coords.hpp"
@@ -17,6 +25,25 @@ namespace
 constexpr size_t kMaxMeshes = 2500, kMaxTextures = 1200;
 constexpr int kWorkers = 4;
 
+#ifdef KCLIENT_DEV_TOOLS
+[[maybe_unused]] double steadyNow() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+
+// KCLIENT_COLD_READ (popin, kenshi-k16.2.258.2): drop the file's pages from the page cache just before it is read, so a run measures a cold
+// disk as the user's first launch does. Only this file's pages; the game data is read-only, so nothing is written back or lost.
+void coldEvict(const std::string& path)
+{
+#if defined(__linux__)
+	const char* e = getenv("KCLIENT_COLD_READ");
+	if (!e || !*e || *e == '0') { return; }
+	const int fd = ::open(path.c_str(), O_RDONLY);
+	if (fd < 0) { return; }
+	posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+	::close(fd);
+#else
+	(void)path;
+#endif
+}
+#endif
 }
 
 using namespace wbi;
@@ -188,6 +215,14 @@ void WorldBuildings::init(const ResourceIndex* res, const MaterialLib* mats)
 	bd.size = kMaxInstances * kInstanceBytes;
 	bd.label = "building-instances";
 	instBuf_ = sg_make_buffer(&bd);
+#ifdef KCLIENT_DEV_TOOLS
+	{	// the pop-in measurement (kenshi-k16.2.258.2): off unless asked for by the run or by `dump popin`
+		const char* on = getenv("KCLIENT_POPIN");
+		popin.on = on && *on && *on != '0';
+		const char* cold = getenv("KCLIENT_COLD_READ");
+		popin.cold = cold && *cold && *cold != '0';
+	}
+#endif
 	for (int i = 0; i < kWorkers; i++) { threads_.emplace_back([this] { worker(); }); }
 }
 
@@ -251,6 +286,7 @@ void WorldBuildings::setData(BuildingSet&& data)
 	for (PartRt& rt : partRt_) { if (rt.openHas) { rq::push("buildings.open-free", [h = rt.openIbuf] { sg_destroy_buffer(h.get()); }, rq::Lane::kFrame); } }
 	partRt_.assign(data_.parts.size(), PartRt());
 	partStamp_.assign(data_.parts.size(), 0);
+	partScore_.assign(data_.parts.size(), 0.0f);
 	motion_.assign(data_.parts.size(), Motion());
 	turning_.clear();
 	for (uint32_t pid = 0; pid < data_.parts.size(); pid++)
@@ -286,6 +322,7 @@ void WorldBuildings::setProps(const std::vector<Prop>& props)
 {
 	dataGen_++;
 	data_.instances.resize(staticCount_);
+	editorInstance_ = -1;	// the editor platform comes back below, if it is on
 	propList_.clear();
 	propMeshes_.clear();
 	propLayout_.clear();
@@ -322,28 +359,12 @@ void WorldBuildings::setProps(const std::vector<Prop>& props)
 	}
 		const auto cell = data_.cells.find(kworld::zoneIndexOf(kworld::zoneCellOf(p.pos[0], p.pos[2])));
 		int placed = -1;
-		if (cell != data_.cells.end() && !p.item)
+		if (cell != data_.cells.end() && !p.item && (p.placedOnly || (p.hasPiece && p.pieceBuilding != 0)))	// a producer, or a container the tail names a placement (building != 0, piece 0xFFFF); a stand-in (building 0) draws its own mesh
 		{
 			for (const uint32_t i : cell->second)
 			{
 				const BuildingInstance& b = data_.instances[i];
 				if ((!b.feature || p.placedOnly) && b.parent < 0 && std::hypot(b.x - p.pos[0], b.z - p.pos[2]) < 1.0) { placed = (int)i; break; }
-			}
-		}
-		if (placed < 0 && !p.item && !p.placedOnly)	// a container the layout already draws (the Hub bar's counter, a cabinet): the sim sends it with yaw 0, a second copy at 90 degrees to the layout piece (kenshi-8vb.1)
-		{
-			for (int dx = -1; dx <= 1 && placed < 0; dx++)
-			{
-				for (int dz = -1; dz <= 1 && placed < 0; dz++)
-				{
-					const auto g = furnGrid_.find(furnKey(p.pos[0] + 4 * dx, p.pos[2] + 4 * dz));
-					if (g == furnGrid_.end()) { continue; }
-					for (const uint32_t i : g->second)
-					{
-						const BuildingInstance& f = data_.instances[i];
-						if (std::hypot(f.x - p.pos[0], f.z - p.pos[2]) < 1.0 && std::fabs(f.y - p.pos[1]) < 2.0) { placed = (int)i; break; }
-					}
-				}
 			}
 		}
 		if (placed >= 0) { propMeshes_[p.id] = (uint32_t)placed; continue; }
@@ -376,8 +397,10 @@ void WorldBuildings::setProps(const std::vector<Prop>& props)
 		BuildingInstance b;
 		b.x = editorPos_[0]; b.y = editorPos_[1]; b.z = editorPos_[2];
 		b.ground = (float)editorPos_[1];
+		b.qw = editorQ_[0]; b.qx = editorQ_[1]; b.qy = editorQ_[2]; b.qz = editorQ_[3];
 		b.firstPart = (uint32_t)data_.editorPlatformRef;
 		b.partCount = 1;
+		editorInstance_ = (int)data_.instances.size();	// setEditor moves it in place after this (the editor's orbit)
 		propList_.push_back((uint32_t)data_.instances.size());
 		data_.instances.push_back(b);
 	}
@@ -385,14 +408,39 @@ void WorldBuildings::setProps(const std::vector<Prop>& props)
 
 // ---- workers ----
 
-void WorldBuildings::queue(bool isMesh, int id, const std::string& path)
+void WorldBuildings::queue(bool isMesh, int id, const std::string& path, float prio)
 {
 	outstanding_++;
 	{
 		std::lock_guard<std::mutex> lk(mu_);
-		jobs_.push_back({ isMesh, id, path });
+		jobs_.push_back({ isMesh, id, path, prio });
 	}
 	jobCv_.notify_one();
+}
+
+// The score of the part's resource this frame (the lowest of the parts needing it), also the stream lane's order for its create (rq::Prio).
+void WorldBuildings::noteScore(float& score, uint64_t& scoreFrame, rq::Prio& p, float s)
+{
+	if (scoreFrame != frame_) { scoreFrame = frame_; score = s; } else { score = std::min(score, s); }
+	p.want.store(score, std::memory_order_relaxed);
+}
+
+// The decodes still queued take the entries' scores of this frame (a resource no part wants now sinks behind every wanted one): the workers take
+// the best queued job, so the order follows the camera (kenshi-k16.2.258.3). A scan of the queue, no sort.
+void WorldBuildings::rerank()
+{
+	std::lock_guard<std::mutex> lk(mu_);
+	for (Job& j : jobs_)
+	{
+		const float s = j.isMesh ? meshes_[j.id].score : textures_[j.id].score;
+		const uint64_t f = j.isMesh ? meshes_[j.id].scoreFrame : textures_[j.id].scoreFrame;
+		j.prio = f == frame_ ? s : s + 1e7f;
+	}
+	for (const auto& [isMesh, id] : uploading_)	// the creates waiting in the stream lane: the same, through their rq::Prio
+	{
+		if (isMesh) { MeshEntry& m = meshes_[id]; if (m.scoreFrame != frame_) { m.prio->want.store(m.score + 1e7f, std::memory_order_relaxed); } }
+		else { TexEntry& t = textures_[id]; if (t.scoreFrame != frame_) { t.prio->want.store(t.score + 1e7f, std::memory_order_relaxed); } }
+	}
 }
 
 // Per-vertex tangents from the UVs, for meshes without a tangent element: each triangle's u direction summed (area-weighted), made
@@ -493,6 +541,54 @@ bool WorldBuildings::decodeMesh(const std::string& path, MeshCpu& out)
 	return !out.subs.empty();
 }
 
+// Median split on the longest centroid axis, leaves of up to 6 triangles; triangles reordered into leaf order.
+void WorldBuildings::buildPick(PickMesh& out, const std::vector<float>& tris)
+{
+	const size_t n = tris.size() / 9;
+	out.tris.clear();
+	out.nodes.clear();
+	if (n == 0) { return; }
+	std::vector<uint32_t> idx(n);
+	for (size_t i = 0; i < n; i++) { idx[i] = (uint32_t)i; }
+	std::vector<float> cen(n * 3);
+	for (size_t i = 0; i < n; i++) { for (int a = 0; a < 3; a++) { cen[i * 3 + a] = (tris[i * 9 + a] + tris[i * 9 + 3 + a] + tris[i * 9 + 6 + a]) / 3; } }
+	out.tris.reserve(tris.size());
+	out.nodes.reserve(n / 3 + 1);
+	struct Range { size_t node, lo, hi; };
+	out.nodes.push_back({});
+	std::vector<Range> stack{ { 0, 0, n } };
+	// leaf order is assigned as ranges are finished: reorder idx in place by nth_element, then emit triangles at the end in idx order
+	std::vector<PickNode>& nodes = out.nodes;
+	while (!stack.empty())
+	{
+		const Range r = stack.back();
+		stack.pop_back();
+		float lo[3] = { 1e30f, 1e30f, 1e30f }, hi[3] = { -1e30f, -1e30f, -1e30f }, clo[3] = { 1e30f, 1e30f, 1e30f }, chi[3] = { -1e30f, -1e30f, -1e30f };
+		for (size_t k = r.lo; k < r.hi; k++)
+		{
+			const size_t t = idx[k];
+			for (int c = 0; c < 3; c++) { for (int a = 0; a < 3; a++) { lo[a] = std::min(lo[a], tris[t * 9 + c * 3 + a]); hi[a] = std::max(hi[a], tris[t * 9 + c * 3 + a]); } }
+			for (int a = 0; a < 3; a++) { clo[a] = std::min(clo[a], cen[t * 3 + a]); chi[a] = std::max(chi[a], cen[t * 3 + a]); }
+		}
+		PickNode nd = {};
+		for (int a = 0; a < 3; a++) { nd.lo[a] = lo[a]; nd.hi[a] = hi[a]; }
+		int axis = 0;
+		for (int a = 1; a < 3; a++) { if (chi[a] - clo[a] > chi[axis] - clo[axis]) { axis = a; } }
+		if (r.hi - r.lo <= 6 || chi[axis] - clo[axis] <= 0) { nd.a = (int32_t)r.lo; nd.b = 0; nd.count = (int32_t)(r.hi - r.lo); nodes[r.node] = nd; continue; }
+		const size_t mid = (r.lo + r.hi) / 2;
+		std::nth_element(idx.begin() + (ptrdiff_t)r.lo, idx.begin() + (ptrdiff_t)mid, idx.begin() + (ptrdiff_t)r.hi, [&](uint32_t p, uint32_t q) { return cen[p * 3 + axis] < cen[q * 3 + axis]; });
+		nd.a = (int32_t)nodes.size();
+		nodes.push_back({});
+		nd.b = (int32_t)nodes.size();
+		nodes.push_back({});
+		nd.count = 0;
+		nodes[r.node] = nd;
+		stack.push_back({ (size_t)nd.a, r.lo, mid });
+		stack.push_back({ (size_t)nd.b, mid, r.hi });
+	}
+	for (size_t k = 0; k < n; k++) { out.tris.insert(out.tris.end(), tris.begin() + (ptrdiff_t)idx[k] * 9, tris.begin() + (ptrdiff_t)idx[k] * 9 + 9); }
+}
+
 void WorldBuildings::worker()
 {
 	for (;;)
@@ -502,14 +598,48 @@ void WorldBuildings::worker()
 			std::unique_lock<std::mutex> lk(mu_);
 			jobCv_.wait(lk, [this] { return quit_ || !jobs_.empty(); });
 			if (quit_) { return; }
-			job = std::move(jobs_.front());
-			jobs_.pop_front();
+			auto best = jobs_.begin();	// the lowest prio, the earliest of equals (a FIFO while nothing is ranked)
+			for (auto it = jobs_.begin(); it != jobs_.end(); ++it) { if (it->prio < best->prio) { best = it; } }
+			job = std::move(*best);
+			jobs_.erase(best);
 		}
 		Result r;
 		r.isMesh = job.isMesh;
 		r.id = job.id;
 		std::string err;
+#ifdef KCLIENT_DEV_TOOLS
+		coldEvict(job.path);
+		{
+			std::error_code ec;
+			r.fileBytes = (size_t)std::filesystem::file_size(job.path, ec);
+			if (ec) { r.fileBytes = 0; }
+		}
+		const auto decode0 = std::chrono::steady_clock::now();
+#endif
 		r.ok = job.isMesh ? decodeMesh(job.path, r.mesh) : dds_load(job.path, r.tex, err);
+#ifdef KCLIENT_DEV_TOOLS
+		r.decodeS = std::chrono::duration<double>(std::chrono::steady_clock::now() - decode0).count();
+		const auto pick0 = std::chrono::steady_clock::now();
+#endif
+		if (r.ok && job.isMesh)	// the drawn triangles and their BVH, off the logic thread (kenshi-k16.2.382.2)
+		{
+			std::vector<float> tris;
+			for (const Sub& sb : r.mesh.subs)
+			{
+				for (int i = 0; i + 2 < sb.indexCount; i += 3)
+				{
+					for (int c = 0; c < 3; c++)
+					{
+						const float* v = &r.mesh.verts[((size_t)sb.firstVertex + r.mesh.indices[(size_t)sb.firstIndex + i + c]) * kVertexFloats];
+						tris.insert(tris.end(), v, v + 3);
+					}
+				}
+			}
+			buildPick(r.mesh.pick, tris);
+		}
+#ifdef KCLIENT_DEV_TOOLS
+		r.pickS = std::chrono::duration<double>(std::chrono::steady_clock::now() - pick0).count();
+#endif
 		{
 			std::lock_guard<std::mutex> lk(mu_);
 			results_.push_back(std::move(r));
@@ -528,7 +658,10 @@ void WorldBuildings::uploadMesh(MeshEntry& m, MeshCpu& cpu, bool blocking)
 	const size_t bytes = data->verts.size() * sizeof(float) + data->indices.size() * sizeof(uint32_t);
 	m.gpu = rq::Handle<MeshGpu>();
 	m.lane = blocking ? rq::Lane::kFrame : rq::Lane::kStream;
-	rq::push("buildings.mesh", [data, h = m.gpu] {
+	rq::push("buildings.mesh", [this, data, h = m.gpu, path = m.path] {
+#ifdef KCLIENT_DEV_TOOLS
+		const auto create0 = std::chrono::steady_clock::now();
+#endif
 		MeshGpu g;
 		sg_buffer_desc bd = {};
 		bd.data = { data->verts.data(), data->verts.size() * sizeof(float) };
@@ -541,7 +674,14 @@ void WorldBuildings::uploadMesh(MeshEntry& m, MeshCpu& cpu, bool blocking)
 		bd.label = "building-indices";
 		g.ibuf = sg_make_buffer(&bd);
 		h.publish(g);
-	}, m.lane, bytes);
+#ifdef KCLIENT_DEV_TOOLS
+		{	// the create is timed on the render thread, where it runs (popin, kenshi-k16.2.258.2)
+			const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - create0).count();
+			std::lock_guard<std::mutex> lk(popin.mu);
+			popin.meshes[path].create += s;
+		}
+#endif
+	}, m.lane, bytes, m.prio);
 	const std::vector<float>& verts = data->verts;
 	const std::vector<uint32_t>& indices = data->indices;
 	if (m.keepHull)
@@ -551,6 +691,15 @@ void WorldBuildings::uploadMesh(MeshEntry& m, MeshCpu& cpu, bool blocking)
 		for (size_t i = 0; i < n; i++) { for (int k = 0; k < 3; k++) { m.hullPos[i * 3 + k] = verts[i * kVertexFloats + k]; } }
 		m.hullIdx.clear();
 		for (const Sub& sb : cpu.subs) { for (int i = 0; i < sb.indexCount; i++) { m.hullIdx.push_back((uint32_t)(sb.firstVertex + indices[sb.firstIndex + i])); } }
+	}
+	// kenshi-k16.2.382.2: the drawn triangles and their BVH (built on the worker, buildPick) for the standing ray and the drawn picks; no query decodes a mesh
+	// on the frame. Kept across an eviction (the entry is only read while the mesh is Ready).
+	if (pickTris_.find(m.path) == pickTris_.end())
+	{
+		pickBytes_ += cpu.pick.bytes();
+		pickTris_.emplace(m.path, std::move(cpu.pick));
+		static size_t logged = 0;
+		if (pickBytes_ >= logged + (8u << 20)) { logged = pickBytes_; evlog::add("pickmem", 0, 0, "drawn-triangle BVHs: %zu meshes, %.1f MB", pickTris_.size(), pickBytes_ / 1048576.0); }
 	}
 	m.subs = std::move(cpu.subs);
 	m.indices = indices;
@@ -605,9 +754,32 @@ void WorldBuildings::uploadTexture(TexEntry& t, DdsImage&& tex, bool blocking)
 	};
 	if (blocking)	// the frame lane runs every job before this packet's draw: one create (a split would buy nothing)
 	{
-		rq::push("buildings.texture", [data, finish] { finish(dds_make_image(*data, "building-texture")); }, t.lane, bytes);
+		rq::push("buildings.texture", [this, file = t.file, data, finish] {
+#ifdef KCLIENT_DEV_TOOLS
+			const auto create0 = std::chrono::steady_clock::now();
+#endif
+			finish(dds_make_image(*data, "building-texture"));
+#ifdef KCLIENT_DEV_TOOLS
+			const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - create0).count();
+			std::lock_guard<std::mutex> lk(popin.mu);
+			popin.textures[file].create += s;
+#endif
+		}, t.lane, bytes, t.prio);
 	} else {	// streamed: a large texture in slices over several drains (dds_queue_image, kenshi-k16.2.205.12.74); Ready once the last one ran
-		dds_queue_image(data, "building-texture", dds_slice(), [](size_t b, std::function<void()> job) { rq::push("buildings.texture", std::move(job), rq::Lane::kStream, b); }, finish);
+		dds_queue_image(data, "building-texture", dds_slice(), [this, file = t.file, prio = t.prio](size_t b, std::function<void()> job) {
+#ifdef KCLIENT_DEV_TOOLS
+			rq::push("buildings.texture", [this, file, job = std::move(job)] {
+				const auto create0 = std::chrono::steady_clock::now();
+				job();
+				const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - create0).count();
+				std::lock_guard<std::mutex> lk(popin.mu);
+				popin.textures[file].create += s;
+			}, rq::Lane::kStream, b, prio);
+#else
+			(void)file;
+			rq::push("buildings.texture", std::move(job), rq::Lane::kStream, b, prio);
+#endif
+		}, finish);
 	}
 	t.state = blocking ? Ready : Uploading;
 }
@@ -663,10 +835,28 @@ void WorldBuildings::drain(bool wait, int maxItems)
 		if (r.isMesh)
 		{
 			MeshEntry& m = meshes_[r.id];
+#ifdef KCLIENT_DEV_TOOLS
+			if (popin.on)
+			{
+				PopIn::Mesh& a = popin.meshes[m.path];
+				a.decode = r.decodeS; a.pick = r.pickS; a.fileBytes = r.fileBytes;
+				a.cpuBytes = (r.mesh.verts.size() + r.mesh.indices.size()) * sizeof(float);
+				a.tris = (int)(r.mesh.indices.size() / 3);
+			}
+#endif
 			if (r.ok) { uploadMesh(m, r.mesh, wait); stats_.uploadedMeshes++; if (!wait) { uploading_.push_back({ true, r.id }); } }
 			else { m.state = Failed; holdGen_++; }
 		} else {
 			TexEntry& t = textures_[r.id];
+#ifdef KCLIENT_DEV_TOOLS
+			if (popin.on)
+			{
+				PopIn::Tex& a = popin.textures[t.file];
+				a.decode = r.decodeS; a.fileBytes = r.fileBytes;
+				a.gpuBytes = r.tex.data.size();
+				a.w = r.tex.width; a.h = r.tex.height; a.mips = r.tex.mips;
+			}
+#endif
 			if (r.ok)
 			{
 				uploadTexture(t, std::move(r.tex), wait);
@@ -746,12 +936,13 @@ void WorldBuildings::ensurePart(uint32_t pid)
 	if (rt.mesh < 0) { return; }
 	MeshEntry& m = meshes_[rt.mesh];
 	m.lastUsed = frame_;
+	noteScore(m.score, m.scoreFrame, *m.prio, partPrio(pid));
 	if (def.kind == 2 || def.stairs) { m.keepHull = true; }	// the mask hull (insideInterior) and a staircase (the floor hotspot reads its treads)
 	if (m.state == Unloaded)
 	{
 		m.state = Loading;
 		holdGen_++;	// every mesh state move bumps it (bedRay's memo, kenshi-k16.2.205.12.111)
-		queue(true, rt.mesh, m.path);
+		queue(true, rt.mesh, m.path, partPrio(pid));
 	}
 	if (m.state == Failed) { rt.openDone = true; return; }	// nothing to classify (and the bake's render.open_windows gate must not wait for it)
 	if (m.state != Ready) { return; }
@@ -787,10 +978,11 @@ void WorldBuildings::ensurePart(uint32_t pid)
 		if (t < 0) { continue; }
 		TexEntry& te = textures_[t];
 		te.lastUsed = frame_;
+		noteScore(te.score, te.scoreFrame, *te.prio, partPrio(pid));
 		if (te.state == Unloaded)
 		{
 			te.state = Loading;
-			queue(false, t, te.file);
+			queue(false, t, te.file, partPrio(pid));
 		}
 	}
 	resolveOpenWindows(pid);
@@ -878,6 +1070,7 @@ void WorldBuildings::evict()
 			holdGen_++;
 			m.hullPos.clear();
 			m.hullIdx.clear();
+			if (const auto pk = pickTris_.find(m.path); pk != pickTris_.end()) { pickBytes_ -= pk->second.bytes(); pickTris_.erase(pk); }	// rebuilt by the reload's worker (kenshi-k16.2.382.2: bounded with the Ready meshes)
 			for (PartRt& rt : partRt_) { if (rt.mesh == (int)i) { rt.resolved = false; } }
 		}
 	}

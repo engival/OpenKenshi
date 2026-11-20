@@ -82,7 +82,6 @@
 #include "kworld/towns.hpp"
 #include "render/navoverlay.hpp"
 #include "app/config.hpp"
-#include "platform/datadir.hpp"
 #include "platform/windowgeom.hpp"
 #include "platform/process.hpp"	// plat::unsetEnv
 #include "platform/windowgate.hpp"
@@ -104,6 +103,8 @@
 #include "ui/itemwindows.hpp"
 #include "ui/stats.hpp"
 #include "ui/keys.hpp"
+#include "ui/minimap.hpp"
+#include "ui/statuspopup.hpp"
 #include "ui/overview.hpp"
 #include "ui/squads.hpp"
 #include "ui/research.hpp"
@@ -176,6 +177,8 @@
 #include "host/logicframe.hpp"
 #include "host/uihost.hpp"
 #include "host/panels.hpp"
+
+const cfg::Bool kMinimap{ cfg::Group{ "HUD and labels" }, "ui.minimap", true, "Minimap: a small map window in a corner of the screen, centred on the camera; drag it to move it, the wheel over it zooms (the place and the zoom are remembered). A deliberate addition: the original has none" };
 
 namespace host
 {
@@ -442,6 +445,27 @@ void init_ui()
 	ui::MapActions map;
 	map.draw = [](const ui::MapFrame& f) { app.wmap.drawArea(f.x, f.y, f.w, f.h, f.cx, f.cz, f.pxPerUnit); };
 	map.moveTo = [](double x, double z, bool queue) { const double at[3] = { x, app.hm->height(x, z), z }; const SimView::Click click{ "map" }; app.sim.moveTo(at, queue, false, &click); };	// the selection; no height (the map sees only the heightmap): the sim snaps by xz
+	{
+		// The minimap window (kenshi-k16.2.436; the original has none): its map image is the overview's, its zoom level and place are kept as raw settings
+		// (not options rows) and restored here; the actions write them at once (a wheel step, a drag's end).
+		ui::MinimapActions mma;
+		mma.draw = map.draw;
+		mma.level = [](int level) { cfg::setRaw("minimap.level", std::to_string(level)); app.minimapState.level = level; };
+		mma.moved = [](float x, float y)
+		{
+			cfg::setRaw("minimap.x", std::to_string((int)std::lround(x)));
+			cfg::setRaw("minimap.y", std::to_string((int)std::lround(y)));
+			app.minimapState.x = x;
+			app.minimapState.y = y;
+		};
+		app.minimap = std::make_unique<ui::Minimap>(std::move(mma));
+		app.minimap->show(false);
+		app.statusPopup = std::make_unique<ui::StatusPopup>(ui::StatusPopupActions{});	// kenshi-k16.2.445.3: server / link conditions, top right (update_ui feeds it)
+		const auto saved = [](const char* key, float def) { const std::string v = cfg::getRaw(key); return v.empty() ? def : (float)atof(v.c_str()); };
+		app.minimapState.level = std::clamp((int)saved("minimap.level", ui::Minimap::kDefaultLevel), 0, ui::Minimap::kLevels - 1);
+		app.minimapState.x = saved("minimap.x", -1);
+		app.minimapState.y = saved("minimap.y", -1);
+	}
 	app.overview = std::make_unique<ui::Overview>(ui::OverviewActions{}, std::move(map));
 	app.squadsUi = std::make_unique<ui::Squads>(*app.overview, squads_actions());
 	app.research = std::make_unique<ui::Research>(*app.overview, research_actions());
@@ -480,6 +504,40 @@ void progress_level_sync(bool force)
 	const int level = progress_level();
 	if (!force && level == app.progressLevelSent) { return; }
 	if (app.sim.progressLevel((uint8_t)level)) { app.progressLevelSent = level; }
+}
+
+// The status popup (kenshi-k16.2.445.3): real server / link conditions only. The lockstep frame repeats never feed it (k16.2.437.4).
+// 1. In play, not paused, speed > 0, and no new sim tick in the snapshots for over 1 s: "Server not responding" (warn, busy, seconds since the
+//    last tick; error past 10 s). A load / zone-in the server reports is a later wire item: nothing is guessed here.
+// 2. The link failed (socket closed or errored, SimView::error): "Connection to the server lost" (error). There is no reconnect yet.
+static void status_popup_update()
+{
+	using Clock = std::chrono::steady_clock;
+	static uint64_t lastTick = 0;
+	static Clock::time_point since = Clock::now();
+	static bool stalled = false, lost = false;
+	ui::StatusPopupState st;
+	const bool play = app.sim.active() && !title_shown();
+	const auto& clk = app.sim.decoder().clock;
+	const uint64_t tick = app.sim.decoder().lastCompleteTick;
+	const auto now = Clock::now();
+	const bool running = play && app.sim.error().empty() && tick > 0 && clk.valid && !clk.paused && clk.speed > 0;
+	if (!running || tick != lastTick) { lastTick = tick; since = now; }	// a pause, a stop or a new tick restarts the wait
+	const float wait = std::chrono::duration<float>(now - since).count();
+	const bool nowLost = play && !app.sim.error().empty();
+	if (nowLost)
+	{
+		st.lines.push_back({ "link", "Connection to the server lost", ui::StatusLine::Level::kError, false, -1 });
+	}
+	else if (running && wait > 1.0f)
+	{
+		st.lines.push_back({ "stall", "Server not responding", wait > 10.0f ? ui::StatusLine::Level::kError : ui::StatusLine::Level::kWarn, true, wait });
+	}
+	if (nowLost != lost) { fprintf(stderr, "kclient: status: %s\n", nowLost ? "connection to the server lost" : "connection restored"); lost = nowLost; }
+	const bool nowStalled = !st.lines.empty() && st.lines[0].key == "stall";
+	if (nowStalled != stalled) { fprintf(stderr, "kclient: status: server %s\n", nowStalled ? "not responding" : "responding again"); stalled = nowStalled; }
+	if (app.minimap->shown()) { st.avoid = app.minimap->window()->screen(); }
+	app.statusPopup->update(st);
 }
 
 void update_ui(double dt)
@@ -588,6 +646,7 @@ void update_ui(double dt)
 		// k16.2.134.1: every reset starts a fresh camera restore (the last one's `applied` must not outlive its session placement); a load this
 		// client asked for arms its sidecar, and the first snapshot after the reset applies it (camera_restore_frame)
 		app.camRestore = CamRestore();
+		app.mapViewPending = true;	// k16.2.435: this world starts at the default map view unless its sidecar brings one (camera_restore_frame)
 		if (!app.camLoadName.empty() && app.frames - app.camLoadFrame < 1800)
 		{
 			app.camRestore.armed = true;
@@ -943,7 +1002,7 @@ void update_ui(double dt)
 			for (const auto& r : d.relations) { fs.relations.push_back({ d.str(r.faction), r.name, r.value }); }
 			app.faction->update(fs);
 		}
-		if (app.scripted() && app.sim.decoder().seenBySerial != app.seen.seenBy)	// SEEN_BY (59): each sneaking character's hostile observers that know it, with the frame's tick
+		if (app.scripted() && app.sim.decoder().seenBySerial != app.seen.seenBy)	// SEEN_BY (59): each sneaking character's non-allied observers that know it, with the frame's tick
 		{
 			app.seen.seenBy = app.sim.decoder().seenBySerial;
 			const auto& sb = app.sim.decoder().seenBy;
@@ -1030,7 +1089,7 @@ void update_ui(double dt)
 			app.tradeStock = trade.stock;
 			app.itemsShown = true;
 			printf("trade: %llu opened by %llu, stock %llu:", (unsigned long long)trade.trader, (unsigned long long)trade.actor, (unsigned long long)trade.stock);
-			if (const simlink::Inventory* inv = app.sim.inventory(trade.stock)) { for (const auto& e : inv->items) { printf(" %s x%u @%u,%u", app.sim.nameOf(e.item, app.chars).c_str(), e.count, e.x, e.y); } }
+			if (const simlink::Inventory* inv = app.sim.inventory(trade.stock)) { for (const auto& e : inv->items) { printf(" %s x%u @%u,%u", app.sim.nameOf(e.item, app.chars).c_str(), e.count, e.x, e.y); if (e.steal != 255) { printf(" steal %u%%", (unsigned)e.steal); } } }
 			printf("\n");
 		}
 		const auto is_up = [&](uint64_t id) { const auto ch = app.sim.decoder().chars.find(id); return ch != app.sim.decoder().chars.end() && !(ch->second.cur.flags & (simlink::kKO | simlink::kDead)); };
@@ -1106,7 +1165,7 @@ void update_ui(double dt)
 					app.itemsShown = true;
 					const std::string name = box ? app.sim.nameOf(box->record, app.chars) : app.sim.decoder().str(app.sim.decoder().chars.at(pd.id).look.name);
 					printf("%s: %llu %s opened by %llu (task %u):", box ? "container" : "body", (unsigned long long)pd.id, name.c_str(), (unsigned long long)user, (unsigned)c.task);
-					if (const simlink::Inventory* inv = app.sim.inventory(pd.id)) { for (const auto& e : inv->items) { printf(" %s x%u", app.sim.nameOf(e.item, app.chars).c_str(), e.count); } }
+					if (const simlink::Inventory* inv = app.sim.inventory(pd.id)) { for (const auto& e : inv->items) { printf(" %s x%u", app.sim.nameOf(e.item, app.chars).c_str(), e.count); if (e.steal != 255) { printf(" steal %u%%", (unsigned)e.steal); } } }
 					printf("\n");
 				}
 			}
@@ -1203,15 +1262,24 @@ void update_ui(double dt)
 	for (const auto& [id, ch] : app.sim.decoder().chars) { if ((ch.cur.flags & simlink::kPlayer) && !(ch.cur.flags & simlink::kDead)) { ms.characters.push_back({ ch.cur.pos[0], ch.cur.pos[2] }); } }
 	discovery_log();
 	crime_log();
+	lock_too_hard_log();
 	map_places(ms);
 	ms.cameraX = app.pos[0];
 	ms.cameraZ = app.pos[2];
 	ms.cameraYaw = (float)app.yaw;
 	app.overview->updateMap(ms);
+	app.minimap->show(kMinimap.get() && app.sim.active() && !title_shown() && !app.creatorUi->shown() && !app.wmap.full);	// hidden with the full map, the title, loading (no sim), the creator
+	if (app.minimap->shown())
+	{
+		app.minimapState.map = std::move(ms);	// after the overview's copy; the minimap draws no names and has no extent / texels
+		app.minimap->update(app.minimapState);
+	}
+	status_popup_update();
 	dev::updateUi();	// the playtest windows
 	ui::frame(dt);
-	if (app.creatorUi->shown()) { logicthread::renderIdle(); creator_frame(); }	// overlap (rule 12): the creator's frames run gated (the switch to it too)
-	else { app.buildings.setEditor(false); }
+	map_view_frame();	// k16.2.435: the map's default view, once the MAP page has a rect (before this frame's draws are recorded)
+	if (app.creatorUi->shown()) { logicthread::renderIdle(); creator_frame(dt); }	// overlap (rule 12): the creator's frames run gated (the switch to it too)
+	else { app.buildings.setEditor(false); app.chars.clearPreviewOrbit(); }	// the preview keeps the orbit only while it shows (it may be closed alone)
 }
 
 }

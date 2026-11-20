@@ -14,6 +14,7 @@
 #include <memory>
 #include <thread>
 
+#include "app/userdirs.hpp"
 #include "dev/beadpost.hpp"
 #include "dev/playtest.hpp"
 #include "dev/scenehost.hpp"
@@ -46,7 +47,7 @@ struct State
 	bool ready = false;
 	std::string playtests;	// --playtests DIR: the playtest store (default: <repo>/playtests, next to client/)
 	std::string bead;	// --bead ID: a run's notes, verdict and F12 shots are also posted as comments on this beads item
-	std::string findings;	// --findings DIR: where a --bead run's shots are copied (default: $HOME/git/kenshi/kenshi-inspect/findings)
+	std::string findings;	// --findings DIR: where a --bead run's shots are copied (default: <home>/git/kenshi/kenshi-inspect/findings)
 	std::string play;	// --play NAME: start NAME's recorded run once the link is up, as Scenarios -> PLAY does
 	bool playtestFlag = false;	// --playtest: the SCENARIOS button on the title and pause menus without the rest of --debug
 	Playtest playtest;	// the store and the run being played; the UI's two windows bind scenarios() / notes()
@@ -66,11 +67,11 @@ State& st()
 }
 
 // Default home of a --bead run's shots (kenshi-k16.2.127): $HOME/git/kenshi/kenshi-inspect/findings, the project's private findings tree
-// (screenshots are game-derived and never go in a repo); --findings overrides it. Its asks/<item id>/ is where a run's shots land.
+// (screenshots are game-derived and never go in a repo); --findings overrides it. Its asks/<item id>/ is where a run's shots land. The home
+// root is plat::userHomeDir (%USERPROFILE% on Windows, kenshi-379.31.3).
 std::string default_findings_dir()
 {
-	const char* home = getenv("HOME");
-	return (std::filesystem::path(home != nullptr && *home ? home : ".") / "git/kenshi/kenshi-inspect/findings").string();
+	return (std::filesystem::path(plat::userHomeDir()) / "git/kenshi/kenshi-inspect/findings").string();
 }
 
 double bead_seconds() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
@@ -164,7 +165,7 @@ void usage()
 	fprintf(stderr, "               [--playtests DIR] (the playtest store; default <repo>/playtests) [--playtest] (SCENARIOS without --debug)\n"
 		"               [--play NAME] (start NAME's recorded playtest run once connected, as Scenarios -> PLAY)\n"
 		"               [--bead ID] (a --play run's notes, verdict and F12 shots are also comments on that beads item)\n"
-		"               [--findings DIR] (where a --bead run's shots are copied; default $HOME/git/kenshi/kenshi-inspect/findings)\n"
+		"               [--findings DIR] (where a --bead run's shots are copied; default <home>/git/kenshi/kenshi-inspect/findings)\n"
 		"               [--sg-owner-probe] (an sg_* call from a second thread right after sg_setup: the thread-owner assert must abort)\n"
 		"               [--sg-owner-logic] (logic_frame owns no sokol: an sg_* call from the logic half aborts, as on the logic thread to come)\n"
 		"               [--scene-test OUTDIR [--scenes NAME,NAME] [--scene-file FILE]] [--scene-hud] [--scene-frames N]\n"

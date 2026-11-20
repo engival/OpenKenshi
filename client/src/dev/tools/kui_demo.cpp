@@ -24,6 +24,7 @@
 #include "sokol_time.h"
 #include "stb_image_write.h"
 #include "assets/dds.hpp"
+#include "dev/launchguard.hpp"	// launchGuard: no window from a Claude session outside gamescope (kenshi-k16.2.392)
 #include "render/drawlist_gpu.hpp"
 #include "app/config.hpp"
 #include "net/simlink.hpp"
@@ -43,6 +44,8 @@
 #include "ui/squads.hpp"
 #include "ui/tutorials.hpp"
 #include "ui/prospecting.hpp"
+#include "ui/minimap.hpp"
+#include "ui/statuspopup.hpp"
 #include "ui/build.hpp"
 #include "ui/trade.hpp"
 #include "ui/dialogue.hpp"
@@ -74,6 +77,9 @@
 namespace
 {
 
+// The player build's failed-start line names the Windows log file (kenshi-379.31.9.3): a 90-character path with no break in it, to see it wrap inside the panel.
+constexpr const char* kLogSample = "C:\\Users\\Maximilian-Alexander-Schwarzenberg\\AppData\\Roaming\\OpenKenshi\\logs\\openkenshi.log";
+
 // One option of each type for the options window (only ui.scale is declared otherwise in this demo).
 const cfg::Int kVolume{ cfg::Group{ "kui_demo" }, "demo.volume", 70, 0, 100, "A volume-style percentage" };
 const cfg::Float kGamma{ cfg::Group{ "kui_demo" }, "demo.gamma", 1.0, 0.5, 2.0, "A float option with a range" };
@@ -92,6 +98,14 @@ const cfg::Bool kDemoToggle{ cfg::Group{ "Indoor lighting (experimental)" }, "re
 const cfg::Float kShadowSoft{ cfg::Group{ "Indoor lighting (experimental)", "needs render.demo_shadow_toggle" }, "render.shadow_soft", 0.0, 0.0, 10.0, "Demo stand-in: soft shadow edges, the sun's half angle" };
 const cfg::Bool kSunSmooth{ cfg::Group{ "Indoor lighting (experimental)" }, "render.sun_smooth", true, "Demo stand-in: the sun's shadow map follows the sun smoothly" };
 const cfg::Float kSunBounce{ cfg::Group{ "Indoor lighting (experimental)" }, "render.sun_bounce", 0.0, 0.0, 1.0, "Demo stand-in: light bounced off the lit ground" };
+// A label that only starts with "sun" (no host key; k16.2.227.4.1): the whole-word "Sun bounce" / "Sun smooth" rank above it.
+const cfg::Float kSunnyHaze{ cfg::Group{ "Indoor lighting (experimental)" }, "render.sunny_haze", 0.0, 0.0, 1.0, "Demo stand-in: haze on bright days" };
+// Stand-ins for the host's navmesh overlay options (main.cpp; the keys, types and group as the host's, our own help) for the DEBUG SETTINGS window's
+// find (k16.2.419.1).
+const cfg::Bool kNavOverlay{ cfg::Group{ "Navmesh" }, "debug.navmesh", false, "Demo stand-in: the navmesh overlay" };
+const cfg::Float kNavStair{ cfg::Group{ "Navmesh" }, "debug.navmesh_stair", 30, 5, 80, "Demo stand-in: the steepness (degrees) drawn as a stair" };
+const cfg::Bool kNavPruned{ cfg::Group{ "Navmesh" }, "debug.navmesh_pruned", false, "Demo stand-in: the pruned polygons too" };
+const cfg::Float kNavBand{ cfg::Group{ "Navmesh" }, "debug.navmesh_band", 20, 2, 500, "Demo stand-in: the level band's half-height" };
 
 struct Demo
 {
@@ -109,10 +123,10 @@ struct Demo
 	ui::HudState hs;
 	std::unique_ptr<ui::Hud> hud;
 	std::unique_ptr<ui::Options> opts;
+	std::unique_ptr<ui::Options> debugOpts;	// the DEBUG SETTINGS window (OptionsScope::kDebug; the demo.* rows; k16.2.419.1)
 	std::unique_ptr<ui::Creator> cr;
 	ui::CreatorState cs;
 	std::string crLog;	// the creator actions asked
-	float rotated = 0;
 	bool showCreator = false;	// --show creator: the screenshot ends on the character creator
 	std::unique_ptr<ui::Gear> gear;
 	ui::GearState gs;
@@ -140,6 +154,8 @@ struct Demo
 	std::string overviewLog;	// OverviewActions / MapActions calls
 	ui::MapState map;	// the overview map's stand-in markers
 	int mapDraws = 0;
+	int mapViews = 0;	// MapActions::viewChanged calls
+	ui::MapView mapViewLast;
 	bool showOverview = false;	// --show overview: the screenshot ends on its MAP page
 	bool mapSweep = false;	// --map-sweep: print the map's zoom sweep, a row a notch (k16.2.201.1)
 	int mapNotches = -1;	// --map-notches N, with --show overview: the map fitted, then N wheel notches in about the hub (shots at a zoom)
@@ -181,6 +197,11 @@ struct Demo
 	std::vector<ui::StartEntry> starts;	// the new game panel's
 	std::unique_ptr<ui::Tutorials> tutorials;
 	std::unique_ptr<ui::Prospecting> prospect;
+	std::unique_ptr<ui::Minimap> minimap;
+	ui::MinimapState mms;	// the minimap's state as a host keeps it (its actions write back here)
+	std::string mmLog;	// the minimap's actions
+	std::unique_ptr<ui::StatusPopup> status;
+	std::string statusLog;	// StatusPopupActions::clicked calls
 	std::unique_ptr<ui::DebugPanel> debug;
 	std::unique_ptr<ui::DebugTree> tree;
 	ui::DebugTreeState ts;
@@ -214,6 +235,8 @@ struct Demo
 	ui::DebugState dbg;
 	std::string debugLog;
 	bool showDebug = false;	// --show debug: the debug panel checks run (frames 119-122), the screenshot at 125
+	bool showDebugSettings = false;	// --show debugsettings: the panel's Settings... and the DEBUG SETTINGS window (frames 119-124), the screenshot at 125
+	bool showCharBar = false;	// --show charbar: the CHARACTER toolbar across restarts (frames 119-124, one settings file over three runs), the screenshot at 125
 	std::unique_ptr<ui::AdvancedOptions> advanced;
 	std::vector<ui::AdvOption> adv;	// the advanced options' stand-in rows (the host keeps the real values)
 	std::unique_ptr<ui::Build> build;
@@ -222,12 +245,14 @@ struct Demo
 	bool showBuild = false;	// --show build: the build window checks run (frames 119-123), the screenshot at 125
 	bool showAdvanced = false;	// --show advanced: the advanced options checks run (frames 118-122), the screenshot at 125
 	bool showProspect = false;	// --show prospect: the prospecting checks run (frames 119-122), the screenshot at 125
+	bool showStatus = false;	// --show statuspopup: the status popup checks (frames 119-121), the screenshot at 125
+	int showMinimap = 0;	// --show minimap (1), minimap-near (2: level 0), minimap-far (3: level 3), minimap-drag (4): the minimap checks (frames 119-122), the screenshot at 125
 	bool showContext = false;	// --show context: a hold-RMB menu open at frame 71, the row under the pointer hot, for the screenshot at 73
 	bool showJobs = false;	// --show jobs: the jobs checks run (frames 119-124), the screenshot at 125
 	bool showTutorial = false;	// --show tutorial: the tutorial checks run (frames 111-119), the screenshot at 125
 	std::string menuLog;	// the menus' and save panel's actions
 	std::vector<ui::Widget*> underTitle;	// the screens hidden while the title shows
-	int showMenu = 0;	// --show mainmenu (1) / gamemenu (2) / load (3) / save (4) / newgame (5) / mainmenu-pending (6) / gamemenu-exit (7): the menu checks run (frames 87-104), the screenshot at 110
+	int showMenu = 0;	// --show mainmenu (1) / gamemenu (2) / load (3) / save (4) / newgame (5) / mainmenu-pending (6) / gamemenu-exit (7) / mainmenu-error (8): the menu checks run (frames 87-104), the screenshot at 110
 	bool showMessage = false;	// --show message: the screenshot ends on the HUD message box
 	bool showTrade = false;	// --show trade: the screenshot ends on the trade windows (a 40-row trader, scrolled), a trader item's tooltip shown
 	std::unique_ptr<ui::Prompt> prompt;
@@ -830,6 +855,7 @@ void build()
 	demo.hud = std::make_unique<ui::Hud>(std::move(act));
 	demo.hud->update(demo.hs);
 	demo.opts = std::make_unique<ui::Options>();
+	demo.debugOpts = std::make_unique<ui::Options>(ui::OptionsScope::kDebug);
 	ui::DialogueActions da;
 	da.choose = [](int i)
 	{
@@ -868,7 +894,6 @@ void build()
 	ca.exportCharacter = [] { demo.crLog += "export;"; };
 	ca.done = [] { demo.crLog += "done;"; };
 	ca.cancel = [] { demo.crLog += "cancel;"; };
-	ca.rotate = [](float dx) { demo.rotated += dx; };
 	demo.cr = std::make_unique<ui::Creator>(std::move(ca));
 	demo.prompt = std::make_unique<ui::Prompt>();
 	// The actions change the squads state as the server would.
@@ -963,6 +988,36 @@ void build()
 		snprintf(b, sizeof b, "move %.0f %.0f %d;", x, z, queue ? 1 : 0);
 		demo.overviewLog += b;
 	};
+	ma.viewChanged = [](const ui::MapView& v)
+	{
+		demo.mapViews++;
+		demo.mapViewLast = v;
+	};
+	{
+		ui::MinimapActions mma;	// the host's part: keep the level and the place, pass them back
+		mma.draw = ma.draw;
+		mma.level = [](int l)
+		{
+			demo.mmLog += "level " + std::to_string(l) + ";";
+			demo.mms.level = l;
+			demo.minimap->update(demo.mms);
+		};
+		mma.moved = [](float x, float y)
+		{
+			char b[64];
+			snprintf(b, sizeof b, "moved %.0f %.0f;", x, y);
+			demo.mmLog += b;
+			demo.mms.x = x;
+			demo.mms.y = y;
+			demo.minimap->update(demo.mms);
+		};
+		demo.minimap = std::make_unique<ui::Minimap>(std::move(mma));
+	}
+	{
+		ui::StatusPopupActions spa;
+		spa.clicked = [](const std::string& key) { demo.statusLog += "clicked " + key + ";"; };
+		demo.status = std::make_unique<ui::StatusPopup>(std::move(spa));
+	}
 	demo.overview = std::make_unique<ui::Overview>(std::move(oa), std::move(ma));
 	{
 		using K = ui::MapPlaceKind;
@@ -980,6 +1035,7 @@ void build()
 		m.cameraZ = -4000;
 		m.cameraYaw = 0.6f;
 		demo.overview->updateMap(m);
+		demo.mms.map = m;
 	}
 	demo.squads = std::make_unique<ui::Squads>(*demo.overview, std::move(sa));
 	// Research: stand-in entries of our own; the actions change the state as the server would.
@@ -1188,6 +1244,7 @@ void build()
 		da.command = [](const std::string& id) { demo.debugLog += "command " + id + ";"; };
 		da.weather = [](const std::string& name) { demo.debugLog += "weather " + name + ";"; };
 		da.time = [](const std::string& preset) { demo.debugLog += "time " + preset + ";"; };
+		da.settings = [] { demo.debugLog += "settings;"; demo.debugOpts->show(!demo.debugOpts->shown()); };
 		demo.debug = std::make_unique<ui::DebugPanel>(std::move(da));
 		ui::DebugTreeActions ta;
 		ta.refresh = [] { demo.treeLog += "refresh;"; };
@@ -1584,11 +1641,209 @@ void init()
 	demo.last = stm_now();
 }
 
-// The options tab of the demo.* keys, the Debug section (its place depends on which other tabs exist).
+// The DEBUG SETTINGS window's tab of the demo.* keys, the kui_demo group (k16.2.419.1; its place depends on which other groups exist).
 ui::Widget* demoTab()
 {
-	for (int i = 0; i < 16 && demo.opts->tab(i); i++) { if (static_cast<const ui::Button*>(demo.opts->tab(i))->text == "Debug") { return demo.opts->tab(i); } }
+	for (int i = 0; i < 32 && demo.debugOpts->tab(i); i++) { if (static_cast<const ui::Button*>(demo.debugOpts->tab(i))->text == "kui_demo") { return demo.debugOpts->tab(i); } }
 	return nullptr;
+}
+
+// The minimap's draws alone (it drawn into a list of its own): the textured groups that aren't the atlas (text: font pages), the host's
+// map hooks, the uploads it made (none expected: they would be lost with the list).
+struct DrawCount { int text = 0, hosts = 0, uploads = 0; };
+DrawCount countDraws(const std::function<void()>& draw)
+{
+	dl::List list;
+	ui::gfx::begin(list, sapp_width(), sapp_height());
+	draw();
+	ui::gfx::end();
+	DrawCount n;
+	for (const dl::Cmd& c : list.cmds())
+	{
+		if (c.kind == dl::Cmd::Kind::kHost) { n.hosts++; }
+		else if (c.tex != 0 && c.tex != ui::gfx::atlas() && c.count > 0) { n.text++; }
+	}
+	n.uploads = (int)list.uploads().size();
+	return n;
+}
+
+// --show minimap*: the window's place, zoom levels, drag, no text, the clamp on a resize; then the scene's state for the screenshot.
+template<class Check, class Send, class Click, class Drag> void minimapChecks(int frame, Check check, Send send, Click click, Drag drag)
+{
+	ui::Minimap& mm = *demo.minimap;
+	const float s = ui::scale(), W = (float)sapp_width(), H = (float)sapp_height();
+	const auto centre = [&] { const ui::Rect r = mm.window()->screen(); return std::pair{ r.x + r.w / 2, r.y + r.h / 2 }; };
+	if (frame == 119)
+	{
+		demo.mms.level = ui::Minimap::kDefaultLevel;
+		demo.mms.x = demo.mms.y = -1;
+		demo.mms.map.cameraX = 6000;
+		demo.mms.map.cameraZ = -4000;
+		mm.update(demo.mms);
+		mm.show(true);
+		demo.mmLog.clear();
+	}
+	if (frame == 120)
+	{
+		const ui::Rect r = mm.window()->screen(), in = mm.mapRect();
+		check(mm.shown() && std::abs(r.right() - (W - ui::Minimap::kMargin * s)) <= 1.5f && std::abs(r.y - ui::Minimap::kTop * s) <= 1.5f
+			&& std::abs(r.w - r.h) < 0.5f && std::abs(r.w - ui::Minimap::kSize * s) <= 1, "minimap: a square at the default place (top right)");
+		const ui::MapFrame f = mm.frame();
+		check(in.w > 0 && in.x > r.x && in.right() < r.right() && in.y > r.y && in.bottom() < r.bottom() && f.cx == 6000 && f.cz == -4000
+			&& std::abs(f.pxPerUnit - in.w / ui::Minimap::span(1)) < 1e-9 && ui::Minimap::span(1) == 9216 && ui::Minimap::span(3) == 36864,
+			"minimap: the map inside the frame, centred on the camera, level 1 = 9216 u across (the old view's 36864 at level 3)");
+		check(mm.marker(1).w > 0 && mm.marker(0).w == 0, "minimap: a place in the view has its icon, one outside it none");
+		const DrawCount n = countDraws([&] { mm.window()->draw(); });
+		const ui::Font* font = ui::fonts::get("Kenshi_StandardFont_Medium");
+		const DrawCount t = countDraws([&] { mm.window()->draw(); if (font) { font->draw(r.x + 10, r.y + 10, "N", { 1, 1, 1, 1 }); } });
+		check(n.text == 0 && n.hosts == 1 && n.uploads == 0 && t.text == 1, "minimap: no text drawn in the window (0 font draws; the probe sees one added), the host's map once");
+		auto [cx, cy] = centre();
+		check(send(SAPP_EVENTTYPE_MOUSE_SCROLL, cx, cy, 1) && mm.level() == 0 && demo.mmLog == "level 0;", "minimap: the wheel up steps closer and reports the level");
+		demo.mmLog.clear();
+		send(SAPP_EVENTTYPE_MOUSE_SCROLL, cx, cy, 1);
+		check(mm.level() == 0 && demo.mmLog.empty(), "minimap: no closer than level 0, nothing reported");
+		send(SAPP_EVENTTYPE_MOUSE_SCROLL, cx, cy, -1);
+		send(SAPP_EVENTTYPE_MOUSE_SCROLL, cx, cy, -0.5f);
+		send(SAPP_EVENTTYPE_MOUSE_SCROLL, cx, cy, -0.5f);
+		check(mm.level() == 2 && demo.mmLog == "level 1;level 2;" && std::abs(mm.frame().pxPerUnit - mm.mapRect().w / ui::Minimap::span(2)) < 1e-9,
+			"minimap: the wheel down steps out a level a notch (half notches add up)");
+		for (int i = 0; i < 6; i++) { send(SAPP_EVENTTYPE_MOUSE_SCROLL, cx, cy, -1); }
+		check(mm.level() == ui::Minimap::kLevels - 1, "minimap: no farther than the last level");
+		demo.mmLog.clear();
+		check(click(cx, cy) && demo.mmLog.empty() && mm.window()->screen().x == r.x, "minimap: a click without movement does nothing");
+	}
+	if (frame == 121)
+	{
+		const ui::Rect r = mm.window()->screen();
+		auto [cx, cy] = centre();
+		demo.mmLog.clear();
+		drag({ cx, cy }, { cx - 600 * s, cy + 200 * s });
+		ui::frame(0);
+		const ui::Rect d = mm.window()->screen();
+		char want[64];
+		snprintf(want, sizeof want, "moved %.0f %.0f;", (r.x - 600 * s) / s, (r.y + 200 * s) / s);
+		check(std::abs(d.x - (r.x - 600 * s)) <= 1.5f && std::abs(d.y - (r.y + 200 * s)) <= 1.5f && demo.mmLog == want && std::abs(mm.x() - demo.mms.x) < 0.01f
+			&& ui::root().children().back().get() == mm.window(),
+			("minimap: a drag on the body moves it, the drag's end reports the place in units, a press raises it (" + demo.mmLog + ")").c_str());
+		demo.mmLog.clear();
+		auto [dx, dy] = centre();
+		drag({ dx, dy }, { dx + 4000, dy - 4000 });	// past the top right
+		ui::frame(0);
+		const ui::Rect e = mm.window()->screen();
+		check(std::abs(e.right() - W) <= 1 && e.y == 0 && std::abs(demo.mms.x - (W - e.w) / s) < 0.6f && demo.mms.y == 0, "minimap: a drag stops at the screen's edges (the place reported on it)");
+		ui::setViewport((int)W / 2, (int)H / 2);	// the window made smaller
+		ui::frame(0);
+		const ui::Rect c = mm.window()->screen();
+		check(c.right() <= W / 2 + 0.5f && c.bottom() <= H / 2 + 0.5f && c.x >= 0 && c.y >= 0 && std::abs(c.right() - W / 2) <= 1 && c.y == 0,
+			"minimap: a resize keeps it on the screen (at its top right corner after a drag there)");
+		ui::setViewport((int)W, (int)H);
+		ui::frame(0);
+		demo.mmLog.clear();
+		demo.mms.x = 300;
+		demo.mms.y = 200;
+		demo.mms.level = 9;
+		mm.update(demo.mms);
+		ui::frame(0);
+		check(std::abs(mm.window()->screen().x - 300 * s) <= 1 && std::abs(mm.window()->screen().y - 200 * s) <= 1 && mm.level() == ui::Minimap::kLevels - 1 && demo.mmLog.empty(),
+			"minimap: the host's place and level restore it (an out-of-range level clamped), nothing reported back");
+	}
+	if (frame == 122)	// the screenshot's state
+	{
+		demo.mms.level = demo.showMinimap == 2 ? 0 : demo.showMinimap == 3 ? 3 : ui::Minimap::kDefaultLevel;
+		demo.mms.x = demo.mms.y = -1;
+		mm.update(demo.mms);
+		if (demo.showMinimap == 4)
+		{
+			ui::frame(0);
+			auto [cx, cy] = centre();
+			drag({ cx, cy }, { cx - 900 * s, cy + 300 * s });
+		}
+		send(SAPP_EVENTTYPE_MOUSE_MOVE, 5, 5);
+	}
+}
+
+// --show statuspopup: place (top right, beside an avoid rect), rows kept across updates, fades in and out, click-through, the per-line action,
+// hidden when empty, at most kMaxLines; then the screenshot's three lines beside the minimap.
+template<class Check, class Click> void statusChecks(int frame, Check check, Click click)
+{
+	using L = ui::StatusLine::Level;
+	ui::StatusPopup& sp = *demo.status;
+	const float s = ui::scale(), W = (float)sapp_width();
+	const ui::StatusPopupState three{ { { "load", "Server loading the world", L::kInfo, true, -1 }, { "ping", "Ping to server lagging (420 ms)", L::kWarn, false, 12 },
+		{ "lost", "Connection to the server lost", L::kError, false, -1 } }, {} };
+	if (frame == 119)
+	{
+		check(!sp.shown() && !sp.row("load"), "statuspopup: hidden with no lines (nothing for the host to show)");
+		sp.update(three);
+		ui::frame(0);
+	}
+	if (frame == 120)
+	{
+		const ui::Rect r = sp.window()->screen();
+		check(sp.shown() && std::abs(r.right() - (W - ui::StatusPopup::kMargin * s)) <= 1.5f && std::abs(r.y - ui::StatusPopup::kTop * s) <= 1.5f
+			&& r.w >= ui::StatusPopup::kMinW * s - 1 && r.w <= ui::StatusPopup::kMaxW * s + 1, "statuspopup: shown with lines, at the top right");
+		check(sp.alpha("load") < 1, "statuspopup: a new line fades in");
+		ui::frame(ui::StatusPopup::kFade + 0.05);
+		check(sp.alpha("load") == 1 && sp.alpha("ping") == 1 && sp.alpha("lost") == 1, "statuspopup: faded in after kFade");
+		const ui::Widget* load = sp.row("load");
+		const ui::Widget* lost = sp.row("lost");
+		ui::StatusPopupState next = three;
+		next.lines[0].text = "Server loading the world (60 %)";
+		next.lines[1].seconds = 13;
+		sp.update(next);
+		ui::frame(0);
+		check(sp.row("load") == load && sp.row("lost") == lost && sp.alpha("load") == 1, "statuspopup: a line that stays keeps its row and its fade across updates");
+		const ui::Rect l = lost->screen();
+		demo.statusLog.clear();
+		const bool clicked = click(l.x + l.w / 2, l.y + l.h / 2);
+		check(clicked && demo.statusLog == "clicked lost;", ("statuspopup: a click on a line calls clicked(key) (" + demo.statusLog + ")").c_str());
+		{
+			ui::StatusPopup plain;	// no actions: no input at all
+			plain.update(three);
+			ui::frame(0);
+			const ui::Rect p = plain.window()->screen();
+			ui::Widget* h = ui::root().hit(p.x + p.w / 2, p.y + p.h / 2);
+			bool inside = false;
+			for (ui::Widget* w = h; w; w = w->parent()) { inside = inside || w == plain.window(); }
+			check(p.w > 0 && !inside, "statuspopup: without an action clicks pass through");
+		}
+		next.avoid = { W - 272 * s, 97 * s, 256 * s, 256 * s };
+		sp.update(next);
+		ui::frame(0);
+		const ui::Rect a = sp.window()->screen();
+		check(std::abs(a.right() - (next.avoid.x - ui::StatusPopup::kGap * s)) <= 1.5f && std::abs(a.y - next.avoid.y) <= 1.5f, "statuspopup: just left of the avoid rect, top-aligned");
+		next.lines.erase(next.lines.begin() + 1);
+		sp.update(next);
+		ui::frame(0.1);
+		check(sp.row("ping") && sp.alpha("ping") > 0 && sp.alpha("ping") < 1 && sp.row("load") == load, "statuspopup: a line gone fades out, the others stay");
+		ui::frame(ui::StatusPopup::kFade);
+		ui::frame(0);
+		check(!sp.row("ping") && sp.row("lost") == lost && sp.shown(), "statuspopup: its row goes after the fade");
+		ui::StatusPopupState many;
+		for (int i = 0; i < 7; i++) { many.lines.push_back({ "l" + std::to_string(i), "Line " + std::to_string(i), L::kInfo, false, -1 }); }
+		sp.update(many);
+		ui::frame(0);
+		check(sp.row("l4") && !sp.row("l5") && !sp.row("l6"), "statuspopup: at most kMaxLines lines");
+		sp.update({});
+		ui::frame(0.1);
+		check(sp.shown() && sp.alpha("l0") > 0, "statuspopup: an empty state fades the lines out");
+		ui::frame(ui::StatusPopup::kFade);
+		ui::frame(0);
+		check(!sp.shown() && !sp.row("l0"), "statuspopup: an empty state hides the window");
+	}
+	if (frame == 121)	// the screenshot: the three lines beside the minimap
+	{
+		demo.mms = {};
+		demo.mms.map.cameraX = 6000;
+		demo.mms.map.cameraZ = -4000;
+		demo.minimap->update(demo.mms);
+		demo.minimap->show(true);
+		ui::frame(0);
+		ui::StatusPopupState shot = three;
+		shot.avoid = demo.minimap->window()->screen();
+		sp.update(shot);
+		ui::frame(ui::StatusPopup::kFade + 0.05);
+	}
 }
 
 // Synthetic input for the screenshot: hover the Recruit button (tooltip), then open a menu.
@@ -1615,6 +1870,7 @@ void script()
 	// The middle of row i of a list of n single-line rows.
 	struct Pt { float x, y; };
 	auto clickOn = [&](const ui::Widget* w, uint32_t mods = 0) { const ui::Rect& r = w->screen(); return click(r.x + r.w / 2, r.y + r.h / 2, mods); };
+	auto cfgValue = [](const char* key) { for (const cfg::Info& i : cfg::find(key)) { if (i.key == key) { return i.value; } } return std::string(); };	// a declared option's value in effect
 	// The HUD's portrait bar paged until portrait i shows (a no-op while every portrait fits; k16.3.41).
 	auto pageTo = [&](size_t i)
 	{
@@ -1895,6 +2151,12 @@ void script()
 		const ui::Rect& r = demo.hoverMe->screen();
 		send(SAPP_EVENTTYPE_MOUSE_MOVE, r.x + r.w / 2, r.y + r.h / 2);
 	}
+	if (demo.frame == 6)	// the portrait hovered at 5: no tip, no box (the original's box is for UI items, not characters; kenshi-k16.2.408.2)
+	{
+		demo.hud->update(demo.hs);
+		check(ui::hoveredWidget() == demo.hud->portrait(2) && demo.hud->portrait(2)->tip().empty() && !demo.hud->hintBox()->visible && demo.hud->hintText().empty(),
+			"hud: a hovered squad portrait opens no tip box");
+	}
 	if (demo.frame == 6)
 	{
 		std::vector<ui::Menu::Item> items = { { "Hungry Bandit", nullptr, true, true }, { "Attack", [] { ui::toast("Attack"); } }, { "Talk", [] { ui::toast("Talk"); } }, { "Loot", nullptr, false }, { "Steal", [] { ui::toast("Steal"); } } };
@@ -2095,18 +2357,18 @@ void script()
 		}
 		ui::closePopups();
 		cfg::set("demo.gamma=1.5");	// a command-line pin: shown, enabled, the change ends it (k16.2.303.1)
-		demo.opts->show(true);
+		demo.debugOpts->show(true);
 	}
 	if (demo.frame == 8)
 	{
-		check(demoTab() && clickOn(demoTab()), "options: the Debug tab (the demo.* rows)");
-		demo.opts->reveal("demo.volume");	// the kui_demo group, the tab's last: its rows scrolled into view (kenshi-k16.2.244.2)
+		check(demoTab() && clickOn(demoTab()), "debug settings: the kui_demo tab (the demo.* rows)");
+		demo.debugOpts->reveal("demo.volume");	// its rows scrolled into view (kenshi-k16.2.244.2)
 	}
 	if (demo.frame == 9)
 	{
-		const ui::Widget* vol = demo.opts->control("demo.volume");
-		const ui::Widget* sub = demo.opts->control("demo.subtitles");
-		const ui::Widget* gamma = demo.opts->control("demo.gamma");
+		const ui::Widget* vol = demo.debugOpts->control("demo.volume");
+		const ui::Widget* sub = demo.debugOpts->control("demo.subtitles");
+		const ui::Widget* gamma = demo.debugOpts->control("demo.gamma");
 		check(vol && sub && gamma, "options: a row per demo option");
 		if (vol && sub && gamma)
 		{
@@ -2132,13 +2394,13 @@ void script()
 	}
 	if (demo.frame == 10)
 	{
-		check(key(SAPP_KEYCODE_ESCAPE) && !demo.opts->shown(), "options: Escape closes the window");
-		demo.opts->show(true);
-		demo.opts->update();
+		check(key(SAPP_KEYCODE_ESCAPE) && !demo.debugOpts->shown(), "options: Escape closes the window");
+		demo.debugOpts->show(true);
+		demo.debugOpts->update();
 		ui::frame(0);
-		const ui::Widget* vol = demo.opts->control("demo.volume");
-		ui::Button* rv = demo.opts->reset("demo.volume");
-		check(rv && rv->shown() && demo.opts->reset("demo.subtitles")->shown() && demo.opts->reset("demo.gamma")->shown() && !demo.opts->reset("demo.name")->shown()
+		const ui::Widget* vol = demo.debugOpts->control("demo.volume");
+		ui::Button* rv = demo.debugOpts->reset("demo.volume");
+		check(rv && rv->shown() && demo.debugOpts->reset("demo.subtitles")->shown() && demo.debugOpts->reset("demo.gamma")->shown() && !demo.debugOpts->reset("demo.name")->shown()
 			&& rv->tip() == "Reset to the default: 70", "options: a reset button on the rows off their default (a pinned one too)");
 		if (vol && rv)
 		{
@@ -2163,9 +2425,9 @@ void script()
 				("options: a drag across the default's notch holds there, pulled further it lets go, back across it holds again (" + std::to_string(before) + " " + std::to_string(onNotch)
 					+ " " + std::to_string(stillOn) + " " + std::to_string(pulled) + " " + std::to_string(back) + ")").c_str());
 			click(px(30), y);
-			demo.opts->update();
+			demo.debugOpts->update();
 			ui::frame(0);
-			check(kVolume.get() == 30 && clickOn(rv) && kVolume.get() == 70 && (demo.opts->update(), ui::frame(0), !rv->shown()), "options: a click on reset sets the default, and the button goes");
+			check(kVolume.get() == 30 && clickOn(rv) && kVolume.get() == 70 && (demo.debugOpts->update(), ui::frame(0), !rv->shown()), "options: a click on reset sets the default, and the button goes");
 			click(px(30), y);
 			send(SAPP_EVENTTYPE_MOUSE_MOVE, vol->screen().x + 20, vol->screen().y + 20);	// the help line
 		}
@@ -2184,7 +2446,7 @@ void script()
 	};
 	if (demo.frame == 11)
 	{
-		const ui::Widget* name = demo.opts->control("demo.name");
+		const ui::Widget* name = demo.debugOpts->control("demo.name");
 		check(name && clickOn(name), "edit box: a click focuses it");
 		if (name)
 		{
@@ -2195,13 +2457,16 @@ void script()
 			check(key(SAPP_KEYCODE_ENTER) && kName.get() == "WandererX", ("edit box: Enter commits (" + kName.get() + ")").c_str());
 			clickOn(name);
 			type("Y");
-			check(key(SAPP_KEYCODE_ESCAPE) && kName.get() == "WandererX" && demo.opts->shown(), "edit box: Escape restores and keeps the window open");
+			check(key(SAPP_KEYCODE_ESCAPE) && kName.get() == "WandererX" && demo.debugOpts->shown(), "edit box: Escape restores and keeps the window open");
 			clickOn(name);
 			type("Z");
 			clickOn(demoTab());	// focus moves to the window: the edit commits
 			check(kName.get() == "WandererXZ", ("edit box: losing focus commits (" + kName.get() + ")").c_str());
 		}
-		// Selection, the clipboard and the keypad (kenshi-k16.3.18), on a box of its own.
+		demo.debugOpts->show(false);	// the OPTIONS window's own checks from here (frame 12)
+		demo.opts->show(true);
+		ui::frame(0);
+				// Selection, the clipboard and the keypad (kenshi-k16.3.18), on a box of its own.
 		ui::EditBox& eb = ui::root().add<ui::EditBox>("alpha beta");
 		eb.rect = { 40, 1000, 400, 0 };
 		ui::frame(0);
@@ -2488,7 +2753,7 @@ void script()
 				const bool typed = type("shadow");
 				settle();
 				size_t expected = 0;
-				for (const cfg::Info& i : cfg::list()) { if (i.key.compare(0, 6, "debug.") && i.key.compare(0, 10, "key.debug.") && (has(i.key, "shadow") || has(i.help, "shadow"))) { expected++; } }
+				for (const cfg::Info& i : cfg::list()) { if (i.key.compare(0, 6, "debug.") && (has(i.key, "shadow") || has(i.help, "shadow"))) { expected++; } }
 				const size_t n = o.matches();
 				const std::string count = o.countText();
 				check(ctrlF && typed && o.query() == "shadow" && n >= expected && n >= 3 && o.hit() >= 0 && count == std::to_string(o.hit() + 1) + " of " + std::to_string(n)
@@ -2550,10 +2815,9 @@ void script()
 					("options find: Ctrl+F selects the field's text; no match reads '0 matches', nothing highlighted (" + o.countText() + ")").c_str());
 				ui::focus(o.window());
 				shiftKey(SAPP_KEYCODE_F, SAPP_MODIFIER_CTRL);
-				type("gamma");
+				type("ui.scale");
 				settle();
-				const ui::Widget* gamma = o.control("demo.gamma");
-				check(o.highlighted() == "demo.gamma" && gamma && gamma->enabled, "options find: a pinned match is shown highlighted, enabled");
+				check(o.highlighted() == "ui.scale" && o.rowInView("ui.scale"), "options find: a key's full name finds its row");
 				// Ranked (k16.2.227.5): "sun" goes first to a Sun* setting; the colours whose help says "Sunken" (Inset) come after every option whose
 				// key has "sun" (its label's words), and Next follows that order across tabs.
 				ui::focus(o.window());
@@ -2578,6 +2842,16 @@ void script()
 				check(sn >= 3 && o.hit() == 0 && o.countText() == "1 of " + std::to_string(sn) && has(o.highlighted(), "sun") && lastLabel >= 1
 					&& firstSunken < (int)sn && lastLabel < firstSunken && o.rowInView(o.highlighted()) && whole(),
 					("options find: 'sun' ranks the Sun* settings first, the 'Sunken' colours after them (" + order + ")").c_str());
+				// Whole word before word start (k16.2.227.4.1): the labels with the word "Sun" before "Sunny haze"; a help with the word "sun" ("the sun's",
+				// render.shadow_soft) before the help's "Sunken" (Inset).
+				const auto rankOf = [&](const std::string& k)
+				{
+					for (size_t i = 0; i < sn; i++) { if (o.matchKey(i) == k) { return (int)i; } }
+					return -1;
+				};
+				const int bounce = rankOf("render.sun_bounce"), smooth = rankOf("render.sun_smooth"), sunny = rankOf("render.sunny_haze"), soft = rankOf("render.shadow_soft");
+				check(bounce >= 0 && smooth >= 0 && sunny > bounce && sunny > smooth && soft > sunny && soft < firstSunken,
+					("options find: 'sun' ranks a whole word over a word start: Sun bounce / Sun smooth over Sunny haze, the help's 'sun's' over 'Sunken' (" + order + ")").c_str());
 				bool ranked = true;
 				std::string rankTabs;
 				for (size_t k = 1; k <= sn; k++)
@@ -2601,6 +2875,80 @@ void script()
 				o.show(true);
 				clickOn(o.tab(before));
 				o.update();
+				ui::frame(0);
+			}
+			// The development options (kenshi-k16.2.419.1): no Debug tab here, the Debug keys group at the end of the Keys tab; the DEBUG SETTINGS
+			// window (the same class, OptionsScope::kDebug) a tab per other Debug group, its own Find bar on the same cfg keys.
+			{
+				const size_t before = o.currentTab();
+				std::string titles;
+				ui::Widget* keysTab = nullptr;
+				for (size_t i = 0; o.tab(i); i++)
+				{
+					const std::string& t = static_cast<const ui::Button*>(o.tab(i))->text;
+					titles += t + ",";
+					if (t == "Keys") { keysTab = o.tab(i); }
+				}
+				std::string keyGroups;
+				if (keysTab && clickOn(keysTab))
+				{
+					o.update();
+					for (const std::string& g : o.groups()) { keyGroups += g + ","; }
+				}
+				check(titles.find("Debug,") == std::string::npos && keyGroups == "Keys,Debug keys," && o.control("key.debug.navmesh"),
+					("options: no Debug tab; the Debug keys group in the Keys tab, under the game's keys (" + titles + " | " + keyGroups + ")").c_str());
+				o.find("navmesh");
+				std::string found;
+				bool bindings = o.matches() > 0;
+				for (size_t k = 0; k < o.matches(); k++)
+				{
+					found += o.matchKey(k) + " ";
+					bindings = bindings && o.matchKey(k).compare(0, 4, "key.") == 0;
+				}
+				check(bindings, ("options find: 'navmesh' finds only its key binding, no debug setting (" + found + ")").c_str());
+				o.find("");
+				clickOn(o.tab(before));
+				o.update();
+				ui::Options& d = *demo.debugOpts;
+				d.show(true);
+				d.update();
+				ui::frame(0);
+				std::vector<std::string> want;
+				for (const cfg::Info& i : cfg::list()) { if (i.section == "Debug" && i.group != "Debug keys" && std::find(want.begin(), want.end(), i.group) == want.end()) { want.push_back(i.group); } }
+				std::sort(want.begin(), want.end());
+				std::vector<std::string> tabs;
+				for (size_t i = 0; d.tab(i); i++) { tabs.push_back(static_cast<const ui::Button*>(d.tab(i))->text); }
+				std::string tabList;
+				for (const std::string& t : tabs) { tabList += t + ","; }
+				check(d.window()->caption().text == "DEBUG SETTINGS" && d.scope() == ui::OptionsScope::kDebug && tabs == want && want.size() >= 3,
+					("debug settings: a tab per Debug group, by name, no Debug keys (" + tabList + ")").c_str());
+				d.find("navmesh");
+				d.update();
+				ui::frame(0);
+				ui::frame(0);
+				found.clear();
+				bool settings = d.matches() == 4;
+				for (size_t k = 0; k < d.matches(); k++)
+				{
+					found += d.matchKey(k) + " ";
+					settings = settings && d.matchKey(k).compare(0, 13, "debug.navmesh") == 0;
+				}
+				check(settings && d.highlighted() == "debug.navmesh" && d.rowInView("debug.navmesh") && d.countText() == "1 of 4",
+					("debug settings find: 'navmesh' finds the four navmesh settings, no key binding (" + found + ")").c_str());
+				d.find("gamma");
+				d.update();
+				ui::frame(0);
+				const ui::Widget* gamma = d.control("demo.gamma");
+				check(d.highlighted() == "demo.gamma" && gamma && gamma->enabled, "debug settings find: a pinned match is shown highlighted, enabled");
+				d.find("pruned");
+				d.update();
+				ui::frame(0);
+				ui::frame(0);
+				ui::Widget* pr = d.control("debug.navmesh_pruned");
+				check(pr && clickOn(pr) && cfgValue("debug.navmesh_pruned") == "on", "debug settings: a tick sets its cfg key (debug.navmesh_pruned)");
+				cfg::setUser("debug.navmesh_pruned", "off");
+				d.find("");
+				d.show(false);
 				ui::frame(0);
 			}
 			// UI sounds (k16.3.17): a test button and slider, the options' tabs, the stats window, through the recording sink.
@@ -2710,7 +3058,7 @@ void script()
 			for (size_t i = 0; o.tab(i); i++)
 			{
 				const std::string& t = static_cast<const ui::Button*>(o.tab(i))->text;
-				if (t == "Debug") { colours = o.tab(i); }	// another tab than Interface (the Colours tab before kenshi-k16.2.244.2)
+				if (t == "Keys") { colours = o.tab(i); }	// another tab than Interface (the Colours tab before kenshi-k16.2.244.2)
 				if (t == "Interface") { iface = o.tab(i); }
 			}
 			std::string tabs;
@@ -3046,12 +3394,13 @@ void script()
 		check(during == 1 && static_cast<const ui::EditBox*>(demo.cr->sliderBox("Jaw width"))->text == "1.00",
 			("creator: dragging a slider sets it live, with its value box (" + std::to_string(during) + ")").c_str());
 		const ui::Rect p = demo.cr->previewRect();
+		demo.crLog.clear();
 		send(SAPP_EVENTTYPE_MOUSE_MOVE, p.x + 100, p.y + p.h / 2);
 		send(SAPP_EVENTTYPE_MOUSE_DOWN, p.x + 100, p.y + p.h / 2);
 		send(SAPP_EVENTTYPE_MOUSE_MOVE, p.x + 160, p.y + p.h / 2);
 		send(SAPP_EVENTTYPE_MOUSE_MOVE, p.x + 220, p.y + p.h / 2);
-		const bool up = send(SAPP_EVENTTYPE_MOUSE_UP, p.x + 220, p.y + p.h / 2);
-		check(up && demo.rotated == 120, ("creator: a drag in the preview rotates (" + std::to_string(demo.rotated) + ")").c_str());
+		send(SAPP_EVENTTYPE_MOUSE_UP, p.x + 220, p.y + p.h / 2);
+		check(demo.crLog.empty() && demo.cs.sliders[2].value == during, ("creator: a drag in the preview sends no action, the host owns it (" + demo.crLog + ")").c_str());	// k16.2.433.2
 		demo.crLog.clear();
 		check(clickOn(demo.cr->randomButton()) && demo.crLog == "random 1;", "creator: RANDOMISE sends the shown tab");
 		demo.cs.sliders.push_back({ "Face", "Ear size", 0, 1, 0.25f });
@@ -3420,6 +3769,31 @@ void script()
 				("map: smooth: a wheel sweep grows the hub's icon steadily, half its frame to all of it, on its pixel (" + std::to_string(rows) + " notches, biggest step "
 					+ std::to_string(jump) + " px, worst " + std::to_string(worst) + " px)").c_str());
 			cfg::set("ui.map_icons_stepped=" + stepped0);
+		}
+		{
+			// The host's view (k16.2.435.2): viewChanged once a wheel step or a drag, never by setMapView; the view round-trips and survives a reopen.
+			const ui::Rect a = ov.mapArea()->screen();
+			int n = demo.mapViews;
+			send(SAPP_EVENTTYPE_MOUSE_SCROLL, a.x + a.w / 2, a.y + a.h / 2, -1);	// out: the sweeps left it at the max
+			check(demo.mapViews == n + 1 && demo.mapViewLast == ov.mapView(), ("map: a wheel step tells the host its view once (" + std::to_string(demo.mapViews - n) + ")").c_str());
+			n = demo.mapViews;
+			drag({ a.x + a.w / 2, a.y + a.h / 2 }, { a.x + a.w / 2 - 40, a.y + a.h / 2 - 30 });
+			check(demo.mapViews == n + 1 && demo.mapViewLast == ov.mapView(), ("map: a drag tells the host its view once, at the release (" + std::to_string(demo.mapViews - n) + ")").c_str());
+			n = demo.mapViews;
+			clickOn(ov.mapButton(1));
+			check(demo.mapViews == n + 1, "map: - tells the host its view");
+			const ui::MapView set{ 3 * fit, 20000, -15000 };
+			n = demo.mapViews;
+			ov.setMapView(set);
+			check(ov.mapView() == set && demo.mapViews == n, "map: setMapView then mapView round-trips, no viewChanged");
+			ov.show(false);
+			ov.open(OP::kMap);
+			ui::frame(0);
+			check(ov.mapView() == set, "map: closing and reopening keeps the host's view");
+			ov.setMapView({});
+			ui::frame(0);
+			const ui::MapView fitted = ov.mapView();
+			check(fitted.zoom == 0 && fitted.cx == 0 && fitted.cz == 0 && std::abs(ov.mapZoom() - fit) < 1e-6, "map: zoom 0 is the fit, mapView gives 0 back");
 		}
 		demo.overviewLog.clear();
 		check(clickOn(ov.tab(OP::kResearch)) && ov.page() == OP::kResearch && static_cast<const ui::CaptionWindow*>(ov.window())->caption().text == "RESEARCH",
@@ -4391,7 +4765,7 @@ void script()
 		check(!ui::messagesShown(), "main menu: showing clears the toasts, message box and zone banner");
 		mm.setContinue(false, "No save to continue");
 		mm.setOffline("The game server did not start: OpenKenshi-server exited with status 1 (could not open the world data under the data directory); "
-			"run client/tools/play.sh game");	// the host's failure line (stand-in wording), long on purpose
+			"the game log is " + std::string(kLogSample));	// the host's failure line (stand-in wording), long on purpose
 	}
 	if (demo.frame == 88)
 	{
@@ -4405,8 +4779,49 @@ void script()
 				&& mm.button(4)->enabled && mm.button(5)->enabled && mm.button(6)->enabled && mm.button(1)->tooltip == off.text && mm.button(3)->tooltip == off.text
 				&& mm.button(0)->tooltip == "No save to continue",
 				"main menu offline: NEW / LOAD / IMPORT live with the hint as their tip; CONTINUE as setContinue left it");
-			check(l.y >= exitR.bottom() && l.h >= 2 * off.font->lineHeight() - 0.5f && l.bottom() <= sapp_heightf() && std::abs(l.x - exitR.x) <= 1,
-				("main menu offline: a long hint wraps under EXIT, from the column's edge, on screen (" + std::to_string(l.y / u) + " +" + std::to_string(l.h / u) + ")").c_str());
+			{
+				// The status panel (kenshi-k16.2.431.1): right of the column, on screen, the long text wrapped inside it, clear of the buttons.
+				const ui::Rect p = mm.statusPanel()->screen(), col = mm.button(0)->screen();
+				bool clear = true;
+				for (int k = 0; k < 7; k++)
+				{
+					const ui::Rect b = mm.button(k)->screen();
+					clear = clear && (p.right() <= b.x || b.right() <= p.x || p.bottom() <= b.y || b.bottom() <= p.y);
+				}
+				check(mm.statusPanel()->shown() && p.x >= col.right() && std::abs(p.y - col.y) <= 1 && p.right() <= sapp_widthf() && p.bottom() <= sapp_heightf()
+					&& clear && l.h >= 2 * off.font->lineHeight() - 0.5f && l.x >= p.x && l.right() <= p.right() && l.bottom() <= p.bottom(),
+					("main menu offline: the status panel beside the column, the long text wrapped inside it, on screen (" + std::to_string(p.x / u) + "," + std::to_string(p.y / u)
+						+ " " + std::to_string(p.w / u) + "x" + std::to_string(p.h / u) + ")").c_str());
+				check(!mm.offlineError() && mm.statusCue()->shown() && !mm.statusBar()->shown() && mm.statusHeading()->text == "GAME SERVER STARTING",
+					"main menu offline: one-argument setOffline is a progress state: the working cue, no step bar");
+				mm.setError(off.text);
+				const ui::Color bad = ui::style().colour("BadBright", {});
+				check(mm.offlineError() && !mm.statusCue()->shown() && !mm.statusBar()->shown() && mm.statusHeading()->text == "GAME SERVER ERROR"
+					&& off.colour.r == bad.r && off.colour.g == bad.g && mm.statusHeading()->colour.r == bad.r && mm.button(1)->tooltip == off.text,
+					"main menu error: setError reads as a failure: warning colour, no cue, no bar, the tips kept");
+				mm.setPending(1);
+				check(!mm.pendingLine()->shown(), "main menu error: no 'will start' line over a failure");
+				mm.setPending(-1);
+				mm.setOffline("Loading the world (8 s)", 2, 4);
+				ui::frame(0);	// lay the bar out
+				const ui::Rect bar = mm.statusBar()->screen();
+				check(!mm.offlineError() && mm.statusCue()->shown() && mm.statusBar()->shown() && mm.statusFill() == 0.5f && mm.statusSteps()->text == "2 / 4"
+					&& off.text == "Loading the world (8 s)" && mm.button(1)->tooltip == off.text && bar.w > 0 && bar.y >= off.screen().bottom() && bar.bottom() <= mm.statusPanel()->screen().bottom(),
+					"main menu offline: setOffline(text, 2, 4): the text, the step bar half full under it, '2 / 4', the cue");
+				mm.setOffline("Loading the world (9 s)", 9, 4);
+				check(mm.statusFill() == 1 && mm.statusSteps()->text == "4 / 4", "main menu offline: a step past steps clamps to a full bar");
+				mm.setOffline("Loading the world (9 s)", 1, 0);
+				check(!mm.statusBar()->shown() && mm.statusCue()->shown(), "main menu offline: steps 0, no bar");
+				mm.setPending(1);
+				check(mm.pendingLine()->shown() && mm.pendingLine()->text == "NEW GAME will start when the server is ready" && mm.button(1)->held,
+					"main menu pending: the panel names the held button ('NEW GAME will start when the server is ready'), the button pushed");
+				mm.setPending(2);
+				check(mm.pendingLine()->text == "LOAD GAME will start when the server is ready", "main menu pending: the line follows the held button");
+				mm.setPending(-1);
+				check(!mm.pendingLine()->shown(), "main menu pending: released, the line gone");
+				mm.setOffline("The game server did not start: OpenKenshi-server exited with status 1 (could not open the world data under the data directory); "
+					"the game log is " + std::string(kLogSample));
+			}
 			demo.menuLog.clear();
 			clickOn(mm.button(1));
 			clickOn(mm.button(3));
@@ -4428,7 +4843,7 @@ void script()
 			mm.setOffline("Starting the game server...");
 			check(off.text == "Starting the game server..." && mm.button(3)->tooltip == off.text && mm.button(3)->enabled, "main menu offline: the status line follows the host");
 			mm.setOffline("");
-			check(!off.visible && mm.button(1)->enabled && mm.button(2)->enabled && mm.button(3)->enabled && mm.button(1)->tooltip.empty()
+			check(!mm.statusPanel()->visible && mm.button(1)->enabled && mm.button(2)->enabled && mm.button(3)->enabled && mm.button(1)->tooltip.empty()
 				&& !mm.button(0)->enabled && mm.button(0)->tooltip == "No save to continue", "main menu online: the tips cleared, CONTINUE as setContinue left it");
 		}
 		{
@@ -6366,23 +6781,55 @@ void script()
 				demo.debugLog.clear();
 				check(clickOn(win) && demo.debugLog == "command lights;", ("debug: a window button sends its id (" + demo.debugLog + ")").c_str());
 				demo.debugLog.clear();
-				check(!dp.characterPopup() && clickOn(dp.characterButton()) && dp.characterPopup() && dp.characterCommand(3) && !dp.characterCommand(4),
-					"debug: Character... opens a toolbar of the four character commands");
-				const ui::Rect bar = dp.characterPopup()->screen(), cb = dp.characterButton()->screen();
-				check(bar.x >= cb.x - 1 && bar.y >= cb.bottom() && dp.characterCommand(0)->text == "Heal" && dp.characterCommand(3)->text == "Kill" && dp.characterCommand(0)->enabled
-					&& !dp.characterCommand(2)->enabled && dp.characterCommand(3)->screen().right() <= bar.right() && dp.characterCommand(1)->screen().x > dp.characterCommand(0)->screen().right(),
-					"debug: a row of buttons below the button, the disabled one (Wake) greyed");
-				check(clickOn(dp.characterCommand(0)) && clickOn(dp.characterCommand(1)) && demo.debugLog == "command heal;command ko;" && dp.characterPopup(),
+				// k16.2.393.1: the CHARACTER toolbar is a window of its own: it stays up until its close button or the toggle.
+				check(!dp.characterBar() && clickOn(dp.characterButton()) && (ui::frame(0), dp.characterBar()) && dp.characterCommand(3) && !dp.characterCommand(4)
+					&& dp.characterButton()->checked && cfgValue("debug.character_bar") == "on",
+					"debug: Character... opens the CHARACTER toolbar of the four character commands (remembered shown)");
+				const ui::Rect bar = dp.characterBar()->screen(), pw = dp.window()->screen();
+				check(bar.y >= pw.bottom() - 0.5f && dp.characterBar()->caption().text == "CHARACTER" && dp.characterCommand(0)->text == "Heal" && dp.characterCommand(3)->text == "Kill"
+					&& dp.characterCommand(0)->enabled && !dp.characterCommand(2)->enabled && dp.characterCommand(3)->screen().right() <= bar.right()
+					&& dp.characterCommand(1)->screen().x > dp.characterCommand(0)->screen().right(),
+					"debug: a row of buttons in a window under the panel, the disabled one (Wake) greyed");
+				check(clickOn(dp.characterCommand(0)) && clickOn(dp.characterCommand(1)) && demo.debugLog == "command heal;command ko;" && dp.characterBar(),
 					("debug: a toolbar button sends its id and the toolbar stays open (" + demo.debugLog + ")").c_str());
 				demo.debugLog.clear();
 				clickOn(dp.characterCommand(2));
-				check(demo.debugLog.empty() && dp.characterPopup(), "debug: a disabled toolbar button sends nothing");
+				check(demo.debugLog.empty() && dp.characterBar(), "debug: a disabled toolbar button sends nothing");
 				const ui::Rect tb = dp.timeButton(0)->screen();
 				click(tb.x + 4, tb.y + 4);
-				check(!dp.characterPopup(), "debug: a click outside closes the toolbar");
-				clickOn(dp.characterButton());
-				key(SAPP_KEYCODE_ESCAPE);
-				check(!dp.characterPopup(), "debug: Escape closes the toolbar");
+				check(dp.characterBar(), "debug: a click elsewhere leaves the toolbar up");
+				{
+					const float u = ui::scale();
+					const ui::Rect b0 = dp.characterBar()->screen();
+					const Pt grab{ b0.x + 40 * u, b0.y + 19 * u };	// the header, left of the caption
+					drag(grab, { grab.x + 300 * u, grab.y - 120 * u });
+					ui::frame(0);
+					const ui::Rect b1 = dp.characterBar()->screen();
+					check(std::fabs(b1.x - (b0.x + 300 * u)) <= 1.5f && std::fabs(b1.y - (b0.y - 120 * u)) <= 1.5f
+						&& cfgValue("debug.character_bar_x") == "300" && cfgValue("debug.character_bar_y") == "-120",
+						("debug: a header drag moves the toolbar, the move kept in the settings (" + cfgValue("debug.character_bar_x") + ", " + cfgValue("debug.character_bar_y") + ")").c_str());
+					dp.show(false);
+					ui::frame(0);
+					check(dp.characterBar() && dp.characterBar()->screen().x == b1.x, "debug: closing the panel leaves the toolbar up, where it was");
+					dp.show(true);
+					clickOn(&dp.characterBar()->closeButton());
+					check(!dp.characterBar() && !dp.characterButton()->checked && cfgValue("debug.character_bar") == "off", "debug: the toolbar's close button hides it (remembered)");
+					clickOn(dp.characterButton());
+					ui::frame(0);
+					check(dp.characterBar() && std::fabs(dp.characterBar()->screen().x - b1.x) <= 0.5f, "debug: Character... brings it back at the moved spot");
+					clickOn(dp.characterButton());
+					check(!dp.characterBar(), "debug: Character... again hides it");
+					demo.dbg.commands[demo.dbg.commands.size() - 4].enabled = false;	// no character in the status panel: every button dead
+					demo.dbg.commands[demo.dbg.commands.size() - 3].enabled = false;
+					dp.update(demo.dbg);
+					clickOn(dp.characterButton());
+					check(dp.characterBar() && !dp.characterCommand(0)->enabled && !dp.characterCommand(1)->enabled && dp.characterButton()->enabled,
+						"debug: no character: the toolbar opens with its buttons greyed");
+					clickOn(dp.characterButton());
+					demo.dbg.commands[demo.dbg.commands.size() - 4].enabled = true;
+					demo.dbg.commands[demo.dbg.commands.size() - 3].enabled = true;
+					dp.update(demo.dbg);
+				}
 				demo.debugLog.clear();
 			}
 			check(dp.timeButton(0) && dp.timeButton(4) && !dp.timeButton(0)->enabled && !dp.timeButton(4)->enabled, "debug: the time buttons greyed until the host enables them");
@@ -6507,10 +6954,86 @@ void script()
 		check(key(SAPP_KEYCODE_ESCAPE) && !dp.shown() && demo.debugLog == "close;", "debug: Escape closes it");
 		dp.show(true);
 	}
-	if (demo.frame == 123 && demo.showDebug)	// the screenshot at 125 shows the Character... toolbar open
+	if (demo.frame == 123 && demo.showDebug)	// the screenshot at 125 shows the CHARACTER toolbar open where frame 120 dragged it
 	{
 		clickOn(demo.debug->characterButton());
-		check(demo.debug->characterPopup(), "debug: the toolbar open for the screenshot");
+		check(demo.debug->characterBar() && cfgValue("debug.character_bar_x") == "300", "debug: the toolbar open (at its dragged spot) for the screenshot");
+	}
+	// --show charbar (k16.2.393.1): the toolbar across restarts. Run it three times on one settings file (KCLIENT_CONFIG=FILE); each run saves it at
+	// frame 124. Fresh: Character... opens the toolbar at its first spot; then remembered shown: it is up unasked, a header drag moves it; then
+	// remembered moved: it comes back up at the moved spot. The screenshot at 125 shows the run's toolbar.
+	if (demo.frame == 119 && demo.showCharBar)
+	{
+		demo.debug->update(demo.dbg);
+		demo.debug->show(true);
+	}
+	if (demo.frame == 121 && demo.showCharBar)
+	{
+		ui::DebugPanel& dp = *demo.debug;
+		const float u = ui::scale();
+		const ui::Rect& area = ui::root().screen();
+		const auto at = [&](float mx, float my)	// the toolbar's spot after a move of (mx, my) units from its first one (8, 880)
+		{
+			const ui::Rect b = dp.characterBar()->screen();
+			return std::fabs(b.x - (area.x + (8 + mx) * u)) <= 1.5f && std::fabs(b.y - (area.y + (880 + my) * u)) <= 1.5f;
+		};
+		const std::string mx = cfgValue("debug.character_bar_x"), my = cfgValue("debug.character_bar_y");
+		if (cfgValue("debug.character_bar") != "on")
+		{
+			check(!dp.characterBar() && clickOn(dp.characterButton()) && (ui::frame(0), dp.characterBar()) && at(0, 0) && cfgValue("debug.character_bar") == "on",
+				"charbar: fresh settings: Character... opens the toolbar at its first spot, remembered shown");
+		}
+		else if (mx == "0" && my == "0")
+		{
+			check(dp.characterBar() && at(0, 0) && dp.characterButton()->checked, "charbar: restarted: the toolbar up unasked, at its first spot");
+			const ui::Rect b0 = dp.characterBar()->screen();
+			const Pt grab{ b0.x + 40 * u, b0.y + 19 * u };
+			drag(grab, { grab.x + 300 * u, grab.y - 120 * u });
+			ui::frame(0);
+			check(at(300, -120) && cfgValue("debug.character_bar_x") == "300" && cfgValue("debug.character_bar_y") == "-120", "charbar: a header drag moves it, the move remembered");
+		}
+		else
+		{
+			const ui::Rect b = dp.characterBar()->screen();
+			check(dp.characterBar() && at(std::stof(mx), std::stof(my)) && mx == "300" && my == "-120" && ui::root().hit(b.x + 40 * u, b.y + 19 * u) != nullptr
+				&& [&] { for (const ui::Widget* w = ui::root().hit(b.x + 40 * u, b.y + 19 * u); w; w = w->parent()) { if (w == dp.characterBar()) { return true; } } return false; }(),
+				("charbar: restarted after the drag: the toolbar up at the moved spot, over the panel it overlaps (" + mx + ", " + my + ")").c_str());
+		}
+	}
+	// --show debugsettings (k16.2.419.1): the F8 panel's Settings... opens the DEBUG SETTINGS window; a tick there sets the key the Options Debug tab
+	// did (with KCLIENT_CONFIG=FILE frame 124 saves it: the saved line); the screenshot (125) on its find for 'navmesh'.
+	if (demo.frame == 119 && demo.showDebugSettings)
+	{
+		demo.debug->update(demo.dbg);
+		demo.debug->show(true);
+	}
+	if (demo.frame == 121 && demo.showDebugSettings)
+	{
+		ui::Button* sb = demo.debug->settingsButton();
+		const ui::Rect pw = demo.debug->window()->screen();
+		demo.debugLog.clear();
+		check(sb && sb->shown() && sb->screen().x >= pw.x && sb->screen().right() <= pw.right() && sb->screen().bottom() <= pw.bottom() && clickOn(sb)
+			&& demo.debugLog == "settings;" && demo.debugOpts->shown(), ("debug settings: the F8 panel's Settings... opens the window (" + demo.debugLog + ")").c_str());
+		ui::Options& d = *demo.debugOpts;
+		d.update();
+		ui::frame(0);
+		d.find("pruned");
+		d.update();
+		ui::frame(0);
+		ui::frame(0);
+		ui::Widget* pr = d.control("debug.navmesh_pruned");
+		check(pr && clickOn(pr) && cfgValue("debug.navmesh_pruned") == "on", "debug settings: its tick sets debug.navmesh_pruned");
+		d.find("navmesh");
+	}
+	if (demo.frame == 124 && demo.showDebugSettings)
+	{
+		for (const cfg::Info& i : cfg::list()) { if (i.key.compare(0, 5, "demo.") == 0) { cfg::setUser(i.key, i.def); } }	// the earlier checks' edits
+		cfg::save();
+	}
+	if (demo.frame == 124 && demo.showCharBar)	// KCLIENT_CONFIG=none (headless.sh's default): writes nothing
+	{
+		for (const cfg::Info& i : cfg::list()) { if (i.key.compare(0, 5, "demo.") == 0) { cfg::setUser(i.key, i.def); } }	// the earlier checks' edits: the next run starts fresh
+		cfg::save();
 	}
 	if (demo.frame == 119 && demo.showProspect)
 	{
@@ -6542,6 +7065,8 @@ void script()
 		check(pro.window()->rect.x == 0 && pro.window()->rect.y == 0, "prospecting: re-centred on show");
 		send(SAPP_EVENTTYPE_MOUSE_MOVE, 5, 5);
 	}
+	if (demo.showMinimap && demo.frame >= 119 && demo.frame <= 122) { minimapChecks(demo.frame, check, send, click, drag); }
+	if (demo.showStatus && demo.frame >= 119 && demo.frame <= 121) { statusChecks(demo.frame, check, click); }
 	if (demo.frame == 119 && demo.showTutorial)	// what the screenshot shows
 	{
 		ui::Tutorial cam{ "camera", "Looking around", { { "Pan the view with the movement keys and turn it with the middle mouse button; the wheel zooms.\n\nTry both now.", true },
@@ -6619,8 +7144,15 @@ void script()
 		if (demo.showMenu == 6)	// the server starting, NEW GAME clicked and held by the host (kenshi-k16.2.210.2)
 		{
 			mm.show(true);
-			mm.setOffline("Starting the game server...");
+			mm.setOffline("Loading the world (8 s)", 2, 4);
 			mm.setPending(1);
+		}
+		if (demo.showMenu == 8)	// the server failed to start (kenshi-k16.2.431.1)
+		{
+			mm.show(true);
+			mm.setContinue(false, "No save to continue");
+			mm.setError("The game server did not start: OpenKenshi-server exited with status 1 (could not open the world data under the data directory); "
+				"the game log is " + std::string(kLogSample));
 		}
 		if (demo.showMenu == 2) { gm.show(true); }
 		if (demo.showMenu == 7)	// the EXIT GAME confirm over the game menu (kenshi-k16.2.212.2)
@@ -6651,13 +7183,14 @@ void frame()
 	const bool shooting = !demo.shot.empty();
 	const double dt = shooting ? 1.0 / 30 : stm_sec(stm_laptime(&demo.last));
 	ui::setViewport(sapp_width(), sapp_height());
-	if (shooting || demo.showStatsMock) { script(); }	// statsmock plays the script in a window too: the mockup is built there
+	if (shooting || demo.showStatsMock) { script(); }
 	cfg::poll();
 	if (!demo.hs.paused) { demo.hs.hour = std::fmod(demo.hs.hour + (float)dt * demo.hs.speed / 60, 24.0f); }	// a game minute per second
 	demo.hs.squadTabs.clear();
 	for (const ui::SquadInfo& q : demo.sq.squads) { if (!q.members.empty()) { demo.hs.squadTabs.push_back({ q.id, q.name }); } }	// as the original: squads with members
 	demo.hud->update(demo.hs);
 	demo.opts->update();
+	demo.debugOpts->update();
 	demo.cr->update(demo.cs);
 	demo.stats->update(demo.ss);
 	demo.squads->update(demo.sq);
@@ -6732,7 +7265,7 @@ void frame()
 	sg_end_pass();
 	sg_commit();
 	demo.frame++;
-	if (shooting && demo.frame == (demo.showTutorial || demo.showToast || demo.showJobs || demo.showProspect || demo.showDebug || demo.showTree || demo.showTrails || demo.showLights || demo.showHints || demo.showAnim || demo.showScenarios || demo.showNotes || demo.showSpectator || demo.showBuild || demo.showAdvanced || demo.showResearch || demo.showCrafting || demo.showFaction || demo.showBuilding ? 125 : demo.showItems ? 130 : demo.showHudBuilding || demo.showGearBody || demo.showTag ? 127 : demo.showMenu ? 110 : demo.showTrade || demo.showGear ? 88 : demo.showStatsMock ? 135 : 73))	// the tooltip (0.5 s at 30 fps) is up; the gear and trade ones are hovered at 72
+	if (shooting && demo.frame == (demo.showTutorial || demo.showToast || demo.showJobs || demo.showProspect || demo.showMinimap || demo.showStatus || demo.showDebug || demo.showDebugSettings || demo.showCharBar || demo.showTree || demo.showTrails || demo.showLights || demo.showHints || demo.showAnim || demo.showScenarios || demo.showNotes || demo.showSpectator || demo.showBuild || demo.showAdvanced || demo.showResearch || demo.showCrafting || demo.showFaction || demo.showBuilding ? 125 : demo.showItems ? 130 : demo.showHudBuilding || demo.showGearBody || demo.showTag ? 127 : demo.showMenu ? 110 : demo.showTrade || demo.showGear ? 88 : demo.showStatsMock ? 135 : 73))	// the tooltip (0.5 s at 30 fps) is up; the gear and trade ones are hovered at 72
 	{
 		save_png(demo.shot);
 		sapp_quit();
@@ -6755,6 +7288,7 @@ void cleanup()
 {
 	demo.hud.reset();
 	demo.opts.reset();
+	demo.debugOpts.reset();
 	demo.tree.reset();
 	demo.anim.reset();
 	demo.scen.reset();
@@ -6804,6 +7338,8 @@ sapp_desc sokol_main(int argc, char** argv)
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "options") { demo.showOptions = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "prompt") { demo.showPrompt = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "debug") { demo.showDebug = true; i++; }
+		else if (a == "--show" && more && std::string(argv[i + 1]) == "charbar") { demo.showCharBar = true; i++; }
+		else if (a == "--show" && more && std::string(argv[i + 1]) == "debugsettings") { demo.showDebugSettings = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "debugtree") { demo.showTree = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "trails") { demo.showTrails = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "lights") { demo.showLights = true; i++; }
@@ -6828,10 +7364,18 @@ sapp_desc sokol_main(int argc, char** argv)
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "newgame") { demo.showMenu = 5; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "mainmenu-pending") { demo.showMenu = 6; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "gamemenu-exit") { demo.showMenu = 7; i++; }
+		else if (a == "--show" && more && std::string(argv[i + 1]) == "mainmenu-error") { demo.showMenu = 8; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "tutorial") { demo.showTutorial = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "jobs") { demo.showJobs = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "context") { demo.showContext = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "prospect") { demo.showProspect = true; i++; }
+		else if (a == "--show" && more && std::string(argv[i + 1]).rfind("minimap", 0) == 0)
+		{
+			const std::string v = argv[i + 1];
+			demo.showMinimap = v == "minimap-near" ? 2 : v == "minimap-far" ? 3 : v == "minimap-drag" ? 4 : 1;
+			i++;
+		}
+		else if (a == "--show" && more && std::string(argv[i + 1]) == "statuspopup") { demo.showStatus = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "advanced") { demo.showAdvanced = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "build") { demo.showBuild = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "research") { demo.showResearch = true; i++; }
@@ -6861,6 +7405,8 @@ sapp_desc sokol_main(int argc, char** argv)
 		else { fprintf(stderr, "usage: kui_demo [--data DIR] [--size WxH] [--set key=value] [--theme MODDIR]... [--show creator|gear|dialogue|zone|stats|options|prompt|toast|toast-text|squads|overview|mainmenu|gamemenu|gamemenu-exit|load|save|message|trade|food|weapon|blueprint|tag-CASE] [--screenshot out.png]\n"); exit(2); }
 	}
 	ui::keys::setDebug(true);	// the demo shows and checks the development windows (the debug panel, its keys, the Debug keys tab)
+	dev::launchGuard("kui_demo");	// no window from a Claude session outside gamescope (src/dev/launchguard.cpp, kenshi-k16.2.392): after the
+								// argument checks' own exits (a usage error), before sokol or any window
 	sapp_desc d = {};
 	d.init_cb = init;
 	d.frame_cb = frame;

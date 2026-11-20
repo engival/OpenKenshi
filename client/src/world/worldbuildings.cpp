@@ -7,6 +7,7 @@
 #include "render/weathermap.hpp"
 
 #include <algorithm>
+#include <set>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -15,6 +16,7 @@
 #include <fstream>
 
 #include "app/config.hpp"
+#include "app/eventlog.hpp"
 #include "interiormask.glsl.h"
 #include "kworld/coords.hpp"
 #include "mesh.glsl.h"
@@ -23,10 +25,33 @@
 
 using namespace wbi;
 
-void WorldBuildings::setEditor(bool on, const double pos[3])
+namespace
 {
+	// kenshi-k16.2.412.3: the click's walkable ground takes only a surface a body can stand on: the steepest the navmesh bake walks at all, the stair/ramp limit
+	// kStairSlopeDegrees = 55 (cpp/src/knav/bake.cpp:39-42: the ground's own limit is agentMaxSlope = 40, knav::NavConfig, HAVOK_NAV.md; a stair's or gate ramp's
+	// smooth slab climbs to 55). A steeper triangle is a wall face or a roof pitch. The walkable part bit is per part (BuildingPartDef::walkable), so a house's
+	// walls and upper blackwalls carry it too and a click at a wall became a walk target on the wall face; stairs and ramps stay ground. User 2026-11-19 23:20
+	// (CLIENT.md "Where characters stand"): reject surfaces a body can't stand on.
+	const double kGroundMinUp = std::cos(55.0 * 3.14159265358979 / 180.0);
+}
+
+void WorldBuildings::setEditor(bool on, const double pos[3], const float q[4])
+{
+	const float qw = q ? q[0] : 1.0f, qx = q ? q[1] : 0.0f, qy = q ? q[2] : 0.0f, qz = q ? q[3] : 0.0f;
+	bool moved = on != editorOn_;
+	if (on) { for (int k = 0; k < 3; k++) { moved = moved || pos[k] != editorPos_[k]; editorPos_[k] = pos[k]; } }
+	moved = moved || qw != editorQ_[0] || qx != editorQ_[1] || qy != editorQ_[2] || qz != editorQ_[3];
+	editorQ_[0] = qw; editorQ_[1] = qx; editorQ_[2] = qy; editorQ_[3] = qz;
 	editorOn_ = on;
-	if (on) { for (int k = 0; k < 3; k++) { editorPos_[k] = pos[k]; } }
+	// The creator's orbit turns the platform with the character every drag frame, and the props are only rebuilt when the sim's things change
+	// (k16.2.433.1): its instance moves in place and the pack pass redraws it there. dataGen_ makes the pick / cull boxes follow it.
+	if (!moved || !on || editorInstance_ < 0 || (size_t)editorInstance_ >= data_.instances.size()) { return; }
+	BuildingInstance& b = data_.instances[(size_t)editorInstance_];
+	b.x = pos[0]; b.y = pos[1]; b.z = pos[2];
+	b.ground = (float)pos[1];
+	b.qw = qw; b.qx = qx; b.qy = qy; b.qz = qz;
+	dataGen_++;
+	packValid_ = false;
 }
 
 bool WorldBuildings::propRay(uint64_t id, const double origin[3], const double dir[3], double& t, bool drawn) const
@@ -35,17 +60,85 @@ bool WorldBuildings::propRay(uint64_t id, const double origin[3], const double d
 	return it != propMeshes_.end() && instanceRay(it->second, origin, dir, t, drawn);
 }
 
+// The top-level instance boxes, current with the instance set and the mesh loads (see drawnHitIn)
+void WorldBuildings::refreshTopBoxes() const
+{
+	// The boxes are keyed on the instance set and on holdGen_ (every mesh load / state move / eviction); a box is recomputed only when the stamp of its parts
+	// moved, so a frame of streaming pays a walk over the parts, not a box per instance (kenshi-k16.2.382.2).
+	if (topBoxData_ != dataGen_ || topBoxHold_ != holdGen_)
+	{
+#ifdef KCLIENT_DEV_TOOLS
+		const auto tb0 = std::chrono::steady_clock::now();
+#endif
+		if (topBoxData_ != dataGen_)
+		{
+			topBoxes_.assign(topLevel_.size(), TopBox{});
+			for (size_t p = 0; p < topLevel_.size(); p++) { topBoxes_[p].index = topLevel_[p]; }
+		}
+		size_t rebuilt = 0;
+		for (uint32_t pos = 0; pos < topBoxes_.size(); pos++)
+		{
+			const uint64_t stamp = topBoxStamp(data_.instances[topBoxes_[pos].index]);
+			if (stamp == topBoxes_[pos].stamp) { continue; }
+			topBoxes_[pos].stamp = stamp;
+			topBoxRebuild(pos);
+			rebuilt++;
+		}
+		topBoxData_ = dataGen_;
+		topBoxHold_ = holdGen_;
+#ifdef KCLIENT_DEV_TOOLS
+		const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tb0).count();
+		if (ms > 0.1) { evlog::add("topbox", -1, 0, "top boxes checked: %zu top-level instances of %zu, %zu boxes rebuilt, %.2f ms", topBoxes_.size(), data_.instances.size(), rebuilt, ms); }
+#endif
+	}
+}
+
+// kenshi-k16.2.412.3: the camera ray's walkable ground: the nearest drawn triangle of a walkable part (BuildingPartDef::walkable, the stand solver's set) the ray meets
+// in [tMin, tMax], any direction, no box. Furniture pieces are not searched (the click's ground is the building's floor).
+bool WorldBuildings::walkableRay(const double origin[3], const double dir[3], double tMin, double tMax, double& t, WalkHit* who) const
+{
+	refreshTopBoxes();
+	bool hit = false;
+	for (const TopBox& tb : topBoxes_)
+	{
+		if (tb.lo[0] > tb.hi[0]) { continue; }
+		double t0 = tMin, t1 = tMax;	// the ray's span through the box (slab test)
+		for (int a = 0; a < 3 && t0 <= t1; a++)
+		{
+			if (std::abs(dir[a]) < 1e-12) { if (origin[a] < tb.lo[a] || origin[a] > tb.hi[a]) { t1 = -1; } continue; }
+			const double ta = (tb.lo[a] - origin[a]) / dir[a], tb2 = (tb.hi[a] - origin[a]) / dir[a];
+			t0 = std::max(t0, std::min(ta, tb2));
+			t1 = std::min(t1, std::max(ta, tb2));
+		}
+		if (t0 > t1) { continue; }
+		double tt;
+		WalkHit wh;
+		if (instanceRay(tb.index, origin, dir, tt, true, t0, t1, true, who ? &wh : nullptr, kGroundMinUp) && (!hit || tt < t))
+		{
+			t = tt;
+			hit = true;
+			if (who) { *who = wh; }
+		}
+	}
+	return hit;
+}
+
 // The nearest drawn surface the ray meets within t in [tMin, tMax] on a building shell or a layout piece standing in the world box lo..hi (a collision solid's):
 // a solid is backed by what is drawn there, or it is an undrawn proxy volume (the staircase body of Storm House reaches 10 u above its treads, k16.2.239.4.1).
-bool WorldBuildings::drawnHitIn(const double origin[3], const double dir[3], const double lo[3], const double hi[3], double tMin, double tMax, double& t) const
+bool WorldBuildings::drawnHitIn(const double origin[3], const double dir[3], const double lo[3], const double hi[3], double tMin, double tMax, double& t, bool walkableOnly) const
 {
 	bool hit = false;
 	const auto test = [&](uint32_t i)
 	{
 		double tt;
-		if (instanceRay(i, origin, dir, tt, true, tMin, tMax) && (!hit || tt < t)) { t = tt; hit = true; }
+		if (instanceRay(i, origin, dir, tt, true, tMin, tMax, walkableOnly) && (!hit || tt < t)) { t = tt; hit = true; }
 	};
-	for (const uint32_t i : topLevel_) { test(i); }
+	refreshTopBoxes();
+	for (const TopBox& tb : topBoxes_)	// a box that the query's window misses cannot be hit by its ray
+	{
+		if (tb.hi[0] < lo[0] || tb.lo[0] > hi[0] || tb.hi[1] < lo[1] || tb.lo[1] > hi[1] || tb.hi[2] < lo[2] || tb.lo[2] > hi[2]) { continue; }
+		test(tb.index);
+	}
 	for (double x = std::floor(lo[0] / 4) * 4 - 4; x <= hi[0] + 4; x += 4)
 	{
 		for (double z = std::floor(lo[2] / 4) * 4 - 4; z <= hi[2] + 4; z += 4)
@@ -57,15 +150,92 @@ bool WorldBuildings::drawnHitIn(const double origin[3], const double dir[3], con
 	return hit;
 }
 
-bool WorldBuildings::groundDrawn(double x, double z, double wireY, double up, double down, double& y) const
+// One top-level instance's box: the union of its Ready parts' mesh boxes (partWorldBox); no Ready part leaves lo > hi, which every query window culls
+void WorldBuildings::topBoxRebuild(uint32_t pos) const
 {
+	TopBox& tb = topBoxes_[pos];
+	const BuildingInstance& b = data_.instances[tb.index];
+	for (int a = 0; a < 3; a++) { tb.lo[a] = 1e30f; tb.hi[a] = -1e30f; }
+	for (uint32_t k = 0; k < b.partCount; k++)
+	{
+		double plo[3], phi[3];
+		if (!partWorldBox(b, k, plo, phi)) { continue; }
+		for (int a = 0; a < 3; a++) { tb.lo[a] = std::min(tb.lo[a], (float)plo[a]); tb.hi[a] = std::max(tb.hi[a], (float)phi[a]); }
+	}
+}
+
+// What an instance's box depends on besides its own transform: its parts' meshes and each mesh's load state (an Uploading mesh has no box yet, a Ready one has)
+uint64_t WorldBuildings::topBoxStamp(const BuildingInstance& b) const
+{
+	uint64_t h = 1469598103934665603ull;
+	for (uint32_t k = 0; k < b.partCount; k++)
+	{
+		const int mesh = partRt_[data_.partRefs[b.firstPart + k]].mesh;
+		h = (h ^ (uint64_t)(uint32_t)mesh) * 1099511628211ull;
+		h = (h ^ (uint64_t)(mesh >= 0 ? (int)meshes_[mesh].state : 0)) * 1099511628211ull;
+	}
+	return h;
+}
+
+int WorldBuildings::groundDrawn(double x, double z, double wireY, double up, double down, double& y) const
+{
+	// one query over the wider reach (kCover each way, at least the window); the nearest hit each way decides the window's answer and the cover answer
+	constexpr double kCover = 12.0;
+	const double reachUp = std::max(up, kCover), reachDown = std::max(down, kCover);
 	const double o[3] = { x, wireY, z }, dn[3] = { 0, -1, 0 }, upd[3] = { 0, 1, 0 };
-	const double lo[3] = { x - 1, wireY - down, z - 1 }, hi[3] = { x + 1, wireY + up, z + 1 };
+	const double lo[3] = { x - 1, wireY - reachDown, z - 1 }, hi[3] = { x + 1, wireY + reachUp, z + 1 };
 	double tDown = 0, tUp = 0;
-	const bool d = drawnHitIn(o, dn, lo, hi, 0, down, tDown), u = drawnHitIn(o, upd, lo, hi, 0, up, tUp);
-	if (!d && !u) { return false; }
-	y = d && (!u || tDown <= tUp) ? wireY - tDown : wireY + tUp;
-	return true;
+	const bool d = drawnHitIn(o, dn, lo, hi, 0, reachDown, tDown, true), u = drawnHitIn(o, upd, lo, hi, 0, reachUp, tUp, true);
+	const bool dIn = d && tDown <= down, uIn = u && tUp <= up;
+	if (dIn || uIn) { y = dIn && (!uIn || tDown <= tUp) ? wireY - tDown : wireY + tUp; return 1; }
+	// nothing drawn in the window: a building near x, z whose mesh has not loaded yet may still hold the floor (its box is unknown until it is Ready)
+	constexpr double kPendingR = 80.0;
+	for (const uint32_t i : topLevel_)
+	{
+		const BuildingInstance& b = data_.instances[i];
+		if (std::fabs(b.x - x) > kPendingR || std::fabs(b.z - z) > kPendingR) { continue; }
+		for (uint32_t k = 0; k < b.partCount; k++)
+		{
+			const uint32_t pid = data_.partRefs[b.firstPart + k];
+			if (data_.parts[pid].kind == 2 || !data_.parts[pid].walkable) { continue; }
+			const int mesh = partRt_[pid].mesh;
+			if (mesh == -2 || (mesh >= 0 && (meshes_[mesh].state == Unloaded || meshes_[mesh].state == Loading || meshes_[mesh].state == Uploading))) { return -1; }
+		}
+	}
+	if (d || u) { y = d && (!u || tDown <= tUp) ? wireY - tDown : wireY + tUp; return 0; }	// kenshi-k16.2.412.1: the nearest drawn surface outside the window, for the caller's search
+	return 3;
+}
+
+std::string WorldBuildings::walkableReport(const std::string& name) const
+{
+	std::string out;
+	std::set<std::string> seen;
+	for (const uint32_t i : topLevel_)
+	{
+		const BuildingInstance& b = data_.instances[i];
+		const std::string& n = b.nameId < data_.names.size() ? data_.names[b.nameId] : std::string();
+		const bool all = name == "interior+", interiors = all || name == "interior*";	// dump walkparts=interior* (interior+: all of them): every building with interior (kind 1) parts the bit calls not walkable (k16.2.414.2, coverage)
+		if (interiors) { bool bad = false; for (uint32_t k = 0; k < b.partCount; k++) { const BuildingPartDef& d = data_.parts[data_.partRefs[b.firstPart + k]]; bad = bad || (d.kind == 1 && (all || !d.walkable)); } if (!bad) { continue; } }
+		if ((!interiors && n.find(name) == std::string::npos) || !seen.insert(n).second) { continue; }
+		int walk[4] = {}, not_[4] = {}, stairs = 0, carve = 0, mode = -1;
+		for (uint32_t k = 0; k < b.partCount; k++)
+		{
+			const BuildingPartDef& d = data_.parts[data_.partRefs[b.firstPart + k]];
+			(d.walkable ? walk : not_)[std::clamp(d.kind, 0, 3)]++;
+			stairs += d.stairs;
+			if (d.kind <= 1) { mode = d.pathMode; }
+			carve += d.carve;
+		}
+		char line[320];
+		snprintf(line, sizeof line, "%s: parts walkable/not shell %d/%d interior %d/%d mask %d/%d furniture %d/%d; stairs %d, carve masks %d, path mode %d\n", n.c_str(), walk[0], not_[0], walk[1], not_[1], walk[2], not_[2], walk[3], not_[3], stairs, carve, mode);
+		out += line;
+	}
+	return out.empty() ? "no placed building named " + name + "\n" : out;
+}
+
+const void* WorldBuildings::groundDrawnGen() const
+{
+	return reinterpret_cast<const void*>((uintptr_t)(((dataGen_ & 0xFFFFFF) << 32) | (holdGen_ & 0xFFFFFFFF)) + 1);
 }
 
 int WorldBuildings::layoutPieceInstance(uint64_t building, uint32_t piece) const
@@ -141,7 +311,7 @@ std::string WorldBuildings::propReport(uint64_t id) const
 
 // A bed (SIMLINK INTERACTABLE kind 5) is a layout furniture piece, not a prop: the piece whose oriented mesh box (grown by kBedSlack) holds the sleeping
 // spot `at`, the nearest to it when several do; the ray enters its box at t. -1: no piece holds the spot, 0: the ray misses it, 1: hit.
-int WorldBuildings::bedRay(const double at[3], const double origin[3], const double dir[3], double& t) const
+int WorldBuildings::bedRay(const double at[3], const double origin[3], const double dir[3], double& t, bool drawn) const
 {
 	// The piece depends on the spot only (not the ray): bedPiece once per spot and generation, the ray test per call (kenshi-k16.2.205.12.111)
 	uint64_t key = 1469598103934665603ull;
@@ -154,7 +324,7 @@ int WorldBuildings::bedRay(const double at[3], const double origin[3], const dou
 		it = bedMemo_.insert_or_assign(key, m).first;
 	}
 	const int found = it->second.piece;
-	return found < 0 ? -1 : instanceRay((uint32_t)found, origin, dir, t) ? 1 : 0;
+	return found < 0 ? -1 : instanceRay((uint32_t)found, origin, dir, t, drawn) ? 1 : 0;
 }
 
 // Whether point p lies in one of the instance's part boxes, each grown by slack (mesh units)
@@ -184,57 +354,64 @@ bool WorldBuildings::instanceHolds(uint32_t index, const double p[3], double sla
 
 // The nearest hit of the ray (mesh frame, already offset-free: `off` is the part's offset) on the mesh's triangles; a mesh whose triangles cannot be
 // read keeps its box (true, t unchanged).
-bool WorldBuildings::triangleRay(int mesh, const double o[3], const double d[3], const double off[3], double& t, double tMin, double tMax) const
+bool WorldBuildings::triangleRay(int mesh, const double o[3], const double d[3], const double off[3], double& t, double tMin, double tMax, double minUp) const
 {
 	const std::string& path = meshes_[mesh].path;
-	auto it = pickTris_.find(path);
-	if (it == pickTris_.end())
-	{
-		std::vector<float> tris;
-		MeshCpu cpu;
-		if (decodeMesh(path, cpu))
-		{
-			for (const Sub& s : cpu.subs)
-			{
-				for (int i = 0; i + 2 < s.indexCount; i += 3)
-				{
-					for (int c = 0; c < 3; c++)
-					{
-						const float* v = &cpu.verts[((size_t)s.firstVertex + cpu.indices[(size_t)s.firstIndex + i + c]) * kVertexFloats];
-						tris.insert(tris.end(), v, v + 3);
-					}
-				}
-			}
-		}
-		it = pickTris_.emplace(path, std::move(tris)).first;
-	}
-	const std::vector<float>& tr = it->second;
-	if (tr.empty()) { return true; }
+	const auto it = pickTris_.find(path);	// filled by uploadMesh (wbload.cpp) when the mesh loads; a Ready mesh always has its entry
+	if (it == pickTris_.end()) { return false; }
+	const PickMesh& pm = it->second;
+	if (pm.nodes.empty()) { return false; }
 	double best = 1e30;
 	const double ox = o[0] - off[0], oy = o[1] - off[1], oz = o[2] - off[2];
-	for (size_t i = 0; i + 8 < tr.size(); i += 9)	// Moeller-Trumbore, both faces (a prop's back faces are drawn or hidden by the box anyway)
+	const double inv[3] = { std::abs(d[0]) < 1e-300 ? 1e300 : 1.0 / d[0], std::abs(d[1]) < 1e-300 ? 1e300 : 1.0 / d[1], std::abs(d[2]) < 1e-300 ? 1e300 : 1.0 / d[2] };
+	const double org[3] = { ox, oy, oz };
+	int stack[64];
+	int sp = 0;
+	stack[sp++] = 0;
+	while (sp > 0)
 	{
-		const float* a = &tr[i];
-		const double e1[3] = { tr[i + 3] - (double)a[0], tr[i + 4] - (double)a[1], tr[i + 5] - (double)a[2] };
-		const double e2[3] = { tr[i + 6] - (double)a[0], tr[i + 7] - (double)a[1], tr[i + 8] - (double)a[2] };
-		const double p[3] = { d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0] };
-		const double det = e1[0] * p[0] + e1[1] * p[1] + e1[2] * p[2];
-		if (std::abs(det) < 1e-14) { continue; }
-		const double s[3] = { ox - a[0], oy - a[1], oz - a[2] };
-		const double u = (s[0] * p[0] + s[1] * p[1] + s[2] * p[2]) / det;
-		if (u < 0 || u > 1) { continue; }
-		const double q[3] = { s[1] * e1[2] - s[2] * e1[1], s[2] * e1[0] - s[0] * e1[2], s[0] * e1[1] - s[1] * e1[0] };
-		const double v = (d[0] * q[0] + d[1] * q[1] + d[2] * q[2]) / det;
-		if (v < 0 || u + v > 1) { continue; }
-		const double tt = (e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]) / det;
-		if (tt >= tMin && tt <= tMax && tt < best) { best = tt; }
+		const PickNode& nd = pm.nodes[(size_t)stack[--sp]];
+		double t0 = tMin, t1 = std::min(tMax, best);
+		for (int a = 0; a < 3 && t0 <= t1; a++)	// slab test against the node's box
+		{
+			double ta = (nd.lo[a] - org[a]) * inv[a], tb = (nd.hi[a] - org[a]) * inv[a];
+			if (ta > tb) { std::swap(ta, tb); }
+			t0 = std::max(t0, ta);
+			t1 = std::min(t1, tb);
+		}
+		if (t0 > t1 + 1e-9) { continue; }
+		if (nd.count == 0) { if (sp + 2 <= 64) { stack[sp++] = nd.a; stack[sp++] = nd.b; } continue; }
+		for (int k = 0; k < nd.count; k++)
+		{
+			const float* tr = &pm.tris[(size_t)(nd.a + k) * 9];
+			const float* a = tr;
+			const double e1[3] = { tr[3] - (double)a[0], tr[4] - (double)a[1], tr[5] - (double)a[2] };
+			const double e2[3] = { tr[6] - (double)a[0], tr[7] - (double)a[1], tr[8] - (double)a[2] };
+			if (minUp > 0)	// kenshi-k16.2.412.3: the ground layer's slope test (a wall face is not ground): |normal.y| against the bake's walk slope
+			{
+				const double nx = e1[1] * e2[2] - e1[2] * e2[1], ny = e1[2] * e2[0] - e1[0] * e2[2], nz = e1[0] * e2[1] - e1[1] * e2[0];
+				const double len = std::sqrt(nx * nx + ny * ny + nz * nz);
+				if (len < 1e-12 || std::fabs(ny) / len < minUp) { continue; }
+			}
+			const double p[3] = { d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0] };
+			const double det = e1[0] * p[0] + e1[1] * p[1] + e1[2] * p[2];
+			if (std::abs(det) < 1e-14) { continue; }
+			const double s[3] = { ox - a[0], oy - a[1], oz - a[2] };
+			const double u = (s[0] * p[0] + s[1] * p[1] + s[2] * p[2]) / det;
+			if (u < 0 || u > 1) { continue; }
+			const double q[3] = { s[1] * e1[2] - s[2] * e1[1], s[2] * e1[0] - s[0] * e1[2], s[0] * e1[1] - s[1] * e1[0] };
+			const double v = (d[0] * q[0] + d[1] * q[1] + d[2] * q[2]) / det;
+			if (v < 0 || u + v > 1) { continue; }
+			const double tt = (e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]) / det;
+			if (tt >= tMin && tt <= tMax && tt < best) { best = tt; }
+		}
 	}
 	if (best >= 1e30) { return false; }
 	t = best;
 	return true;
 }
 
-bool WorldBuildings::instanceRay(uint32_t index, const double origin[3], const double dir[3], double& t, bool drawn, double tMin, double tMax) const
+bool WorldBuildings::instanceRay(uint32_t index, const double origin[3], const double dir[3], double& t, bool drawn, double tMin, double tMax, bool walkableOnly, WalkHit* who, double minUp) const
 {
 	const BuildingInstance& b = data_.instances[index];
 	// the ray in the instance's mesh frame; a linear map, so t is the same along both
@@ -250,7 +427,7 @@ bool WorldBuildings::instanceRay(uint32_t index, const double origin[3], const d
 		const uint32_t pid = data_.partRefs[b.firstPart + k];
 		const BuildingPartDef& def = data_.parts[pid];
 		const int mesh = partRt_[pid].mesh;
-		if (def.kind == 2 || mesh < 0 || meshes_[mesh].state != Ready) { continue; }
+		if (def.kind == 2 || (walkableOnly && !def.walkable) || mesh < 0 || meshes_[mesh].state != Ready) { continue; }
 		const MeshEntry& m = meshes_[mesh];
 		double off[3];
 		toMesh(offsetFrame, def.offset, off);
@@ -264,8 +441,13 @@ bool WorldBuildings::instanceRay(uint32_t index, const double origin[3], const d
 			t1 = std::min(t1, std::max(ta, tb));
 		}
 		if (t0 > t1 || t1 < tMin || t0 > tMax) { continue; }	// the box's span along the ray misses the window
-		if (drawn && !triangleRay(mesh, o, d, off, t0, tMin, tMax)) { continue; }	// the box is only the cheap test; the drawn triangles decide
-		if (!hit || t0 < t) { t = t0; hit = true; }
+		if (drawn && !triangleRay(mesh, o, d, off, t0, tMin, tMax, minUp)) { continue; }	// the box is only the cheap test; the drawn triangles decide
+		if (!hit || t0 < t)
+		{
+			t = t0;
+			hit = true;
+			if (who) { *who = WalkHit{ index, pid, def.walkable, (int)def.kind, m.path }; }	// the pick report's part (kenshi-k16.2.412.3 rework)
+		}
 	}
 	return hit;
 }
@@ -304,6 +486,21 @@ const WorldBuildings::BInfo* WorldBuildings::infoFor(uint32_t bi)
 		if (def.kind == 1) { interiorLow[def.floor] = std::min(interiorLow[def.floor], lo[1]); }
 	}
 	info.hasBounds = mask || ground;
+	// The occluder fade keeps the foundation AND the ground floor solid (user 2026-11-19; lead review): every fragment up to the ground floor's walking surface, the
+	// interior's bottom (the mask hull, else the lowest floor-0 interior part) plus kFloorTop for the slab's thickness. The base mesh holds foundation and
+	// ground walls in one, so the shader cuts per fragment (mesh.glsl xray_fnd). A building with neither hull has no floor to find: nothing exempted (foundY
+	// stays -1e30). Guaranteed before a first draw: wbdraw.cpp calls infoFor for every building instance it draws, and a real (non stand-in) draw needs
+	// every mesh Ready, which is what infoFor waits for.
+	const float interiorBottom = mask ? maskMn[1] : interiorLow[0];
+	if (interiorBottom < 1e29f)
+	{
+		info.foundY = interiorBottom + (float)kFloorTop;
+		for (uint32_t k = 0; k < b.partCount; k++)
+		{
+			const uint32_t pid = data_.partRefs[b.firstPart + k];
+			if (data_.parts[pid].kind != 2) { partRt_[pid].foundY = interiorBottom + (float)kFloorTop; }
+		}
+	}
 	for (int a = 0; a < 3; a++)
 	{
 		info.mn[a] = mask ? maskMn[a] : groundMn[a];

@@ -23,6 +23,7 @@
 #include "kworld/loadorder.hpp"
 
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <algorithm>
 #include <cstdio>

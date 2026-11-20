@@ -25,15 +25,10 @@
 #include <string>
 #include <vector>
 #include "nav_source.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
-#endif
-#ifndef KSIM_SCENARIOS_DIR
-#error KSIM_SCENARIOS_DIR must be defined
 #endif
 
 using namespace ksim;
@@ -227,6 +222,9 @@ int main(int argc, char** argv)
 			if (severed == 0)
 				continue;
 			sim.run(10);
+			severed = 0; // a second arm can come off inside the settle ticks: count the arms off now, not at the first sever
+			for (const char* name : {"Left Arm", "Right Arm"})
+				severed += partNamed(*sim.combat()->find(bandit), name)->severed() ? 1 : 0;
 			const std::size_t items = limbItems(sim, *sim.combat()->find(bandit)) - before;
 			test::require(items == severed, "one ground item per severed arm: " + std::to_string(items) + " for " + std::to_string(severed));
 			std::cout << "fight: " << severed << " arm(s) off, " << items << " item(s) on the ground\n";

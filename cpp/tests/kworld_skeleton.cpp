@@ -5,6 +5,7 @@
 #include "kworld/error.hpp"
 #include "kworld/ogreskeleton.hpp"
 #include "kworld_test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cmath>
 #include <cstddef>

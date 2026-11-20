@@ -57,8 +57,16 @@ namespace
 		g.staticRows.clear();
 		const double x = g.x, z = g.z;
 		g.terrain = cx.hm ? cx.hm->terrainHeight(x, z) : 0.0;	// what the stand ray uses since k16.2.382.1: the drawn lattice triangles
-		const double lo = g.terrain - 40, hi = g.terrain + 100;
-		// the terrain: the drawn lattice triangle (Heightmap::terrainHeight, what the stand ray stands on since kenshi-k16.2.382.1) and, as its own row, the
+		double lo = g.terrain - 40, hi = g.terrain + 100;
+		// a body within 1 u of the point: its wire y's own reach too, so a stand ray that floats (a high floor, a wrong wire y) is listed where the ray looks
+		for (const uint64_t id : cx.sim.characterIds())
+		{
+			double p[3], wy = 0;
+			if (!cx.sim.simPos(id, p) || std::hypot(p[0] - x, p[2] - z) > 1.0 || !cx.sim.wireY(id, wy)) { continue; }
+			lo = std::min(lo, wy - 14);
+			hi = std::max(hi, wy + 14);
+		}
+		// the terrain: the drawn lattice triangle (Heightmap::terrainHeight, what the stand ray lands on since kenshi-k16.2.382.1) and, as its own row, the
 		// bilinear Heightmap::height (what it used before; the two differ by up to ~0.5 u on rough ground)
 		g.staticRows.push_back({ g.terrain, kTerrainDrawn, "Heightmap::terrainHeight (drawn triangle; the stand ray's)" });
 		if (cx.hm) { g.staticRows.push_back({ cx.hm->height(x, z), kTerrain, "Heightmap::height (bilinear, not the stand ray's)" }); }
@@ -74,7 +82,7 @@ namespace
 				from = t + 0.005;
 			}
 		}
-		// building collision triangles, flagged as groundY treats them
+		// building collision triangles, (the stand ray no longer reads them: kenshi-k16.2.382.2), flagged as the retired ray treated them
 		std::vector<CollisionPick::ColumnHit> hits;
 		g.collLoaded = cx.collide.column(x, z, lo, hi, hits) >= 0;
 		for (const CollisionPick::ColumnHit& h : hits)
@@ -134,6 +142,7 @@ namespace
 			if (std::fabs(p[1] - wy) > 0.005) { g.rows.push_back({ p[1], kWire, "  its drawn y this frame (the ray's result)" }); }
 			g.rows.push_back({ top, kWindow, "stand ray window top (wire + kRayUp)" });
 			g.rows.push_back({ bottom, kWindow, "stand ray window bottom (wire - kRayDown)" });
+			g.rows.push_back({ wy - SimView::kDrawnDown, kWindow, "stand ray drawn-floor reach (wire - kDrawnDown)" });
 			if (res >= 1) { snprintf(note, sizeof note, "stand ray -> %s (%+.2f from the wire)", kind, ry - wy); g.rows.push_back({ ry, kPick, note }); }
 			else { snprintf(note, sizeof note, "stand ray -> MISS (%s): drawn at the wire y", kind); g.rows.push_back({ wy, kPick, note }); }
 		}
@@ -169,6 +178,21 @@ namespace
 
 bool heightProbeMode() { return g.mode; }
 void heightProbeToggle() { g.mode = !g.mode; printf("height probe mode %s\n", g.mode ? "on: click a point" : "off"); }
+bool heightProbeActive() { return g.active; }
+
+// Forget the probe at a point (the F8 panel's "Clear height probe", kenshi-k16.2.413.1): no chart, no line in the scene, no sidecar lines.
+// The mode is its own switch (Ctrl+F10 / the panel's toggle), so a click after the clear sets a new probe.
+void heightProbeClear()
+{
+	if (!g.active) { return; }
+	g.active = false;
+	g.x = g.z = 0;
+	g.rows.clear();
+	g.staticRows.clear();
+	g.lines.clear();
+	g.header.clear();
+	printf("height probe cleared\n");
+}
 
 void heightProbeSet(const Context& cx, double x, double z, bool print)
 {

@@ -18,6 +18,9 @@
 // footwork is a simplified steering model, see IMPLEMENTATION.md).
 
 #include "ksim/combat/combat_data.hpp"
+#if KSIM_DEV
+#include "ksim/dev/walk_stats.hpp"
+#endif
 #include "ksim/combat/fighter_state.hpp"
 #include "ksim/ai/perception.hpp"
 #include "ksim/core/profile.hpp"
@@ -55,7 +58,7 @@ class MeshNavigator;
 // channel with k = 0), reduced by the worn gear's weather protection and not by the weather's `effect strength`.
 inline constexpr double kAcidDamagePerSecond = 0.08;
 // Venge's sky beams: 10 HP per real second per body part at full strength (kinspect rwh48_venge_beams_static.md section 5), times the
-// beam's strength and (1 - worn protection), into the wear pool like the acid.
+// beam's strength and (1 - worn protection), into the part's HEALTH (rwh.175: the stun and wear pools are untouched; it corrects rwh.48).
 inline constexpr double kBeamDamagePerSecond = 10.0;
 
 // The exe's 1405ca9a0(c, 0), the only writer of Character+0xd4 (kinspect STEALTH_CLEAR.md, 71fa402): it clears the sneak
@@ -336,6 +339,7 @@ public:
 		// rwh.116: the far flag measured to the predicted point (90 / 160 / 70), and the steer's speed accumulator (steer+0x12c; per character, never
 		// reset, 0 after a load). Transient.
 		bool leadFar = false;
+		bool lineBlocked = false; // approach() found the navmesh straight walk to the target blocked this tick (a table's cut, a wall): integrate routes instead of steering straight (kenshi-k16.6.416). Transient
 		double steerSpeed = 0.0;
 		// SELF_PRESERVATION (goal 32, kinspect f5784bb + c1a305f): the attackers whose landed hits this member has
 		// taken. A player character answers such an attacker at any range, past the kSelfDefenceRange gate (the
@@ -387,6 +391,8 @@ public:
 	bool remove(std::uint64_t id);
 	// Sets the join rules of one member (Member::joinDriven / joinGoals); false when there is no such member.
 	bool setJoinGoals(std::uint64_t id, bool driven, std::uint16_t goals);
+	// The pair-distance cache entries `id` is the lower id of, for a save (state::Fighter::pathSamples); add() takes them back.
+	std::vector<state::Fighter::PathSample> pathSamplesOf(std::uint64_t id) const;
 	// The key a fighter's dice streams hang on (task CC): its Fighter::diceSeed, the character's stable identity, when the spawn path set
 	// one; else the Id (a bare arena, an older save).
 	std::uint64_t diceKey(std::uint64_t id) const noexcept;
@@ -412,7 +418,8 @@ public:
 	// 0.3 s retry / reload timer, the ammo, the blockers on the line (a walled-off target, an ally in the way: no shot) and the shot itself, an
 	// instant line query with the skill's deviation; a hit lands through the same medical path as strikeFromTask.
 	enum class Shot { NoWeapon, NoTarget, OutOfRange, OutOfArc, Waiting, NoAmmo, Blocked, Missed, Hit };
-	Shot rangedFire(std::uint64_t attacker, std::uint64_t defender, double dt);
+	// `aimXp` false = the auto-engage task 266 (the original pays no gun XP for it; 262 / 263 / a turret do).
+	Shot rangedFire(std::uint64_t attacker, std::uint64_t defender, double dt, bool aimXp = true);
 	// The range test alone: dist^2 < (range x height factor)^2 (dt41_A section 1).
 	static bool inRangedReach(const state::Fighter& shooter, const state::Fighter& target) noexcept;
 	// A mounted gunner's firing arc: the target's bearing within kTurretArcHalf of the turret's facing (OURS, UNSURE: the decode has no arc).
@@ -677,7 +684,7 @@ private:
 	// The medical hit of a blow no technique made (strikeFromTask, rangedFire): hit-by tags, the receiveHit, the KO and death events.
 	void landBlow(Ctx& ctx, Member& att, Member& def, double dmg[6]);
 	// A pair's distance cache behind the melee gates (task AQ; ENGAGEMENT.md "Fights across floors"): the route length
-	// plus the gap from its end to the target, and where both stood when sampled. Transient, never saved.
+	// plus the gap from its end to the target, and where both stood when sampled. Saved with the lower id's Fighter (pathSamples, v114).
 	struct PathSample
 	{
 		double length = 0.0; // infinity = no route
@@ -687,13 +694,14 @@ private:
 		double bx = 0.0;
 		double by = 0.0;
 		double bz = 0.0;
-		double time = 0.0;
+		std::uint64_t tick = 0; // stepCount_ when sampled
 	};
 
 	CombatRules rules_;
 	std::uint64_t seed_;
 	std::vector<Member> members_;
 	double time_ = 0.0;
+	std::uint64_t stepCount_ = 0; // steps taken; the path cache's age counts in them (an exact count survives a save, a seconds sum does not)
 	// The crowd penalty's double buffer (Member::refused): the phase this step's refusals go to; readers use the other.
 	std::uint8_t refusePhase_ = 0;
 	std::function<void(const CombatEvent&)> observer_;
@@ -738,6 +746,10 @@ private:
 	std::uint64_t routesBlocked_ = 0;
 	std::uint64_t reroutes_ = 0;
 	std::uint64_t offPathRepaths_ = 0;
+#if KSIM_DEV
+public:
+	dev::WalkStats walkStats_; // kenshi-k16.8.39
+#endif
 };
 
 } // namespace ksim

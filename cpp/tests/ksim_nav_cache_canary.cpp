@@ -20,8 +20,8 @@
 
 namespace {
 
-constexpr std::uint32_t kPinnedRecipe = 21;
-constexpr std::uint64_t kPinnedDigest = 0x4fba5addfa175094ull;
+constexpr std::uint32_t kPinnedRecipe = 40;
+constexpr std::uint64_t kPinnedDigest = 0x8e38acc06a3e62daull;
 
 std::string hex(std::uint64_t value)
 {

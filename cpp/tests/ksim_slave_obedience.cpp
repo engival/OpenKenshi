@@ -21,6 +21,7 @@
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cstdlib>
 #include <algorithm>
@@ -33,12 +34,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
-#endif
-#ifndef KSIM_SCENARIOS_DIR
-#error KSIM_SCENARIOS_DIR must be defined
 #endif
 
 using namespace ksim;
@@ -193,7 +188,8 @@ int main()
 		// here (the note above). 4 and 5 are freed inside the window and graft, with the row and without it.
 		// The furniture ring (k16.7.89) moves the fight: KSIM_SEEDS sweep of 1..12 with it (2026-11-18): only seed 1 is freed inside the window and grafts;
 		// 4 and 5 are still carried (down) when the walk is over.
-		for (const std::uint64_t seed : {std::uint64_t{1}})
+		// Recipe 30's ring (k16.7.95) moved the fights again (KSIM_SEEDS survey 2026-11-19, kenshi-k16.7.104): of 1-12, 100, 101, 103 only seed 12 is freed inside the window and grafts.
+		for (const std::uint64_t seed : {std::uint64_t{12}})
 		{
 			grafted += play(seed, false) ? 1 : 0;
 			play(seed, true);

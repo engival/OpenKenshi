@@ -20,11 +20,7 @@
 #include "test_util.hpp"
 #include "sim_access.hpp"
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "test_net.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -96,7 +92,7 @@ struct Client
 	~Client()
 	{
 		if (fd >= 0)
-			::close(fd);
+			test_net::close(fd);
 	}
 	Client(const Client&) = delete;
 	Client& operator=(const Client&) = delete;
@@ -106,7 +102,7 @@ struct Client
 		std::size_t at = 0;
 		while (at < bytes.size())
 		{
-			const ssize_t n = ::send(fd, bytes.data() + at, bytes.size() - at, MSG_NOSIGNAL);
+			const auto n = test_net::send(fd, bytes.data() + at, bytes.size() - at, test_net::kMsgNoSignal);
 			test::require(n > 0, "client send");
 			at += static_cast<std::size_t>(n);
 		}
@@ -117,10 +113,10 @@ struct Client
 	{
 		const auto fill = [&]() {
 			pollfd p{ fd, POLLIN, 0 };
-			if (::poll(&p, 1, timeoutMs) <= 0)
+			if (test_net::poll(&p, 1, timeoutMs) <= 0)
 				return false;
 			std::uint8_t block[65536];
-			const ssize_t n = ::recv(fd, block, sizeof block, 0);
+			const auto n = test_net::recv(fd, block, sizeof block, 0);
 			test::require(n > 0, "client recv");
 			in.insert(in.end(), block, block + n);
 			return true;

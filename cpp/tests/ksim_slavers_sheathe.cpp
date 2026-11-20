@@ -19,12 +19,14 @@
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <sstream>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -33,12 +35,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
-#endif
-#ifndef KSIM_SCENARIOS_DIR
-#error KSIM_SCENARIOS_DIR must be defined
 #endif
 
 using namespace ksim;
@@ -50,7 +46,8 @@ constexpr double kSettle = 30.0; // s after the cuff; the original's N is not in
 
 struct Row { std::uint64_t id; bool weapon; bool fight; int goal; bool routine; int technique; };
 
-std::vector<Row> play(const std::uint64_t seed, const double settle)
+// reloadAtCapture: on the tick the player is shackled the run is saved and loaded back (the stand-down comes after it).
+std::vector<Row> play(const std::uint64_t seed, const double settle, const bool reloadAtCapture)
 {
 	const kworld::LoadOrder order = kworld::resolveLoadOrder(KENSHI_DATA, {});
 	SpawnOptions spawn;
@@ -85,7 +82,15 @@ std::vector<Row> play(const std::uint64_t seed, const double settle)
 	{
 		sim.tick();
 		if (shackled < 0 && sim.combat()->find(kPlayer)->slaveState == 1)
+		{
 			shackled = static_cast<std::int64_t>(sim.clockTick());
+			if (reloadAtCapture)
+			{
+				std::stringstream blob;
+				sim.save(blob);
+				sim.reload(blob);
+			}
+		}
 		if (shackled >= 0 && static_cast<double>(static_cast<std::int64_t>(sim.clockTick()) - shackled) * kTickSeconds >= settle)
 			break;
 	}
@@ -121,7 +126,13 @@ int main()
 		}
 		for (const std::uint64_t seed : {std::uint64_t{706960716}, std::uint64_t{3}})
 		{
-			const std::vector<Row> rows = play(seed, kSettle);
+			const std::vector<Row> rows = play(seed, kSettle, false);
+			const std::vector<Row> loaded = play(seed, kSettle, true);
+			test::require(loaded.size() == rows.size(), "the loaded run has the same members");
+			for (std::size_t i = 0; i < rows.size(); ++i)
+				test::require(loaded[i].weapon == rows[i].weapon && loaded[i].fight == rows[i].fight, // the goal is not compared: a reload does not keep the selector's pick (goal 53 / 43 at the capture)
+					"seed " + std::to_string(seed) + " member " + std::to_string(rows[i].id) + ": a run saved and loaded at the capture stands down as the straight run (weapon "
+					+ std::to_string(loaded[i].weapon) + " / " + std::to_string(rows[i].weapon) + ", fight " + std::to_string(loaded[i].fight) + " / " + std::to_string(rows[i].fight) + ")");
 			if (std::getenv("KSIM_DUMP") != nullptr)
 				for (const Row& r : rows)
 					std::cout << "seed " << seed << " m" << r.id << " weapon " << r.weapon << " fight " << r.fight << " goal " << r.goal << " routine " << r.routine << " tech " << r.technique << "\n";

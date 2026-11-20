@@ -2160,8 +2160,7 @@ void wounds(const Data& w)
 }
 
 // DC_NUM_BACKPACKS (37) and the `target has item type` list (1.3 step 8) on the inventories: the Dust King's "Looting" (7151) under
-// EV_LOOTING_EVERYTHING, whose line 7154 wants two squad backpacks and 7158 an item type (Hashish; UNSURE: the reading compares
-// record types, and the data's list entries are ITEM records).
+// EV_LOOTING_EVERYTHING, whose line 7154 wants two squad backpacks and 7158 an item type (Hashish, by item function).
 void looting(const Data& w)
 {
 	const auto line = [&](int members, bool hashish)
@@ -2194,12 +2193,11 @@ void looting(const Data& w)
 	check(twoBags == "7154-Dialogue.mod", "two squad backpacks draw NUM_BACKPACKS' line 7154 (got \"" + twoBags + "\")");
 	const std::string oneBag = line(1, false);
 	check(oneBag.empty(), "one does not (the item-type lines fail, the money line is gated out; got \"" + oneBag + "\")");
-	// UNSURE (DIALOGUE_CONDITIONS_STATIC 1.3 step 8): the exe's item-type reading is not decoded, so ours is the record type; every
-	// data list entry is an ITEM record, and Hashish passes all four lists (their four lines tie and the hash picks one).
+	// The exe reads only the first list entry, by its item function (item+0x124), in the flat main inventory (findings/bread.md): Hashish
+	// (function 8) passes 7156 (Cactus Rum 8) and 7158 (Hashish 8), never 7157 (function 3) or 7159 (function 0); the lines tie, the hash picks.
 	const std::string hashish = line(1, true);
-	check((hashish == "7156-Dialogue.mod" || hashish == "7157-Dialogue.mod" || hashish == "7158-Dialogue.mod"
-			|| hashish == "7159-Dialogue.mod"),
-		"carrying Hashish passes the item-type lists (7156-7159, got \"" + hashish + "\")");
+	check(hashish == "7156-Dialogue.mod" || hashish == "7158-Dialogue.mod",
+		"carrying Hashish passes the function-8 lists only (7156 / 7158, got \"" + hashish + "\")");
 }
 
 // The `target carrying character` list (1.3 step 7) and `target has item` (step 8): the Samurai Gate Guard's "Guard sees fish head"

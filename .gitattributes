@@ -1,0 +1,3 @@
+# Validity tables are one row per line; branches each append rows, so a union merge keeps both sides (kenshi-k16.15.26 follow-up).
+# ksim_validity_check fails on a row that comes out twice (both sides edited it).
+cpp/tests/validity/*.tsv merge=union

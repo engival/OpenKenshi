@@ -45,7 +45,7 @@ enum class CommandType : std::uint8_t
 	// points: the route the server made on the navmesh (x, z; the first is where the order was
 	// given), object: the order's clientSeq, x, z: the destination, value: bit 0 queue (the
 	// move waits in state::OrderQueue and is routed to the last point when it starts; otherwise it replaces the running
-	// order and empties the queue), bit 1 approach point. With no navmesh or no points the command is dropped: no route, no move.
+	// order and empties the queue), bit 1 approach point, bit 2 far goal (`points` is the goal alone: far_orders.cpp). With no navmesh or no points the command is dropped: no route, no move.
 	FighterMoveTo = 6,
 	// object: the enemy's Id; dropped when it is unknown or on the same team.
 	FighterAttack = 7,
@@ -233,6 +233,9 @@ struct Command
 	static Command setDoorState(std::uint64_t doorKey, std::int32_t state);
 	static Command fighterMoveTo(state::Id subject, std::vector<state::GroundPoint> route, std::vector<double> heights,
 		std::uint32_t clientSeq, bool queue = false, bool approach = false);
+	// A move to a goal in a zone that is not loaded (MeshNavigator::farGoal): `points` is the true goal alone (value bit 2). The route is planned
+	// leg by leg when the order applies (Simulation::startMoveOrder); the order is never refused for lack of a route.
+	static Command fighterMoveFar(state::Id subject, double goalX, double goalZ, double goalY, std::uint32_t clientSeq, bool queue = false);
 	static Command fighterDrive(state::Id subject, std::int32_t mode, double heading, std::uint32_t clientSeq, int strafe = 0);
 	static Command fighterAttack(state::Id subject, state::Id target);
 	static Command fighterStop(state::Id subject, bool hold);

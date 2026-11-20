@@ -34,7 +34,7 @@ inline constexpr double kChanceBound = 15.0;
 // the observers it holds for, so the client's red fist never promises a KO the sim then aborts.
 inline bool victimKnows(const state::Fighter& victim, std::uint64_t assassin) noexcept
 {
-	return perception::aware(victim, assassin);
+	return perception::knownNow(victim, assassin);
 }
 
 // The attack value: Assassination x its effective stat (the exe's CharStats+0xb8 x getEffectiveStat 0x16).
@@ -56,12 +56,13 @@ inline double defenceValue(const state::Fighter& victim) noexcept
 }
 
 // 1408852f0(assassin, victim, 1): 0..100, 0 when the victim already knows the assassin. (The exe halves it for a victim with a sighted
-// record; our record folds the sighting into "aware", so that case is the 0.)
+// record: `aware` but not knownNow here.)
 inline double chance(const state::Fighter& assassin, const state::Fighter& victim, std::uint64_t assassinId) noexcept
 {
-	if (perception::aware(victim, assassinId))
+	if (victimKnows(victim, assassinId))
 		return 0.0;
-	return 100.0 * std::clamp((attackValue(assassin) - defenceValue(victim) + kChanceBound) / (2.0 * kChanceBound), 0.0, 1.0);
+	const double heard = perception::aware(victim, assassinId) ? 0.5 : 1.0; // heard only (DAT_14172381c): half
+	return heard * 100.0 * std::clamp((attackValue(assassin) - defenceValue(victim) + kChanceBound) / (2.0 * kChanceBound), 0.0, 1.0);
 }
 
 } // namespace ksim::stealthko

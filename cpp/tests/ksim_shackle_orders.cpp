@@ -322,7 +322,7 @@ int main(int argc, char** argv)
 			const Lock& l = rig.locks[self];
 			test::require(l.n == 1 && l.index == rig.shackleIndex(self) && (l.flags & 1) == 1, "ITEM_LOCK: the worn shackles are not locked on the wire");
 			test::require((l.flags & 2) == 0 && (l.flags & 4) == 0, "ITEM_LOCK: can-cut / can-break set with no tool and strength 10");
-			test::require(l.level == 20 && l.maxHardness == 30.0f && l.hardness == 30.0f, "ITEM_LOCK: level / hardness are not the shackle lock's");
+			test::require(l.level == 20 && l.maxHardness == 20.0f && l.hardness == 20.0f, "ITEM_LOCK: level / hardness are not the shackle lock's");
 			test::require(std::fabs(l.chance - static_cast<float>(pickChance(20.0, 100.0))) < 1e-6f, "ITEM_LOCK: the pick chance is not pickChance(level, lockpicking)");
 		}
 		rig.put(self, tool, state::Inventory::kCarried);
@@ -330,7 +330,7 @@ int main(int argc, char** argv)
 		rig.run(2);
 		test::require((rig.locks[self].flags & 6) == 6, "ITEM_LOCK: can-cut and can-break not set with a tool and strength 100");
 		me.skills.strength = 10.0;
-		std::printf("ok  ITEM_LOCK: empty with no shackles; locked, level 20, hardness 30, the pick chance, can-cut / can-break follow the tool and strength\n");
+		std::printf("ok  ITEM_LOCK: empty with no shackles; locked, level 20, hardness 20 (live rwh62 section 7), the pick chance, can-cut / can-break follow the tool and strength\n");
 
 		// ---- the order-time refusals ----
 		test::require(rig.interact(self, self, kPick, 1) == "bad_value", "queue 1 was not bad_value");
@@ -399,7 +399,7 @@ int main(int argc, char** argv)
 		float last = -1.0f;
 		for (const Bar& b : seen)
 		{
-			test::require(b.target == self && (b.flags & Simulation::kProgressOriginal) != 0 && b.value >= 0.0f && b.value <= 30.0f && std::fabs(b.value - 30.0f * (1.0f - b.progress)) < 0.01f,
+			test::require(b.target == self && (b.flags & Simulation::kProgressOriginal) != 0 && b.value >= 0.0f && b.value <= 20.0f && std::fabs(b.value - 20.0f * (1.0f - b.progress)) < 0.01f,
 				"the cut row: target the wearer, flag bit 0, value = the hardness left");
 			test::require(b.kind == 7 && b.rate > 0.0f && b.progress >= 0.0f && b.progress <= 1.0f, "the cut bar is not kind 7");
 			first = std::min(first, b.progress);

@@ -2,12 +2,11 @@
 //
 //  1. data: every door of the placements gets a key like the navmesh bake's, the gate doors
 //     are found (BUILDING `is wall gate` / `is gateway`) and belong to towns, non-public towns
-//     (TOWN `is public` false) refuse strangers from the first step;
+//     (TOWN `is public` false) keep their gates open like any other (no class refusal, as the original);
 //  2. no alert closing (retired, GATES_CARRY_LIVE.md a): a faction that loses a town defends, and its gates stay exactly as
 //     the data has them;
 //  3. overrides: SetDoorState locks and unlocks one door, saved with the game;
-//  4. classes: the stance of a faction as the owner of a town sees it; a squad inside the walls
-//     leaves as a resident;
+//  4. stances: how the owner of a town sees a faction (no door effect);
 //  5. (needs a bake, usage: ksim_doors BAKEDIR RX0 RZ0 RX1 RZ1) Shark: with its gates locked (an override, Shark's
 //     crews taken off them) every route in is refused, a raid that the locked gates refuse bashes one open for ever, the
 //     squads of Shark keep a goal (no terminal state); unlocked, everything is as before;
@@ -24,6 +23,7 @@
 #include "kworld/loadorder.hpp"
 
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -216,23 +216,12 @@ int main(int argc, char** argv)
 			test::require(doors.stats().gates >= 90 && doors.stats().gateTowns >= 60,
 				"gates were not bound to towns: " + std::to_string(doors.stats().gates));
 			test::require(fake->applies() == 1, "the first book was not applied exactly once");
-			test::require(!fake->book().settings().empty(), "non-public towns do not refuse anyone");
-			for (const auto& [key, setting] : fake->book().settings())
-			{
-				const flecs::entity_t town = doors.townOf(key);
-				test::require(town != 0, "a restricted door has no town");
-				const ksim::state::TownState* state = entityOf(simulation, town).get<ksim::state::TownState>();
-				test::require(data->privateTowns.contains(state->activeSid) && state->owner.id != 0,
-					"a door is restricted in a public or ownerless town");
-				test::require(setting.state == knav::DoorState::Open
-					&& setting.denied == (ksim::doorClassBit(DoorClass::Neutral) | ksim::doorClassBit(DoorClass::Hostile)),
-					"a private town's gate is not open to residents and allies only");
-			}
+			// The original has no class or faction door test: a private town's gates start as open as any other.
+			test::require(fake->book().settings().empty(), "a gate starts restricted");
 			std::cout << "data: " << data->sites.size() << " doors, " << gates << " on gate buildings ("
 				<< locking << " always lock), " << doors.stats().gates << " bound to "
 				<< doors.stats().gateTowns << " towns, " << data->privateTowns.size()
-				<< " non-public TOWN records, " << fake->book().settings().size()
-				<< " doors refuse strangers at the start\n";
+				<< " non-public TOWN records, no door restricted at the start\n";
 		}
 
 		// 2. Posture, 3. overrides, 4. classes.
@@ -275,15 +264,6 @@ int main(int argc, char** argv)
 				test::require(doors.classOf(scene.neutral, scene.owner) == DoorClass::Neutral,
 					"the neutral stance did not come back");
 			}
-			const ksim::state::TownState* gateTown = entityOf(simulation, scene.gateTown).get<ksim::state::TownState>();
-			const double far = 3000.0;
-			test::require(doors.travellerClass(scene.hostile, gateTown->x + far, gateTown->z, gateTown->x, gateTown->z)
-				== static_cast<int>(DoorClass::Hostile), "a hostile squad going to the town travels as hostile");
-			test::require(doors.travellerClass(scene.hostile, gateTown->x + 100, gateTown->z, gateTown->x + far, gateTown->z)
-				== static_cast<int>(DoorClass::Resident), "a squad inside the walls leaves as a resident");
-			test::require(doors.travellerClass(scene.hostile, gateTown->x + far, gateTown->z, gateTown->x + 2 * far, gateTown->z)
-				== static_cast<int>(DoorClass::Neutral), "a trip between towns is neutral to gates");
-
 			// The owner loses a town and a squad: it defends. Nothing closes a gate for that (retired Alert,
 			// GATES_CARRY_LIVE.md a: MAN_THE_GATE never closes, no package but a shopkeeper's plans close / lock).
 			const flecs::entity ownerEntity = entityOf(simulation, scene.owner);
@@ -369,8 +349,8 @@ int main(int argc, char** argv)
 						route.points[i].z - route.points[i - 1].z);
 				return total;
 			};
-			const ksim::Traveller resident{static_cast<int>(DoorClass::Resident)};
-			const ksim::Traveller stranger{static_cast<int>(DoorClass::Hostile)};
+			const ksim::Traveller resident;
+			const ksim::Traveller stranger; // the same: a door has no class, only its state refuses
 			std::vector<Probe> probes;
 			for (int k = 0; k < 12; ++k)
 			{
@@ -396,7 +376,7 @@ int main(int argc, char** argv)
 					"an open Shark is not reachable by goal pick");
 
 			// Take Shark's crews off its gates (a crew reopens a shut gate within seconds, gatecrew.hpp) and lock them all: a
-			// locked gate is a wall for every class.
+			// locked gate is a wall for everyone.
 			{
 				std::set<std::uint64_t> townKeys(townGates.begin(), townGates.end());
 				std::vector<flecs::entity> crews;
@@ -439,7 +419,7 @@ int main(int argc, char** argv)
 						return;
 					const double far = std::hypot(at.x - kSharkX, at.z - kSharkZ);
 					if (far < 1000.0 || far > 40000.0 ||  !navigator->covers(at.x, at.z)
-						|| doors.travellerClass(hostile, at.x, at.z, kSharkX, kSharkZ) != static_cast<int>(DoorClass::Hostile))
+						|| doors.classOf(hostile, owner) != DoorClass::Hostile)
 						return;
 					++hostiles;
 					const ksim::Route out = navigator->routeFor(stranger, at.x, at.z, kSharkX, kSharkZ);
@@ -500,7 +480,7 @@ int main(int argc, char** argv)
 					+ std::to_string(static_cast<int>(started.goal)) + " status " + std::to_string(static_cast<int>(started.order.status)));
 				const std::uint64_t gate = started.bashGate;
 				const double seconds = started.bashSeconds;
-				test::require(doors.book().get(gate).state != knav::DoorState::Open || doors.book().get(gate).denied != 0, "the gate to bash is not shut");
+				test::require(doors.book().get(gate).state != knav::DoorState::Open, "the gate to bash is not shut");
 				std::uint64_t hours = 0;
 				while (doors.stats().gatesBroken == 0 && hours++ < 8 * 24)
 				{
@@ -509,7 +489,7 @@ int main(int argc, char** argv)
 				test::require(doors.stats().gatesBroken == 1, "the raiders never broke the gate: " + std::to_string(doors.stats().gatesBroken));
 				simulation.run(ksim::Simulation::kSquadIntervalTicks + 1);
 				const knav::DoorSetting broken = doors.book().get(gate);
-				test::require(broken.state == knav::DoorState::Open && broken.denied == 0, "a broken gate is not open to everyone");
+				test::require(broken.state == knav::DoorState::Open, "a broken gate is not open to everyone");
 				test::require(navigator->routeFor(stranger, raiderX, raiderZ, kSharkX, kSharkZ).found, "the broken gate still refuses strangers");
 				const ksim::state::GroupAI& after = *raider.get<ksim::state::GroupAI>();
 				test::require(after.order.status != ksim::state::OrderStatus::Failed && after.goal != GoalKind::None, "the raid lost its goal after the bash");

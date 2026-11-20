@@ -362,8 +362,9 @@ vec4 light_ao(vec3 rel)
 
 // Interior light (render.interior_light, kenshi-jj3.2.1; lightvol.hpp): the baked SKY TRANSFER of up to 8 buildings (lightbake.hpp: L1 spherical harmonics per probe, how much of a
 // uniform white sky reaches the probe, ground bounce included) multiplies the ambient term, so a room is dark where the openings do not reach and bright beside them. Ported
-// from kenshi-lab stormview/shaders/lit.glsl probe_light (074dc80: the trilinear lookup divided by the filtered `usable` so a probe inside a wall never leaks, and the weight
-// that fades the volume out at its edge). The lab's output is light; ours is a FACTOR on the client's own ambient: the sky transfer over what an open field gives for the same
+// from kenshi-lab stormview/shaders/lit.glsl probe_light (074dc80: the trilinear lookup divided by the filtered `usable` so a probe inside a wall never leaks, the lookup
+// point pushed one probe spacing off the surface along its geometry normal, the enclosure gate that keeps the light indoors, and the weight that fades the volume out at its
+// edge). The lab's output is light; ours is a FACTOR on the client's own ambient: the sky transfer over what an open field gives for the same
 // normal (the bake's own model: sky radiance 1 above the horizon, the ground bouncing `a` below it), so outside every volume, and in the open, it is exactly 1.
 // Included only by the programs that call light_vol (mesh, character); every one of them binds vol_sh / vol_use / vol_smp and light_volumes (lightvol.cpp).
 @block lighting_vol
@@ -375,7 +376,7 @@ layout(binding=5) uniform light_volumes
 					// [6] x = atlas x offset in probes, y = blend-in 0..1 (a bake that just arrived fades in over a second), z = the sun bake's cross-fade 0..1, w = 1: the volume has a sun term
 };
 layout(binding=19) uniform texture3D vol_sh;	// rgba16f: the sky transfer SH (L00, L1y, L1z, L1x) x usable
-layout(binding=20) uniform texture3D vol_use;	// r16f: usable (1, 0 for a probe inside a wall or under the ground)
+layout(binding=20) uniform texture3D vol_use;	// rg16f: r = usable (1, 0 for a probe inside a wall or under the ground), g = enclosure x usable
 layout(binding=21) uniform texture3D vol_sun0;	// render.sun_bounce (kenshi-jj3.4.1): the sun transfer's R, G, B (one 3D texture per channel, rgba16f: L00, L1y, L1z, L1x; the atlas is two pages wide)
 layout(binding=22) uniform texture3D vol_sun1;
 layout(binding=23) uniform texture3D vol_sun2;
@@ -400,8 +401,11 @@ vec3 light_vol_sun(vec3 g, vec3 nl, float off, float fade)
 }
 
 // x = the factor for the diffuse ambient along n, y = the factor for the specular environment (the SH mean); both exactly 1 outside every volume. rel = camera-relative position.
+// ng = the surface's GEOMETRY normal (not the normal-mapped one): the lookup point is pushed one probe spacing off the surface along it, as the lab's probe_light does
+// (lit.glsl: grid_uvw(p + ng * probeSpacing)), so a face never interpolates with the probes behind its wall. Without it an exterior wall took the dark probes of the
+// room it encloses (kenshi-k16.2.256.8.5: the BDC dome's walls and door at 0.4-0.7 x the original). +1 on a probe-index axis is one spacing.
 // bounce = render.sun_bounce's irradiance along n (sun_col and the daylight factor already in, 0 outside every volume or with the switch off): ADD it to the ambient.
-vec2 light_vol(vec3 rel, vec3 n, out vec3 bounce)
+vec2 light_vol(vec3 rel, vec3 n, vec3 ng, out vec3 bounce)
 {
 	vec2 f = vec2(1.0);
 	bounce = vec3(0.0);
@@ -412,14 +416,21 @@ vec2 light_vol(vec3 rel, vec3 n, out vec3 bounce)
 		const vec4 a0 = vol_m[i * 8], a1 = vol_m[i * 8 + 1], a2 = vol_m[i * 8 + 2], r0 = vol_m[i * 8 + 3], r1 = vol_m[i * 8 + 4], r2 = vol_m[i * 8 + 5], inf = vol_m[i * 8 + 6];
 		const vec3 g = vec3(dot(a0.xyz, rel) + a0.w, dot(a1.xyz, rel) + a1.w, dot(a2.xyz, rel) + a2.w);	// probe index
 		const vec3 top = vec3(r0.w, r1.w, r2.w) - 1.0;
+		const vec3 gp = g + vec3(dot(r0.xyz, ng), dot(r1.xyz, ng), dot(r2.xyz, ng));	// one spacing out along the geometry normal, in probe index
 		// the weight: 1 inside, 0 past the grid's outer margin (two probes: the bake's margin round the building); no fade at the bottom (the floor sits on the grid's lowest layer)
-		const float sx = smoothstep(0.0, 2.0, min(g.x, top.x - g.x)), sz = smoothstep(0.0, 2.0, min(g.z, top.z - g.z));
-		const float sy = smoothstep(0.0, 2.0, top.y - g.y) * clamp(g.y + 1.0, 0.0, 1.0);
+		const float sx = smoothstep(0.0, 2.0, min(gp.x, top.x - gp.x)), sz = smoothstep(0.0, 2.0, min(gp.z, top.z - gp.z));
+		const float sy = smoothstep(0.0, 2.0, top.y - gp.y) * clamp(gp.y + 1.0, 0.0, 1.0);
 		float w = sx * sy * sz * inf.y * vol_head.y;
 		if (w <= 0.0) { continue; }
-		const vec3 uvw = (clamp(g, vec3(0.0), top) + vec3(0.5 + inf.x, 0.5, 0.5)) / vol_atlas.xyz;	// clamped to the volume's own probes: no bleed into the next volume of the atlas
-		const float use = textureLod(sampler3D(vol_use, vol_smp), uvw, 0.0).r;
+		const vec3 uvw = (clamp(gp, vec3(0.0), top) + vec3(0.5 + inf.x, 0.5, 0.5)) / vol_atlas.xyz;	// clamped to the volume's own probes: no bleed into the next volume of the atlas
+		const vec2 uu = textureLod(sampler3D(vol_use, vol_smp), uvw, 0.0).rg;	// r = usable, g = enclosure x usable (the sun shafts' channel)
+		const float use = uu.x;
 		w *= smoothstep(0.0, 0.02, use);
+		if (w <= 0.0) { continue; }
+		// an INDOOR light: the factor applies only where the sky at the lookup point is under cover. The bake's interior probes read an enclosure of 0.9-1.0 and the open
+		// ones below 0.5; the 0.5-0.9 band is the sheltered outdoors (a niche, a face under an overhang, the fringe of a doorway), so a face there gets exactly 1 (the
+		// shader's contract; kenshi-k16.2.256.8.5; the lab's surf_enclosure gate in lit.glsl, smoothstep(0.6, 0.9), starts lower on its own bake).
+		w *= smoothstep(0.7, 0.9, uu.y / max(use, 0.05));
 		if (w <= 0.0) { continue; }
 		const vec4 s = textureLod(sampler3D(vol_sh, vol_smp), uvw, 0.0) / max(use, 0.05);
 		const vec3 nl = vec3(dot(r0.xyz, n), dot(r1.xyz, n), dot(r2.xyz, n));
@@ -432,7 +443,7 @@ vec2 light_vol(vec3 rel, vec3 n, out vec3 bounce)
 		if (vol_head.w > 0.0 && inf.w > 0.0 && !no_bounce)
 		{
 			const float up = sun_dir.y > 1e-4 ? 1.0 : 0.0;
-			bounce += 3.14159265 * light_vol_sun(clamp(g, vec3(0.0), top), nl, inf.x, inf.z) * (sun_col.rgb * (nadir.w * up * vol_head.w * w));
+			bounce += 3.14159265 * light_vol_sun(clamp(gp, vec3(0.0), top), nl, inf.x, inf.z) * (sun_col.rgb * (nadir.w * up * vol_head.w * w));
 		}
 	}
 	return f;

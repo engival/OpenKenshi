@@ -82,7 +82,6 @@
 #include "kworld/towns.hpp"
 #include "render/navoverlay.hpp"
 #include "app/config.hpp"
-#include "platform/datadir.hpp"
 #include "platform/windowgeom.hpp"
 #include "platform/process.hpp"	// plat::unsetEnv
 #include "platform/windowgate.hpp"
@@ -193,6 +192,42 @@ void queue_event(const sapp_event* e)
 
 // RMB click vs look drag. Locked, X11 reports raw device counts (DPI-dependent), so a quick press forgives a jitter that
 // a slow one doesn't: a click while moving the mouse to the next spot must still order (a5 2026-11-03, lost move orders).
+// The creator preview's mouse (kenshi-k16.2.433.1): a left press in the preview area and the drag after it turn the assembly (creator_drag: yaw and
+// tilt), a wheel step over it zooms towards the point under the cursor (creator_zoom). The panel is a UI widget that consumes its own press and wheel
+// and sends only the drag's x, so the host reads the events itself first: observed, never consumed (the UI's press / hover state must keep following).
+void creator_event(const sapp_event* e)
+{
+	if (!app.creatorUi || !app.creatorUi->shown() || !app.creator.active()) { return; }
+	const ui::Rect r = app.creatorUi->previewRect();
+	switch (e->type)
+	{
+		case SAPP_EVENTTYPE_MOUSE_DOWN:
+			if (e->mouse_button == SAPP_MOUSEBUTTON_LEFT && r.contains(e->mouse_x, e->mouse_y))
+			{
+				app.creatorDragging = true;
+				app.creatorDragX = e->mouse_x;
+				app.creatorDragY = e->mouse_y;
+			}
+			break;
+		case SAPP_EVENTTYPE_MOUSE_UP:
+			if (e->mouse_button == SAPP_MOUSEBUTTON_LEFT) { app.creatorDragging = false; }
+			break;
+		case SAPP_EVENTTYPE_MOUSE_MOVE:
+			if (app.creatorDragging)
+			{
+				const float dx = e->mouse_x - app.creatorDragX, dy = e->mouse_y - app.creatorDragY;
+				app.creatorDragX = e->mouse_x;
+				app.creatorDragY = e->mouse_y;
+				if (dx != 0 || dy != 0) { creator_drag(dx, dy); }
+			}
+			break;
+		case SAPP_EVENTTYPE_MOUSE_SCROLL:
+			if (r.contains(e->mouse_x, e->mouse_y)) { creator_zoom(e->scroll_y, e->mouse_x, e->mouse_y); }
+			break;
+		default: break;
+	}
+}
+
 constexpr double kDragNear = 6, kDragFar = 60, kClickTime = 0.25;	// counts; seconds (MINE)
 // An LMB drag on the world shows the selection box only when BOTH sides pass this: fixed pixels, not x ui::scale (the original's
 // test, 1407f2c30; kenshi-rwh.134). Below it the release is the ordinary click.
@@ -202,6 +237,7 @@ constexpr double kBoxDragPx = 4;
 void debug_toggle(const std::string& id)
 {
 	if (id == "debug.navmesh") { kNavOverlay.set(!kNavOverlay.get()); }
+	else if (id == "debug.collision") { dev::collisionToggle(); }
 	else if (id == "debug.trails") { app.trails.toggle(); }
 	else if (id == "debug.navmesh_pruned") { kNavPruned.set(!kNavPruned.get()); }
 	else if (id == "debug.squad_overlay") { app.squads.on = !app.squads.on; }
@@ -221,6 +257,9 @@ void debug_toggle(const std::string& id)
 	}
 	else if (id == "debug.autorun" && app.follow) { app.autorun = !app.autorun; }	// UNSURE: the original's autorun key
 	else if (id == "debug.clock_pause") { app.sky.clock.paused = !app.sky.clock.paused; }
+#ifdef KCLIENT_DEV_TOOLS
+	else if (id == "debug.height_probe") { dev::heightProbeToggle(); }	// the panel's toggle row: the same switch as Ctrl+F10 (kenshi-k16.2.413.1)
+#endif
 }
 
 #ifdef KCLIENT_DEBUG_VIEW
@@ -255,7 +294,7 @@ static void key_actions(const sapp_event& e)
 	if (app.opt.debug && e.type == SAPP_EVENTTYPE_KEY_DOWN && !e.key_repeat && e.key_code == SAPP_KEYCODE_F10 && e.modifiers == SAPP_MODIFIER_CTRL) { dev::heightProbeToggle(); }	// Ctrl+F10: the vertical height probe mode (dev/heightprobe.cpp)
 #endif
 	if (pressed("debug.terrain_view") && app.terrain.hasColour) { app.terrain.viewMode = (app.terrain.viewMode + 1) % (app.terrain.detail.ok ? 4 : 3); }
-	for (const char* id : { "debug.squad_overlay", "debug.navmesh", "debug.trails", "debug.shadows", "debug.walk", "debug.free_camera", "debug.autorun", "debug.clock_pause" }) { if (pressed(id)) { debug_toggle(id); } }
+	for (const char* id : { "debug.squad_overlay", "debug.navmesh", "debug.collision", "debug.trails", "debug.shadows", "debug.walk", "debug.free_camera", "debug.autorun", "debug.clock_pause" }) { if (pressed(id)) { debug_toggle(id); } }
 #ifdef KCLIENT_DEV_TOOLS
 	if (pressed("debug.trails_panel")) { dev::toggleTrailsPanel(); }
 	if (pressed("debug.lights_panel") && app.lightsPanel) { app.lightsPanel->show(!app.lightsPanel->shown()); }
@@ -314,8 +353,6 @@ static void key_actions(const sapp_event& e)
 		app.shotAt = ui::now() + kShotDelay;
 		ui::toast("Screenshot in 3 seconds", ui::style().colour("Main", {}), kShotDelay - 1);	// gone before the shot
 	}
-	if (pressed("debug.map_zoom_in")) { app.wmap.zoom = std::max(WorldMap::kMinZoom, app.wmap.zoom - 1); }
-	if (pressed("debug.map_zoom_out")) { app.wmap.zoom = std::min(WorldMap::kMaxZoom, app.wmap.zoom + 1); }
 	if (pressed("debug.mouse_look")) { app.look = !app.look; app.lookDrag = true; sappcmd::lockMouse(app.look); }
 	if (!app.sim.active()) { return; }
 	// the sim's game speed (orders 40, 41) and the selection (the HUD bar's characters, in its order)
@@ -430,6 +467,7 @@ void event(const sapp_event* e)
 	// W in an edit box does not pan the camera.
 	if (e->type == SAPP_EVENTTYPE_KEY_UP && (int)e->key_code < SAPP_MAX_KEYCODES) { app.keys[e->key_code] = false; }
 	box_event(e);
+	creator_event(e);	// the creator preview's drag and wheel (k16.2.433.1), before ui::event: its panel consumes them and sends x only
 	// Mid-drag a right press is ignored, as the original's (kenshi-rwh.134): no camera grip, no hold menu, no window, no order on its release; the
 	// box keeps going. Before ui::event and the switch, so the press never reaches either.
 	if (app.boxDown && e->type == SAPP_EVENTTYPE_MOUSE_DOWN && e->mouse_button == SAPP_MOUSEBUTTON_RIGHT) { return; }

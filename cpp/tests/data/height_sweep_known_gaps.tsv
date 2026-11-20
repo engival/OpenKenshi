@@ -305,7 +305,6 @@ deck	67760 -71280	Heft: face 1246.581, nearest hit 1244.394 (1 hits), terrain 12
 deck	67840 -71072	Heft: face 1372.698, nearest hit 1372.304 (2 hits), terrain 1331.029
 deck	67856 -71072	Heft: face 1372.488, nearest hit 1372.304 (2 hits), terrain 1325.468
 deck	67872 -71072	Heft: face 1372.806, nearest hit 1372.304 (2 hits), terrain 1320.697
-deck	68000 -70912	Heft: face 1372.306, nearest hit 1372.304 (2 hits), terrain 1361.906
 deck	68512 -70768	Heft: face 1380.205, nearest hit 1377.886 (8 hits), terrain 1351.898
 deck	68528 -71472	Heft: face 1085.768, nearest hit 1083.580 (1 hits), terrain 1083.803
 deck	68528 -71520	Heft: face 1076.131, nearest hit 1073.944 (1 hits), terrain 1074.030
@@ -371,8 +370,6 @@ deck	68976 -71392	Heft: face 1065.512, nearest hit 1063.325 (1 hits), terrain 10
 deck	68992 -71648	Heft: face 1044.725, nearest hit 1041.912 (1 hits), terrain 1042.023
 deck	69024 -71360	Heft: face 1069.787, nearest hit 1067.600 (1 hits), terrain 1067.738
 deck	69408 -72384	Heft: face 1343.533, nearest hit 1342.183 (2 hits), terrain 1341.696
-deck	69600 -70464	Heft: face 1275.896, nearest hit 1273.083 (1 hits), terrain 1273.335
-deck	69616 -70448	Heft: face 1276.358, nearest hit 1273.545 (1 hits), terrain 1273.579
 deck	69760 -70784	Heft: face 1133.095, nearest hit 1130.857 (2 hits), terrain 1109.133
 deck	70160 -71760	Heft: face 1249.369, nearest hit 1247.182 (1 hits), terrain 1247.381
 deck	70208 -71440	Heft: face 1160.712, nearest hit 1158.525 (1 hits), terrain 1158.684
@@ -386,10 +383,8 @@ door	-51776 4768	The Hub: face 1771.554, nearest hit 1769.198 (2 hits), terrain 
 door	67472 -71264	Heft: face 1408.052, nearest hit 1404.604 (2 hits), terrain 1370.150
 door	67472 -72400	Heft: face 1287.572, nearest hit 1284.696 (2 hits), terrain 1276.307
 door	67616 -71120	Heft: face 1390.773, nearest hit 1388.343 (2 hits), terrain 1361.243
-door	68272 -70864	Heft: face 1380.050, nearest hit 1378.019 (2 hits), terrain 1349.140
 door	68288 -72336	Heft: face 1193.209, nearest hit 1188.526 (4 hits), terrain 1180.005
 door	68304 -72336	Heft: face 1193.315, nearest hit 1189.122 (4 hits), terrain 1180.219
-door	69376 -70240	Heft: face 1389.210, nearest hit 1388.076 (4 hits), terrain 1349.862
 door	69760 -70768	Heft: face 1137.189, nearest hit 1134.699 (2 hits), terrain 1112.061
 door	69760 -70784	Heft: face 1134.077, nearest hit 1131.757 (2 hits), terrain 1110.531
 door	69824 -70368	Heft: face 1282.098, nearest hit 1282.085 (3 hits), terrain 1253.917
@@ -398,7 +393,6 @@ flat	-50624 -1136	The Hub: face 1077.423, nearest hit 1077.423 (1 hits), terrain
 flat	-50736 2816	The Hub: face 1529.073, nearest hit 1529.073 (1 hits), terrain 1529.151
 flat	-50736 3184	The Hub: face 1533.572, nearest hit 1534.197 (1 hits), terrain 1534.346
 flat	-51024 2848	The Hub: face 1539.077, nearest hit 1538.764 (1 hits), terrain 1538.795
-flat	-51024 2880	The Hub: face 1537.080, nearest hit 1536.767 (1 hits), terrain 1537.032
 flat	-51104 3152	The Hub: face 1534.399, nearest hit 1534.087 (1 hits), terrain 1534.136
 flat	-51136 2784	The Hub: face 1549.194, nearest hit 1548.882 (1 hits), terrain 1549.153
 flat	-51136 2800	The Hub: face 1550.712, nearest hit 1550.400 (8 hits), terrain 1550.701
@@ -415,41 +409,14 @@ flat	69584 -72352	Heft: face 1342.795, nearest hit 1343.108 (1 hits), terrain 13
 flat	69712 -70688	Heft: face 1137.120, nearest hit 1136.808 (1 hits), terrain 1137.056
 flat	69728 -70688	Heft: face 1135.327, nearest hit 1135.327 (1 hits), terrain 1135.330
 flat	69728 -70704	Heft: face 1133.537, nearest hit 1133.537 (1 hits), terrain 1133.578
-floor0	-50528 -1264	Rebel Base: face 1075.229, nearest hit 1072.438 (2 hits), terrain 1042.527
-floor0	-50560 -1168	Rebel Base: face 1076.893, nearest hit 1076.368 (2 hits), terrain 1061.174
-floor0	-50560 -1184	Rebel Base: face 1077.801, nearest hit 1076.213 (2 hits), terrain 1059.105
-floor0	-50560 -1216	Rebel Base: face 1075.772, nearest hit 1075.774 (2 hits), terrain 1056.583
-floor0	-50560 -1232	Rebel Base: face 1075.700, nearest hit 1075.704 (2 hits), terrain 1055.704
-floor0	-50576 -1168	Rebel Base: face 1076.956, nearest hit 1076.929 (2 hits), terrain 1062.932
-floor0	-50608 -1200	Rebel Base: face 1083.872, nearest hit 1080.263 (2 hits), terrain 1068.154
-floor0	-51744 4800	The Hub: face 1776.224, nearest hit 1776.240 (2 hits), terrain 1756.626
-floor0	-51760 4864	The Hub: face 1778.688, nearest hit 1778.652 (2 hits), terrain 1762.880
 floor0	67296 -72368	Heft: face 1296.393, nearest hit 1292.956 (1 hits), terrain 1293.008
-floor0	67344 -72352	Heft: face 1291.424, nearest hit 1291.393 (2 hits), terrain 1277.982
-floor0	67344 -72368	Heft: face 1293.350, nearest hit 1293.324 (2 hits), terrain 1284.606
-floor0	67360 -71296	Heft: face 1413.585, nearest hit 1413.565 (2 hits), terrain 1407.629
-floor0	67376 -71296	Heft: face 1413.085, nearest hit 1413.050 (2 hits), terrain 1399.991
-floor0	67392 -71248	Heft: face 1414.173, nearest hit 1414.222 (2 hits), terrain 1397.796
-floor0	67392 -72400	Heft: face 1295.127, nearest hit 1293.991 (2 hits), terrain 1285.126
-floor0	67408 -72400	Heft: face 1296.273, nearest hit 1294.169 (2 hits), terrain 1285.471
-floor0	67424 -71232	Heft: face 1414.410, nearest hit 1414.384 (2 hits), terrain 1392.947
-floor0	67424 -71248	Heft: face 1414.129, nearest hit 1414.114 (2 hits), terrain 1389.586
-floor0	67424 -72368	Heft: face 1291.364, nearest hit 1288.981 (2 hits), terrain 1267.753
-floor0	67424 -72400	Heft: face 1296.009, nearest hit 1293.599 (2 hits), terrain 1284.133
 floor0	67440 -72368	Heft: face 1293.516, nearest hit 1288.772 (2 hits), terrain 1267.621
-floor0	67456 -71216	Heft: face 1414.775, nearest hit 1414.735 (8 hits), terrain 1387.800
-floor0	67552 -71088	Heft: face 1401.377, nearest hit 1401.376 (2 hits), terrain 1387.720
 floor0	67552 -71120	Heft: face 1400.346, nearest hit 1399.191 (2 hits), terrain 1376.856
 floor0	67552 -71136	Heft: face 1399.378, nearest hit 1399.390 (2 hits), terrain 1377.257
 floor0	67552 -71152	Heft: face 1398.774, nearest hit 1398.789 (2 hits), terrain 1372.459
-floor0	67568 -71088	Heft: face 1400.110, nearest hit 1400.078 (2 hits), terrain 1382.797
-floor0	67568 -71120	Heft: face 1398.594, nearest hit 1398.561 (2 hits), terrain 1375.459
 floor0	67616 -71072	Heft: face 1399.732, nearest hit 1396.195 (2 hits), terrain 1371.816
-floor0	67808 -70944	Heft: face 1372.387, nearest hit 1372.304 (1 hits), terrain 1372.020
-floor0	68192 -70816	Heft: face 1387.789, nearest hit 1387.797 (2 hits), terrain 1371.744
 floor0	68192 -70864	Heft: face 1386.280, nearest hit 1386.256 (8 hits), terrain 1354.643
 floor0	68256 -70816	Heft: face 1385.602, nearest hit 1385.596 (2 hits), terrain 1365.983
-floor0	68272 -70784	Heft: face 1385.941, nearest hit 1385.972 (2 hits), terrain 1373.774
 floor0	68512 -70752	Heft: face 1382.444, nearest hit 1383.064 (2 hits), terrain 1355.408
 floor0	68720 -70128	Heft: face 1589.371, nearest hit 1586.995 (2 hits), terrain 1573.464
 floor0	68768 -70368	Heft: face 1520.967, nearest hit 1520.975 (2 hits), terrain 1482.458
@@ -461,18 +428,12 @@ floor0	68848 -70400	Heft: face 1519.886, nearest hit 1519.883 (2 hits), terrain 
 floor0	68928 -70416	Heft: face 1520.798, nearest hit 1520.779 (2 hits), terrain 1476.453
 floor0	69072 -70608	Heft: face 1359.500, nearest hit 1359.609 (3 hits), terrain 1335.444
 floor0	69088 -70608	Heft: face 1359.085, nearest hit 1359.344 (8 hits), terrain 1333.348
-floor0	69344 -70240	Heft: face 1393.371, nearest hit 1389.408 (2 hits), terrain 1372.812
 floor0	69392 -70192	Heft: face 1393.209, nearest hit 1393.161 (3 hits), terrain 1379.568
 floor0	69408 -72256	Heft: face 1341.274, nearest hit 1339.150 (2 hits), terrain 1306.558
-floor0	69456 -72256	Heft: face 1340.972, nearest hit 1340.934 (2 hits), terrain 1313.796
-floor0	69456 -72272	Heft: face 1342.245, nearest hit 1342.283 (2 hits), terrain 1316.154
 floor0	69552 -72288	Heft: face 1346.896, nearest hit 1346.937 (8 hits), terrain 1329.074
 floor0	69568 -72352	Heft: face 1342.698, nearest hit 1342.698 (1 hits), terrain 1342.949
-floor0	69616 -70432	Heft: face 1276.552, nearest hit 1274.052 (1 hits), terrain 1274.079
 floor0	69648 -70384	Heft: face 1278.368, nearest hit 1278.368 (1 hits), terrain 1278.647
 floor0	69696 -70400	Heft: face 1276.700, nearest hit 1272.325 (1 hits), terrain 1272.381
-floor0	69824 -70272	Heft: face 1279.614, nearest hit 1279.649 (2 hits), terrain 1274.655
-floor0	69840 -70256	Heft: face 1278.215, nearest hit 1278.249 (2 hits), terrain 1276.812
 floor0	69856 -70336	Heft: face 1277.210, nearest hit 1277.140 (2 hits), terrain 1249.338
 floor0	69872 -70320	Heft: face 1276.110, nearest hit 1277.536 (3 hits), terrain 1250.672
 floor0	69888 -71760	Heft: face 1249.352, nearest hit 1249.578 (2 hits), terrain 1238.118
@@ -573,7 +534,6 @@ stair	67296 -72352	Heft: face 1294.234, nearest hit 1290.172 (1 hits), terrain 1
 stair	67328 -71328	Heft: face 1412.654, nearest hit 1410.466 (1 hits), terrain 1410.593
 stair	67344 -71328	Heft: face 1411.624, nearest hit 1409.124 (1 hits), terrain 1409.271
 stair	67472 -71280	Heft: face 1412.225, nearest hit 1409.039 (3 hits), terrain 1371.724
-stair	67488 -72448	Heft: face 1292.637, nearest hit 1288.887 (1 hits), terrain 1289.146
 stair	67504 -71376	Heft: face 1324.936, nearest hit 1313.686 (1 hits), terrain 1313.889
 stair	67504 -71392	Heft: face 1321.711, nearest hit 1316.086 (1 hits), terrain 1316.175
 stair	67504 -72448	Heft: face 1290.720, nearest hit 1286.885 (1 hits), terrain 1286.956
@@ -611,7 +571,6 @@ stair	68016 -70976	Heft: face 1367.197, nearest hit 1368.371 (8 hits), terrain 1
 stair	68272 -72352	Heft: face 1184.821, nearest hit 1182.633 (1 hits), terrain 1182.929
 stair	68288 -72336	Heft: face 1184.793, nearest hit 1182.606 (1 hits), terrain 1182.706
 stair	68288 -72352	Heft: face 1186.851, nearest hit 1186.851 (1 hits), terrain 1187.061
-stair	68448 -70672	Heft: face 1383.086, nearest hit 1394.961 (1 hits), terrain 1395.042
 stair	68464 -72288	Heft: face 1185.915, nearest hit 1183.103 (1 hits), terrain 1183.344
 stair	68480 -72288	Heft: face 1186.283, nearest hit 1183.158 (1 hits), terrain 1183.266
 stair	68512 -70688	Heft: face 1381.071, nearest hit 1378.883 (1 hits), terrain 1378.937
@@ -619,7 +578,6 @@ stair	68512 -71280	Heft: face 1123.010, nearest hit 1120.197 (1 hits), terrain 1
 stair	68608 -70320	Heft: face 1521.267, nearest hit 1518.767 (1 hits), terrain 1519.042
 stair	68608 -70544	Heft: face 1450.436, nearest hit 1452.624 (1 hits), terrain 1452.625
 stair	68624 -70320	Heft: face 1518.113, nearest hit 1514.675 (1 hits), terrain 1514.846
-stair	68688 -71936	Heft: face 1081.766, nearest hit 1079.551 (2 hits), terrain 1052.913
 stair	68752 -71440	Heft: face 1077.366, nearest hit 1074.241 (1 hits), terrain 1074.358
 stair	68768 -71440	Heft: face 1074.723, nearest hit 1071.285 (1 hits), terrain 1071.437
 stair	68784 -70624	Heft: face 1371.725, nearest hit 1368.600 (1 hits), terrain 1368.771
@@ -636,18 +594,14 @@ stair	68960 -71328	Heft: face 1083.259, nearest hit 1080.759 (1 hits), terrain 1
 stair	68960 -71376	Heft: face 1071.499, nearest hit 1067.437 (1 hits), terrain 1067.584
 stair	68992 -71552	Heft: face 1062.977, nearest hit 1060.822 (2 hits), terrain 1056.647
 stair	69008 -71552	Heft: face 1067.977, nearest hit 1065.501 (2 hits), terrain 1054.803
-stair	69024 -70480	Heft: face 1359.569, nearest hit 1379.219 (8 hits), terrain 1419.537
 stair	69024 -71312	Heft: face 1079.095, nearest hit 1076.908 (1 hits), terrain 1076.978
 stair	69072 -70608	Heft: face 1355.490, nearest hit 1354.362 (2 hits), terrain 1333.394
 stair	69088 -70512	Heft: face 1357.774, nearest hit 1357.461 (1 hits), terrain 1357.735
 stair	69280 -70288	Heft: face 1396.822, nearest hit 1389.322 (1 hits), terrain 1389.379
 stair	69296 -70272	Heft: face 1393.052, nearest hit 1390.240 (1 hits), terrain 1390.276
 stair	69312 -70240	Heft: face 1392.475, nearest hit 1403.412 (1 hits), terrain 1403.572
-stair	69344 -70240	Heft: face 1392.552, nearest hit 1389.256 (2 hits), terrain 1382.226
 stair	69392 -72368	Heft: face 1343.013, nearest hit 1340.201 (1 hits), terrain 1340.389
-stair	69408 -70192	Heft: face 1394.936, nearest hit 1402.748 (1 hits), terrain 1403.028
 stair	69408 -72224	Heft: face 1468.718, nearest hit 1465.687 (6 hits), terrain 1297.858
-stair	69424 -72272	Heft: face 1346.874, nearest hit 1344.229 (2 hits), terrain 1315.255
 stair	69680 -70400	Heft: face 1276.175, nearest hit 1273.363 (8 hits), terrain 1273.672
 stair	69776 -70768	Heft: face 1133.894, nearest hit 1131.506 (2 hits), terrain 1110.914
 stair	69808 -70160	Heft: face 1374.388, nearest hit 1371.576 (1 hits), terrain 1371.732
@@ -684,16 +638,13 @@ stair	70176 -71184	Heft: face 1159.757, nearest hit 1157.478 (4 hits), terrain 1
 stair	70176 -71200	Heft: face 1161.208, nearest hit 1159.404 (5 hits), terrain 1083.165
 stair	70192 -71280	Heft: face 1162.562, nearest hit 1159.316 (4 hits), terrain 1107.602
 stair	70192 -71760	Heft: face 1248.560, nearest hit 1245.435 (1 hits), terrain 1245.698
-stair	70208 -71392	Heft: face 1164.117, nearest hit 1160.722 (3 hits), terrain 1139.677
 stair	70208 -71440	Heft: face 1163.969, nearest hit 1161.469 (8 hits), terrain 1161.776
 stair	70224 -70624	Heft: face 1186.066, nearest hit 1182.094 (4 hits), terrain 1107.284
 stair	70224 -71440	Heft: face 1162.917, nearest hit 1160.729 (1 hits), terrain 1160.952
-stair	70240 -71264	Heft: face 1164.880, nearest hit 1162.098 (4 hits), terrain 1109.892
 sunk	67328 -71264	Heft: face 1414.866, nearest hit 1427.991 (1 hits), terrain 1428.016
 sunk	67328 -71280	Heft: face 1414.491, nearest hit 1424.804 (1 hits), terrain 1425.042
 sunk	67344 -71264	Heft: face 1414.845, nearest hit 1421.095 (1 hits), terrain 1421.309
 sunk	67344 -71280	Heft: face 1414.319, nearest hit 1419.631 (1 hits), terrain 1419.695
-sunk	68352 -70704	Heft: face 1383.086, nearest hit 1394.336 (1 hits), terrain 1394.615
 sunk	68368 -70704	Heft: face 1383.086, nearest hit 1390.899 (1 hits), terrain 1391.112
 sunk	68368 -70720	Heft: face 1383.086, nearest hit 1387.149 (1 hits), terrain 1387.413
 sunk	68384 -70688	Heft: face 1383.086, nearest hit 1393.086 (1 hits), terrain 1393.308
@@ -766,7 +717,6 @@ sunk	68992 -70576	Heft: face 1359.569, nearest hit 1365.819 (1 hits), terrain 13
 sunk	69008 -70528	Heft: face 1359.569, nearest hit 1374.256 (1 hits), terrain 1374.425
 sunk	69008 -70544	Heft: face 1359.569, nearest hit 1369.881 (1 hits), terrain 1370.150
 sunk	69008 -70560	Heft: face 1359.569, nearest hit 1368.006 (1 hits), terrain 1368.038
-sunk	69024 -70496	Heft: face 1359.569, nearest hit 1379.219 (8 hits), terrain 1404.228
 sunk	69024 -70512	Heft: face 1359.569, nearest hit 1373.631 (1 hits), terrain 1373.902
 sunk	69024 -70528	Heft: face 1359.569, nearest hit 1368.006 (1 hits), terrain 1368.188
 sunk	69024 -70544	Heft: face 1359.569, nearest hit 1369.256 (1 hits), terrain 1369.270
@@ -779,7 +729,6 @@ sunk	69040 -70544	Heft: face 1359.569, nearest hit 1361.756 (1 hits), terrain 13
 sunk	69056 -70496	Heft: face 1359.569, nearest hit 1373.631 (1 hits), terrain 1373.812
 sunk	69056 -70512	Heft: face 1359.569, nearest hit 1364.256 (1 hits), terrain 1364.526
 sunk	69056 -70528	Heft: face 1359.569, nearest hit 1362.069 (1 hits), terrain 1362.231
-sunk	69264 -70208	Heft: face 1397.828, nearest hit 1417.478 (8 hits), terrain 1426.884
 sunk	69280 -70208	Heft: face 1397.765, nearest hit 1417.415 (8 hits), terrain 1419.742
 sunk	69296 -70208	Heft: face 1397.714, nearest hit 1410.214 (1 hits), terrain 1410.217
 sunk	69296 -70224	Heft: face 1396.117, nearest hit 1409.242 (1 hits), terrain 1409.314
@@ -789,18 +738,12 @@ sunk	69328 -70176	Heft: face 1397.303, nearest hit 1401.678 (1 hits), terrain 14
 sunk	69408 -70176	Heft: face 1397.504, nearest hit 1403.129 (1 hits), terrain 1403.367
 sunk	69408 -70192	Heft: face 1394.758, nearest hit 1396.945 (1 hits), terrain 1397.235
 sunk	69424 -70176	Heft: face 1397.741, nearest hit 1408.366 (1 hits), terrain 1408.405
-sunk	69424 -70192	Heft: face 1393.394, nearest hit 1402.144 (1 hits), terrain 1402.276
 sunk	69424 -70208	Heft: face 1392.636, nearest hit 1400.448 (1 hits), terrain 1400.651
 sunk	69840 -70240	Heft: face 1276.788, nearest hit 1279.288 (1 hits), terrain 1279.334
 sunk	69840 -71792	Heft: face 1248.135, nearest hit 1248.760 (1 hits), terrain 1248.963
 sunk	69856 -70224	Heft: face 1275.953, nearest hit 1281.578 (1 hits), terrain 1281.844
 sunk	69856 -70240	Heft: face 1276.091, nearest hit 1278.591 (1 hits), terrain 1278.824
-upper	-51200 2640	The Hub: face 1648.339, nearest hit 1647.342 (4 hits), terrain 1556.918
-upper	-51232 2624	The Hub: face 1648.461, nearest hit 1648.468 (4 hits), terrain 1559.726
-upper	67344 -71216	Heft: face 1482.169, nearest hit 1482.202 (5 hits), terrain 1430.406
 upper	67360 -71200	Heft: face 1482.439, nearest hit 1482.478 (3 hits), terrain 1429.205
-upper	67376 -71184	Heft: face 1482.716, nearest hit 1482.712 (3 hits), terrain 1427.433
-upper	67392 -72336	Heft: face 1417.082, nearest hit 1417.109 (6 hits), terrain 1267.596
 upper	67536 -71456	Heft: face 1250.909, nearest hit 1248.097 (1 hits), terrain 1248.281
 upper	67536 -71472	Heft: face 1245.599, nearest hit 1244.037 (1 hits), terrain 1244.200
 upper	67568 -71408	Heft: face 1246.818, nearest hit 1246.300 (1 hits), terrain 1246.083
@@ -809,20 +752,14 @@ upper	67584 -71456	Heft: face 1250.276, nearest hit 1247.790 (4 hits), terrain 1
 upper	67600 -71392	Heft: face 1247.372, nearest hit 1246.435 (1 hits), terrain 1246.699
 upper	67600 -71456	Heft: face 1249.047, nearest hit 1247.788 (4 hits), terrain 1229.054
 upper	67616 -71632	Heft: face 1247.231, nearest hit 1203.343 (2 hits), terrain 1177.602
-upper	67648 -71600	Heft: face 1250.807, nearest hit 1247.787 (5 hits), terrain 1175.797
 upper	67680 -71408	Heft: face 1249.877, nearest hit 1247.788 (4 hits), terrain 1222.361
-upper	67776 -71488	Heft: face 1250.851, nearest hit 1247.789 (5 hits), terrain 1177.313
 upper	67776 -71520	Heft: face 1250.081, nearest hit 1247.790 (5 hits), terrain 1166.794
-upper	67808 -70992	Heft: face 1419.024, nearest hit 1372.304 (2 hits), terrain 1356.022
 upper	67824 -70896	Heft: face 1419.075, nearest hit 1414.167 (3 hits), terrain 1384.637
 upper	67824 -71008	Heft: face 1419.097, nearest hit 1372.304 (2 hits), terrain 1352.291
 upper	67840 -70880	Heft: face 1419.063, nearest hit 1418.988 (3 hits), terrain 1388.466
 upper	67920 -71008	Heft: face 1419.100, nearest hit 1372.304 (2 hits), terrain 1338.100
 upper	67952 -70960	Heft: face 1419.101, nearest hit 1372.304 (2 hits), terrain 1347.051
-upper	68160 -70768	Heft: face 1456.231, nearest hit 1456.213 (3 hits), terrain 1390.579
 upper	68496 -70752	Heft: face 1449.179, nearest hit 1448.946 (4 hits), terrain 1357.011
-upper	69040 -70608	Heft: face 1425.560, nearest hit 1425.492 (4 hits), terrain 1342.132
-upper	69056 -70608	Heft: face 1425.918, nearest hit 1425.492 (4 hits), terrain 1339.473
 upper	69520 -72256	Heft: face 1469.991, nearest hit 1469.494 (2 hits), terrain 1317.013
 upper	70112 -70704	Heft: face 1187.025, nearest hit 1140.230 (2 hits), terrain 1104.725
 upper	70128 -70736	Heft: face 1187.022, nearest hit 1140.230 (2 hits), terrain 1104.299
@@ -834,8 +771,6 @@ upper	70176 -71168	Heft: face 1160.632, nearest hit 1157.014 (4 hits), terrain 1
 upper	70176 -71184	Heft: face 1160.255, nearest hit 1157.478 (4 hits), terrain 1080.357
 upper	70176 -71296	Heft: face 1160.394, nearest hit 1157.928 (4 hits), terrain 1102.706
 upper	70192 -71184	Heft: face 1163.773, nearest hit 1159.890 (5 hits), terrain 1082.227
-upper	70192 -71216	Heft: face 1160.641, nearest hit 1158.349 (4 hits), terrain 1086.546
-upper	70192 -71296	Heft: face 1159.247, nearest hit 1159.264 (4 hits), terrain 1112.301
 upper	70192 -71376	Heft: face 1163.118, nearest hit 1161.278 (4 hits), terrain 1133.985
 upper	70192 -71392	Heft: face 1162.818, nearest hit 1160.259 (3 hits), terrain 1138.614
 upper	70208 -71168	Heft: face 1161.516, nearest hit 1159.331 (4 hits), terrain 1081.800
@@ -845,17 +780,14 @@ upper	70208 -71312	Heft: face 1160.719, nearest hit 1160.678 (3 hits), terrain 1
 upper	70208 -71376	Heft: face 1161.111, nearest hit 1161.131 (3 hits), terrain 1137.399
 upper	70208 -71392	Heft: face 1163.597, nearest hit 1161.186 (3 hits), terrain 1141.549
 upper	70224 -71184	Heft: face 1163.880, nearest hit 1161.744 (5 hits), terrain 1086.852
-upper	70224 -71216	Heft: face 1163.259, nearest hit 1160.141 (4 hits), terrain 1092.225
 upper	70224 -71392	Heft: face 1164.230, nearest hit 1162.113 (3 hits), terrain 1147.994
 upper	70240 -70592	Heft: face 1186.999, nearest hit 1140.230 (2 hits), terrain 1108.718
 upper	70240 -70656	Heft: face 1186.918, nearest hit 1186.914 (4 hits), terrain 1107.347
 upper	70240 -71184	Heft: face 1164.225, nearest hit 1162.208 (8 hits), terrain 1088.629
 upper	70240 -71216	Heft: face 1161.224, nearest hit 1161.209 (4 hits), terrain 1097.854
-upper	70240 -71344	Heft: face 1162.954, nearest hit 1162.944 (3 hits), terrain 1142.750
 upper	70240 -71392	Heft: face 1164.589, nearest hit 1162.576 (3 hits), terrain 1150.690
 upper	70256 -71200	Heft: face 1162.876, nearest hit 1161.691 (5 hits), terrain 1095.248
 upper	70272 -71264	Heft: face 1163.943, nearest hit 1163.918 (3 hits), terrain 1121.316
-upper	70272 -71328	Heft: face 1164.416, nearest hit 1164.399 (3 hits), terrain 1134.638
 deck	-50288 -1040	The Hub: face 1019.076, nearest hit 1016.889 (1 hits), terrain 1016.978
 deck	-50288 -1056	The Hub: face 1019.295, nearest hit 1010.545 (1 hits), terrain 1010.581
 deck	-50288 -1072	The Hub: face 1019.506, nearest hit 1004.818 (1 hits), terrain 1004.848
@@ -1161,7 +1093,6 @@ deck	67760 -71280	Heft: face 1246.581, nearest hit 1244.394 (1 hits), terrain 12
 deck	67840 -71072	Heft: face 1372.698, nearest hit 1372.304 (2 hits), terrain 1331.029
 deck	67856 -71072	Heft: face 1372.488, nearest hit 1372.304 (2 hits), terrain 1325.468
 deck	67872 -71072	Heft: face 1372.806, nearest hit 1372.304 (2 hits), terrain 1320.697
-deck	68000 -70912	Heft: face 1372.306, nearest hit 1372.304 (2 hits), terrain 1361.906
 deck	68512 -70768	Heft: face 1380.205, nearest hit 1377.886 (8 hits), terrain 1351.898
 deck	68528 -71472	Heft: face 1085.768, nearest hit 1083.580 (1 hits), terrain 1083.803
 deck	68528 -71520	Heft: face 1076.131, nearest hit 1073.944 (1 hits), terrain 1074.030
@@ -1227,8 +1158,6 @@ deck	68976 -71392	Heft: face 1065.512, nearest hit 1063.325 (1 hits), terrain 10
 deck	68992 -71648	Heft: face 1044.725, nearest hit 1041.912 (1 hits), terrain 1042.023
 deck	69024 -71360	Heft: face 1069.787, nearest hit 1067.600 (1 hits), terrain 1067.738
 deck	69408 -72384	Heft: face 1343.533, nearest hit 1342.183 (2 hits), terrain 1341.696
-deck	69600 -70464	Heft: face 1275.896, nearest hit 1273.083 (1 hits), terrain 1273.335
-deck	69616 -70448	Heft: face 1276.358, nearest hit 1273.545 (1 hits), terrain 1273.579
 deck	69760 -70784	Heft: face 1133.095, nearest hit 1130.857 (2 hits), terrain 1109.133
 deck	70160 -71760	Heft: face 1249.369, nearest hit 1247.182 (1 hits), terrain 1247.381
 deck	70208 -71440	Heft: face 1160.712, nearest hit 1158.525 (1 hits), terrain 1158.684
@@ -1242,10 +1171,8 @@ door	-51776 4768	The Hub: face 1771.554, nearest hit 1769.198 (2 hits), terrain 
 door	67472 -71264	Heft: face 1408.052, nearest hit 1404.604 (2 hits), terrain 1370.150
 door	67472 -72400	Heft: face 1287.572, nearest hit 1284.696 (2 hits), terrain 1276.307
 door	67616 -71120	Heft: face 1390.773, nearest hit 1388.343 (2 hits), terrain 1361.243
-door	68272 -70864	Heft: face 1380.050, nearest hit 1378.019 (2 hits), terrain 1349.140
 door	68288 -72336	Heft: face 1193.209, nearest hit 1188.526 (4 hits), terrain 1180.005
 door	68304 -72336	Heft: face 1193.315, nearest hit 1189.122 (4 hits), terrain 1180.219
-door	69376 -70240	Heft: face 1389.210, nearest hit 1388.076 (4 hits), terrain 1349.862
 door	69760 -70768	Heft: face 1137.189, nearest hit 1134.699 (2 hits), terrain 1112.061
 door	69760 -70784	Heft: face 1134.077, nearest hit 1131.757 (2 hits), terrain 1110.531
 door	69824 -70368	Heft: face 1282.098, nearest hit 1282.085 (3 hits), terrain 1253.917
@@ -1254,7 +1181,6 @@ flat	-50624 -1136	The Hub: face 1077.423, nearest hit 1077.423 (1 hits), terrain
 flat	-50736 2816	The Hub: face 1529.073, nearest hit 1529.073 (1 hits), terrain 1529.151
 flat	-50736 3184	The Hub: face 1533.572, nearest hit 1534.197 (1 hits), terrain 1534.346
 flat	-51024 2848	The Hub: face 1539.077, nearest hit 1538.764 (1 hits), terrain 1538.795
-flat	-51024 2880	The Hub: face 1537.080, nearest hit 1536.767 (1 hits), terrain 1537.032
 flat	-51104 3152	The Hub: face 1534.399, nearest hit 1534.087 (1 hits), terrain 1534.136
 flat	-51136 2784	The Hub: face 1549.194, nearest hit 1548.882 (1 hits), terrain 1549.153
 flat	-51136 2800	The Hub: face 1550.712, nearest hit 1550.400 (8 hits), terrain 1550.701
@@ -1271,41 +1197,14 @@ flat	69584 -72352	Heft: face 1342.795, nearest hit 1343.108 (1 hits), terrain 13
 flat	69712 -70688	Heft: face 1137.120, nearest hit 1136.808 (1 hits), terrain 1137.056
 flat	69728 -70688	Heft: face 1135.327, nearest hit 1135.327 (1 hits), terrain 1135.330
 flat	69728 -70704	Heft: face 1133.537, nearest hit 1133.537 (1 hits), terrain 1133.578
-floor0	-50528 -1264	Rebel Base: face 1075.229, nearest hit 1072.438 (2 hits), terrain 1042.527
-floor0	-50560 -1168	Rebel Base: face 1076.893, nearest hit 1076.368 (2 hits), terrain 1061.174
-floor0	-50560 -1184	Rebel Base: face 1077.801, nearest hit 1076.213 (2 hits), terrain 1059.105
-floor0	-50560 -1216	Rebel Base: face 1075.772, nearest hit 1075.774 (2 hits), terrain 1056.583
-floor0	-50560 -1232	Rebel Base: face 1075.700, nearest hit 1075.704 (2 hits), terrain 1055.704
-floor0	-50576 -1168	Rebel Base: face 1076.956, nearest hit 1076.929 (2 hits), terrain 1062.932
-floor0	-50608 -1200	Rebel Base: face 1083.872, nearest hit 1080.263 (2 hits), terrain 1068.154
-floor0	-51744 4800	The Hub: face 1776.224, nearest hit 1776.240 (2 hits), terrain 1756.626
-floor0	-51760 4864	The Hub: face 1778.688, nearest hit 1778.652 (2 hits), terrain 1762.880
 floor0	67296 -72368	Heft: face 1296.393, nearest hit 1292.956 (1 hits), terrain 1293.008
-floor0	67344 -72352	Heft: face 1291.424, nearest hit 1291.393 (2 hits), terrain 1277.982
-floor0	67344 -72368	Heft: face 1293.350, nearest hit 1293.324 (2 hits), terrain 1284.606
-floor0	67360 -71296	Heft: face 1413.585, nearest hit 1413.565 (2 hits), terrain 1407.629
-floor0	67376 -71296	Heft: face 1413.085, nearest hit 1413.050 (2 hits), terrain 1399.991
-floor0	67392 -71248	Heft: face 1414.173, nearest hit 1414.222 (2 hits), terrain 1397.796
-floor0	67392 -72400	Heft: face 1295.127, nearest hit 1293.991 (2 hits), terrain 1285.126
-floor0	67408 -72400	Heft: face 1296.273, nearest hit 1294.169 (2 hits), terrain 1285.471
-floor0	67424 -71232	Heft: face 1414.410, nearest hit 1414.384 (2 hits), terrain 1392.947
-floor0	67424 -71248	Heft: face 1414.129, nearest hit 1414.114 (2 hits), terrain 1389.586
-floor0	67424 -72368	Heft: face 1291.364, nearest hit 1288.981 (2 hits), terrain 1267.753
-floor0	67424 -72400	Heft: face 1296.009, nearest hit 1293.599 (2 hits), terrain 1284.133
 floor0	67440 -72368	Heft: face 1293.516, nearest hit 1288.772 (2 hits), terrain 1267.621
-floor0	67456 -71216	Heft: face 1414.775, nearest hit 1414.735 (8 hits), terrain 1387.800
-floor0	67552 -71088	Heft: face 1401.377, nearest hit 1401.376 (2 hits), terrain 1387.720
 floor0	67552 -71120	Heft: face 1400.346, nearest hit 1399.191 (2 hits), terrain 1376.856
 floor0	67552 -71136	Heft: face 1399.378, nearest hit 1399.390 (2 hits), terrain 1377.257
 floor0	67552 -71152	Heft: face 1398.774, nearest hit 1398.789 (2 hits), terrain 1372.459
-floor0	67568 -71088	Heft: face 1400.110, nearest hit 1400.078 (2 hits), terrain 1382.797
-floor0	67568 -71120	Heft: face 1398.594, nearest hit 1398.561 (2 hits), terrain 1375.459
 floor0	67616 -71072	Heft: face 1399.732, nearest hit 1396.195 (2 hits), terrain 1371.816
-floor0	67808 -70944	Heft: face 1372.387, nearest hit 1372.304 (1 hits), terrain 1372.020
-floor0	68192 -70816	Heft: face 1387.789, nearest hit 1387.797 (2 hits), terrain 1371.744
 floor0	68192 -70864	Heft: face 1386.280, nearest hit 1386.256 (8 hits), terrain 1354.643
 floor0	68256 -70816	Heft: face 1385.602, nearest hit 1385.596 (2 hits), terrain 1365.983
-floor0	68272 -70784	Heft: face 1385.941, nearest hit 1385.972 (2 hits), terrain 1373.774
 floor0	68512 -70752	Heft: face 1382.444, nearest hit 1383.064 (2 hits), terrain 1355.408
 floor0	68720 -70128	Heft: face 1589.371, nearest hit 1586.995 (2 hits), terrain 1573.464
 floor0	68768 -70368	Heft: face 1520.967, nearest hit 1520.975 (2 hits), terrain 1482.458
@@ -1317,18 +1216,12 @@ floor0	68848 -70400	Heft: face 1519.886, nearest hit 1519.883 (2 hits), terrain 
 floor0	68928 -70416	Heft: face 1520.798, nearest hit 1520.779 (2 hits), terrain 1476.453
 floor0	69072 -70608	Heft: face 1359.500, nearest hit 1359.609 (3 hits), terrain 1335.444
 floor0	69088 -70608	Heft: face 1359.085, nearest hit 1359.344 (8 hits), terrain 1333.348
-floor0	69344 -70240	Heft: face 1393.371, nearest hit 1389.408 (2 hits), terrain 1372.812
 floor0	69392 -70192	Heft: face 1393.209, nearest hit 1393.161 (3 hits), terrain 1379.568
 floor0	69408 -72256	Heft: face 1341.274, nearest hit 1339.150 (2 hits), terrain 1306.558
-floor0	69456 -72256	Heft: face 1340.972, nearest hit 1340.934 (2 hits), terrain 1313.796
-floor0	69456 -72272	Heft: face 1342.245, nearest hit 1342.283 (2 hits), terrain 1316.154
 floor0	69552 -72288	Heft: face 1346.896, nearest hit 1346.937 (8 hits), terrain 1329.074
 floor0	69568 -72352	Heft: face 1342.698, nearest hit 1342.698 (1 hits), terrain 1342.949
-floor0	69616 -70432	Heft: face 1276.552, nearest hit 1274.052 (1 hits), terrain 1274.079
 floor0	69648 -70384	Heft: face 1278.368, nearest hit 1278.368 (1 hits), terrain 1278.647
 floor0	69696 -70400	Heft: face 1276.700, nearest hit 1272.325 (1 hits), terrain 1272.381
-floor0	69824 -70272	Heft: face 1279.614, nearest hit 1279.649 (2 hits), terrain 1274.655
-floor0	69840 -70256	Heft: face 1278.215, nearest hit 1278.249 (2 hits), terrain 1276.812
 floor0	69856 -70336	Heft: face 1277.210, nearest hit 1277.140 (2 hits), terrain 1249.338
 floor0	69872 -70320	Heft: face 1276.110, nearest hit 1277.536 (3 hits), terrain 1250.672
 floor0	69888 -71760	Heft: face 1249.352, nearest hit 1249.578 (2 hits), terrain 1238.118
@@ -1429,7 +1322,6 @@ stair	67296 -72352	Heft: face 1294.234, nearest hit 1290.172 (1 hits), terrain 1
 stair	67328 -71328	Heft: face 1412.654, nearest hit 1410.466 (1 hits), terrain 1410.593
 stair	67344 -71328	Heft: face 1411.624, nearest hit 1409.124 (1 hits), terrain 1409.271
 stair	67472 -71280	Heft: face 1412.225, nearest hit 1409.039 (3 hits), terrain 1371.724
-stair	67488 -72448	Heft: face 1292.637, nearest hit 1288.887 (1 hits), terrain 1289.146
 stair	67504 -71376	Heft: face 1324.936, nearest hit 1313.686 (1 hits), terrain 1313.889
 stair	67504 -71392	Heft: face 1321.711, nearest hit 1316.086 (1 hits), terrain 1316.175
 stair	67504 -72448	Heft: face 1290.720, nearest hit 1286.885 (1 hits), terrain 1286.956
@@ -1467,7 +1359,6 @@ stair	68016 -70976	Heft: face 1367.197, nearest hit 1368.371 (8 hits), terrain 1
 stair	68272 -72352	Heft: face 1184.821, nearest hit 1182.633 (1 hits), terrain 1182.929
 stair	68288 -72336	Heft: face 1184.793, nearest hit 1182.606 (1 hits), terrain 1182.706
 stair	68288 -72352	Heft: face 1186.851, nearest hit 1186.851 (1 hits), terrain 1187.061
-stair	68448 -70672	Heft: face 1383.086, nearest hit 1394.961 (1 hits), terrain 1395.042
 stair	68464 -72288	Heft: face 1185.915, nearest hit 1183.103 (1 hits), terrain 1183.344
 stair	68480 -72288	Heft: face 1186.283, nearest hit 1183.158 (1 hits), terrain 1183.266
 stair	68512 -70688	Heft: face 1381.071, nearest hit 1378.883 (1 hits), terrain 1378.937
@@ -1475,7 +1366,6 @@ stair	68512 -71280	Heft: face 1123.010, nearest hit 1120.197 (1 hits), terrain 1
 stair	68608 -70320	Heft: face 1521.267, nearest hit 1518.767 (1 hits), terrain 1519.042
 stair	68608 -70544	Heft: face 1450.436, nearest hit 1452.624 (1 hits), terrain 1452.625
 stair	68624 -70320	Heft: face 1518.113, nearest hit 1514.675 (1 hits), terrain 1514.846
-stair	68688 -71936	Heft: face 1081.766, nearest hit 1079.551 (2 hits), terrain 1052.913
 stair	68752 -71440	Heft: face 1077.366, nearest hit 1074.241 (1 hits), terrain 1074.358
 stair	68768 -71440	Heft: face 1074.723, nearest hit 1071.285 (1 hits), terrain 1071.437
 stair	68784 -70624	Heft: face 1371.725, nearest hit 1368.600 (1 hits), terrain 1368.771
@@ -1492,18 +1382,14 @@ stair	68960 -71328	Heft: face 1083.259, nearest hit 1080.759 (1 hits), terrain 1
 stair	68960 -71376	Heft: face 1071.499, nearest hit 1067.437 (1 hits), terrain 1067.584
 stair	68992 -71552	Heft: face 1062.977, nearest hit 1060.822 (2 hits), terrain 1056.647
 stair	69008 -71552	Heft: face 1067.977, nearest hit 1065.501 (2 hits), terrain 1054.803
-stair	69024 -70480	Heft: face 1359.569, nearest hit 1379.219 (8 hits), terrain 1419.537
 stair	69024 -71312	Heft: face 1079.095, nearest hit 1076.908 (1 hits), terrain 1076.978
 stair	69072 -70608	Heft: face 1355.490, nearest hit 1354.362 (2 hits), terrain 1333.394
 stair	69088 -70512	Heft: face 1357.774, nearest hit 1357.461 (1 hits), terrain 1357.735
 stair	69280 -70288	Heft: face 1396.822, nearest hit 1389.322 (1 hits), terrain 1389.379
 stair	69296 -70272	Heft: face 1393.052, nearest hit 1390.240 (1 hits), terrain 1390.276
 stair	69312 -70240	Heft: face 1392.475, nearest hit 1403.412 (1 hits), terrain 1403.572
-stair	69344 -70240	Heft: face 1392.552, nearest hit 1389.256 (2 hits), terrain 1382.226
 stair	69392 -72368	Heft: face 1343.013, nearest hit 1340.201 (1 hits), terrain 1340.389
-stair	69408 -70192	Heft: face 1394.936, nearest hit 1402.748 (1 hits), terrain 1403.028
 stair	69408 -72224	Heft: face 1468.718, nearest hit 1465.687 (6 hits), terrain 1297.858
-stair	69424 -72272	Heft: face 1346.874, nearest hit 1344.229 (2 hits), terrain 1315.255
 stair	69680 -70400	Heft: face 1276.175, nearest hit 1273.363 (8 hits), terrain 1273.672
 stair	69776 -70768	Heft: face 1133.894, nearest hit 1131.506 (2 hits), terrain 1110.914
 stair	69808 -70160	Heft: face 1374.388, nearest hit 1371.576 (1 hits), terrain 1371.732
@@ -1540,16 +1426,13 @@ stair	70176 -71184	Heft: face 1159.757, nearest hit 1157.478 (4 hits), terrain 1
 stair	70176 -71200	Heft: face 1161.208, nearest hit 1159.404 (5 hits), terrain 1083.165
 stair	70192 -71280	Heft: face 1162.562, nearest hit 1159.316 (4 hits), terrain 1107.602
 stair	70192 -71760	Heft: face 1248.560, nearest hit 1245.435 (1 hits), terrain 1245.698
-stair	70208 -71392	Heft: face 1164.117, nearest hit 1160.722 (3 hits), terrain 1139.677
 stair	70208 -71440	Heft: face 1163.969, nearest hit 1161.469 (8 hits), terrain 1161.776
 stair	70224 -70624	Heft: face 1186.066, nearest hit 1182.094 (4 hits), terrain 1107.284
 stair	70224 -71440	Heft: face 1162.917, nearest hit 1160.729 (1 hits), terrain 1160.952
-stair	70240 -71264	Heft: face 1164.880, nearest hit 1162.098 (4 hits), terrain 1109.892
 sunk	67328 -71264	Heft: face 1414.866, nearest hit 1427.991 (1 hits), terrain 1428.016
 sunk	67328 -71280	Heft: face 1414.491, nearest hit 1424.804 (1 hits), terrain 1425.042
 sunk	67344 -71264	Heft: face 1414.845, nearest hit 1421.095 (1 hits), terrain 1421.309
 sunk	67344 -71280	Heft: face 1414.319, nearest hit 1419.631 (1 hits), terrain 1419.695
-sunk	68352 -70704	Heft: face 1383.086, nearest hit 1394.336 (1 hits), terrain 1394.615
 sunk	68368 -70704	Heft: face 1383.086, nearest hit 1390.899 (1 hits), terrain 1391.112
 sunk	68368 -70720	Heft: face 1383.086, nearest hit 1387.149 (1 hits), terrain 1387.413
 sunk	68384 -70688	Heft: face 1383.086, nearest hit 1393.086 (1 hits), terrain 1393.308
@@ -1622,7 +1505,6 @@ sunk	68992 -70576	Heft: face 1359.569, nearest hit 1365.819 (1 hits), terrain 13
 sunk	69008 -70528	Heft: face 1359.569, nearest hit 1374.256 (1 hits), terrain 1374.425
 sunk	69008 -70544	Heft: face 1359.569, nearest hit 1369.881 (1 hits), terrain 1370.150
 sunk	69008 -70560	Heft: face 1359.569, nearest hit 1368.006 (1 hits), terrain 1368.038
-sunk	69024 -70496	Heft: face 1359.569, nearest hit 1379.219 (8 hits), terrain 1404.228
 sunk	69024 -70512	Heft: face 1359.569, nearest hit 1373.631 (1 hits), terrain 1373.902
 sunk	69024 -70528	Heft: face 1359.569, nearest hit 1368.006 (1 hits), terrain 1368.188
 sunk	69024 -70544	Heft: face 1359.569, nearest hit 1369.256 (1 hits), terrain 1369.270
@@ -1635,7 +1517,6 @@ sunk	69040 -70544	Heft: face 1359.569, nearest hit 1361.756 (1 hits), terrain 13
 sunk	69056 -70496	Heft: face 1359.569, nearest hit 1373.631 (1 hits), terrain 1373.812
 sunk	69056 -70512	Heft: face 1359.569, nearest hit 1364.256 (1 hits), terrain 1364.526
 sunk	69056 -70528	Heft: face 1359.569, nearest hit 1362.069 (1 hits), terrain 1362.231
-sunk	69264 -70208	Heft: face 1397.828, nearest hit 1417.478 (8 hits), terrain 1426.884
 sunk	69280 -70208	Heft: face 1397.765, nearest hit 1417.415 (8 hits), terrain 1419.742
 sunk	69296 -70208	Heft: face 1397.714, nearest hit 1410.214 (1 hits), terrain 1410.217
 sunk	69296 -70224	Heft: face 1396.117, nearest hit 1409.242 (1 hits), terrain 1409.314
@@ -1645,18 +1526,12 @@ sunk	69328 -70176	Heft: face 1397.303, nearest hit 1401.678 (1 hits), terrain 14
 sunk	69408 -70176	Heft: face 1397.504, nearest hit 1403.129 (1 hits), terrain 1403.367
 sunk	69408 -70192	Heft: face 1394.758, nearest hit 1396.945 (1 hits), terrain 1397.235
 sunk	69424 -70176	Heft: face 1397.741, nearest hit 1408.366 (1 hits), terrain 1408.405
-sunk	69424 -70192	Heft: face 1393.394, nearest hit 1402.144 (1 hits), terrain 1402.276
 sunk	69424 -70208	Heft: face 1392.636, nearest hit 1400.448 (1 hits), terrain 1400.651
 sunk	69840 -70240	Heft: face 1276.788, nearest hit 1279.288 (1 hits), terrain 1279.334
 sunk	69840 -71792	Heft: face 1248.135, nearest hit 1248.760 (1 hits), terrain 1248.963
 sunk	69856 -70224	Heft: face 1275.953, nearest hit 1281.578 (1 hits), terrain 1281.844
 sunk	69856 -70240	Heft: face 1276.091, nearest hit 1278.591 (1 hits), terrain 1278.824
-upper	-51200 2640	The Hub: face 1648.339, nearest hit 1647.342 (4 hits), terrain 1556.918
-upper	-51232 2624	The Hub: face 1648.461, nearest hit 1648.468 (4 hits), terrain 1559.726
-upper	67344 -71216	Heft: face 1482.169, nearest hit 1482.202 (5 hits), terrain 1430.406
 upper	67360 -71200	Heft: face 1482.439, nearest hit 1482.478 (3 hits), terrain 1429.205
-upper	67376 -71184	Heft: face 1482.716, nearest hit 1482.712 (3 hits), terrain 1427.433
-upper	67392 -72336	Heft: face 1417.082, nearest hit 1417.109 (6 hits), terrain 1267.596
 upper	67536 -71456	Heft: face 1250.909, nearest hit 1248.097 (1 hits), terrain 1248.281
 upper	67536 -71472	Heft: face 1245.599, nearest hit 1244.037 (1 hits), terrain 1244.200
 upper	67568 -71408	Heft: face 1246.818, nearest hit 1246.300 (1 hits), terrain 1246.083
@@ -1665,20 +1540,14 @@ upper	67584 -71456	Heft: face 1250.276, nearest hit 1247.790 (4 hits), terrain 1
 upper	67600 -71392	Heft: face 1247.372, nearest hit 1246.435 (1 hits), terrain 1246.699
 upper	67600 -71456	Heft: face 1249.047, nearest hit 1247.788 (4 hits), terrain 1229.054
 upper	67616 -71632	Heft: face 1247.231, nearest hit 1203.343 (2 hits), terrain 1177.602
-upper	67648 -71600	Heft: face 1250.807, nearest hit 1247.787 (5 hits), terrain 1175.797
 upper	67680 -71408	Heft: face 1249.877, nearest hit 1247.788 (4 hits), terrain 1222.361
-upper	67776 -71488	Heft: face 1250.851, nearest hit 1247.789 (5 hits), terrain 1177.313
 upper	67776 -71520	Heft: face 1250.081, nearest hit 1247.790 (5 hits), terrain 1166.794
-upper	67808 -70992	Heft: face 1419.024, nearest hit 1372.304 (2 hits), terrain 1356.022
 upper	67824 -70896	Heft: face 1419.075, nearest hit 1414.167 (3 hits), terrain 1384.637
 upper	67824 -71008	Heft: face 1419.097, nearest hit 1372.304 (2 hits), terrain 1352.291
 upper	67840 -70880	Heft: face 1419.063, nearest hit 1418.988 (3 hits), terrain 1388.466
 upper	67920 -71008	Heft: face 1419.100, nearest hit 1372.304 (2 hits), terrain 1338.100
 upper	67952 -70960	Heft: face 1419.101, nearest hit 1372.304 (2 hits), terrain 1347.051
-upper	68160 -70768	Heft: face 1456.231, nearest hit 1456.213 (3 hits), terrain 1390.579
 upper	68496 -70752	Heft: face 1449.179, nearest hit 1448.946 (4 hits), terrain 1357.011
-upper	69040 -70608	Heft: face 1425.560, nearest hit 1425.492 (4 hits), terrain 1342.132
-upper	69056 -70608	Heft: face 1425.918, nearest hit 1425.492 (4 hits), terrain 1339.473
 upper	69520 -72256	Heft: face 1469.991, nearest hit 1469.494 (2 hits), terrain 1317.013
 upper	70112 -70704	Heft: face 1187.025, nearest hit 1140.230 (2 hits), terrain 1104.725
 upper	70128 -70736	Heft: face 1187.022, nearest hit 1140.230 (2 hits), terrain 1104.299
@@ -1690,8 +1559,6 @@ upper	70176 -71168	Heft: face 1160.632, nearest hit 1157.014 (4 hits), terrain 1
 upper	70176 -71184	Heft: face 1160.255, nearest hit 1157.478 (4 hits), terrain 1080.357
 upper	70176 -71296	Heft: face 1160.394, nearest hit 1157.928 (4 hits), terrain 1102.706
 upper	70192 -71184	Heft: face 1163.773, nearest hit 1159.890 (5 hits), terrain 1082.227
-upper	70192 -71216	Heft: face 1160.641, nearest hit 1158.349 (4 hits), terrain 1086.546
-upper	70192 -71296	Heft: face 1159.247, nearest hit 1159.264 (4 hits), terrain 1112.301
 upper	70192 -71376	Heft: face 1163.118, nearest hit 1161.278 (4 hits), terrain 1133.985
 upper	70192 -71392	Heft: face 1162.818, nearest hit 1160.259 (3 hits), terrain 1138.614
 upper	70208 -71168	Heft: face 1161.516, nearest hit 1159.331 (4 hits), terrain 1081.800
@@ -1701,26 +1568,17 @@ upper	70208 -71312	Heft: face 1160.719, nearest hit 1160.678 (3 hits), terrain 1
 upper	70208 -71376	Heft: face 1161.111, nearest hit 1161.131 (3 hits), terrain 1137.399
 upper	70208 -71392	Heft: face 1163.597, nearest hit 1161.186 (3 hits), terrain 1141.549
 upper	70224 -71184	Heft: face 1163.880, nearest hit 1161.744 (5 hits), terrain 1086.852
-upper	70224 -71216	Heft: face 1163.259, nearest hit 1160.141 (4 hits), terrain 1092.225
 upper	70224 -71392	Heft: face 1164.230, nearest hit 1162.113 (3 hits), terrain 1147.994
 upper	70240 -70592	Heft: face 1186.999, nearest hit 1140.230 (2 hits), terrain 1108.718
 upper	70240 -70656	Heft: face 1186.918, nearest hit 1186.914 (4 hits), terrain 1107.347
 upper	70240 -71184	Heft: face 1164.225, nearest hit 1162.208 (8 hits), terrain 1088.629
 upper	70240 -71216	Heft: face 1161.224, nearest hit 1161.209 (4 hits), terrain 1097.854
-upper	70240 -71344	Heft: face 1162.954, nearest hit 1162.944 (3 hits), terrain 1142.750
 upper	70240 -71392	Heft: face 1164.589, nearest hit 1162.576 (3 hits), terrain 1150.690
 upper	70256 -71200	Heft: face 1162.876, nearest hit 1161.691 (5 hits), terrain 1095.248
 upper	70272 -71264	Heft: face 1163.943, nearest hit 1163.918 (3 hits), terrain 1121.316
-upper	70272 -71328	Heft: face 1164.416, nearest hit 1164.399 (3 hits), terrain 1134.638
 floor0	-50528 -1184	Rebel Base: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1073.741, nearest hit 1073.271 (2 hits), terrain 1053.630; nearest furniture 21,31/402-zone21.31-INGAME 3384-TwoStorey.mod
-floor0	-50528 -1200	Rebel Base: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1076.081, nearest hit 1073.000 (2 hits), terrain 1049.666; nearest furniture 21,31/402-zone21.31-INGAME 3384-TwoStorey.mod
 floor0	-50528 -1216	Rebel Base: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1075.949, nearest hit 1072.955 (2 hits), terrain 1049.080; nearest furniture 21,31/402-zone21.31-INGAME 3384-TwoStorey.mod
-floor0	-50560 -1280	Rebel Base: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1074.610, nearest hit 1074.591 (2 hits), terrain 1050.720; nearest furniture 21,31/402-zone21.31-INGAME 3384-TwoStorey.mod
-floor0	67520 -71152	Heft: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1400.621, nearest hit 1400.635 (2 hits), terrain 1378.866; nearest furniture 46,16/5418-rebirth-INGAME 3384-TwoStorey.mod
-floor0	67536 -71152	Heft: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1399.485, nearest hit 1399.527 (2 hits), terrain 1375.234; nearest furniture 46,16/5418-rebirth-INGAME 3384-TwoStorey.mod
-floor0	67824 -70928	Heft: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1372.547, nearest hit 1372.304 (2 hits), terrain 1371.666; nearest furniture 46,16/286-Newwworld-INGAME 727-gamedata.base
 floor0	69888 -71792	Heft: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1251.417, nearest hit 1251.398 (2 hits), terrain 1249.337; nearest furniture 47,16/2423-rebirth-INGAME 4028-TwoStorey.mod
-floor0	70016 -71680	Heft: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1251.227, nearest hit 1251.252 (2 hits), terrain 1233.932; nearest furniture 47,16/2423-rebirth-INGAME 4028-TwoStorey.mod
 stair	-50528 -1200	Rebel Base: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1075.212, nearest hit 1073.070 (8 hits), terrain 1050.510; nearest furniture 21,31/402-zone21.31-INGAME 3384-TwoStorey.mod
 stair	-50528 -1248	Rebel Base: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1073.822, nearest hit 1072.692 (2 hits), terrain 1043.931; nearest furniture 21,31/402-zone21.31-INGAME 3384-TwoStorey.mod
 stair	69424 -70192	Heft: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1394.204, nearest hit 1402.016 (1 hits), terrain 1402.276; nearest furniture 47,16/2419-rebirth-INGAME 4028-TwoStorey.mod
@@ -1728,47 +1586,65 @@ stair	70192 -71264	Heft: furniture ring (k16.7.89): the floor is cut by design i
 sunk	68272 -70752	Heft: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1387.578, nearest hit 1389.453 (1 hits), terrain 1389.503; nearest furniture 46,16/5414-rebirth-INGAME 3384-TwoStorey.mod
 sunk	69280 -70224	Heft: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1397.009, nearest hit 1416.659 (8 hits), terrain 1420.413; nearest furniture 47,16/2419-rebirth-INGAME 4028-TwoStorey.mod
 upper	67424 -72384	Heft: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1422.986, nearest hit 1419.265 (2 hits), terrain 1273.520; nearest furniture 46,16/5402-rebirth-INGAME 4104-D-TwoStorey.mod
-upper	67712 -71456	Heft: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1246.331, nearest hit 1246.286 (4 hits), terrain 1200.467; nearest furniture 46,16/357-Newwworld-INGAME 1111-gamedata.base
 upper	70224 -71264	Heft: furniture ring (k16.7.89): the floor is cut by design inside furniture footprint + 1 u + half a cell; face 1160.675, nearest hit 1160.702 (4 hits), terrain 1102.774; nearest furniture 47,16/243-Newwworld-INGAME 1111-gamedata.base
 deck	67952 -71056	Heft: k16.8.36; wire 1369.973, face 1369.965, nearest hit 1312.465 (1 hits), terrain 1312.584; the face is on the wire since recipe 12 (k16.8.41), the sweep ray finds only terrain
 flat	-50992 3152	recipe gap, k16.7.89 re-triangulation (k16.8.36); The Hub
 floor0	-51728 4880	recipe gap, k16.7.89 re-triangulation (k16.8.36); The Hub
 floor0	67376 -72384	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
-floor0	67456 -72432	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 floor0	67488 -72448	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 floor0	67568 -71152	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 floor0	67600 -71056	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 floor0	67616 -71088	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 floor0	69392 -70208	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
-floor0	69712 -70784	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
-floor0	69728 -70784	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 stair	-50528 -1264	recipe gap, k16.7.89 re-triangulation (k16.8.36); Rebel Base
 stair	-51088 2768	recipe gap, k16.7.89 re-triangulation (k16.8.36); The Hub
 stair	-51136 2688	recipe gap, k16.7.89 re-triangulation (k16.8.36); The Hub
 stair	67376 -72352	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
-stair	67408 -72352	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 stair	67440 -72384	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 stair	67680 -71600	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 stair	67776 -71472	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 stair	67776 -71488	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 stair	67776 -71504	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
-stair	68416 -70688	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
-stair	69408 -72256	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
-stair	69424 -72240	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
-sunk	69008 -70512	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 sunk	69024 -70480	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
-upper	67376 -72352	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
-upper	67376 -72368	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 upper	67408 -72400	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
-upper	67424 -72400	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 upper	67584 -71552	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 upper	67648 -71616	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 upper	67744 -71584	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 upper	67792 -71488	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 upper	67792 -71520	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 upper	70144 -71280	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
-upper	70176 -70752	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
-upper	70176 -71216	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 upper	70176 -71424	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
-upper	70224 -71248	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
 upper	70272 -71344	recipe gap, k16.7.89 re-triangulation (k16.8.36); Heft
+upper	67952 -70896	Heft: face 1419.063, nearest hit 1372.304 (2 hits), terrain 1366.796; recipe 24 (k16.7.71): face moved 2-5 u off the client ray hit by dropping furniture-hull side sheets, not examined further (k16.8.36)
+door	69376 -70240	Heft: face 1389.210, nearest hit 1388.076 (4 hits), terrain 1349.862; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): wire/face differ by under 0.01 (a sub-mm detail difference, the 1e-6 wire check)
+floor0	-50592 -1152	Rebel Base: face 1078.462, nearest hit 1078.486 (2 hits), terrain 1067.370; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): wire/face differ by under 0.01 (a sub-mm detail difference, the 1e-6 wire check)
+floor0	-51200 2704	The Hub: face 1580.043, nearest hit 1580.013 (2 hits), terrain 1555.328; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): wire/face differ by under 0.01 (a sub-mm detail difference, the 1e-6 wire check)
+floor0	67392 -72400	Heft: face 1296.295, nearest hit 1294.007 (2 hits), terrain 1285.192; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): nearest hit 2.3 u off the face
+floor0	67424 -72368	Heft: face 1291.921, nearest hit 1289.075 (2 hits), terrain 1268.090; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): nearest hit 2.8 u off the face
+floor0	68768 -71888	Heft: face 1080.109, nearest hit 1080.085 (2 hits), terrain 1049.661; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): wire/face differ by under 0.01 (a sub-mm detail difference, the 1e-6 wire check)
+floor0	69840 -70272	Heft: face 1279.158, nearest hit 1279.133 (2 hits), terrain 1268.614; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): wire/face differ by under 0.01 (a sub-mm detail difference, the 1e-6 wire check)
+floor0	70048 -71472	Heft: face 1181.385, nearest hit 1181.372 (2 hits), terrain 1167.412; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): wire/face differ by under 0.01 (a sub-mm detail difference, the 1e-6 wire check)
+stair	67392 -72336	Heft: face 1419.516, nearest hit 1416.478 (6 hits), terrain 1265.394; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): nearest hit 3.0 u off the face
+stair	67632 -71104	Heft: face 1396.949, nearest hit 1394.393 (2 hits), terrain 1363.983; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): nearest hit 2.6 u off the face
+stair	68448 -70672	Heft: face 1383.086, nearest hit 1394.961 (1 hits), terrain 1395.042; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): nearest hit 11.9 u off the face
+stair	69056 -70512	Heft: face 1359.569, nearest hit 1364.256 (1 hits), terrain 1364.526; k16.7.106: a sample the 2-cell lane has no mesh at (the 4-cell lane keeps floor there); not checked against the shipped mesh
+sunk	69024 -70496	Heft: face 1359.569, nearest hit 1379.219 (8 hits), terrain 1404.228; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): nearest hit 19.7 u off the face
+sunk	69312 -70240	Heft: face 1392.024, nearest hit 1397.649 (1 hits), terrain 1397.660; k16.7.106: a sample the 2-cell lane has no mesh at (the 4-cell lane keeps floor there); not checked against the shipped mesh
+upper	-51232 2624	The Hub: face 1648.468, nearest hit 1648.477 (4 hits), terrain 1559.755; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): wire/face differ by under 0.01 (a sub-mm detail difference, the 1e-6 wire check)
+upper	69424 -72240	Heft: face 1469.227, nearest hit 1467.088 (6 hits), terrain 1301.357; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): nearest hit 2.1 u off the face
+upper	70160 -71280	Heft: face 1159.637, nearest hit 1157.462 (6 hits), terrain 1098.905; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): nearest hit 2.2 u off the face
+upper	70176 -71232	Heft: face 1160.763, nearest hit 1157.430 (4 hits), terrain 1086.406; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): nearest hit 3.3 u off the face
+upper	70272 -71328	Heft: face 1164.385, nearest hit 1164.398 (3 hits), terrain 1134.578; k16.7.95 0.75 ring + k16.7.71 hull tops (recipe 30): wire/face differ by under 0.01 (a sub-mm detail difference, the 1e-6 wire check)
+upper	67712 -71456	Heft: face 1246.331, nearest hit 1246.286 (4 hits), terrain 1200.467; k16.7.106: face and hit agree, a bake-noise wire/face churn (the same class as the 198 lines here); at the 2-cell lane 8 other cells fail instead
+upper	69024 -70608	Heft: face 1425.635, nearest hit 1425.476 (4 hits), terrain 1342.813; k16.7.106: face and hit agree, a bake-noise wire/face churn (the same class as the 198 lines here); at the 2-cell lane 8 other cells fail instead
+upper	69040 -70608	Heft: face 1425.723, nearest hit 1425.492 (4 hits), terrain 1342.095; k16.7.106: face and hit agree, a bake-noise wire/face churn (the same class as the 198 lines here); at the 2-cell lane 8 other cells fail instead
+upper	70176 -70752	Heft: face 1187.032, nearest hit 1140.230 (2 hits), terrain 1104.360; k16.7.106: a sample the 2-cell lane has no mesh at (the 4-cell lane keeps floor there); not checked against the shipped mesh
+floor0	67344 -72352	Heft: face 1294.521, nearest hit 1291.336 (2 hits), terrain 1277.788; recipe 35 (the ring clipped back in narrow gaps, k16.7.102): 3.2 u off the face
+floor0	-50576 -1168	Rebel Base: face 1077.686, nearest hit 1077.643 (2 hits), terrain 1064.157; k16.7.106: face and hit agree, a bake-noise wire/face churn (the same class as the 198 lines here); at the 2-cell lane 8 other cells fail instead
+floor0	67360 -72352	Heft: face 1293.768, nearest hit 1291.488 (2 hits), terrain 1278.032; k16.7.106: a sample the 2-cell lane has no mesh at (the 4-cell lane keeps floor there); not checked against the shipped mesh
+floor0	67408 -72352	Heft: face 1292.129, nearest hit 1289.310 (2 hits), terrain 1269.526; k16.7.106: a sample the 2-cell lane has no mesh at (the 4-cell lane keeps floor there); not checked against the shipped mesh
+floor0	67456 -72432	Heft: face 1295.349, nearest hit 1295.351 (2 hits), terrain 1292.324; k16.7.106: face and hit agree, a bake-noise wire/face churn (the same class as the 198 lines here); at the 2-cell lane 8 other cells fail instead
+floor0	67568 -71120	Heft: face 1398.955, nearest hit 1398.927 (2 hits), terrain 1376.379; k16.7.106: face and hit agree, a bake-noise wire/face churn (the same class as the 198 lines here); at the 2-cell lane 8 other cells fail instead
+floor0	69712 -70784	Heft: face 1137.839, nearest hit 1137.874 (2 hits), terrain 1114.874; k16.7.106: face and hit agree, a bake-noise wire/face churn (the same class as the 198 lines here); at the 2-cell lane 8 other cells fail instead
+floor0	69728 -70784	Heft: face 1137.195, nearest hit 1137.214 (2 hits), terrain 1113.151; k16.7.106: face and hit agree, a bake-noise wire/face churn (the same class as the 198 lines here); at the 2-cell lane 8 other cells fail instead
+floor0	70016 -71680	Heft: face 1251.227, nearest hit 1251.252 (2 hits), terrain 1233.932; k16.7.106: face and hit agree, a bake-noise wire/face churn (the same class as the 198 lines here); at the 2-cell lane 8 other cells fail instead

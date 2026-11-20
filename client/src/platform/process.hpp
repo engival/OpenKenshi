@@ -14,7 +14,7 @@ struct Child
 	void* job = nullptr;
 };
 
-// Starts argv[0] with argv; out reads the child's stdout (stderr stays ours). The child dies with us where the OS can arrange it (Linux
+// Starts argv[0] with argv; out reads the child's stdout and stderr, merged (the host echoes the stderr lines). The child dies with us where the OS can arrange it (Linux
 // PR_SET_PDEATHSIG, a Windows kill-on-close job; macOS cannot).
 bool spawnPiped(const std::vector<std::string>& argv, Child& c, FILE*& out, std::string& err);
 // True while it runs. False once it exited: c is reset and how says how ("exited with status N", "killed by signal ...").

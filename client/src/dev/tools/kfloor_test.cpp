@@ -184,7 +184,8 @@ std::vector<Trace> traces()
 			F(on(-50560, 1125.2, -1276), 0, kF, "up the flight"),
 			F(on(-50552, 1134, -1276), 1, kF, "over the line"),
 			F(on(-50542.8, 1137.7, -1275.3), 1, kF, "the top tread"),
-			F(on(-50552, 1129.5, -1276), 0, kF, "back down over the line (half a rise past it)"),
+			F(on(-50552, 1129.5, -1276), 1, kF, "back down past the line, half a rise: the fired hotspot is consumed, still 1 (k16.2.236.8.4.3)"),
+			F(on(-50556, 1124, -1276), 0, kF, "two rises past the line: re-armed, back to 0"),
 			F(on(-50580, 1098.3, -1276), 0, kI, "back through the door"),
 		} });
 	}
@@ -297,7 +298,8 @@ std::vector<Trace> traces()
 	t.push_back({ "reverse_midflight", {
 		F(on(-50580, 1098.3, -1276), 0, kI),
 		F(on(-50551, 1135, -1276), 1, kF, "up past the line"),
-		F(on(-50557, 1129, -1276), 0, kF, "back below it (half a rise past, the hysteresis line)"),
+		F(on(-50557, 1129, -1276), 1, kF, "back below it: the fired hotspot is consumed, still 1"),
+		F(on(-50560, 1124, -1276), 0, kF, "two rises past the line: re-armed, 0"),
 	} });
 
 	// manual_hold: following on the deck, F: the view stays 0 while the lead walks the deck; the next stair crossing takes it back.
@@ -402,7 +404,8 @@ void directChecks()
 		check(m.update(on(x, 1132.5, -1276)).level == 1, "the up line crossed: 1");
 		check(m.update(on(x, 1132.3, -1276)).level == 1, "half a rise of jitter below it: still 1");
 		check(m.update(on(x, 1132.3, -1276)).level == 1, "again: still 1");
-		check(m.update(on(x, 1130.0, -1276)).level == 0, "more than half a rise below it: back to 0");
+		check(m.update(on(x, 1130.0, -1276)).level == 1, "more than half a rise below it: the fired hotspot is consumed, still 1");
+		check(m.update(on(-50560.0f, 1124.0, -1276)).level == 0, "two rises below the line: re-armed, back to 0");
 	}
 	// The follow ends while on the flight: the player keeps the level, and no later sample writes.
 	{

@@ -47,7 +47,8 @@ bool container_locked(const SimView& sim, uint64_t id);
 // ours dead: search, loot (C9); ours hurt: med, first aid (C10); ours down and not carried, someone else selected: lift, carry (C13); ours carried
 // by the selection: lift, put down (C14); anyone else down or dead: search, loot (C2, C22: scavenge vs search is UNSURE there, search here);
 // anyone else alive: attack, or knockout (cursor 0x19, order 60 action 14 stealth KO) while a selected character sneaks and carries nobody and the
-// hostile has NOT seen it (absent from its SEEN_BY set, SIMLINK 59: the KO's own abort test); a hostile that has seen it is attacked (C7, C21; the
+// hostile has NOT seen it (absent from its SEEN_BY set, SIMLINK 59: the KO's own abort test; the set holds every non-allied observer, hostility is
+// tested separately by kHostile); a hostile that has seen it is attacked (C7, C21; the
 // exe's two-portrait cursor pair is not drawn). MINE: ours otherwise is green (follow) while someone else is selected (C12 has no cursor; talk
 // and cages wait on the sim). action: order 60's action, or kAttack / kFollow; 0: nothing. ctrl: the Ctrl key held (forces the attack, MINE: the
 // original's is the hold menu's Attack).

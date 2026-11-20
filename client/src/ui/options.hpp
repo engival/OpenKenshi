@@ -10,22 +10,30 @@
 
 // The options window (docs/UI.md): every declared cfg option, one tab per cfg section (cfg::sectionNames(): Graphics, Post-processing, ...), a header
 // per group (cfg::Info::group) with its options under it and an option's needs note under its row (dimmed while what it needs is off; kenshi-k16.2.244.2),
-// built from cfg::list(), so a new option shows up without touching this file. A resizable window: the tabs a side list (SETTINGS, then CLIENT), each row a Flex (name, the control
+// built from cfg::list(), so a new option shows up without touching this file. A resizable window: the tabs a side list under a SETTINGS (or DEBUG) heading, each row a Flex (name, the control
 // filling the middle, the value at the right edge). The body's layout is client/data/ui/options.layout (ui::Layout; reloads when saved). Changes are user sets (cfg::setUser; cfg::poll saves them a second later). An option pinned on the command
 // line (--set) works as any other: its tooltip and help say so, and a change ends the pin and is saved (k16.2.303.1). Values follow edits of the file made while it is open. The Find bar over it (Ctrl+F) steps
 // through the rows of every tab whose label, key or help has the text, best match first (label matches before key and help ones; Next / Enter,
 // Previous / Shift+Enter, wrapping, jumping between tabs): the hit's tab shown,
 // the row scrolled into view and highlighted; nothing is hidden. Escape clears it.
+// Two scopes (kenshi-k16.2.419.1): kSettings, the OPTIONS window, every section but Debug, with the Debug keys group (key.debug.*) at the end of the Keys
+// tab; kDebug, the DEBUG SETTINGS window (the F8 panel's Settings button), the Debug section's other groups, a side tab each, under a DEBUG heading.
+// Both are this class on the same rows, Find bar and cfg keys; the Debug section and the Debug keys only with KCLIENT_DEV_TOOLS and keys::debug().
 namespace ui
 {
+	enum class OptionsScope { kSettings, kDebug };
+
 	class Options
 	{
 	public:
-		Options();
+		explicit Options(OptionsScope scope = OptionsScope::kSettings);
+		static bool debugAvailable();	// the development options can show: a KCLIENT_DEV_TOOLS build with the debug gate (keys::debug(), --debug)
+		OptionsScope scope() const { return scope_; }
 		~Options();
 		void update();	// every frame, before ui::frame
 		bool shown() const;
 		void show(bool on);
+		bool tabShown(const std::string& section) const { return shown() && tabBar_ && tabBar_->selected() < tabs_.size() && tabs_[tabBar_->selected()].section == section; }	// the window is up on that tab (the F8 Keys button toggles on it)
 		void showTab(const std::string& section);	// opens the window at that tab (the F8 panel's Keys button); an unknown section opens it as it was
 		// For scripted tests; null when out of range / unknown.
 		Widget* tab(size_t i) const { return i < tabs_.size() ? tabs_[i].button : nullptr; }
@@ -55,9 +63,13 @@ namespace ui
 		Label* needsLabel(const std::string& key) const;	// the row's needs note, null without one	// scroll the shown tab's row into view (at the next layout)
 
 	private:
-		struct Tab { std::string section, title; Button* button; };
+		struct Tab { std::string section, group, title; Button* button; };	// group "": the whole section
 		struct Hit { size_t tab; std::string key; int score; };
 		struct Row { cfg::Info info; size_t tab; Widget* box; Widget* control; Label* value; Widget* swatch = nullptr; Widget* keys[2] = {}; Button* reset = nullptr; Label* name = nullptr; Label* needs = nullptr; };
+		OptionsScope scope_;
+		std::string sectionOf(const cfg::Info& info) const;	// the section it shows in under this scope; "" not shown
+		bool onTab(const cfg::Info& info, size_t t) const;
+		size_t tabOf(const cfg::Info& info) const;	// its tab, tabs_.size() when none
 		CaptionWindow* window_ = nullptr;
 		Tabs* tabBar_ = nullptr;
 		ScrollView* rows_ = nullptr;

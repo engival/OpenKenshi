@@ -68,7 +68,10 @@ int main(int argc, char** argv)
 			const Pt side = move(Drive::Stop, 1);
 			test::require(std::fabs(side.x * fx + side.z * fz) < 2e-3, "a strafe moved along the facing");
 			test::require(std::fabs(std::hypot(side.x, side.z) - knav::kStrafeFactor * full) < 2e-3, "a strafe is not kStrafeFactor x speed");
-			test::require(side.x * std::cos(heading) - side.z * std::sin(heading) > 0.0, "strafe +1 is not to the right of the heading");
+			test::require(side.z * std::sin(heading) - side.x * std::cos(heading) > 0.0, "strafe +1 is not to the right of the heading");
+			// k16.8.38: the body's right is forward x up: -x at heading 0.
+			test::require(walker.drive(*start, Drive::Stop, 0.0, speed, dt, 1).at.x < start->x, "strafe +1 at heading 0 does not move -x");
+			test::require(walker.drive(*start, Drive::Stop, 0.0, speed, dt, -1).at.x > start->x, "strafe -1 at heading 0 does not move +x");
 			const Pt left = move(Drive::Stop, -1);
 			test::require(std::fabs(left.x + side.x) < 2e-3 && std::fabs(left.z + side.z) < 2e-3, "strafe -1 is not the mirror of +1");
 			const Pt wa = move(Drive::Forward, -1);

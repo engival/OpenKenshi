@@ -16,6 +16,7 @@
 
 #include "combat_replay_util.hpp"
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <algorithm>
 #include <array>
@@ -30,9 +31,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_COMBAT_FIGHTS
-#error KSIM_COMBAT_FIGHTS must be defined
 #endif
 
 namespace {

@@ -10,7 +10,11 @@
 //  1. the site: floors found, the deck (y 1203.4) reads 0, the bunk room (y 1246.3) reads >= 1, the roof storey the last floor;
 //  2. a fighter put on each of them reads the same after a tick: building = s-IV, floor 0 / >= 1; and on the ramp midway (the rule
 //     gives the midpoint between the deck and the slab: the floor turns over halfway up, like the Bar's stairs);
-//  3. the open ground outside s-IV reads building 0, floor 0.
+//  3. (kenshi-k16.6.420, char 1157 "UC Bar patron": a seated Shek at y 1246 read floor 0 beside floor-1 guards) a fighter that stood
+//     still through a save/load: the saved BuildingLooks say "nobody moved", `floor` is not saved, so it kept floor 0 for ever;
+//     now the first stepBuildings pass after a load re-derives it. Also the walk deck -> bunk room -> deck (floor 0, >= 1, 0), and the
+//     ramp's turnover (guard 941, y 1220, floor 0 / guard 937, y 1225, floor 1: the midpoint of ground 1195 and slab 1246.1 is 1220.55);
+//  4. the open ground outside s-IV reads building 0, floor 0.
 
 #include "knav/native.hpp"
 #include "ksim/core/clock.hpp"
@@ -26,6 +30,7 @@
 #include <iostream>
 #include <filesystem>
 #include <memory>
+#include <sstream>
 #include <string>
 
 #ifndef KENSHI_DATA
@@ -111,6 +116,22 @@ int main()
 		const double low = siv->groundY;
 		test::require(put(kDeckX, low + 0.25 * (slab - low), kDeckZ).floor == 0, "a quarter up the ramp is not floor 0");
 		test::require(put(kBunkX, low + 0.75 * (slab - low), kBunkZ).floor >= 1, "three quarters up the ramp is not floor >= 1");
+		// The turnover on the ramp: y 1220 (guard 941) is under the midpoint, y 1225 (guard 937) over it: by design, not a stale value.
+		test::require(siv->floorAt(1220.0) == 0 && siv->floorAt(1225.0) >= 1, "the ramp's turnover is not between y 1220 and 1225");
+		// A walk deck -> bunk room -> deck: the floor follows the height both ways.
+		test::require(put(kDeckX, 1203.4, kDeckZ).floor == 0, "back on the deck: floor is not 0");
+		// A fighter standing still through a save and load (a seated patron): `floor` is not saved, the look is.
+		const state::Fighter& sat = put(kBunkX, 1246.3, kBunkZ);
+		test::require(sat.floor >= 1, "before the save: floor " + std::to_string(sat.floor));
+		{
+			std::stringstream stream;
+			sim.save(stream);
+			sim.reload(stream);
+			sim.tick();
+			const state::Fighter* loaded = sim.combat()->find(player);
+			test::require(loaded != nullptr && loaded->building == siv->key, "after the load the fighter is not in s-IV");
+			test::require(loaded->floor >= 1, "after the load, standing still in the bunk room: floor " + std::to_string(loaded->floor));
+		}
 		// Outside, on the hill above the deck.
 		const state::Fighter& out = put(kDeckX - 120.0, 1240.0, kDeckZ + 120.0);
 		test::require(out.building == 0 && out.floor == 0, "open ground outside: building " + std::to_string(out.building) + " floor " + std::to_string(out.floor));

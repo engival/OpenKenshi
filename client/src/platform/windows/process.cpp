@@ -6,7 +6,7 @@
 #include <windows.h>
 
 // CreateProcessW with the child's stdout on an inherited pipe (kenshi-379.31.1). The child goes in a job that kills it when our handle closes,
-// so a crashed client takes the server with it (Linux: PR_SET_PDEATHSIG). Windows has no SIGTERM: a graceful stop terminates it too.
+// so a crashed client takes the server with it (Linux: PR_SET_PDEATHSIG). CREATE_NO_WINDOW: the server opens no console window (kenshi-379.31.9.1). Windows has no SIGTERM: a graceful stop terminates it too.
 namespace plat {
 
 namespace {
@@ -69,10 +69,11 @@ bool spawnPiped(const std::vector<std::string>& args, Child& c, FILE*& out, std:
 	si.dwFlags = STARTF_USESTDHANDLES;
 	si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
 	si.hStdOutput = wr;
-	si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+	si.hStdError = wr;	// stdout and stderr share the pipe; the host echoes the lines to its own stderr, the log file (platform/console.hpp) or console
+	if (!si.hStdInput || si.hStdInput == INVALID_HANDLE_VALUE) { si.hStdInput = nullptr; }
 	PROCESS_INFORMATION pi = {};
 	const std::wstring exe = widen(args[0]);
-	if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, TRUE, CREATE_SUSPENDED, nullptr, nullptr, &si, &pi))
+	if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, TRUE, CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
 	{
 		err = args[0] + ": " + lastError("CreateProcess");
 		CloseHandle(rd);

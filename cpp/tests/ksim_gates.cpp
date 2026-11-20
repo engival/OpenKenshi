@@ -9,15 +9,18 @@
 //     goal-less); a shut gate is reopened by its crew after UNLOCK (3.33 s, only the door's faction) + OPEN (0.8 / `door move
 //     speed`); a gate with no crew, or a crew of another faction at a locked gate, stays shut; nothing closes a gate (the owner
 //     loses a town and defends: the book does not change);
-//  3. (argv[1] = the Stack navmesh cache; the Hub's gates are ruins, no doors) the full-detail leader and guards on Stack's gate: it walks to the outside point, a
-//     locked gate is unlocked then opened by it within seconds, a gate shut again is reopened, it never closes it, a leader of
-//     another faction cannot unlock, and a leader in a fight leaves the gate as it is;
+//  3. (kenshi-k16.6.12.3) the post is taken through the squad's package row for MAN_THE_GATE 180 (goalsel over the row's tier, weight
+//     and window, the goap row's utility): the crews' ManGate score is the row's, not a constant. The full-detail GateDuty system
+//     this section once tested is deleted (nothing in production set it);
 //  4. the binding (GATE_CREWS_LIVE.md section 5): a crew's home gate is its gate at spawn; a stale own gate falls back to the home
 //     building's gate; a removed gate falls back to the town's nearest free gateway; a duplicate is never made (the second crew
 //     takes the next free gateway or stands down); a town with no gate left keeps its squads as ordinary residents; save, load
 //     and continue give the same hash.
 
 #include "ksim/ai/ai.hpp"
+#include "ksim/ai/goalsel.hpp"
+#include "ksim/ai/goap.hpp"
+#include "ksim/ai/routines.hpp"
 #include "ksim/ai/behaviours.hpp"
 #include "ksim/core/clock.hpp"
 #include "ksim/combat/combat.hpp"
@@ -36,6 +39,7 @@
 #include "kworld/loadorder.hpp"
 
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -50,9 +54,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
 #endif
 
 namespace {
@@ -131,6 +132,9 @@ Simulation newGame(const kworld::LoadOrder& order, int workers, SpawnReport* rep
 	return Simulation::newGame(KENSHI_DATA, order, options, report, config);
 }
 
+// Every ManGate candidate score the group layer offered (the debug view's decision sink).
+std::vector<double> gScores;
+
 void enable(Simulation& simulation, std::shared_ptr<const Navigator> navigator)
 {
 	AiSystem::Config config;
@@ -138,6 +142,12 @@ void enable(Simulation& simulation, std::shared_ptr<const Navigator> navigator)
 	config.navigator = std::move(navigator);
 	config.factions = FactionBook::build(simulation.gameData());
 	config.factionTuning.raidFrequency = 0.0;
+	config.decision = [](std::uint64_t, const GoalChoice&, const std::vector<GoalChoice>& offered)
+	{
+		for (const GoalChoice& choice : offered)
+			if (choice.kind == state::GoalKind::ManGate)
+				gScores.push_back(choice.score);
+	};
 	simulation.enableAi(std::move(config));
 }
 
@@ -155,7 +165,7 @@ bool shut(const knav::DoorBook& book, std::uint64_t key)
 
 } // namespace
 
-int main(int argc, char** argv)
+int main()
 {
 	try
 	{
@@ -272,6 +282,26 @@ int main(int argc, char** argv)
 		test::require(audit.goalless == 0, "a squad has no goal");
 		test::require(audit.byGoal[static_cast<std::size_t>(state::GoalKind::ManGate)] == crews.size(), "the ManGate count");
 		test::require(audit.offRoute == 0, "a squad is off its route");
+
+		// ---- 2b. the post is taken through the package's 180 row (kenshi-k16.6.12.3): its score is goalsel's over the row's weight and
+		// the goap row's utility (x the running goal's 1.25), where it used to be the constant 5.0 whatever the package said ----
+		{
+			test::require(!gScores.empty(), "the group layer never offered a ManGate candidate");
+			const routines::PackageTable table(*simulation.gameData());
+			std::set<double> allowed;
+			for (const routines::CompiledPackage& package : table.packages())
+				for (const routines::GoalRow& row : package.list(routines::Role::Leader))
+					if (row.task == routines::task::ManTheGate)
+					{
+						const double base = routines::effectiveWeight(row) * goap::rowOf(routines::task::ManTheGate)->utility;
+						allowed.insert(base);
+						allowed.insert(base * goalsel::kCurrentBonus);
+					}
+			test::require(!allowed.empty(), "no package carries a MAN_THE_GATE 180 row for its leader");
+			for (const double score : gScores)
+				test::require(allowed.count(score) != 0, "a ManGate score is not the package row's: " + std::to_string(score));
+			std::cout << "post goal: " << gScores.size() << " ManGate offers, every score from the package's 180 row\n";
+		}
 
 		// A crewed gate whose crew belongs to the faction that owns the door (UNLOCK is planned only by the door's faction).
 		const DoorData data = *DoorData::fromWorld(simulation.world());
@@ -660,194 +690,6 @@ int main(int argc, char** argv)
 			std::cout << "save: " << gone << " gates gone, " << crewsLeft << " crews left, " << rebound << " rebound; hash identical after load and continue\n";
 		}
 
-		// ---- 3. the full-detail leader and guards on Stack's gate ----
-		if (argc == 2)
-		{
-			const auto gameData = simulation.gameData();
-			const std::shared_ptr<const CombatData> data = CombatData::build(*gameData, KENSHI_DATA);
-			const std::shared_ptr<MeshNavigator> nav = MeshNavigator::load(argv[1]);
-			Simulation stack = Simulation::load(KENSHI_DATA, 91);
-			stack.setGameData(gameData);
-			CombatSettings settings;
-			settings.substeps = 2;
-			stack.enableCombat(data, settings);
-			stack.enableNavigation(nav);
-			spawnMeshDoors(stack, *nav);
-			stack.setClockTick(tickAt(kNewGameDay, kNewGameHour, 0));
-			flecs::world& ecs = const_cast<flecs::world&>(stack.world().ecs());
-			// The body of the leader, the guards and the foe: the duel's servant (the combat tests' Escaped Servant).
-			const kdata::Record* servant = nullptr;
-			for (const kdata::Record* r : gameData->byType(kworld::itemTypeByName("CHARACTER")))
-				if (r->name == "Escaped Servant")
-					servant = r;
-			test::require(servant != nullptr, "no Escaped Servant in the data");
-			std::uint64_t rng = 12345;
-			const state::Fighter servantBody = data->makeFighter(*gameData, servant->stringID, "", rng);
-			const auto fighter = [&](std::uint64_t id) -> state::Fighter& { return *const_cast<CombatArena*>(stack.combat())->find(id); };
-			// The Stack gate that has a door entity and an outside point on the mesh.
-			const GateSite* gate = nullptr;
-			flecs::entity doorEntity;
-			knav::Position post{};
-			for (const GateSite& site : stack.world().gateSites())
-			{
-				flecs::entity candidate;
-				ecs.each([&](flecs::entity e, const state::Door& door) { if (door.key == site.key) candidate = e; });
-				if (!candidate.is_valid())
-					continue;
-				const auto spot = nav->walker().snap({site.outX, candidate.get<state::Door>()->y, site.outZ}, 40.0);
-				if (!spot || std::hypot(spot->x - site.outX, spot->z - site.outZ) > 4.0)
-					continue;
-				gate = &site;
-				doorEntity = candidate;
-				post = *spot;
-				break;
-			}
-			test::require(gate != nullptr, "no gate of Stack with a door and an outside point on the mesh");
-			const auto door = [&]() -> state::Door& { return *doorEntity.get_mut<state::Door>(); };
-			test::require(!door().ownerSid.empty(), "the gate of Stack has no owner faction");
-			std::cout << "stack gate: " << gameData->find(gate->buildingSid)->name << ", door state " << int(door().state) << ", owner "
-				<< gameData->find(door().ownerSid)->name << ", speed " << door().moveSpeed << "\n";
-
-			state::Fighter body = servantBody;
-			const auto spawn = nav->walker().snap({gate->outX + 20.0 * gate->nx, door().y, gate->outZ + 20.0 * gate->nz}, 40.0);
-			test::require(spawn.has_value(), "the spawn point is off the mesh");
-			body.team = 0;
-			body.unconscious = false;
-			body.koTimer = 0.0;
-			body.target = 0;
-			body.x = spawn->x;
-			body.y = spawn->y;
-			body.z = spawn->z;
-			flecs::entity leaderEntity = stack.spawnFighter(std::move(body));
-			leaderEntity.set<state::Allegiance>(state::Allegiance{door().ownerSid});
-			leaderEntity.set<state::GateDuty>(state::GateDuty{gate->key, post.x, post.y, post.z, 0});
-			const std::uint64_t leader = leaderEntity.get<state::Id>()->value;
-			const auto tick = [&](int n) { for (int i = 0; i < n; ++i) stack.tick(); };
-			const auto toPost = [&] { return std::hypot(fighter(leader).x - post.x, fighter(leader).z - post.z); };
-			const auto setDoor = [&](std::uint8_t state)
-			{
-				door().state = state;
-				++door().version;
-				tick(1);
-			};
-			// 1. The gate is open: the leader walks from the spawn point to the outside point and stands there.
-			setDoor(0);
-			int ticks = 0;
-			for (; ticks < 20 * 60 && toPost() > kGatePostReach; ++ticks)
-				stack.tick();
-			test::require(toPost() <= kGatePostReach, "the leader never reached the outside point: " + std::to_string(toPost()) + " away");
-			tick(20 * 10);
-			test::require(toPost() <= kGatePostReach && door().state == 0 && fighter(leader).building == 0, "the leader left its post or touched an open gate");
-			std::cout << "leader: walked " << std::hypot(spawn->x - post.x, spawn->z - post.z) << " units to the outside point in "
-				<< ticks * kTickSeconds << " game-s and stands there; the open gate stays open\n";
-
-			// 1b. The guards (full detail): spawned at the post, each walks to its slot (outside + 33 n, across -34, -19, +19, +34)
-			// and stands there; a displaced guard walks back; a gate shut or locked is none of its business.
-			{
-				std::vector<std::uint64_t> guards;
-				std::vector<GateStand> slots;
-				for (int slot = 1; slot <= kGateMemberSlots; ++slot)
-				{
-					const GateStand stand = *gateStandPoint(*gate, slot);
-					const auto spot = nav->walker().snap({stand.x, door().y, stand.z}, 40.0);
-					if (!spot || std::hypot(spot->x - stand.x, spot->z - stand.z) > 4.0)
-						continue; // this slot is off the mesh
-					state::Fighter guardBody = fighter(leader);
-					guardBody.clearRoute();
-					flecs::entity guard = stack.spawnFighter(std::move(guardBody));
-					guard.set<state::Allegiance>(state::Allegiance{door().ownerSid});
-					guard.set<state::GateDuty>(state::GateDuty{gate->key, spot->x, spot->y, spot->z, kGateMemberPhase});
-					guards.push_back(guard.get<state::Id>()->value);
-					slots.push_back(GateStand{spot->x, spot->z});
-				}
-				test::require(!guards.empty(), "no member slot of the gate of Stack is on the mesh");
-				const auto worst = [&]
-				{
-					double far = 0.0;
-					for (std::size_t g = 0; g < guards.size(); ++g)
-						far = std::max(far, std::hypot(fighter(guards[g]).x - slots[g].x, fighter(guards[g]).z - slots[g].z));
-					return far;
-				};
-				int n = 0;
-				for (; n < 20 * 90 && worst() > kGatePostReach; ++n)
-					stack.tick();
-				test::require(worst() <= kGatePostReach, "a guard never reached its slot: " + std::to_string(worst()) + " away");
-				fighter(guards[0]).x += 30.0;
-				for (int i = 0; i < 20 * 90 && worst() > kGatePostReach; ++i)
-					stack.tick();
-				test::require(worst() <= kGatePostReach, "a displaced guard did not walk back to its slot");
-				test::require(toPost() <= kGatePostReach, "the leader left its post for the guards");
-				std::cout << "guards: " << guards.size() << " of " << kGateMemberSlots << " slots on the mesh, all reached in " << n * kTickSeconds
-					<< " game-s; a displaced guard walked back\n";
-				for (const std::uint64_t guard : guards)
-					fighter(guard).dead = true; // out of the way of the rest
-			}
-
-			// 2. The gate is locked (its `always locks` re-lock): UNLOCK (3.3 s) then OPEN, within seconds; nothing closes it again.
-			const auto reopen = [&](std::uint8_t from, double limit)
-			{
-				setDoor(from);
-				int n = 0;
-				bool unlocked = false;
-				for (; n < static_cast<int>(limit / kTickSeconds) && door().state != 0; ++n)
-				{
-					stack.tick();
-					unlocked = unlocked || door().state == 1;
-				}
-				test::require(door().state == 0, "the leader did not open the gate in " + std::to_string(limit) + " s (state " + std::to_string(int(door().state)) + ")");
-				test::require(from != 2 || unlocked, "a locked gate went to open without passing closed (the UNLOCK step)");
-				return n * kTickSeconds;
-			};
-			const double lockedSeconds = reopen(2, 40.0);
-			test::require(lockedSeconds >= kUnlockSeconds, "UNLOCK took less than " + std::to_string(kUnlockSeconds) + " s");
-			tick(20 * 30);
-			test::require(door().state == 0, "the crew (or anyone) closed the gate again");
-			const double closedSeconds = reopen(1, 40.0);
-			tick(20 * 10);
-			test::require(toPost() <= kGatePostReach + 1.0 && door().state == 0, "the leader did not return to its post after the reopen");
-			std::cout << "leader: locked gate unlocked and opened in " << lockedSeconds << " game-s, a closed one opened in " << closedSeconds
-				<< " game-s, back at the post; it stays open\n";
-
-			// 3. A leader of another faction cannot unlock, and waits; unlocked (closed) it opens the gate like anyone.
-			const std::string owner = door().ownerSid;
-			leaderEntity.set<state::Allegiance>(state::Allegiance{""});
-			setDoor(2);
-			tick(20 * 40);
-			test::require(door().state == 2, "a leader of another faction unlocked the gate");
-			setDoor(1);
-			tick(20 * 20);
-			test::require(door().state == 0, "the other faction's leader did not open a closed gate");
-			leaderEntity.set<state::Allegiance>(state::Allegiance{owner});
-
-			// 4. In a fight the gate stays as it is (the leader has a target: goal 144 owns it). A hostile servant of the other team
-			// stands beside the post; every second the leader has a target, a shut gate stays shut.
-			state::Fighter foe = servantBody;
-			foe.team = 1;
-			foe.unconscious = false;
-			foe.koTimer = 0.0;
-			foe.target = 0;
-			foe.x = fighter(leader).x + 8.0;
-			foe.z = fighter(leader).z;
-			foe.y = fighter(leader).y;
-			stack.spawnFighter(std::move(foe));
-			// The fight starts first, then the gate shuts: a leader without a target yet opens it (step 2), which is not this check.
-			for (int i = 0; i < 20 * 10 && fighter(leader).target == 0; ++i)
-				stack.tick();
-			test::require(fighter(leader).target != 0, "the leader never took the foe as its target");
-			setDoor(1);
-			int fighting = 0;
-			for (int i = 0; i < 20 * 12; ++i)
-			{
-				stack.tick();
-				if (stack.clockTick() % kGateCrewIntervalTicks == 0 && fighter(leader).target != 0)
-				{
-					++fighting;
-					test::require(door().state == 1, "a fighting leader worked the gate (state " + std::to_string(int(door().state)) + ")");
-				}
-			}
-			test::require(fighting >= 3, "the leader never fought (" + std::to_string(fighting) + " samples with a target)");
-			std::cout << "leader: " << fighting << " seconds with a target, the shut gate stayed shut\n";
-		}
 		std::cout << "ksim_gates ok\n";
 		return 0;
 	}

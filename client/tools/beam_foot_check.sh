@@ -19,7 +19,7 @@ TREE=$(cd "$CLIENT/.." && pwd)	# the kenshi tree (its cpp/ builds the server)
 OUT=${1:?usage: beam_foot_check.sh OUT_DIR [SCENARIO] [PORT]}
 SCENARIO=${2:-scenarios/venge_beams.kscen}
 . "$HERE/ports.sh"
-PORT=$(pick_port "${3:-}") || exit 3
+WANT=${3:-}
 case "$SCENARIO" in /*) ;; *) SCENARIO=$TREE/$SCENARIO ;; esac
 . "$HERE/server_bin.sh"	# pick_server: KSIM_SERVER, else the shared master build, else this build dir's (kenshi-k16.2.306.1)
 pick_server "$TREE" "$CLIENT/build/cpp/OpenKenshi-server"
@@ -51,17 +51,10 @@ SCRIPT=$OUT/check.txt
 	done
 	echo "3660 quit"
 } > "$SCRIPT"
-(cd "$TREE" && exec "$SERVER" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen "127.0.0.1:$PORT" --scenario-file "$SCENARIO" \
-	${KENSHI_NAVWORLD:+--navworld "$KENSHI_NAVWORLD"}) > "$OUT/server.log" 2>&1 &
-pid=$!
+START_PORT=$WANT start_server_on_free_port "$OUT/server.log" env -C "$TREE" "$SERVER" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen "127.0.0.1:@PORT@" --scenario-file "$SCENARIO" \
+	${KENSHI_NAVWORLD:+--navworld "$KENSHI_NAVWORLD"}
+pid=$SERVER_PID; PORT=$SERVER_PORT
 trap 'kill $pid 2>/dev/null || true' EXIT
-for i in $(seq 240)
-do
-	grep -q '^listening ' "$OUT/server.log" && break
-	kill -0 $pid 2>/dev/null || { echo "beam_foot_check: server died:" >&2; tail -5 "$OUT/server.log" >&2; exit 3; }
-	sleep 0.5
-done
-grep -q '^listening ' "$OUT/server.log" || { echo "beam_foot_check: server not listening on $PORT" >&2; exit 3; }
 nice -n 10 "$HERE/headless.sh" -- "$KCLIENT" --debug --simlink "127.0.0.1:$PORT" --script "$SCRIPT" > "$OUT/client.log" 2>&1 || true
 kill $pid 2>/dev/null || true
 trap - EXIT

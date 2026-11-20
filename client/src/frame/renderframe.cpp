@@ -10,7 +10,6 @@
 #include "input/inputqueue.hpp"
 #include "render/drawstats.hpp"
 #include "knobs/ablate.hpp"
-#include "dev/devhooks.hpp"
 #include "render/drawlist_gpu.hpp"
 #include "render/dust.hpp"
 #include "world/foliage.hpp"
@@ -69,7 +68,8 @@ static bool world_setup(const FramePacket& pk, RenderState& rs)
 		CPUSTAGE_ACC("chars.upload");
 		rs.chars.upload(pk.chars);
 	}
-	if (rs.shadow.active() && !pk.worldMap && !editor)	// the creator's Deferred_RTT pass has no shadows (rtt.hlsl)
+	const Shadow::FrameData& sfd = pk.shadow;
+	if (sfd.active() && !pk.worldMap && !editor)	// the creator's Deferred_RTT pass has no shadows (rtt.hlsl)
 	{
 		const auto ts = std::chrono::steady_clock::now();
 		const int loads = sc0.terrainLoads;
@@ -77,7 +77,7 @@ static bool world_setup(const FramePacket& pk, RenderState& rs)
 		// With render.shadow_cache the static casters went to the cache's atlas (own pass, only the tiles whose key changed) and the live atlas gets each
 		// rendering cascade's tile restored from it, then the wind-turned building parts and the characters over it (kenshi-k16.2.205.12.2).
 		uint64_t sig = 0x9e3779b97f4a7c15ull;
-		if (rs.shadow.cacheOn())
+		if (sfd.cacheOn)
 		{
 			auto mix = [&sig](uint64_t v) { sig ^= v + 0x9e3779b97f4a7c15ull + (sig << 6) + (sig >> 2); };
 			mix(rs.terrain.shadowGen());
@@ -85,8 +85,8 @@ static bool world_setup(const FramePacket& pk, RenderState& rs)
 			mix(sc0.bldSet ? pk.buildings.shadowSig : 0);	// the packet's copy, from buildings.update's end (kenshi-k16.2.205.12.95)
 			mix((uint64_t)(editor ? 1u : 0u) | (uint64_t)(sc0.foliageOn ? 2u : 0u) | (uint64_t)(sc0.bldSet ? 4u : 0u));
 		}
-		rs.shadow.resolve(sig);
-		const bool cached = rs.shadow.cacheOn();
+		rs.shadow.resolve(sfd, sig);
+		const bool cached = sfd.cacheOn;
 		GPU_BEGIN(rs.gpu, GpuTimer::Shadow);
 		if (cached)
 		{
@@ -96,10 +96,10 @@ static bool world_setup(const FramePacket& pk, RenderState& rs)
 				for (int c = 0; c < Shadow::kCascades; c++)
 				{
 					if (!rs.shadow.staticDraw(c)) { continue; }
-					const ShadowCascade& sc = rs.shadow.cascade(c);
-					rs.shadow.selectStatic(c);
+					const ShadowCascade& sc = sfd.casc(c);
+					rs.shadow.selectStatic(sfd, c);
 					{ CPUSTAGE_ACC("shadow.terrain"); if (!editor) { rs.terrain.renderShadow(sc0.pos, sc, loads); } }
-					{ CPUSTAGE_ACC("shadow.buildings"); if (sc0.bldSet) { rs.buildings.renderShadow(sc, 1); } }
+					{ CPUSTAGE_ACC("shadow.buildings"); if (sc0.bldSet) { rs.buildings.renderShadow(pk.buildings.draws, sc, 1); } }
 					{ CPUSTAGE_ACC("shadow.foliage"); if (!editor && sc0.foliageOn && sc0.bldSet) { rs.foliage.renderShadow(pk.foliage, sc); } }
 				}
 				rs.shadow.endStaticPass();
@@ -107,11 +107,11 @@ static bool world_setup(const FramePacket& pk, RenderState& rs)
 			rs.shadow.beginPass();
 			for (int c = 0; c < Shadow::kCascades; c++)
 			{
-				if (!rs.shadow.renders(c)) { continue; }
-				rs.shadow.restoreCascade(c);
-				rs.shadow.selectTile(c);
+				if (!sfd.renders(c)) { continue; }
+				rs.shadow.restoreCascade(sfd, c);
+				rs.shadow.selectTile(sfd, c);
 				CPUSTAGE_ACC("shadow.buildings");
-				if (sc0.bldSet && rs.buildings.renderShadow(rs.shadow.cascade(c), 2)) { rs.shadow.markDirty(c); }
+				if (sc0.bldSet && rs.buildings.renderShadow(pk.buildings.draws, sfd.casc(c), 2)) { rs.shadow.markDirty(sfd, c); }
 			}
 		}
 		else
@@ -119,11 +119,11 @@ static bool world_setup(const FramePacket& pk, RenderState& rs)
 			rs.shadow.beginPass();
 			for (int c = 0; c < Shadow::kCascades; c++)
 			{
-				if (!rs.shadow.renders(c)) { continue; }
-				const ShadowCascade& sc = rs.shadow.cascade(c);
-				rs.shadow.selectCascade(c);
+				if (!sfd.renders(c)) { continue; }
+				const ShadowCascade& sc = sfd.casc(c);
+				rs.shadow.selectCascade(sfd, c);
 				{ CPUSTAGE_ACC("shadow.terrain"); if (!editor) { rs.terrain.renderShadow(sc0.pos, sc, loads); } }
-				{ CPUSTAGE_ACC("shadow.buildings"); if (sc0.bldSet) { rs.buildings.renderShadow(sc); } }
+				{ CPUSTAGE_ACC("shadow.buildings"); if (sc0.bldSet) { rs.buildings.renderShadow(pk.buildings.draws, sc); } }
 				{ CPUSTAGE_ACC("shadow.foliage"); if (!editor && sc0.foliageOn && sc0.bldSet) { rs.foliage.renderShadow(pk.foliage, sc); } }
 			}
 		}
@@ -131,22 +131,22 @@ static bool world_setup(const FramePacket& pk, RenderState& rs)
 		GPU_BEGIN(rs.gpu, GpuTimer::CharacterShadows);
 		for (int c = 0; c < Shadow::kCascades; c++)
 		{
-			if (!rs.shadow.renders(c)) { continue; }
-			rs.shadow.selectTile(c);	// the world's casters already cleared (or restored) this tile: no second clear
+			if (!sfd.renders(c)) { continue; }
+			rs.shadow.selectTile(sfd, c);	// the world's casters already cleared (or restored) this tile: no second clear
 			if (ablate::on("charshadow")) { continue; }	// KCLIENT_ABL: no character shadow casters (an upper-bound measurement)
 			CPUSTAGE_ACC("shadow.chars");
-			if (rs.chars.renderShadow(c, rs.shadow.cascade(c)) && cached) { rs.shadow.markDirty(c); }
+			if (rs.chars.renderShadow(c, sfd.casc(c)) && cached) { rs.shadow.markDirty(sfd, c); }
 		}
 		GPU_END(rs.gpu);
 		rs.shadow.endPass();
 		framestats::slot().shadowMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - ts).count();
-	} else { rs.shadow.invalidate(); }
+	} else { rs.shadow.invalidateAtlas(); }	// logic cleared its own side (Shadow::invalidate) at the packet fill
 	CPUSTAGE("shadow.pass");
 	// after the shadow pass: the portraits use the world's light and shadows (portraits.hpp); the packet's jobs (one per frame, all of them in a
 	// scripted run), their results to the mailbox logic takes (render thread: Portraits; logic thread: PortraitTable)
 	if (sc0.simActive) { rs.portraits.update(rs.chars, pk.portraitJobs); }
 #ifdef KCLIENT_DEV_TOOLS
-	dev::labRender(pk.lab);	// the animation lab: its own pass on the portrait light, outside every world pass; only while the browser is open or a script drives it
+	if (framehooks::labRender) { framehooks::labRender(pk.lab, pk.shadow); }	// the animation lab: its own pass on the portrait light, outside every world pass; only while the browser is open or a script drives it
 #endif
 
 	// the water's planar reflection (reflection.hpp): the sky, then the world with the reflect-pass light (unlit albedo luma), from the mirrored camera.
@@ -173,7 +173,7 @@ static bool world_setup(const FramePacket& pk, RenderState& rs)
 		rs.sky.render(pk.sky, rc.f, rc.r, rc.u, rc.fovY, rc.aspect, Reflection::kSize);
 		if (fullRefl)
 		{
-			if (sc0.bldSet) { rs.buildings.render(rm, rl); }
+			if (sc0.bldSet) { rs.buildings.render(pk.buildings.draws, rm, rl); }
 			rs.terrain.renderView(rm, rl, sc0.terrainView);
 			if (sc0.foliageOn && sc0.bldSet) { rs.foliage.render(pk.foliage, rm, rl); }
 			if (sc0.grassOn && sc0.bldSet) { rs.grass.render(pk.grass, rm, rl, sc0.animTime); }
@@ -191,38 +191,27 @@ static bool world_setup(const FramePacket& pk, RenderState& rs)
 	rs.arrows.update(pk.arrows, sc0.pos);	// the packet's marks (logic_frame): a transient buffer write, outside every pass
 	rs.post.beginScene(cam, !editor && !pk.worldMap);	// the world reads last frame's AO (post.ao)
 	{
-		// render.interior_light: the nearest baked buildings as volumes for the scene pass (the packet's strength = 1 - the option, so 0 = the original lighting:
-		// none asked for, no bake starts)
+		// render.interior_light: the nearest baked buildings as volumes for the scene pass, collected by the logic side (pk.buildings.volumes, T19; the packet's strength = 1 - the option,
+		// so 0 = the original lighting: none asked for, no bake starts)
 		const float strength = sc0.interiorLight;
 		const bool shafts = ((sc0.sunShafts > 0.0f || sc0.dustMotes > 0.0f || sc0.lampBeams > 0.0f) && !editor && !pk.worldMap && sc0.bldSet) || (sc0.lampOcclusion && !editor && !pk.worldMap && sc0.bldSet);	// the volumes stay live (strength 0: the lit programs read factor 1) for the shafts and the lamps
-		// render.sun_bounce: needs render.interior_light below 1 (its term is part of that light); the sun direction is the shadow's (clamped to the horizon), and
-		// the ground under the bake is the colour map at the camera, as the sky ambient reads it
 		const bool sunBounce = sc0.sunBounce > 0.0f && strength > 0.0f && !editor && !pk.worldMap && sc0.bldSet;
-		if (sunBounce && pk.sky.light.v[0][1] > 0.0f)
-		{
-			const float* sd = pk.sky.light.v[0];
-			float ground[3] = { 0.3f, 0.3f, 0.3f };
-			if (sc0.groundOk) { for (int k = 0; k < 3; k++) { ground[k] = sc0.ground[k]; } }
-			if ((strength > 0.0f || shafts) && !editor && !pk.worldMap && sc0.bldSet) { rs.buildings.lightVolumes(cam.pos, 500.0, lightvol::kMax, rs.lightVols, true, sd, ground); }
-		}
-		else if ((strength > 0.0f || shafts) && !editor && !pk.worldMap && sc0.bldSet) { rs.buildings.lightVolumes(cam.pos, 500.0, lightvol::kMax, rs.lightVols); }
-		else { rs.lightVols.clear(); }
-		rs.lightVolumes.begin(cam.pos, rs.lightVols, strength, sunBounce ? sc0.sunBounce : 0.0f, WorldBuildings::lightGroundAlbedo(), (float)dt, shafts);
+		rs.lightVolumes.begin(cam.pos, pk.buildings.volumes, strength, sunBounce ? sc0.sunBounce : 0.0f, WorldBuildings::lightGroundAlbedo(), (float)dt, shafts);
 		auto& lv = framestats::slot().lightVols;	// the dev ops' copy (render thread writes the list; logic reads only these counts, a frame late)
-		lv.volumes = rs.lightVols.size();
+		lv.volumes = pk.buildings.volumes.size();
 		lv.sunVolumes = 0;
-		for (const lightvol::Volume& v : rs.lightVols) { lv.sunVolumes += v.sunNew != nullptr; }
+		for (const lightvol::Volume& v : pk.buildings.volumes) { lv.sunVolumes += v.sunNew != nullptr; }
 	}
 	rs.hdr.clearOpaqueDepth();
 	// The interior mask (the game's rt_interiormask, materials/common/interiormask.material): the interior-mask hulls near the camera, back faces into
 	// G and front faces into R, rendered with this view's mvp before the scene pass: the terrain and the grass drop the fragments inside a hull (a sunk
 	// building's interior is not filled by the dune; interiorclip.inc), and the CLIP_INTERIOR particle materials (ash, rain, dust...) after the scene.
-	const bool maskOn = sc0.interiorMask && sc0.bldSet && !pk.worldMap && !editor && rs.buildings.hasMask();
+	const bool maskOn = sc0.interiorMask && sc0.bldSet && !pk.worldMap && !editor && !pk.buildings.draws.mask.empty();
 	if (maskOn)
 	{
 		GPU_BEGIN(rs.gpu, GpuTimer::Mask);
 		sg_begin_pass(rs.hdr.maskPass(pk.width, pk.height));	// the applied size: a held window change does not rebuild them (k16.2.222)
-		rs.buildings.renderMask(mvp);
+		rs.buildings.renderMask(pk.buildings.draws, mvp);
 		sg_end_pass();
 		GPU_END(rs.gpu);
 		interiorclip::use(rs.hdr.maskTex());
@@ -319,7 +308,8 @@ static void gpu_log(const FramePacket& pk)
 		for (int s = 0; s < GpuTimer::kSections; s++)
 		{
 			const drawstats::Pass& p = framestats::drawing().passes[s];
-			snprintf(b, sizeof b, " | %s g%.2f d%u i%u t%u", GpuTimer::name(s), framestats::drawing().gpuMs[s], p.draws, p.instances, p.triangles);
+			// p / b: the pipeline switches and binding applications (kenshi-k16.2.205.12.119: what a pass's draw CPU is spent on besides the draws)
+			snprintf(b, sizeof b, " | %s g%.2f d%u i%u t%u p%u b%u", GpuTimer::name(s), framestats::drawing().gpuMs[s], p.draws, p.instances, p.triangles, p.pipelines, p.bindings);
 			g += b;
 		}
 		cpustage::extra(g);
@@ -383,17 +373,30 @@ static void draw_title(const FramePacket& pk, RenderState& rs)
 	framestats::endFrame();	// the frame count (the render side's; logic mirrors it into app.frames)
 }
 
+#ifdef KCLIENT_DEV_TOOLS
+namespace framehooks
+{
+	void (*labRender)(const dev::LabFrame&, const Shadow::FrameData&) = nullptr;
+	void (*viewDraw)(const FramePacket&, GpuTimer&) = nullptr;
+}
+#endif
+
 void render_frame(const FramePacket& pk, RenderState& rs)
 {
 	const view::RenderSize viewSize(pk.width, pk.height);	// every view::width()/height() below is the packet's applied size, never logic's copy (rule 10; kenshi-k16.2.205.12.108)
 	rq::drain(pk.serial);	// the resource jobs queued for this packet, before any pass (docs/RENDER_THREAD.md §7.2): creates, frees, one-shot paints
 	CPUSTAGE("rq.drain");	// its own stage, ahead of the shadow pass's (kenshi-k16.2.205.12.74); each job's time by its tag is the +<tag> accumulators
 	readback::drawing(pk.serial);	// readback::serve serves this packet's requests (and any older)
+	rs.terrain.sfd = rs.buildings.sfd = rs.grass.sfd = rs.chars.sfd = &pk.shadow;	// the receivers read this frame's shadow data, never logic's Shadow (kenshi-k16.2.205.12.113)
 	switch (pk.path)
 	{
 	case FramePath::kBlank: case FramePath::kAwait: frame_blank(pk, rs); return;
 	case FramePath::kLoading: draw_loading(pk, rs); return;
-	case FramePath::kView: dev::viewDraw(pk, rs.gpu); return;	// the mesh viewer (dev/viewmesh.cpp, dev builds only; render hook 9): the packet alone
+	case FramePath::kView:
+#ifdef KCLIENT_DEV_TOOLS
+		if (framehooks::viewDraw) { framehooks::viewDraw(pk, rs.gpu); }
+#endif
+		return;	// the mesh viewer (dev/viewmesh.cpp, dev builds only; render hook 9): the packet alone
 	case FramePath::kTitle: draw_title(pk, rs); return;
 	case FramePath::kWorld: break;
 	}
@@ -409,6 +412,7 @@ void render_frame(const FramePacket& pk, RenderState& rs)
 	{
 		GPU_BEGIN(rs.gpu, GpuTimer::Sky);
 		rs.sky.render(pk.sky, cam.f, cam.r, cam.u, cam.fovY, cam.aspect, cam.height);
+		CPUSTAGE("draw.sky");	// split out of draw.foliage (kenshi-k16.2.437.4.1)
 		GPU_END(rs.gpu);
 	}
 	// The opaque scene's first renderers, by cost: the buildings first (they cover much of the terrain in towns, and the terrain pixel shader is the most
@@ -421,13 +425,14 @@ void render_frame(const FramePacket& pk, RenderState& rs)
 	if (pk.scene.bldSet) { WorldBuildings::fillLights(pk.buildings, light, pk.scene.lampOcclusion ? &rs.lightVolumes : nullptr); }
 	if (pk.editor) { rs.creator.light(light); }
 	GPU_BEGIN(rs.gpu, GpuTimer::Buildings);
-	if (pk.scene.bldSet && !pk.worldMap) { rs.buildings.render(mvp, light); }
+	if (pk.scene.bldSet && !pk.worldMap) { rs.buildings.render(pk.buildings.draws, mvp, light); }
 	CPUSTAGE("draw.buildings");
 	GPU_END(rs.gpu);
 	if (!pk.worldMap)
 	{
 		GPU_BEGIN(rs.gpu, GpuTimer::Terrain);
 		if (!pk.editor) { rs.terrain.render(pk.scene.pos, mvp, light, pk.scene.terrainLoads, pk.scene.terrainView); }
+		CPUSTAGE("draw.terrain");	// split out of draw.foliage (kenshi-k16.2.437.4.1)
 		GPU_END(rs.gpu);
 	}
 	// The foliage, then the grass (the opaque parts; the foliage's fade band stays in the legacy scene, after the water, as does its shadow)
@@ -472,14 +477,14 @@ void render_frame(const FramePacket& pk, RenderState& rs)
 	const bool peek = pk.scene.bldSet && !pk.worldMap;
 	// While peeked glass draws, the scene depth is kept first (Hdr::copyOpaqueDepth, after the foliage fade band, so the band reaches the particles / fog / AO / haze in every frame as
 	// before): the see-through glass writes its nearest surface into the depth and must not hide what is behind it from those passes. The cursor ID pass below still reads the glass depth.
-	if (peek && rs.buildings.hasGlass())
+	if (peek && !pk.buildings.draws.glass.empty())
 	{
 		sg_end_pass();
 		rs.hdr.copyOpaqueDepth();
 		sg_begin_pass(rs.hdr.continuePass());
 	}
-	if (peek) { rs.buildings.renderGlass(mvp, light); }	// the peeked parts, blended over everything opaque
-	if (peek) { rs.buildings.renderFlip(mvp, light); }	// the cut-away walls that just turned away, fading out (k16.2.354.1)
+	if (peek) { rs.buildings.renderGlass(pk.buildings.draws, mvp, light); }	// the peeked parts, blended over everything opaque
+	if (peek) { rs.buildings.renderFlip(pk.buildings.draws, mvp, light); }	// the cut-away walls that just turned away, fading out (k16.2.354.1)
 	sg_end_pass();
 	CPUSTAGE("draw.water+glass+misc");
 	interiorclip::release();
@@ -490,7 +495,7 @@ void render_frame(const FramePacket& pk, RenderState& rs)
 		// from framestats' cursor slot (FrameStats::cursorHit, taken at the next frame's start): a frame late, as before.
 		const int idW = pk.width, idH = pk.height;
 		sg_begin_pass(rs.idbuf.pass(rs.hdr.depthAtt(), idW, idH));
-		rs.buildings.renderIds(mvp);
+		rs.buildings.renderIds(pk.buildings.draws, mvp);
 		sg_end_pass();
 		const double wx = pk.scene.windowW > 0 ? (double)idW / (double)pk.scene.windowW : 1.0, wy = pk.scene.windowH > 0 ? (double)idH / (double)pk.scene.windowH : 1.0;
 		framestats::publishCursor(rs.idbuf.read((int)(pk.scene.mouse[0] * wx), (int)(pk.scene.mouse[1] * wy), pk.scene.pos));
@@ -507,7 +512,7 @@ void render_frame(const FramePacket& pk, RenderState& rs)
 	{
 		GPU_BEGIN(rs.gpu, GpuTimer::Shafts);
 		sg_begin_pass(rs.hdr.fogPass());
-		rs.sunShafts.render(cam, light, rs.shadow, sunScale, lampScale, (float)pk.sky.sunDir[1], rs.hdr.sceneDepthTex(), pk.scene.sunShaftsDebug);
+		rs.sunShafts.render(cam, light, pk.shadow, sunScale, lampScale, (float)pk.sky.sunDir[1], rs.hdr.sceneDepthTex(), pk.scene.sunShaftsDebug);
 		sg_end_pass();
 		GPU_END(rs.gpu);
 	}
@@ -516,7 +521,7 @@ void render_frame(const FramePacket& pk, RenderState& rs)
 	{
 		GPU_BEGIN(rs.gpu, GpuTimer::Shafts);
 		sg_begin_pass(rs.hdr.fogPass());
-		rs.dust.render(cam, pk.sky.light, rs.shadow, pk.scene.dustMotes, dev::lightOff(pk.lightOff, dev::kLtMotesOwnLight) ? pk.scene.lampBeams : lampScale, (float)pk.sky.sunDir[1], pk.scene.animTime, rs.hdr.sceneDepthTex());
+		rs.dust.render(cam, pk.sky.light, pk.shadow, pk.scene.dustMotes, dev::lightOff(pk.lightOff, dev::kLtMotesOwnLight) ? pk.scene.lampBeams : lampScale, (float)pk.sky.sunDir[1], pk.scene.animTime, rs.hdr.sceneDepthTex());
 		sg_end_pass();
 		GPU_END(rs.gpu);
 	}

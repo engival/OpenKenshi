@@ -6,7 +6,8 @@
 
 // Ground colour: `overlaymaps/colour.X.Y.png` (8x8 tiles of 2048^2, X = column, Y = row, no flips;
 // 16384^2 over the whole world, 18 units/px). Too big to upload raw (1 GiB), so the first run builds a
-// BC1 + full mip chain cache (~171 MiB) under $XDG_CACHE_HOME/kclient (or ~/.cache/kclient), keyed by the
+// BC1 + full mip chain cache (~171 MiB) under the per-user cache root's kclient/ (app/userdirs.hpp: $XDG_CACHE_HOME or ~/.cache; Windows
+// %LOCALAPPDATA%\OpenKenshi\cache), keyed by the
 // source files' sizes and mtimes. Later runs just read the cache.
 class GroundColour
 {

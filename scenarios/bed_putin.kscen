@@ -1,0 +1,12 @@
+# bed_putin (kenshi-k16.2.224.2; verify ask of kenshi-k16.2.224). The player's Carrier and a KO'd squadmate (Sleeper) on the floor-1 landing of a Hub Storm House,
+# beside its bed (-51187 1647 2598). radius=150 clears every default-world squad within 150 u of the centre; the file places no other squad: nobody to
+# attack or wake the Sleeper (ko=100000 keeps it down for the whole check). Only the player's characters are ever ordered: the playtester selects the Carrier,
+# RMBs the Sleeper (lift: the Carrier picks the body up), then RMBs the bed (order 60 action 9 from a carrier: the carried one is put into the bed,
+# KO + asleep + the sleepinbed pose tail; k16.6.216 / k16.6.217, drawn in the bed by k16.2.224.1).
+KSCEN 2
+scenario title=Put%20a%20KO%27d%20squadmate%20into%20a%20bed setup=Two%20of%20your%20squad%20stand%20on%20the%20Storm%20House%20upper%20floor%20by%20a%20bed%3A%20the%20Carrier%20and%20the%20Sleeper%2C%20who%20is%20knocked%20out. look_for=Select%20the%20Carrier%2C%20right-click%20the%20Sleeper%20to%20carry%20him%2C%20then%20right-click%20the%20bed.%20Does%20the%20Sleeper%20lie%20in%20the%20bed%2C%20and%20does%20a%20click%20on%20his%20head%20or%20his%20feet%20select%20him%3F bead=kenshi-k16.2.224 metrics=targeted_player,player_downed_s
+source save=playtest game=1.0.68 radius=150 centre=-51187,2598 leader=Carrier
+clock day=1 hour=14 minute=0
+squad id=1 name=Carrier faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Carrier template=1533662-rebirth.mod faction=204-gamedata.base x=-51180 y=1647 z=2590 yaw=0 leader=1 player=1 chase=1 ranged=1
+char id=2 squad=1 name=Sleeper template=1533662-rebirth.mod faction=204-gamedata.base x=-51175 y=1647 z=2586 yaw=0 player=1 ko=100000 unconscious=1

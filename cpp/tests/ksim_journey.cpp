@@ -6,10 +6,8 @@
 #include "trade_rig.hpp"
 
 #include "ksim/save/scenario_file.hpp"
+#include "ksim/dev/build_paths.hpp"
 
-#ifndef KSIM_SCENARIOS_DIR
-#error KSIM_SCENARIOS_DIR must be defined
-#endif
 
 namespace {
 

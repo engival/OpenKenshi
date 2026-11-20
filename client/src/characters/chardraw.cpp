@@ -15,6 +15,7 @@
 #include <tuple>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <functional>
@@ -46,12 +47,12 @@ const cfg::Bool kCharInstancing{ cfg::Group{ "Performance" }, "render.char_insta
 // the slots every lit program shares (lighting.inc, shadow.inc, the fog map)
 void Characters::bindLighting(sg_bindings& bind) const
 {
-	bind.views[VIEW_shadow_tex] = shadow->view();
+	bind.views[VIEW_shadow_tex] = sfd->view;
 	bind.views[VIEW_fog_map] = fog_map_binding().view;
 	bind.views[VIEW_spec_cube] = spec_cube_binding().view;
 	bind.views[VIEW_irr_cube] = irr_cube_binding().view;
-	bind.samplers[SMP_shadow_smp] = shadow->sampler();
-	bind.samplers[SMP_shadow_raw] = shadow->rawSampler();
+	bind.samplers[SMP_shadow_smp] = sfd->sampler;
+	bind.samplers[SMP_shadow_raw] = sfd->rawSampler;
 	bind.samplers[SMP_fog_smp] = fog_map_binding().smp;
 	bind.samplers[SMP_spec_smp] = spec_cube_binding().smp;
 	bind.views[VIEW_ao_tex] = ao_binding().view;
@@ -202,6 +203,12 @@ void Characters::buildSet(FrameData& s, const std::vector<Char>& all, bool cull,
 				break;
 			default: break;	// the real look, whole
 			}
+			// the arrival / departure dither (render.char_fade, kenshi-k16.2.258.10.1): the real look keeps its share of the whole, scaled by cover;
+			// the stand-in keeps everything above it, so the two partition the whole character's cover fraction of the pixels (the stand-in's rule
+			// keeps `ign >= v_cover`, the real look's `ign < v_cover`: both shrink as cover does)
+			coverIn *= c.cover;
+			coverBody = std::max(coverBody, 1.0f - c.cover);
+			coverParts = std::max(coverParts, 1.0f - c.cover);
 		}
 		d[199 * 4] = shape;
 		d[199 * 4 + 1] = coverIn;
@@ -529,9 +536,10 @@ float Characters::headHeight(size_t i)
 {
 	double target[3], eye[3];
 	Char c;
-	// portraitPose targets Bip01 Head + the race's `portrait offset y` (into a local copy: nothing the render side draws from)
+	// portraitPose targets the head bone + the race's `portrait offset y` (into a local copy: nothing the render side draws from); an animal
+	// (no `portrait offset`) is framed on its head bone's box centre instead
 	if (!portraitPose(i, 0, 0, target, eye, c)) { return 0; }
-	return (float)(target[1] - chars_[i].pos[1]) - chars_[i].body->portrait[2];
+	return (float)(target[1] - chars_[i].pos[1]) - (chars_[i].body->portraitSet ? chars_[i].body->portrait[2] : 0.0f);
 }
 
 bool Characters::portraitFrame(size_t i, float yaw, float pitch, double target[3], double eye[3], FrameData& out)
@@ -549,14 +557,27 @@ bool Characters::portraitPose(size_t i, float yaw, float pitch, double target[3]
 	if (i >= chars_.size() || !chars_[i].body) { return false; }
 	if (!drawable(chars_[i])) { return false; }	// its GPU objects are still in the stream lane: the portrait waits (Portraits asks again)
 	Char c = chars_[i];
-	const int head = c.body->skel.bone("Bip01 Head");
+	const int head = headBone(c.body->skel);
 	if (head < 0) { return false; }
-	// FUN_140845b60 (the `idle stance` animation at time 0, weight 1): MINE: the stance's clip, all its bones, else the spec's raw clip
-	c.layers.clear();
-	c.idle = c.action = -1;
+	// FUN_140845b60 (the `idle stance` animation at time 0, weight 1): MINE: the stance's clip, all its bones, else the spec's raw clip.
+	// An animal's race has neither (its clips are ANIMAL_ANIMATION records, `idle_stand_normal` among no skeleton): its own idle layer, the one
+	// the live chooser picked, else its skeleton's first clip (the anim lab's fallback when a race has no `idle_stand_normal`).
 	const auto st = anims_.find(folded(c.spec.stance));
 	std::string err;
-	if (!addLayer(c, st != anims_.end() ? st->second.clip : c.spec.clip, 0, 0.0f, err)) { fprintf(stderr, "kclient: portrait: %s\n", err.c_str()); }
+	std::string clip = st != anims_.end() ? st->second.clip : c.spec.clip;
+	if (!c.body->skel.animation(clip))
+	{
+		const Char& live = chars_[i];
+		clip = live.idle >= 0 && (size_t)live.idle < live.layers.size() && live.layers[(size_t)live.idle].clip ? live.layers[(size_t)live.idle].clip->name : std::string();
+		if (clip.empty() && !c.body->skel.animations.empty()) { clip = c.body->skel.animations.front().name; }
+	}
+	c.layers.clear();
+	c.idle = c.action = -1;
+	if (clip.empty())
+	{
+		fprintf(stderr, "kclient: portrait: %s: no pose clip\n", c.spec.race.c_str());
+	}
+	else if (!addLayer(c, clip, 0, 0.0f, err)) { fprintf(stderr, "kclient: portrait: %s\n", err.c_str()); }
 	// the original copies the node's attached entities (body, armour, hair); weapons hang on bones, not the node
 	c.parts.erase(std::remove_if(c.parts.begin(), c.parts.end(), [](const Part& p) { return p.mounted; }), c.parts.end());
 	c.mounts.clear();
@@ -565,12 +586,27 @@ bool Characters::portraitPose(size_t i, float yaw, float pitch, double target[3]
 	pose(c);
 	const kworld::SkelVec3& h = c.model[(size_t)head].pos;
 	const float* pr = c.body->portrait;
+	// the target: the head bone + the race's `portrait offset`; the eye: Ry(yaw) x Rx(pitch) x (0, 0, distance)
 	const float hp[3] = { h.x, h.y, h.z };
-	// the eye: Ry(yaw) x Rx(pitch) x (0, 0, distance)
-	const double v[3] = { std::sin(yaw) * std::cos(pitch) * pr[0], -std::sin(pitch) * pr[0], std::cos(yaw) * std::cos(pitch) * pr[0] };
+	double t[3], dist = pr[0], lo[3] = { 0, 0, 0 }, hi[3] = { 0, 0, 0 };
+	for (int k = 0; k < 3; k++) { t[k] = c.pos[k] + hp[k] + (c.body->portraitSet ? pr[1 + k] : 0.0f); }
+	// an animal (its RACE framing is the main view's): frame the bounds of the vertices its head bone carries, 4.0 x the largest extent away (the
+	// human: 10 over a 2.498 u head); a head bone that carries no vertex of its own falls back to its body part (the part map's own head).
+	if (!c.body->portraitSet)
+	{
+		const int part = (size_t)head < c.body->bonePart.size() ? (int)c.body->bonePart[(size_t)head] : -1;
+		const bool ok = boneBox(c, head, lo, hi) || (part >= 0 && partBox(c, part, lo, hi));
+		if (ok)
+		{
+			for (int k = 0; k < 3; k++) { t[k] = (lo[k] + hi[k]) * 0.5; }
+			dist = 4.0 * std::max({ hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2] });
+		}
+		dist = std::clamp(dist, 1.5, 100.0);
+	}
+	const double v[3] = { std::sin(yaw) * std::cos(pitch) * dist, -std::sin(pitch) * dist, std::cos(yaw) * std::cos(pitch) * dist };
 	for (int k = 0; k < 3; k++)
 	{
-		target[k] = c.pos[k] + hp[k] + pr[1 + k];
+		target[k] = t[k];
 		eye[k] = target[k] + v[k];
 	}
 	out = std::move(c);
@@ -674,7 +710,7 @@ void Characters::renderPortrait(const FrameData& fd, const float mvp[16], const 
 
 void Characters::render(const float mvp[16], const double cam[3], const LightParams& light)
 {
-	const ShadowParams sp = shadow->params();
+	const ShadowParams sp = sfd->params;
 	// the loading stand-ins first: where the dither hands a pixel to the real look it is the later draw (kenshi-k16.2.258.1)
 	drawMain(frame_, &Plan::standin, 3, mvp, cam, light, sp);
 	drawMain(frame_, &Plan::body, 0, mvp, cam, light, sp);
@@ -686,7 +722,7 @@ void Characters::render(const float mvp[16], const double cam[3], const LightPar
 // pieces above, drawn in their own GPU section so a fight's weapon cost is visible beside the bodies.
 void Characters::renderItems(const float mvp[16], const double cam[3], const LightParams& light)
 {
-	const ShadowParams sp = shadow->params();
+	const ShadowParams sp = sfd->params;
 	drawMain(frame_, &Plan::items, 1, mvp, cam, light, sp);
 }
 

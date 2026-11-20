@@ -21,7 +21,7 @@ namespace ui
 	};
 
 	// Where a command shows (k16.2.364): kWindow: a WINDOWS button (opens a window); kAction: an ACTIONS button; kCharacter: not a column
-	// button but one in the "Character..." popup toolbar (acts on the selection).
+	// button but one on the CHARACTER toolbar (acts on the selection; k16.2.393.1: a window of its own, toggled by the panel's "Character...").
 	enum class DebugGroup { kAction, kWindow, kCharacter };
 
 	struct DebugCommand
@@ -55,6 +55,7 @@ namespace ui
 		std::function<void(const std::string& name)> weather;	// "auto": normal weather
 		std::function<void(const std::string& preset)> time;	// "dawn", "noon", "dusk", "midnight", "+1h" (the host maps them to hours), or the dial's hour as a number ("14.25")
 		std::function<void()> close;	// the close button or Escape (the panel hides itself first)
+		std::function<void()> settings;	// "Settings...": the host opens the DEBUG SETTINGS window (ui::Options, OptionsScope::kDebug; k16.2.419.1); unset: no button
 	};
 
 	// The Time row's 24 h dial (k16.3.37): midnight at the bottom, noon at the top, hours running clockwise (6 on the left, 18 on the right),
@@ -96,9 +97,16 @@ namespace ui
 		Widget* scenesBox() const;
 		Button* command(size_t i) const;	// the WINDOWS buttons then the ACTIONS ones, in the commands' order (kCharacter ones are not here)
 		Widget* windowsBox() const { return windowsBox_; }	// the WINDOWS heading and buttons: hidden while no command is kWindow
-		Button* characterButton() const { return character_; }	// "Character...": hidden while no command is kCharacter
-		Widget* characterPopup() const;	// the open toolbar, else null
-		Button* characterCommand(size_t i) const;	// the open toolbar's i-th button (the kCharacter commands in order), else null
+		Button* settingsButton() const { return settings_; }	// "Settings...": hidden while DebugActions::settings is unset
+		Button* characterButton() const { return character_; }	// "Character...": toggles the toolbar; hidden while no command is kCharacter
+		// The CHARACTER toolbar (k16.2.393.1): a small movable window of the kCharacter commands, apart from the panel: once shown it stays up
+		// (a click elsewhere, Escape on another window or the panel's close leave it) until its own close button or Character... again. Whether
+		// it is shown and where it was dragged are client settings (debug.character_bar*, the Debug section), so a restart puts it back.
+		CaptionWindow* characterBar() const;	// the toolbar while shown, else null
+		Button* characterCommand(size_t i) const;	// the toolbar's i-th button (the kCharacter commands in order) while shown, else null
+		void showCharacter(bool on);	// as the toggle: shown (when there are kCharacter commands) and remembered
+		// The host feeds update() while this is true: the panel or the toolbar is up (or the toolbar is remembered shown and waits for its commands).
+		bool wantsUpdate() const;
 		Button* weatherRow(size_t i) const;
 		ScrollView* weatherList() const { return weathers_; }	// 0: Auto, then the names; checked = current
 		Button* timeButton(size_t i) const;	// dawn, noon, dusk, midnight, +1h
@@ -110,7 +118,6 @@ namespace ui
 	private:
 		void rebuildSide();
 		void rebuildMid();	// the command buttons and the weather rows
-		void openCharacter();
 		void refreshMid();	// enabled / checked / the reply, from last_
 		CaptionWindow* win_ = nullptr;
 		void bind(Layout& l);	// the file's widgets, after each (re)build
@@ -122,8 +129,9 @@ namespace ui
 		std::vector<Button*> toggleButtons_, sceneButtons_, commandButtons_, weatherButtons_;
 		Widget *commands_ = nullptr, *windows_ = nullptr, *windowsBox_ = nullptr;
 		Button* character_ = nullptr;
+		Button* settings_ = nullptr;
 		class CharBar;
-		CharBar* bar_ = nullptr;
+		CharBar* bar_ = nullptr;	// the toolbar window, built hidden with the panel
 		std::vector<size_t> cmdOf_;	// commandButtons_[i] -> last_.commands index
 		ScrollView* weathers_ = nullptr;
 		Label* reply_ = nullptr;

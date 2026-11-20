@@ -2,6 +2,8 @@
 #include "render/drawstats.hpp"
 #include "render/framestats.hpp"
 #include "world/grass.hpp"
+#include "app/config.hpp"
+#include "world/foliagewind.hpp"
 #include "render/renderqueue.hpp"
 
 #include <algorithm>
@@ -706,6 +708,8 @@ void Grass::prepare(const double cam[3], const float mvp[16], bool blocking, Fra
 
 // ---- render side ----
 
+const cfg::Bool kGrassLiveWind{ cfg::Group{ "Detail" }, "render.grass_live_wind", false, "Grass sways with the live wind: strength, rate and direction, like render.leaf_sway (off: the original, a constant rate along +X)" };
+
 void Grass::render(const FrameData& d, const float mvp[16], const LightParams& light, double time)
 {
 	if (!ready_ || !texturesMade_ || d.tiles.empty()) { return; }
@@ -714,16 +718,18 @@ void Grass::render(const FrameData& d, const float mvp[16], const LightParams& l
 	grass_vs_params_t vs = {};
 	memcpy(vs.mvp, mvp, sizeof vs.mvp);
 	for (int i = 0; i < 3; i++) { vs.camw[i] = (float)d.cam[i]; }
-	vs.camw[3] = (float)time;
+	const bool live = kGrassLiveWind.get();
+	const foliagewind::State& fw = foliagewind::g;
+	vs.camw[3] = live ? (float)fw.phase : (float)time;
 	grass_fs_params_t fs = {};
 	fs.fade[2] = kAlphaTest;
 	sg_bindings b = {};
 	b.vertex_buffers[0] = corners_;
 	b.index_buffer = indices_;
 	b.samplers[SMP_grass_smp] = smp_;
-	b.views[VIEW_shadow_tex] = shadow->view();
-	b.samplers[SMP_shadow_smp] = shadow->sampler();
-	b.samplers[SMP_shadow_raw] = shadow->rawSampler();
+	b.views[VIEW_shadow_tex] = sfd->view;
+	b.samplers[SMP_shadow_smp] = sfd->sampler;
+	b.samplers[SMP_shadow_raw] = sfd->rawSampler;
 	b.views[VIEW_fog_map] = fog_map_binding().view;
 	b.samplers[SMP_fog_smp] = fog_map_binding().smp;
 	b.views[VIEW_ao_tex] = ao_binding().view;
@@ -751,15 +757,17 @@ void Grass::render(const FrameData& d, const float mvp[16], const LightParams& l
 			b.vertex_buffer_offsets[1] = r.first * (int)sizeof(Inst);
 			b.views[VIEW_grass_tex] = views_[r.def];
 			drawstats::bindings(&b);
-			vs.wind[0] = def.wind;
-			vs.wind[1] = 0.8f;	// sway direction: fixed (the game's wind direction is not traced)
-			vs.wind[2] = 0.6f;
-			vs.wind[3] = def.cross ? 1.0f : 0.0f;
+			// The original: GrassLoader's direction is UNIT_X, written only in its ctor (kinspect foliage_wind.md §2), so the default sways along +X.
+			// render.grass_live_wind: amplitude, rate and direction follow the live foliage wind, like the leaves.
+			vs.wind[0] = live ? def.wind * fw.strength : def.wind;
+			vs.wind[1] = live ? fw.dir[0] : 1.0f;
+			vs.wind[2] = live ? fw.dir[1] : 0.0f;
+			vs.wind[3] = live ? 0.0f : 1.0f;	// shader mode: the original's sway (grass.glsl) unless live
 			sg_apply_uniforms(UB_grass_vs_params, SG_RANGE(vs));
 			sg_apply_uniforms(UB_grass_fs_params, SG_RANGE(fs));
 			sg_apply_uniforms(UB_light_params, { &light, sizeof light });
 			sg_apply_uniforms(UB_ao_params, SG_RANGE(ao_binding().params));
-			sg_apply_uniforms(UB_shadow_params, { &shadow->params(), sizeof(ShadowParams) });
+			sg_apply_uniforms(UB_shadow_params, { &sfd->params, sizeof(ShadowParams) });
 			drawstats::draw(0, def.cross ? 12 : 6, r.count);
 			framestats::addGrass(r.count, 1, 0);
 		}

@@ -97,6 +97,7 @@ struct FramePacket
 	int width = 0, height = 0;
 	// the renderers' frame data (render hook 7a, kenshi-k16.2.205.12.14): prepare() fills it in logic_frame, upload() and render() read it
 	Grass::FrameData grass;		// grass.prepare (when it ran: a slot it did not refill keeps its last list); its buffer creates and frees are resource jobs
+	Shadow::FrameData shadow;	// Shadow::snapshot at the end of the frame's first half: the pass, the cache and every receiver read this, never the Shadow (kenshi-k16.2.205.12.113)
 	Particles::FrameData particles;	// cleared when the particles are not prepared this frame
 	WorldBuildings::FrameData buildings;	// buildings.update: the frame's instances (cleared when it does not run); upload() writes them into the transient buffer
 	// chars.prepare (kenshi-k16.2.205.12.26): the palettes, part records and per-pass instance lists, built at the end of logic_frame on the world path
@@ -231,10 +232,8 @@ struct RenderState
 	SunShafts& sunShafts;
 	Dust& dust;
 	lightvol::Volumes& lightVolumes;
-	// sitting 9 (kenshi-k16.2.205.12.54): worldSetup. lightVols: the baked buildings' volumes it fills each frame for lightVolumes.begin, render-owned
-	// (kenshi-k16.2.205.12.56: the dev ops read framestats' counts); refl: setup() / pass() / camera() / mvp() / view(); portraits: update() only, on
+	// sitting 9 (kenshi-k16.2.205.12.54): worldSetup. The light volumes are the packet's (pk.buildings.volumes, T19; the dev ops read framestats' counts); refl: setup() / pass() / camera() / mvp() / view(); portraits: update() only, on
 	// the packet's jobs (PortraitTable is logic's)
-	std::vector<lightvol::Volume> lightVols;	// render thread only
 	Reflection& refl;
 	Portraits& portraits;
 	CreatorScene& creator;	// light() only: the creator's fixed light (the editor scene)
@@ -251,3 +250,14 @@ struct RenderState
 // The draw of one packet: the resource jobs queued for it, the readbacks it serves, its passes, sg_commit. On one thread frame() calls it after
 // logic_frame; with render.thread on, the render thread does (logicthread.hpp).
 void render_frame(const FramePacket& pk, RenderState& rs);
+
+#ifdef KCLIENT_DEV_TOOLS
+class GpuTimer;
+// The two dev draws render_frame calls (dev::labRender, dev::viewDraw): dev sits above the frame layer, so main.cpp installs them once at start
+// (before the render thread runs); null until then. Release builds have neither.
+namespace framehooks
+{
+	extern void (*labRender)(const dev::LabFrame&, const Shadow::FrameData&);
+	extern void (*viewDraw)(const FramePacket&, GpuTimer&);
+}
+#endif

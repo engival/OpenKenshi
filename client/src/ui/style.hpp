@@ -52,6 +52,8 @@ namespace ui
 		kBuild,		// the HUD build button: a hammer and a pick
 		kSlotBox,	// a machine window's slot / crafting / furnace panel: flat draws nothing (the column sits on the window), original as kField
 		kSlotBar,	// a machine window's progress bar: only its natural height differs (flat 6, frameless; original 24, the skinned bar)
+		kMapFrame,	// the minimap's frame: the panel's border with no body (flat: edge, hairline, a thin band of panel grey; original: the floating panel
+				// skin); textArea gives the inside, where the map goes
 	};
 
 	class Style

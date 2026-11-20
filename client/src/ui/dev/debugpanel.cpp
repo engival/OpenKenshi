@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "app/config.hpp"
 #include "ui/keys.hpp"
 #include "ui/ui.hpp"
 
@@ -16,25 +17,38 @@ namespace ui
 		const char* const kTimePresets[5] = { "dawn", "noon", "dusk", "midnight", "+1h" };	// what DebugActions::time gets
 	}
 
-	// The Character... toolbar: a row of buttons on a small popup panel (Esc / a click outside close it, via the popup layer; a click on a button
-	// leaves it open).
-	class DebugPanel::CharBar : public Menu
+	namespace
+	{
+		const cfg::Bool kBarShown{ cfg::Group{ "Debug panel", "", "Debug" }, "debug.character_bar", false,
+			"The F8 panel's CHARACTER toolbar (Heal, Knock out, Wake, Kill) is open; its toggle and close button set this (needs --debug)" };
+		const cfg::Float kBarX{ cfg::Group{ "Debug panel", "", "Debug" }, "debug.character_bar_x", 0, -8000, 8000,
+			"The CHARACTER toolbar's drag from its first spot, units across (set by dragging its header)" };
+		const cfg::Float kBarY{ cfg::Group{ "Debug panel", "", "Debug" }, "debug.character_bar_y", 0, -8000, 8000,
+			"The CHARACTER toolbar's drag from its first spot, units down (set by dragging its header)" };
+	}
+
+	// The CHARACTER toolbar (k16.2.393.1): a CaptionWindow (header drag, kept on the screen, edge snap, ui.windows_movable) whose body is one
+	// row of buttons. Its first spot is under the panel's default one; the drag is kept in debug.character_bar_x / _y.
+	class DebugPanel::CharBar : public CaptionWindow
 	{
 	public:
 		static constexpr float kBtnW = 84, kBtnH = 28, kGap = 4, kPad = 6;
-		std::function<void()> onGone;
 		std::vector<Button*> buttons;
-		explicit CharBar(size_t n) : Menu({})
+		Box* row;
+		explicit CharBar(std::function<void()> onClose) : CaptionWindow("CHARACTER", std::move(onClose), kPad)
 		{
-			padding = kPad;
-			n_ = n;
+			rect = { 8, 880, 0, 0 };
+			visible = false;
+			moveX = (float)kBarX.get();
+			moveY = (float)kBarY.get();
+			row = &body().add<Box>(false, kGap);
 		}
-		~CharBar() override { if (onGone) { onGone(); } }
-		Size preferred() const override { return { n_ * kBtnW + (n_ ? n_ - 1 : 0) * kGap + 2 * kPad, kBtnH + 2 * kPad }; }
-		void onClick(Btn) override {}	// the margins pick nothing and keep it open
-
-	private:
-		size_t n_;
+		void place(const Rect& px, float s) override
+		{
+			CaptionWindow::place(px, s);
+			if (moveX != (float)kBarX.get()) { kBarX.set(moveX); }	// a drag moved it (set() is a no-op on the same value)
+			if (moveY != (float)kBarY.get()) { kBarY.set(moveY); }
+		}
 	};
 
 	DebugPanel::DebugPanel(DebugActions actions) : act_(std::move(actions))
@@ -49,6 +63,7 @@ namespace ui
 		win_->resizable = true;
 		win_->minSize = { 560, 400 };
 		win_->body().rect.h = kBodyH;
+		bar_ = &root().add<CharBar>([this] { showCharacter(false); });
 		layout_ = std::make_unique<Layout>(win_->body(), "debug", [this](Layout& l) { bind(l); });
 		if (!toggles_) { bind(*layout_); }	// the file failed: spares, so the panel works under the red box
 	}
@@ -62,7 +77,10 @@ namespace ui
 		windows_ = &l.at<Flex>("windows");
 		windowsBox_ = &l.at<Flex>("windowsBox");
 		character_ = &l.at<Button>("character");
-		character_->onClicked = [this] { openCharacter(); };
+		character_->onClicked = [this] { showCharacter(!bar_->visible); };
+		settings_ = &l.at<Button>("settings");
+		settings_->visible = (bool)act_.settings;
+		settings_->onClicked = [this] { if (act_.settings) { act_.settings(); } };
 		reply_ = &l.at<Label>("reply");
 		reply_->colour = res::colour("Main");
 		reply_->rect.w = kMidW;	// wraps to the column (its height from the width)
@@ -105,9 +123,9 @@ namespace ui
 
 	DebugPanel::~DebugPanel()
 	{
-		if (bar_) { bar_->onGone = nullptr; closePopups(); }
 		layout_.reset();	// before its parent goes
 		if (ready() && win_) { root().remove(win_); }
+		if (ready() && bar_) { root().remove(bar_); }
 	}
 
 	void DebugPanel::rebuildSide()
@@ -168,7 +186,20 @@ namespace ui
 		}
 		windowsBox_->visible = anyWindow;
 		character_->visible = anyChar;
-		if (!anyChar && bar_) { closePopups(); }
+		bar_->row->clear();
+		bar_->buttons.clear();
+		for (const DebugCommand& c : last_.commands)
+		{
+			if (c.group != DebugGroup::kCharacter) { continue; }
+			Button& bt = bar_->row->add<Button>(c.label, Look::kButton, "Kenshi_StandardFont_Medium");
+			bt.rect = { 0, 0, CharBar::kBtnW, CharBar::kBtnH };
+			bt.onClicked = [this, id = c.id]
+			{
+				for (const DebugCommand& d : last_.commands) { if (d.id == id && d.enabled && act_.command) { act_.command(id); } }
+			};
+			bar_->buttons.push_back(&bt);
+		}
+		bar_->visible = anyChar && kBarShown.get();	// a remembered toolbar comes back with its commands
 		Widget& body = weathers_->body();
 		body.clear();
 		weatherButtons_.clear();
@@ -185,30 +216,16 @@ namespace ui
 		for (const std::string& w : last_.weathers) { row(w, w); }
 	}
 
-	void DebugPanel::openCharacter()
+	void DebugPanel::showCharacter(bool on)
 	{
-		if (bar_) { closePopups(); return; }	// the button again closes it
-		std::vector<const DebugCommand*> cs;
-		for (const DebugCommand& c : last_.commands) { if (c.group == DebugGroup::kCharacter) { cs.push_back(&c); } }
-		if (cs.empty()) { return; }
-		auto bar = std::make_unique<CharBar>(cs.size());
-		CharBar* b = bar.get();
-		for (size_t i = 0; i < cs.size(); i++)
-		{
-			Button& bt = b->add<Button>(cs[i]->label, Look::kButton, "Kenshi_StandardFont_Medium");
-			bt.rect = { i * (CharBar::kBtnW + CharBar::kGap), 0, CharBar::kBtnW, CharBar::kBtnH };
-			bt.onClicked = [this, id = cs[i]->id]
-			{
-				for (const DebugCommand& d : last_.commands) { if (d.id == id && d.enabled && act_.command) { act_.command(id); } }
-			};
-			b->buttons.push_back(&bt);
-		}
-		const Rect r = character_->screen();
-		openMenu(std::move(bar), r.x, r.bottom() + 2 * scale());	// lays the buttons out
-		bar_ = b;
-		b->onGone = [this] { bar_ = nullptr; };
-		refreshMid();
+		kBarShown.set(on);
+		bar_->visible = on && !bar_->buttons.empty();
+		character_->checked = bar_->visible;
+		if (bar_->visible) { bar_->raise(); }
+		else if (focusedWidget() && !focusedWidget()->shown()) { focus(nullptr); }
 	}
+
+	bool DebugPanel::wantsUpdate() const { return win_->visible || bar_->visible || kBarShown.get(); }
 
 	void DebugPanel::refreshMid()
 	{
@@ -219,14 +236,10 @@ namespace ui
 			b.textColour = on ? res::colour("Main") : Color{ 0, 0, 0, 0 };
 		};
 		for (size_t i = 0; i < commandButtons_.size(); i++) { live(*commandButtons_[i], last_.commands[cmdOf_[i]].enabled); }
-		{	// "Character...": drawn like the other live buttons while a character action can run, dim and dead otherwise
-			bool any = false;
-			for (const DebugCommand& c : last_.commands) { any = any || (c.group == DebugGroup::kCharacter && c.enabled); }
-			live(*character_, any);
-			if (!any && bar_) { closePopups(); }
-		}
-		if (bar_)
-		{
+		live(*settings_, true);
+		live(*character_, true);	// "Character...": the toolbar's toggle, live whenever it shows; checked while the toolbar is up
+		character_->checked = bar_->visible;
+		{	// the toolbar's buttons: live only while their action can run (a character in the status panel)
 			size_t k = 0;
 			for (const DebugCommand& c : last_.commands) { if (c.group == DebugGroup::kCharacter && k < bar_->buttons.size()) { live(*bar_->buttons[k++], c.enabled); } }
 		}
@@ -282,6 +295,7 @@ namespace ui
 		{
 			rebuildSide();	// the toggles' chords: the bindings may have changed since
 			win_->raise();
+			if (bar_->visible) { bar_->raise(); }	// the small toolbar stays over the panel it may overlap
 			focus(win_);
 		}
 		else if (focusedWidget() && !focusedWidget()->shown()) { focus(nullptr); }
@@ -294,8 +308,8 @@ namespace ui
 	Widget* DebugPanel::scenesBox() const { return scenesBox_; }
 	Widget* DebugPanel::extra() const { return extra_; }
 	Button* DebugPanel::command(size_t i) const { return i < commandButtons_.size() ? commandButtons_[i] : nullptr; }
-	Widget* DebugPanel::characterPopup() const { return bar_; }
-	Button* DebugPanel::characterCommand(size_t i) const { return bar_ && i < bar_->buttons.size() ? bar_->buttons[i] : nullptr; }
+	CaptionWindow* DebugPanel::characterBar() const { return bar_->visible ? bar_ : nullptr; }
+	Button* DebugPanel::characterCommand(size_t i) const { return bar_->visible && i < bar_->buttons.size() ? bar_->buttons[i] : nullptr; }
 	Button* DebugPanel::weatherRow(size_t i) const { return i < weatherButtons_.size() ? weatherButtons_[i] : nullptr; }
 	Button* DebugPanel::timeButton(size_t i) const { return i < 5 ? time_[i] : nullptr; }
 

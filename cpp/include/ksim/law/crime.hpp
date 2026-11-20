@@ -53,6 +53,7 @@ inline constexpr int kEvWitnessGenericAssault = 0x29;
 inline constexpr int kEvWitnessLootingAlly = 0x2a;
 inline constexpr int kEvWitnessThiefOrLockpick = 0x2b;
 inline constexpr int kEvBountySpotted = 0x2c;
+inline constexpr int kEvAlmostWokeUp = 0x2f; // a failed steal roll on a character asleep in a bed (rand(2)), fired before event 8
 
 // ---- NPC classes (CharacterTypeEnum) ----
 inline constexpr int kClassLaw = 1;

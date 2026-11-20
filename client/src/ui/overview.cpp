@@ -28,16 +28,17 @@ namespace ui
 	// The map's place: the host's image for the view kept here, the host's markers over it (Kenshi_MapMarkers). LMB / MMB drag pans 1:1, the
 	// wheel zooms about the pointer, a click does nothing; RMB released on the map is a move order (Shift: queued) and puts the move marker
 	// there for 3 s. Markers take no input; a visited town's tip is the map's tooltip under the pointer.
-	class Overview::MapView : public Widget
+	class Overview::MapArea : public Widget
 	{
 	public:
 		const MapActions* map = nullptr;
 		const MapState* state = nullptr;
 		double cx = 0, cz = 0, zoom = 0;	// zoom: pixels a texel; 0 = fit
+		MapView reported;	// the view viewChanged last gave (or the host set): report() fires only on a change
 		ScrollBar* bars[2] = {};	// vertical (right), horizontal (bottom): placed here, outside the view, while the image is larger than it
 		static constexpr const char* kLabelFont = "Kenshi_StandardFont_Medium";	// the original's Kenshi_TextboxStandardText
 
-		MapView() { solid = true; }
+		MapArea() { solid = true; }
 
 		double fit() const { return screen_.w > 0 && state ? std::min(screen_.w, screen_.h) / state->texels : 0; }
 		double ppu() const { return state ? state->texels * zoom / state->extent : 0; }
@@ -95,6 +96,17 @@ namespace ui
 		}
 
 		MapFrame frame() const { return { screen_.x, screen_.y, screen_.w, screen_.h, cx, cz, ppu() }; }
+
+		MapView view() const { return { fit() > 0 && zoom <= fit() * (1 + 1e-9) ? 0 : zoom, cx, cz }; }
+
+		// A change of the view ended (a wheel step, a drag or a bar released, a button): the host hears of it once.
+		void report()
+		{
+			const MapView v = view();
+			if (v == reported) { return; }
+			reported = v;
+			if (map && map->viewChanged) { map->viewChanged(v); }
+		}
 
 		bool shows(const MapPlace& p) const { return p.tier == MapTier::kMin || (p.tier == MapTier::kMid && level() >= 1) || level() >= 2; }
 
@@ -185,7 +197,12 @@ namespace ui
 
 		void onRelease(Btn b, float x, float y) override
 		{
-			if (b != Btn::kRight || !screen_.contains(x, y) || ppu() <= 0) { return; }
+			if (b != Btn::kRight)
+			{
+				report();	// a pan ended
+				return;
+			}
+			if (!screen_.contains(x, y) || ppu() <= 0) { return; }
 			toWorld(x, y, moveX_, moveZ_);
 			moveUntil_ = now() + kMoveSeconds;
 			if (map && map->moveTo) { map->moveTo(moveX_, moveZ_, (mods() & SAPP_MODIFIER_SHIFT) != 0); }
@@ -196,6 +213,7 @@ namespace ui
 			float mx, my;
 			mouse(mx, my);
 			zoomAbout(dy * kWheel, mx, my);	// the original's delta x 0.000625: a fine-stepped wheel or a touchpad zooms by its fraction of a notch
+			report();
 			return true;
 		}
 
@@ -302,7 +320,7 @@ namespace ui
 		tabs_->onSelect = [this](size_t i)
 		{
 			win_->caption().text = captions_[i].empty() ? kCaptions[i] : captions_[i];
-			if ((OverviewPage)i == OverviewPage::kMap) { centreMap(); }
+			if ((OverviewPage)i == OverviewPage::kMap && !hostView_) { centreMap(); }
 			if (act_.page) { act_.page((OverviewPage)i); }
 		};
 		for (const char* c : kCaptions) { tabs_->add(c); }
@@ -314,11 +332,12 @@ namespace ui
 		// The scroll bars come first: the map view places them after the page's layout.
 		Widget& mp = pageWidget(OverviewPage::kMap);
 		ScrollBar* bars[2] = { &mp.add<ScrollBar>(true), &mp.add<ScrollBar>(false) };
-		mapView_ = &mp.add<MapView>();
+		mapView_ = &mp.add<MapArea>();
 		for (int i = 0; i < 2; i++)
 		{
 			bars[i]->visible = false;
 			bars[i]->onChange = [this, i](double v) { mapView_->scrollTo(i, v); };
+			bars[i]->onDone = [this] { mapView_->report(); };
 			mapView_->bars[i] = bars[i];
 		}
 		mapView_->map = &map_;
@@ -338,6 +357,7 @@ namespace ui
 			{
 				if (i == 0) { centreMap(); }
 				else { mapView_->step(i == 1 ? -1 : 1); }
+				mapView_->report();
 			};
 			mapButtons_[i] = &b;
 		}
@@ -369,7 +389,7 @@ namespace ui
 
 	void Overview::show(bool on)
 	{
-		if (on && !win_->visible && page() == OverviewPage::kMap) { centreMap(); }
+		if (on && !win_->visible && page() == OverviewPage::kMap && !hostView_) { centreMap(); }
 		if (on != win_->visible)
 		{
 			const bool tech = page() == OverviewPage::kResearch;
@@ -418,7 +438,7 @@ namespace ui
 	bool Overview::mapMoveShown() const { return mapView_->moveShown(); }
 	ScrollBar* Overview::mapBar(int i) const { return i >= 0 && i < 2 ? mapView_->bars[i] : nullptr; }
 	Rect Overview::mapBadge(size_t i) const { return i < mapState_.places.size() && mapState_.places[i].isNew ? mapView_->icon(mapState_.places[i]) : Rect{}; }
-	const char* Overview::mapLabelFont() { return MapView::kLabelFont; }
+	const char* Overview::mapLabelFont() { return MapArea::kLabelFont; }
 	float Overview::mapCameraUnits() { return kCamera; }
 
 	void Overview::updateMap(const MapState& s)
@@ -429,5 +449,17 @@ namespace ui
 	void Overview::centreMap()
 	{
 		mapView_->centre();
+	}
+
+	MapView Overview::mapView() const { return mapView_->view(); }
+
+	void Overview::setMapView(const MapView& v)
+	{
+		hostView_ = true;
+		mapView_->zoom = v.zoom;
+		mapView_->cx = v.cx;
+		mapView_->cz = v.cz;
+		mapView_->clampView();	// before the first layout: place() clamps it
+		mapView_->reported = mapView_->view();
 	}
 }

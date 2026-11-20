@@ -14,6 +14,7 @@
 #include "platform/windowgate.hpp"
 #include "audio/events.hpp"
 #include "host/app.hpp"
+#include "host/logicframe.hpp"
 #include "host/orders.hpp"
 #include "host/pick.hpp"
 #include "input/pick.hpp"
@@ -26,6 +27,10 @@ namespace host
 constexpr double kDoubleClick = 0.4;
 
 const cfg::Bool kForeignWalkTo{ cfg::Group{ "Orders" }, "orders.foreign_walk_to", true, "A right click without ALT on someone else's container (shop counter, cabinet, locked safe) shows the ALT hint and walks there, as the original (user 2026-11-14). Off: the hint only. ALT steals / picks the lock either way" };
+
+// kenshi-k16.2.395.1 (k16.2.395): the follow camera's vertical smoothing, the time constant of the boom pivot's y easing toward the drawn body's y
+// plus kEye; a jump past 4 u (a fall, a spawn) snaps. 0 = off (the pivot IS the drawn body plus kEye, the base behaviour).
+const cfg::Float kFollowPivotTau{ cfg::Group{ "Look" }, "look.follow_pivot_tau", 0.12, 0.0, 1.0, "The follow camera's vertical smoothing: the boom pivot's height eases toward the drawn body's with this time constant (s), so a stair tread or a drop does not step the eye; horizontal follow and the look-around stay immediate. 0 = off (the pivot sits on the drawn body)" };
 
 #ifdef KCLIENT_DEV_TOOLS
 uint64_t g_forcePickThing = 0;	// script `mouse force ID`: the next clicks pick thing ID wherever the pointer is (a test of the order dispatch past the pick's geometry)
@@ -363,14 +368,20 @@ void sim_click(double mx, double my, bool right, bool shift)
 			rec->building = click.buildingName;
 			rec->floor = click.floor;
 		}
+		// kenshi-k16.2.412.3: the drawn hit goes to the server as the client navmesh's nearest point (the server snaps within 340 u in 3D, so an exact navmesh point
+		// snaps to itself); tiles not streamed or no polygon in reach: the drawn hit as it is
+		double snapped[3];
+		const bool onMesh = app.nav.snap(p.hit, snapped) == ClientNav::Reach::kYes;
+		if (onMesh) { std::copy(snapped, snapped + 3, p.hit); }
 		sent = app.sim.moveTo(p.hit, shift, true, &click);
-		printf("sim click (%.0f, %.0f): move_to %.0f %.0f: %s\n", mx, my, p.hit[0], p.hit[2], sent ? "sent" : "not sent");
+		printf("sim click (%.0f, %.0f): move_to %.1f %.1f %.1f (%s): %s\n", mx, my, p.hit[0], p.hit[1], p.hit[2], onMesh ? "navmesh point" : "drawn hit", sent ? "sent" : "not sent");
 		if (sent)
 		{
 			memcpy(app.orderAt, p.hit, sizeof p.hit);
 			app.orderAge = 0;
 			app.orderRejected = false;
 			rec->seq = app.sim.lastSentSeq();
+			route_preview_order(p.hit, app.sim.lastSentSeq());
 			app.orderSeq = app.sim.lastSentSeq();	// the marker moves to this order's route end when the sim answers (k16.2.259)
 			app.orderRouted = false;
 		}
@@ -385,7 +396,10 @@ void sim_click(double mx, double my, bool right, bool shift)
 double heading_of(double camYaw) { return M_PI - camYaw; }
 
 // The follow camera's default close view (k16.2.237 part 5): the distance the follow camera starts at (the wheel's 10..2000 zoom moves it after).
-constexpr double kFollowDist = 60.0, kFollowPitch = -15 * M_PI / 180.0;	// units, rad
+// 100 u, not 60 (kenshi-k16.2.353.4 point 6, the lead's call 2026-11-19): the drive boom's floor is min(80, wanted), so at 60 there is never a
+// pull-in to watch and the user's "still do the pull-in, but with a limit" never runs. At 100 the pull-in goes 100 -> 80 (the character ~29 % of
+// the screen at the floor, ~23 % here) and the fade takes over from there. A lead default, deferred to the user's playtest.
+constexpr double kFollowDist = 100.0, kFollowPitch = -15 * M_PI / 180.0;	// units, rad
 // The follow camera on any drawn character (a spectator's NPC): the selection is not needed, and the drive keys stay the player's (update_follow).
 // Every entry starts at the default close camera behind the character, whatever the RTS zoom was, and a leave + re-enter the same (k16.2.237 part 5,
 // user: "v - reengaging direct drive, it didn't restore to a 'default close' camera").
@@ -403,32 +417,73 @@ bool set_follow_id(uint64_t id)
 	app.yaw = app.followBase;
 	app.pitch = kFollowPitch;
 	app.followDist = kFollowDist;
-	app.followPulled = 1e9;
-	app.followHold = 0;
+	app.followEase = 1e9;
+	app.followRise = 0; app.followPitchAdj = 0; app.followRide = 0;
+	app.followPivotOn = false;	// kenshi-k16.2.395.1: a new follow sets the pivot y at once (no easing in from the last subject's)
 	app.driveSent = 0; app.strafeSent = 0;
 	if (app.scripted()) { printf("follow %llu: camera mode follow dist %.1f pitch %.1f (from rts dist %.1f)\n", (unsigned long long)id, app.followDist, app.pitch * 180.0 / M_PI, fromRts); }
 	return true;
 }
 
-// The collision boom (kenshi-k16.2.289.1; user 2026-11-15: a follow camera never hides the character; shared with the RTS camera's look-up,
-// kenshi-k16.2.353.1): a sphere kBoomRadius swept from the pivot back along the view to the wanted distance; solid world (terrain, walls, large building
-// shapes, foliage) shortens the boom to just before the contact, at once. Thin props (CollisionPick::thin) are not in the way: the occluder cone dithers
-// them (the frame's cone). It eases back out at `outRate` u/s once it has held kBoomHold s since the last blockage, so a post passed never makes it
-// jitter. `pulled`/`hold` are the caller's state (1e9: free). minLen is the shortest the boom is cut to; sweep false skips the world test (the boom only
-// eases out). Every constant is MINE.
-struct Boom { double len, allowed; std::string blocker; };
-Boom boom_step(const double pivot[3], const double back[3], double wanted, double minLen, double outRate, bool sweep, double dt, double& pulled, double& hold)
+constexpr double kGroundClear = 2.0;	// u: the eye's least height over the ground (the boom's terrain march, the drive camera's ride)
+
+// The drive boom's floor (kenshi-k16.2.289.4; user 2026-11-19: the pull-in went so close the character filled ~50 % of the screen). Derived: the
+// character is 19.5 u tall (human_male; 10 u per metre, ~1.95 m) and the vertical FOV is 45 deg, so at distance d it covers 19.5 / (2 d tan 22.5 deg) of
+// the screen height: 80 u -> 29 %, 90 u -> 26 %. 80 u is the closest the boom is cut to; a wanted distance below it (the wheel) is the user's own and
+// is never cut. What is still in the way at 80 u fades (the occluder cone, 16 u wide at that range, covers the 19.5 u body about the pivot's 10.8 u centre).
+// The RTS camera shares its minimum *mechanism* (boom_step's minLen, below) but not this screen-size value; MINE.
+constexpr double kBoomMin = 80.0;	// u
+constexpr double kRtsGroundMin = 8.0;	// u: the RTS boom's floor at a bare ground pivot (only the eye's own clearance); MINE
+constexpr double kBodyMargin = 3.0;	// u: outside the pivot body's hull box (the RTS floor); MINE
+
+// Distance from p to a character's hull box (the picker's: feet at `at`, the RACE hull size, k16.2.259): 0 inside. For the scripted logs.
+double box_dist(const double p[3], const double at[3], const float hull[3])
 {
-	constexpr double kBoomRadius = 3.0, kBoomMargin = 0.5, kBoomHold = 0.6, kGroundClear = 2.0, kStep = 3.0;	// u, u, s, u, u
+	const double lo[3] = { at[0] - hull[0] * 0.5, at[1], at[2] - hull[2] * 0.5 };
+	const double hi[3] = { at[0] + hull[0] * 0.5, at[1] + hull[1], at[2] + hull[2] * 0.5 };
+	double d2 = 0;
+	for (int k = 0; k < 3; k++) { const double d = std::max({ lo[k] - p[k], 0.0, p[k] - hi[k] }); d2 += d * d; }
+	return std::sqrt(d2);
+}
+
+// The direction window (kenshi-k16.2.353.4 point 5; user 2026-11-19: "When rotating the camera ... the amount of terrain/hills behind you changes,
+// so the camera JUMPS to compensate. It needs some smoothing"). Neither camera reads the world only along its own view direction: each frame the
+// boom's allowed length is sampled over kClearSamples yaw offsets each side, out to kClearWindow, at the same pitch, and the shortest sample less
+// kClearSlope per degree of offset is the target the boom heads for. A hill entering the window begins the pull-in before it is behind the camera,
+// and a live, jittery mouse over an edge moves the target only a little. The length then moves toward the target both ways at kClearTau (a time
+// constant), never faster than kClearRate; the view direction's own allowed length stays the safety snap-in (a flick faster than the window covers)
+// and is counted. The same samples lift the eye early over a hill (ground_window). Both cameras share all of it. Every constant is MINE.
+constexpr double kClearWindow = 25 * M_PI / 180.0;	// rad: the window's half-width each side of the view direction
+constexpr int kClearSamples = 2;	// each side (5 directions a frame)
+constexpr double kClearSlope = 2.5;	// u per degree of offset: a sample that far out must clear this much more to win (a 180 u pull-in spans the window)
+constexpr double kClearTau = 0.2;	// s: the ease's time constant
+constexpr double kClearRate = 1200.0;	// u/s: the most the length or the ride height moves in a frame
+constexpr double kRideSlope = 1.5;	// u per degree for the ground window (the eye's ride height)
+
+// The eased value toward target, both ways: the time constant kClearTau, never more than kClearRate u/s, so no frame jumps.
+double ease_clear(double v, double target, double dt)
+{
+	const double step = std::clamp(target - v, -kClearRate * dt, kClearRate * dt);
+	return v + step * std::min(1.0, dt / kClearTau);
+}
+
+// The world's allowed boom length from `pivot` back along `back` (unit): a sphere kBoomRadius swept to the contact (sweep: solid world, walls, large
+// building shapes, foliage; thin props are not in the way, the occluder cone dithers them), then the terrain's march from kStep to the first
+// ground + kGroundClear (terrain). `wanted` at most, `minLen` at least (the caller's floor: the drive camera's kBoomMin / the RTS body minimum).
+// sweep false skips the world test; terrain false leaves the ground to the caller (the drive camera rides over it, k16.2.289.4). `blocker` is the
+// scripted log's text. No state: both the boom's own direction and the window's samples read it.
+double world_allowed(const double pivot[3], const double back[3], double wanted, double minLen, bool sweep, bool terrain,
+	std::string* blocker = nullptr, float* bboxOut = nullptr)
+{
+	constexpr double kBoomRadius = 3.0, kBoomMargin = 0.5, kStep = 3.0;	// u
 	double allowed = wanted;
-	std::string blocker;
 	float bbox[6] = {};
 	if (sweep)
 	{
-		if (double t; app.collide.sweep(pivot, back, allowed + kBoomMargin, kBoomRadius, t, bbox, app.scripted() ? &blocker : nullptr)) { allowed = std::max(t - kBoomMargin, minLen); }
-		else { blocker.clear(); }
-		if (char box[96]; app.scripted() && !blocker.empty()) { snprintf(box, sizeof box, " box %.0f %.0f %.0f - %.0f %.0f %.0f", bbox[0], bbox[1], bbox[2], bbox[3], bbox[4], bbox[5]); blocker += box; }
-		for (double d = kStep; d < allowed + kStep; d += kStep)	// the terrain: the first step under the ground, then the last one over it
+		if (double t; app.collide.sweep(pivot, back, allowed + kBoomMargin, kBoomRadius, t, bbox, blocker)) { allowed = std::max(t - kBoomMargin, minLen); }
+		else if (blocker) { blocker->clear(); }
+		if (bboxOut) { std::copy(bbox, bbox + 6, bboxOut); }
+		for (double d = kStep; terrain && d < allowed + kStep; d += kStep)	// the terrain: the first step under the ground, then the last one over it
 		{
 			const double l = std::min(d, allowed);
 			if (pivot[1] + back[1] * l < app.hm->height(pivot[0] + back[0] * l, pivot[2] + back[2] * l) + kGroundClear)
@@ -445,10 +500,80 @@ Boom boom_step(const double pivot[3], const double back[3], double wanted, doubl
 			if (l >= allowed) { break; }
 		}
 	}
-	if (allowed < std::min(pulled, wanted)) { pulled = allowed; hold = kBoomHold; }	// snap in
-	else if ((hold -= dt) <= 0) { pulled = std::min(pulled + outRate * dt, allowed < wanted ? allowed : 1e9); }	// ease out, slowly
-	if (pulled >= wanted) { pulled = 1e9; }
-	return { std::min(wanted, pulled), allowed, blocker };
+	else if (blocker) { blocker->clear(); }
+	return allowed;
+}
+
+// The direction window's target length: the shortest allowed length over the yaw samples (the view's own direction `now` included, so the target
+// never exceeds it), each sample raised by kClearSlope per degree of offset.
+double window_target(double yaw, double pitch, const double pivot[3], double now, double wanted, double minLen, bool sweep, bool terrain)
+{
+	const double kDeg = 180.0 / M_PI;
+	double target = now;
+	for (int i = 1; i <= kClearSamples; i++)
+	{
+		const double off = i * kClearWindow / kClearSamples;
+		for (int s = -1; s <= 1; s += 2)
+		{
+			double f[3];
+			forward_vec(yaw + s * off, pitch, f);
+			const double back[3] = { -f[0], -f[1], -f[2] };
+			const double a = world_allowed(pivot, back, wanted, minLen, sweep, terrain);
+			target = std::min(target, a + kClearSlope * off * kDeg);
+		}
+	}
+	return target;
+}
+
+// The ground window: the highest terrain under the eye over the same yaw samples (each less kRideSlope per degree of offset), the eye at `len`
+// from the pivot on the orbit. The eye's ride height eases toward it, so a hill entering the window lifts the eye before it is behind the camera
+// and a rotation over hills never hops (kenshi-k16.2.353.4 points 5/7).
+double ground_window(double yaw, double pitch, const double pivot[3], double len)
+{
+	const double kDeg = 180.0 / M_PI;
+	double f[3];
+	forward_vec(yaw, pitch, f);
+	double best = app.hm->height(pivot[0] - f[0] * len, pivot[2] - f[2] * len);
+	for (int i = 1; i <= kClearSamples; i++)
+	{
+		const double off = i * kClearWindow / kClearSamples;
+		for (int s = -1; s <= 1; s += 2)
+		{
+			forward_vec(yaw + s * off, pitch, f);
+			best = std::max(best, app.hm->height(pivot[0] - f[0] * len, pivot[2] - f[2] * len) - kRideSlope * off * kDeg);
+		}
+	}
+	return best;
+}
+
+// The collision boom (kenshi-k16.2.289.1; user 2026-11-15: a follow camera never hides the character; shared with the RTS camera's look-up,
+// kenshi-k16.2.353.1): the allowed length at the view direction (world_allowed) and the direction window's target (window_target); the caller's
+// eased length heads for the target (ease_clear). The length never passes the view direction's own allowed length: the ease's lag over a target that
+// is itself moving (a held tilt key dragging the ground up the boom, ~0.2 u a frame) is clamped silently, and a jump the ease could not have made
+// in a frame - the window missing a fast move - is the safety snap-in, counted in `snaps` and expected 0 at a normal rotation speed
+// (kenshi-k16.2.353.4). `eased` is the caller's state (1e9: free). minLen is the shortest the boom is cut to; sweep false
+// skips the world test (the RTS camera below the horizon); terrain false leaves the ground to the caller (the drive camera rides over it).
+struct Boom { double len, allowed, target; bool snapped; bool clamped; std::string blocker; };
+Boom boom_step(const double pivot[3], double yaw, double pitch, double wanted, double minLen, bool sweep, bool terrain, double dt, double& eased, unsigned& snaps)
+{
+	double f[3];
+	forward_vec(yaw, pitch, f);
+	const double back[3] = { -f[0], -f[1], -f[2] };
+	std::string blocker;
+	float bbox[6] = {};
+	Boom b;
+	b.allowed = world_allowed(pivot, back, wanted, minLen, sweep, terrain, app.scripted() ? &blocker : nullptr, bbox);
+	if (char box[96]; app.scripted() && !blocker.empty()) { snprintf(box, sizeof box, " box %.0f %.0f %.0f - %.0f %.0f %.0f", bbox[0], bbox[1], bbox[2], bbox[3], bbox[4], bbox[5]); blocker += box; }
+	b.blocker = blocker;
+	b.target = window_target(yaw, pitch, pivot, b.allowed, wanted, minLen, sweep, terrain);
+	if (eased > 1e8) { eased = b.target; }
+	eased = ease_clear(eased, b.target, dt);
+	b.clamped = eased > b.allowed;
+	b.snapped = b.clamped && eased - b.allowed > kClearRate * dt;
+	if (b.snapped) { snaps++; }
+	if (b.clamped) { eased = b.allowed; }	// never past what the view direction allows
+	b.len = eased;
+	return b;
 }
 
 // Follow camera: behind the character at followDist, its yaw smoothed towards the character's facing, or towards the route ahead so the corners
@@ -536,15 +661,53 @@ void update_follow(double dt)
 		const simlink::Dynamic& d = app.sim.decoder().chars.at(app.followId).cur;
 		printf("predict: shown %.1f %.1f  server %.1f %.1f (tick %llu, drive %u) y shown %.2f server %.2f\n", pos[0], pos[2], d.pos[0], d.pos[2], (unsigned long long)d.tick, d.drive, pos[1], (double)d.pos[1]);
 	}
-	constexpr double kBoomMin = 4.0;	// u
+	// The drive boom's floor is kBoomMin (above, shared with the RTS camera); a wanted distance below it is the user's own and is never cut, and
+	// what is still in the way there fades (the occluder cone).
+	app.pitch -= app.followPitchAdj;	// the user's pitch; the look-down of last frame's raised eye is put back on below
+	app.followPitchAdj = 0;
+	// kenshi-k16.2.395.1 (k16.2.395, user 2026-11-19: "maybe my jitter problem is the 'follow' camera"): the pivot's y is the DRAWN body's (already
+	// eased off the stair treads, SimView) plus kEye, and it gets its own light vertical smoothing here, so whatever the body still steps with (a
+	// catch-up snap, a nudge re-ray, a drop, the floor latch handing it over) the eye glides. Horizontal follow and the look-around stay immediate.
+	// It snaps on the first frame of a follow (followPivotOn) and past kPivotSnap, a fall or a spawn. kEye: the pivot over the body's feet.
+	// The time constant is the cfg key look.follow_pivot_tau (0 = off, the pivot on the drawn body: the base behaviour).
+	{
+		constexpr double kPivotSnap = 4.0;	// u: a step bigger than this is a fall or a spawn, not a tread
+		const double tau = kFollowPivotTau.get();
+		const double want = pos[1] + kEye;
+		if (!app.followPivotOn || tau <= 0) { app.followPivotY = want; app.followPivotOn = true; }
+		else
+		{
+			const double d = want - app.followPivotY;
+			if (std::fabs(d) > kPivotSnap) { app.followPivotY = want; }
+			else if (dt > 0) { app.followPivotY += d * (1.0 - std::exp(-dt / tau)); }
+		}
+	}
 	double f[3];
 	forward_vec(app.yaw, app.pitch, f);
-	const double pivot[3] = { pos[0], pos[1] + kEye, pos[2] };
+	const double pivot[3] = { pos[0], app.followPivotY, pos[2] };
 	const double back[3] = { -f[0], -f[1], -f[2] };
-	const Boom b = boom_step(pivot, back, app.followDist, kBoomMin, 30.0, true, dt, app.followPulled, app.followHold);
+	// Terrain never shortens the boom (user 2026-11-19, "we're pivoting around a character, but that doesn't mean our camera shouldn't 'stand on' the terrain"):
+	// the eye rides at ground + kGroundClear at its own spot and the view looks down at the pivot from there. Walls and props are the sweep (cut no
+	// shorter than kBoomMin) and the occluder fade. The length and the ride height both go through the direction window (kClearWindow,
+	// kenshi-k16.2.353.4), so a wall or a hill swinging in behind is anticipated instead of jumping the camera.
+	const Boom b = boom_step(pivot, app.yaw, app.pitch, app.followDist, std::min(kBoomMin, app.followDist), true, false, dt, app.followEase, app.followSnaps);
 	for (int k = 0; k < 3; k++) { app.pos[k] = pivot[k] + back[k] * b.len; }
+	const double need = std::max(0.0, app.hm->height(app.pos[0], app.pos[2]) + kGroundClear - app.pos[1]);
+	const double ahead = std::max(need, ground_window(app.yaw, app.pitch, pivot, b.len) + kGroundClear - app.pos[1]);
+	app.followRide = ease_clear(app.followRide, ahead, dt);
+	app.followRise = std::max(need, app.followRide);	// the hard floor (the ground at this frame's spot) wins over the ease
+	if (app.followRise > 0)
+	{
+		app.pos[1] += app.followRise;
+		const double eyeDy = app.pos[1] - pivot[1], eyeDh = std::hypot(app.pos[0] - pivot[0], app.pos[2] - pivot[2]);	// the view turns to look down at the pivot
+		app.followPitchAdj = -std::atan2(eyeDy, eyeDh) - app.pitch;
+		app.pitch += app.followPitchAdj;
+	}
 	app.followBoom = b.len;
-	if (app.scripted()) { printf("boom: len %.2f wanted %.2f allowed %.2f hold %.2f cam %.1f %.1f %.1f %s\n", b.len, app.followDist, b.allowed, std::max(app.followHold, 0.0), app.pos[0], app.pos[1], app.pos[2], b.blocker.c_str()); }
+#ifdef KCLIENT_DEV_TOOLS
+	{ static const bool ylog = std::getenv("KFOLLOWYLOG") != nullptr; if (ylog && app.scripted()) { printf("followy: frame %llu id %llu drawn %.3f pivot %.3f eye %.3f\n", (unsigned long long)app.frames, (unsigned long long)app.followId, pos[1], pivot[1], app.pos[1]); } }	// kenshi-k16.2.395.1: the stairs diagnosis, per frame: the drawn body's y, the boom pivot's y and the eye's
+#endif
+	if (app.scripted()) { printf("boom: len %.2f wanted %.2f allowed %.2f hold %.2f cam %.1f %.1f %.1f rise %.2f pitch %.1f %s snap %d clamp %d\n", b.len, app.followDist, b.allowed, 0.0, app.pos[0], app.pos[1], app.pos[2], app.followRise, app.pitch * 180.0 / M_PI, b.blocker.c_str(), b.snapped ? 1 : 0, b.clamped ? 1 : 0); }
 }
 
 // Leaving direct drive (V, Esc, or a double right click on the driven character; k16.2.238.1): back to the floating camera, auto-centred on the
@@ -602,24 +765,46 @@ void update_rts(double dt)
 	}
 	double f[3];
 	forward_vec(app.yaw, app.pitch, f);
-	// Looking up (user 2026-11-18: look at the sky): the follow camera's collision boom (boom_step) shortens the orbit as the ground (indoors the
-	// floor, walls, ceiling) comes between the focus and the eye, and eases back out to rtsDist, the player's zoom, as the view tilts down. At
-	// or below the horizon the orbit is the original's, untouched.
 	const double back[3] = { -f[0], -f[1], -f[2] };
-	const Boom b = boom_step(app.focus, back, app.rtsDist, 0.0, std::max(30.0, 1.5 * app.rtsDist), f[1] > 0, dt, app.rtsPulled, app.rtsHold);
-	// The boom's length blends in over pitch 0..11.5 deg (smoothstep), so tilting up from the horizon never jumps the orbit (kenshi-k16.2.353.2);
-	// below 11.5 the ground lift below keeps the eye out of the ground, as the original did.
+	// The orbit's floor (kenshi-k16.2.353.4 points 1-2): the body's hull corners round the pivot plus a margin, so the eye stays outside whatever
+	// stands at the pivot (a 5 x 17 x 5 humanoid: 11.4 + 3 = 14.4 u); a bare ground pivot keeps only a small minimum, the eye's own clearance. This is
+	// the drive camera's minimum *mechanism* (boom_step's minLen, one copy), not its 80 u screen floor: 80 would freeze the pull-in at pitch 6 deg
+	// (the ground allows 8.8 / sin p) and push the followed character out of the frame by 16 deg, undoing the pull-in the user called near right.
+	double minLen = kRtsGroundMin;
+	if (app.centerId)
+	{
+		const double dx = hull[0] * 0.5, dz = hull[2] * 0.5;
+		const double dy = std::max(app.focus[1] - at[1], at[1] + hull[1] - app.focus[1]);
+		minLen = std::max(minLen, std::sqrt(dx * dx + dy * dy + dz * dz) + kBodyMargin);
+	}
+	// Looking up (user 2026-11-18: look at the sky): the collision boom (boom_step) shortens the orbit as the ground (indoors the floor, walls,
+	// ceiling) comes between the focus and the eye, and eases back out to rtsDist, the player's zoom, as the view tilts down. At or below the
+	// horizon the orbit is the original's, untouched.
+	const Boom b = boom_step(app.focus, app.yaw, app.pitch, app.rtsDist, minLen, f[1] > 0, true, dt, app.rtsEase, app.rtsSnaps);
+	// The boom's length blends in over pitch 0..11.5 deg (smoothstep), so tilting up from the horizon never jumps the orbit (kenshi-k16.2.353.2).
 	const double wt = std::clamp(app.pitch / (11.5 * M_PI / 180.0), 0.0, 1.0), w = wt * wt * (3 - 2 * wt);
 	const double len = app.rtsDist + (b.len - app.rtsDist) * w;
 	app.rtsBoom = len;
+	// The eye: at its orbit point when that stands on the terrain; when the ground presses it up (looking up at the minimum) it keeps its distance
+	// from the pivot, slides round it to its ride height and the view turns up around the eye (the pivot slides along the view, point 2): never
+	// inside the body, never in the ground, the sky still comes into view. The ride height is the original's min(0.2 len, 20) + 10 over the ground
+	// at the eye's own spot, and the ground is direction-window smoothed (point 5), so a hill swinging in behind lifts the eye early, never hops it.
+	const double ride = std::min(0.2 * len, 20.0) + 10.0;
+	app.rtsRide = ease_clear(app.rtsRide, ground_window(app.yaw, app.pitch, app.focus, len), dt);
 	for (int k = 0; k < 3; k++) { app.pos[k] = app.focus[k] + back[k] * len; }
-	const double lift = app.hm->height(app.pos[0], app.pos[2]) + std::min(0.2 * len, 20.0) + 10 - app.pos[1];
-	if (lift > 0)
+	const double horiz = std::hypot(back[0], back[2]);
+	for (int it = 0; it < 2; it++)	// twice: the slide moves the eye over other ground
 	{
-		if (w < 1 || b.len >= app.rtsDist) { app.focus[1] += lift; }	// the original's: the focus rides up with the eye; a shortened boom lifts the eye alone, or the focus would climb
-		app.pos[1] += lift;
+		const double floorY = std::max(app.hm->height(app.pos[0], app.pos[2]), app.rtsRide) + ride;
+		if (app.pos[1] >= floorY) { break; }
+		const double uy = std::clamp((floorY - app.focus[1]) / len, -1.0, 1.0);
+		const double s = std::sqrt(std::max(0.0, 1.0 - uy * uy)) * len;
+		app.pos[0] = app.focus[0] + (horiz > 1e-9 ? back[0] / horiz * s : 0.0);
+		app.pos[1] = app.focus[1] + uy * len;
+		app.pos[2] = app.focus[2] + (horiz > 1e-9 ? back[2] / horiz * s : 0.0);
 	}
-	if (app.scripted() && app.rtsLog) { printf("rtsboom: pitch %.3f len %.2f dist %.1f allowed %.2f eye %.1f %.1f %.1f ground %.1f\n", app.pitch * 180.0 / M_PI, len, app.rtsDist, b.allowed, app.pos[0], app.pos[1], app.pos[2], app.hm->height(app.pos[0], app.pos[2])); }
+	// the log's snap counts only where the blend is full (below 11.5 deg the smoothstep keeps the length near the zoom, so a snap there is invisible)
+	if (app.scripted() && app.rtsLog) { printf("rtsboom: pitch %.3f len %.2f dist %.1f allowed %.2f eye %.1f %.1f %.1f ground %.1f bounds %.1f snap %d clamp %d\n", app.pitch * 180.0 / M_PI, len, app.rtsDist, b.allowed, app.pos[0], app.pos[1], app.pos[2], app.hm->height(app.pos[0], app.pos[2]), app.centerId ? box_dist(app.pos, at, hull) : -1.0, b.snapped && w >= 1.0 ? 1 : 0, b.clamped && w >= 1.0 ? 1 : 0); }
 }
 
 }

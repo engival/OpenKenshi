@@ -100,17 +100,9 @@ fi
 . "$HERE/server_bin.sh"
 pick_server "$TREE" "$BUILD/cpp/OpenKenshi-server"
 [ -x "$SERVER" ] || { echo "lockstep_check: no $SERVER (build target ksim_server)" >&2; exit 2; }
-PORT=$(pick_port "$PORT") || exit 3
-(cd "$TREE" && exec "$SERVER" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen "127.0.0.1:$PORT" --scenario newgame) >"$OUT/server.log" 2>&1 &
-SPID=$!
+START_PORT=$PORT start_server_on_free_port "$OUT/server.log" env -C "$TREE" "$SERVER" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen "127.0.0.1:@PORT@" --scenario newgame
+SPID=$SERVER_PID; PORT=$SERVER_PORT
 trap 'kill "$SPID" 2>/dev/null; wait "$SPID" 2>/dev/null' EXIT
-for ((i = 0; i < 120; i++))
-do
-	grep -q '^listening ' "$OUT/server.log" && break
-	kill -0 "$SPID" 2>/dev/null || fail "the server exited early, see $OUT/server.log"
-	sleep 0.5
-done
-grep -q '^listening ' "$OUT/server.log" || fail "the server is not listening after 60 s, see $OUT/server.log"
 printf '300 quit\n' > "$OUT/newgame.txt"
 nice -n 10 "$HERE/headless.sh" -- "$KCLIENT" --data "$DATA" --debug --simlink "127.0.0.1:$PORT" --set render.thread=lockstep --sg-owner-logic \
 	--script "$OUT/newgame.txt" >"$OUT/newgame.log" 2>&1

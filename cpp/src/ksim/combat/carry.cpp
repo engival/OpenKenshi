@@ -496,6 +496,21 @@ void Simulation::stepBuildings()
 			mirrorFighter(member.id);
 			continue;
 		}
+		if (!locationsChecked_)
+		{
+			// First pass after a load: the looks are saved but `floor` and `cavernous` are not, so a fighter that stood still
+			// through the save (a seated patron) would keep floor 0 under a saved look for ever (kenshi-k16.6.420).
+			state::Fighter* held = combat_->find(member.id);
+			const BuildingSite* site = f.building != 0 ? world_.buildingSite(f.building) : nullptr;
+			const int floor = site != nullptr ? site->floorAt(f.y) : 0;
+			const bool cavernous = site != nullptr && site->cavernous;
+			if (floor != f.floor || cavernous != f.cavernous)
+			{
+				held->floor = static_cast<std::int16_t>(floor);
+				held->cavernous = cavernous;
+				mirrorFighter(member.id);
+			}
+		}
 		if (look->x == f.x && look->y == f.y && look->z == f.z)
 			continue;
 		*look = state::BuildingLook{member.id, f.x, f.y, f.z};
@@ -510,6 +525,7 @@ void Simulation::stepBuildings()
 			mirrorFighter(member.id);
 		}
 	}
+	locationsChecked_ = true;
 	if (changed)
 		ecs.set<state::BuildingLooks>({std::move(looks)});
 }

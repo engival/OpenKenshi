@@ -49,6 +49,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -224,6 +225,11 @@ double factionProsperity(const kdata::GameData& data, flecs::entity faction);
 // What `from` thinks of `to`: 100 for itself, the live Relation pair, else
 // from's `default relation` in the data.
 double factionRelation(const kdata::GameData& data, flecs::entity from, flecs::entity to);
+
+// The pair's seeded relation (the original's FactionRelations seed, FUN_1406b40d0, rwh.227): an unlisted pair is min(from's `default relation`,
+// to's), the most hostile of the two defaults. Authored `relations` refs and live changes are Relation pairs and win over it; the final values
+// are never symmetrised. THE one fallback every relation reader uses (no stored seed: the value is derived, so a save carries nothing for it).
+double seededRelation(const kdata::GameData& data, std::string_view fromSid, std::string_view toSid);
 
 // The enemy test between two factions (task BV), THE one place its direction is chosen (FUN_14079c950, kinspect dt11 + dt21): an NPC
 // faction's stored relation toward the target's, at or below FactionBook::kHostile, is hostile. A player-faction observer forwards the

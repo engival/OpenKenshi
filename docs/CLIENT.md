@@ -23,13 +23,31 @@ separately (`docs/STATE.md`, the sim coordinator). Keep this file current.
   `1 - uv.y`** for this. Not flipped: a texture loaded from a file, `texelFetch` at `gl_FragCoord` (framebuffer coordinates, storage order
   on both), C++ uv rects into an atlas a pass drew (`Portraits::get` branches on `sg_query_features().origin_top_left`). GL-only readbacks
   (`glReadPixels`: screenshot, probe depth, the id buffer, luminance) are behind `SOKOL_GLCORE` and stay out of scope (k16.2.37).
-- **Where characters stand (user 2026-11-18, kenshi-k16.8.29, review k16.2.338):** the sim owns a character's navmesh point and
-  its floor (floors are their own navmesh islands, joined only by ramps; there is no jump), and the wire y is that navmesh point. The
-  client is the presentation layer: it lays the drawn body onto its own geometry with a ray from the wire's navmesh point, nearest hit
-  (collision shapes first, drawn faces where a part has none; k16.2.344). It may draw slightly off the sim, e.g. nudge a body out of a
-  barrel or another character (display only, bounded, eased, never fed back; k16.2.345). The client never re-snaps the y to the terrain
-  heightmap by distance rules (retired with k16.2.339). User: "The client is just a presentation layer ... it has all the data it needs
-  to place characters properly."
+- **Where characters stand (user 2026-11-18, kenshi-k16.8.29, review k16.2.338; solver k16.2.414.2):** the sim owns a character's navmesh
+  point and floor (floors are their own navmesh islands, joined only by ramps; there is no jump), and the wire y is that navmesh point.
+  The client lays every drawn placement from it onto the drawn geometry with ONE solver, `SimView::groundAt(x, z, navY, ...)`
+  (bridge/simview.cpp; the rule is `solveGround`, k16.2.412.1's): the drawn **walkable** surface nearest the navmesh y at x, z, in a window
+  (up 1.5, down 8), joined with the drawn terrain. Walkable = the navmesh bake's own set, a per-part bit decided at load
+  (`BuildingPartDef::walkable`, world/buildings.cpp): a shell or interior part of a BUILDING whose `path mode` is WALKABLE (3; PROJECTED,
+  OBSTACLE and IGNORE bake no walkable surface), not `is unwalkable roof`, `passable` or `no collision`; stairs included, furniture, masks
+  and props never. So a roof, an awning or a table is never a candidate. Open ground (no walkable surface over x, z): the terrain at any
+  distance (the coarse navmesh quad sits 12-33 u under the hill's dune). A walkable surface in reach but outside the window: the nearer
+  to the navmesh y of it and the terrain (a body under a porch roof or on a low-navmesh bridge deck stays put). The terrain is excluded
+  only inside an interior mask whose BUILDING has `interior terrain` 0 (`BuildingPartDef::carve`; the sunk dune). Callers: the
+  body's feet (update, predict), the move marker, the route line; the ring follows the body. It may draw slightly off the sim
+  (nudge: display only, bounded, eased, never fed back; k16.2.345). The client never re-snaps the y to the terrain heightmap by
+  distance rules (retired with k16.2.339). User: "The client is just a presentation layer ... it has all the
+  data it needs to place characters properly." Not done yet: the click through the same solver in reverse (k16.2.414.2 step 3).
+- **One ground solver, both directions (user 2026-11-20, kenshi-k16.2.412; implemented in "Where characters stand" above):** the navmesh is approximate by design; the drawn
+  geometry is the detail. Sim side: a position is 100% on the navmesh, the "true global position". Client side: every drawn
+  placement from a sim position (body, ring, move marker, route line) corrects the navmesh point to the rendered geometry, per
+  call. A screen click goes back the other way through **the same solver**: the drawn hit becomes a position the server
+  understands (its navmesh point and floor), so the server never needs the detailed 3D geometry on screen. User: "you MUST
+  translate a screen click by using the same solver as the standing height, and translate your coords into something server
+  understands. Server shouldn't have to know about detailed 3d geometry on the screen."
+  Then (2026-11-19 23:20): "Server side, navmesh *is* the world. Client side, real 3d geometry is the world. You just need to solve
+  between them." Gotcha: filter the noise, so a body never lands on an awning, roof or prop overhead: the walkable drawn surface
+  nearest the navmesh point and consistent with it, never the highest hit (walkable by the navmesh bake's own flags, NAVMESH_CACHE.md "Bake").
 - **sokol API is newer than model training data** (2025 `sg_view` resource
   views). Agents read `client/third_party/sokol/*.h` and never write sokol
   calls from memory.
@@ -61,6 +79,11 @@ separately (`docs/STATE.md`, the sim coordinator). Keep this file current.
   (`src/dev/tools/`, executables built only when ON). An OFF build compiles and plays (title, new game, load); its check is
   `client/tools/dev_off_check.sh`. `KCLIENT_DEBUG_VIEW` (`src/debug/`) is the older model and stays. New dev code goes
   inside the fence from now on; what sits outside today moves under the children of kenshi-k16.2.153.
+- **The launch guard (kenshi-k16.2.392, user 2026-11-19).** `kclient` and `kui_demo` refuse to open a window from a Claude session
+  (any `CLAUDE*` variable in the environment) with no `gamescope` ancestor process — the tell of an agent run that skipped
+  `client/tools/headless.sh`: one line to stderr and exit 1, before the game data resolve (its folder picker is a window) and any
+  sokol setup. `KCLIENT_ALLOW_DESKTOP=1` skips it for a deliberate desktop run (it prints that it did). Dev-only: `src/dev/launchguard.cpp`,
+  called from `sokol_main`; a release build (`KCLIENT_DEV_TOOLS` OFF) has no guard. Linux only (`/proc`); a no-op elsewhere.
 - Physics later (Jolt Physics is the likely pick). No DeepSeek workers.
 - **Format questions go to session `kenshi-b0`** (SendMessage), not
   re-investigated here. Formats already documented: `docs/formats/`.
@@ -88,9 +111,15 @@ close-up view of the world (`ARCHITECTURE.md` sim/client rule 4).
   **Collision boom** (kenshi-k16.2.289.1; user 2026-11-15: a follow camera never hides the
   character; ours, all values MINE): a sphere of radius 3 u is swept from the head pivot (character
   + 14 u) back along the view to the wanted distance (`CollisionPick::sweep`, exact sphere-triangle
-  contact). Solid world shortens the boom to just before the contact (0.5 u margin, floor 4 u) at once:
-  terrain (marched in 3 u steps, 2 u clearance, bisected), foliage shapes (rocks, trees), and building
-  shapes that are not thin. It eases back out at 30 u/s, only after it has held 0.6 s since the last
+  contact). Solid world shortens the boom to just before the contact (0.5 u margin) at once, but never
+  below the **minimum distance of 80 u** (kenshi-k16.2.289.4; user 2026-11-19: the pull-in left the
+  character ~50 % of the screen. The body is 19.5 u, FOV 45 deg: 19.5 / (2 d tan 22.5) = 29 % at 80 u; a
+  wanted distance below 80, the default 60 or the wheel, is the user's and is never cut): foliage shapes
+  (rocks, trees) and building shapes that are not thin. What is still between the camera and the character
+  at that minimum, walls included, fades in the occluder cone (16 u wide at 80 u, covers the body).
+  **Terrain never shortens the boom** (user: the camera stands on the terrain): the eye rides at
+  ground + 2 u at its own spot (rises at once, settles down at 30 u/s) and the view turns down to look at
+  the pivot from there (`followPitchAdj`, undone each frame so the mouse pitch stays the user's). It eases back out at 30 u/s, only after it has held 0.6 s since the last
   blockage, so a post passed never makes it jitter. The ease-out is capped at what the sweep allows now.
   **Thin split** (`CollisionPick::thin`, by the shape's world box, extents sorted d0 <= d1 <= d2): a bar
   (d1 < 10 u: pole, rail, frame member) or a panel (d0 < 3 u and d2 < 60 u: a sign board) is thin; every
@@ -145,7 +174,7 @@ The M1 free fly camera is a debug tool. All input reaches the sim as commands.
    and is then trusted. While the camera follows a character (the V follow camera, or the RTS camera centred on one with F or a portrait double
    click: the original's follow, k16.2.236.1) the shown level is `manual` (a level R / F stepped to) if set, else the subject's *auto floor*;
    with the camera free it is the player's own level alone (h2v.24.6.2; the follow's end keeps the last shown level). The auto floor is resolved
-   every frame, in this order, from the subject's SIM position (never the drawn one): (1) on a flight of stairs: the stair latch's floor, in the
+   every frame, in this order, from the subject's SIM position (never the drawn, interpolated one; its y is the standing ray's ground since kenshi-k16.2.344): (1) on a flight of stairs: the stair latch's floor, in the
    flight's building whatever the wire says; (2) on a roof deck (the wire's indoors bit clear, `roofBuilding` names a building): that building's top
    floor; (3) indoors on the wire: the wire's floor; (4) outdoors: 0. The wire's bits are the sample at the *render tick* the position is interpolated
    at (`SimView::stateAt`), never the newest snapshot: the render clock runs a couple of ticks behind the sim and further behind after a stall, and the
@@ -181,7 +210,9 @@ The M1 free fly camera is a debug tool. All input reaches the sim as commands.
    (base too, 0.3 s in / 0.4 s out, the peek's renderer) while it blocks (the segment crosses its parts' box; camera or chest
    inside skips it: by the interior bounds for a building with floors, none while ours are in it; `dump occluders`); the click ray passes it. `camera.occluder_ghost`
    0 = the old dithered cone (the user found it odd; A/B until the glass is confirmed). Terrain can't fade, so a hill in
-   the way pulls the camera in.
+   the way pulls the camera in. Foliage never fades (user 2026-11-20, kenshi-k16.2.411.4.1: a palm between the camera and the
+   Wanderer ghosted): the fade is for big buildings, trees are not occluders in the original's logic either; a part with
+   `BuildingPartDef::plant` (plants::isPlant) skips the cone. Rocks, ruins and structures keep the fade; the floor peek is separate (an interior plant hides with its floor like any furniture).
 3. **Auto-center:** as floating, but the focus tracks one character (Z, or the number key twice). WASD drops back
    to floating at the current focus; rotation and zoom keep working.
 4. **Hover / direct drive (ours):** as auto-center, but the camera turns with the character's movement; when the
@@ -194,11 +225,19 @@ The M1 free fly camera is a debug tool. All input reaches the sim as commands.
 Defaults (MINE until kinspect measures the original): zoom 10..2000, start distance 400, pitch -45 deg, pan
 speed from settings.cfg `camera speed=500` at `camera zoom=125`.
 **The camera across a save (kenshi-k16.2.134.1):** a save holds no camera, so the client keeps one beside its other per-user files,
-`$XDG_DATA_HOME/kclient/cameras/<server name>-<server data hash>/<save name>.camera`: mode, eye, focus, yaw / pitch, the distances and the
+`$XDG_DATA_HOME/kclient/cameras/<server name>-<server data hash>/<save name>.camera` (`%LOCALAPPDATA%\OpenKenshi\data\kclient\cameras\` on Windows;
+the per-user roots are app/userdirs.hpp, kenshi-379.31.3): mode, eye, focus, yaw / pitch, the distances and the
 followed / auto-centered character. It is written when the client issues a save (the UI panel's SAVE, F5) and applied on that save's load at its
 first snapshot after the reset (at once when the sim is paused: no snapshots come); a save without one loads as before. Deleting a save deletes
 its sidecar. The client's tests/camerasave/ drives all four paths headless. Keys still to add (client/src/ui/keys.cpp, the UI
 session's): `mouse_rotate` (LCtrl, Mouse3), a debug free-camera toggle, a gameplay key for the hover mode.
+**The world map's view (kenshi-k16.2.435; a deliberate deviation from the original, below):** the same sidecar carries the MAP page's view as
+`map_zoom` (pixels a map texel, 0 = fitted) / `map_cx` / `map_cz` (the world point at the view's centre), from `Overview::mapView()` at the save
+and back through `Overview::setMapView()` with the camera at the load. A new game, or a load of a sidecar without them (an older client's), starts
+at the default overview: `map_view_default` (main.cpp) computes the zoom so the Hub is at the view's centre and Stack just inside its top edge
+from the two towns' TOWN records (not the discovered list) and `mapFrame().h`, applied by `map_view_frame` on the first frame the MAP page has a
+rect; a missing town (a mod) falls back to the fitted whole world with one stderr line, and a save taken before the default applied writes no map
+keys. `client/tests/mapsave/` drives it headless; `dump map` prints the view.
 
 ## Goals
 
@@ -213,6 +252,19 @@ Moved to `CLIENT_GOALS.md` (one section per feature): M1 — walk the bare terra
   (the sim's direction is its own seeded pick). Turn and ramp DONE (p4-carry, worldbuildings.cpp `advanceMotion`, mesh.glsl inst_vs): a wind change turns
   the part at a constant yaw rate, `rotation speed max` x a per-instance 0.95..1.05 (offline `set wind`: the ShoBattai heads turn over a few seconds,
   findings/wind-turn/sheet.png); function 3 spins at (W - min) / (max - min) of its speed from the live wind (MINE: that the factor scales the drawn spin).
+- [ ] **Foliage wind** (kenshi-k16.2.420.1, user 2026-11-20): one live wind (`foliagewind.hpp`), smoothed in `advanceMotion` from the same `windSpeed` / `wind[]` as the blade spin
+  and the aimed parts: strength = speed / `render.foliage_wind_ref` (default 30 u/s: the weather records' `wind speed max`, 30 for most, 60-100 in storms; the windmills ramp 10..50),
+  direction = the wind's unit x, z, a phase integrated at a rate that rises with the strength. Unknown speed (an offline scene): strength 1, direction (0.8, 0.6); `set windspeed N|live` forces
+  it. Leaves (`render.leaf_sway`, on by default, user 2026-11-20; off is the original's static trees): **plants only** — `plants::isPlant` (`src/world/plants.hpp`: a `leaves mesh` canopy, or the record's own mesh drawn with the
+  vegetation FOLIAGE material (`material type` / `texture mode` 4) and no `collision` mesh; both trees and the scattered FOLIAGE_MESH rocks are FOLIAGE_MESH records,
+  so the material is the only FCS field that separates them, kenshi-k16.2.420.6.1) — bend along the wind, trunk and leaves by one tree height (height^2), fronds and a
+  small flutter weighted by the distance from the trunk axis; still at no wind. The records the rule gets wrong are data, not code: `client/data/foliage_plants.txt`
+  (one line per FCS string id, `1` a plant / `0` static, and the reason; read once at startup, the dead trees listed `0`). Rocks, wrecks, ruins and props
+  (`Foliage_1K_RockStack01`, the boulders, `LandCables01`, `Building_Ruins_Newer01`) never bend: the part's `plant` flag (set from the same predicate where the
+  parts are made) is 0, which the occluder fade's foliage exemption will read too (kenshi-k16.2.411.4.1); `dump foliage` prints `sway 0|1 src material|data "<reason>"`.
+  The diffuse texture's alpha cannot decide this: it is the gloss mask (a rock's texture is as non-opaque as a palm's), and the FOLIAGE alpha test cuts on the NORMAL
+  map's alpha — the measured 748-record table is in the task's findings. Grass: the original's fixed +X, sin(0.3 pi rad/s x real time + 2.0 rad/unit x world x) (foliage_wind.md §2-3; the 2.0 is `frequency` times the vertex's x, so rad per world
+  unit); `render.grass_live_wind` (off) makes it follow the same wind with our two-sine field. Dev: `KCLIENT_WINDLOG=1` prints one `windlog:` line a second (wind speed, foliage strength, direction, blade ramp).
 - [ ] **Greenlands bridge** (user 2026-11-08, scene greenlands_bridge): our deck spans are not level with each other (each tilts, they don't join) where the
   original's are flat and continuous: geometry (placement rotation or sub-mesh transform), not texture. The original also has water under it; ours a dry bed.
   Compare: kenshi-inspect/findings/albedo-ab/bridge_compare.png.
@@ -383,7 +435,7 @@ Moved to `CLIENT_GOALS.md` (one section per feature): M1 — walk the bare terra
 - [x] Ground item meshes (a5 2026-11-03; ffee2fb, live headless): ITEM / NEST_ITEM records draw `ground mesh` else `mesh` at the wire pos, unsnapped,
   in the mesh's own orientation (BuildingSet::items via setProps); the sphere pick stays. Open: weapons / crossbows (texture + scale are the
   instance's MATERIAL_SPECS_WEAPON model, rest pose the sim's: asked a5), armour / backpacks (worn skinned mesh only: ring), item rest pose.
-- [x] Tree leaves sway: the original's leaves are static (kinspect foliage_wind.md); ours opt-in `render.leaf_sway` (default off, user to judge), merged.
+- [x] Tree leaves sway: the original's leaves are static (kinspect foliage_wind.md); ours `render.leaf_sway`, on by default by the user's decision 2026-11-20 (kenshi-k16.2.420; off is the original's static trees), merged.
 - [x] Health panel to the default layout (user 2026-11-03): UI fd9ba8e (Blood / parts / Hunger rows, the original's bar layers) + host
   part order Head .. Right Leg; live 720p. CHAR_MEDICAL panel tail (sim 3c4b53a) decoded and wired: bloodMax, bleed arrows, hunger + fed / in bed,
   per-part max (wear) / bandage / splint / stump-crushed / robot; HealthText gains Starving, Bleeding, Hungry, Malnourished. Verified live
@@ -400,6 +452,14 @@ Moved to `CLIENT_GOALS.md` (one section per feature): M1 — walk the bare terra
   vertices (`kMaxVertices`, navoverlay.cpp) and reports the skipped polygons once a run (`sgl: navmesh overlay capped at 56000 vertices`), a
   `dump navdraw` trace line giving the frame's count. Measured with the overlay on: Heng 21,822 vertices, Blister Hill 20,365, the Hub
   12,240-12,430, Mourn 4,585 (every level in the fade); the cap is for the worst case, not a normal frame.
+- [x] Collision overlay (user 2026-11-18, debug; kenshi-k16.2.383.1, wording kenshi-k16.2.382.4): `debug.collision` / Ctrl+F7, dev/colloverlay.cpp:
+  the building collision shapes and the drawn terrain, round the focus with the navmesh overlay's 900 u fade and its own key beside Ctrl+F5 so the two
+  flip over the same spot. White wire: the building collision shapes the CollisionPick gather holds — the barricades that block movement and line of
+  sight, which bodies do not stand on since kenshi-k16.2.382.2; yellow: doorways (NavUse::Door); grey: the thin props (CollisionPick::thin); green:
+  the drawn terrain bodies stand on, Heightmap::terrainHeight's drawn triangles on the 18 u lattice (each cell's two edges and its split diagonal), the
+  ground k16.2.382.1 put the stand ray and the yValid-clear fallback on. What a body stands on at a point is the Ctrl+F10 height probe / `probe height X Z`. A debug-text line counts the
+  shapes, triangles and cells drawn; capped at 90,000 vertices (the navmesh overlay's k16.19.6.1 rule). No depth test, like the navmesh overlay:
+  indoors the terrain grid shows through the floor (read the white wires there).
 - [x] **Whole-fight trails** (user 2026-11-10, debug; kenshi-k16.2.73): every drawn character's two foot contacts (the animation viewer's sole
   points, the lower of heel and ball a foot; not `dump feet`'s lowest skinned vertex), its sim centre (`SimView::simPos`, dashed) and its drawn
   centre (solid) at half the click box above the feet, recorded every frame and drawn floating in 3D over the scene for the whole fight (user
@@ -522,6 +582,8 @@ Fidelity, found against the live references in `scenes.txt` (`ref=`):
 - [ ] Weather-driven dust is off (its size now follows the PU Scale affector, e02df5c0; kGrowth removed).
 - [ ] Grass: our noise paint vs the baked overlay R byte differ (`--grass-map disk`); which one the game ends with is unknown.
 - [ ] Water reflection near the bridge; `kReflection` 0.2 is a guess.
+- [ ] Deliberate deviation, keep: a minimap (the original has none; user 2026-11-20, kenshi-k16.2.436): a frameless draggable square window at the top right, no text, five wheel zoom levels (default ~0.9 km across), on by default (`ui.minimap`); place and level kept as `minimap.x/.y/.level` in kclient.cfg. `ui::Minimap` (ui/minimap.*), wired in host/uihost.cpp; the old overlay minimap (`WorldMap::drawMinimap`, `Ctrl+=` / `Ctrl+-`) is deleted, not retired (nothing used it).
+- [ ] Deliberate deviation, keep: the world map (M) opens at an area overview and remembers its view (user 2026-11-20, kenshi-k16.2.435). The original's map opens fitted to the whole world and keeps no view in a save; ours starts centred on the Hub with Stack just inside the top edge, keeps the zoom and centre across close / reopen, and writes them into the save's camera sidecar (`map_zoom` / `map_cx` / `map_cz`). The minimap's level (`ui::Minimap`) is separate.
 - [ ] Deliberate deviation, keep: foliage drawn 6x the game range (no pop-in), so e.g. the RefineryHeads show in deadlands_border where the game culls them at 1000.
 Features:
 - [ ] Live sim link (`docs/formats/SIMLINK.md`, client half `src/simlink.*` + `src/simview.*`). Done (2026-10-31):
@@ -545,6 +607,20 @@ Features:
   - Follow camera and direct drive, first cut (done; `set_follow` / `update_follow` in main.cpp). C follows the first selected character; C again returns to the free camera. The camera sits behind it at 60 units (wheel zoom 10..2000, the original's clamp), pitch -15 deg, mouse look orbits. Its yaw is smoothed (2.5/s, MINE) towards the character's yaw, or towards the first route point 15 units ahead, so waypoint corners don't snap it. On a player character: W / S drive forward / back along the camera, A / D (2 rad/s, MINE) and mouse look steer, Q toggles autorun (UNSURE: the original's key). Order 20 goes out on a change of drive, and on heading changes over 0.01 rad at most at the tick rate. A move or attack click ends autorun (the server clears drive on any ordinary order). Verified live (duel): the server applies the drive (CHAR_DYNAMIC drive 1, heading follows), the character speeds up and moves; event 8 shows "drive blocked" on the HUD. Not yet: client prediction (knav::Walker needs navmesh tiles on the client), smoothing server corrections, a gait toggle.
   - The general picker (SIMLINK §13; the original's rule, measured (docs/reference/CURSORS_LIVE.md): one ray, the nearest hit wins, no layer priority; cursor and RMB default action from one decision). Done so far:
     - Bottom layer: `CollisionPick` (collisionpick.cpp) gathers the building and foliage collision shapes (`kworld::AreaGatherer`, the shapes the navmesh bakes from) for the camera's zone cell and its neighbours, on a worker thread (Hub: 22k shapes, ~170 ms). It skips doorway shapes, culls by AABB, then tests triangles. `ray_hit` takes the nearer of that and the heightmap march. A click on a wall now sends move_to at the wall's foot, not a point inside the building.
+    - **The drawn body's y eases off the stair treads** (user 2026-11-19 after kenshi-k16.2.389, kenshi-k16.2.395.1: "Walking up the stairs is a jumpy
+      jittery mess, because every new stair rung makes the character teleport to a new height. It needs to interpolate between current height and new
+      requested height."). The sim's y and the stand ray's result stay exact (the floor model reads the wire y, k16.2.236.8.4.3); the DRAWN body's y
+      eases toward the stand height (`anim.stand_ease_tau`, 0.03 s, rate-capped at 150 u/s), so a tread becomes a ramp of a few frames; a step past 8 u
+      (twice a flight's own 3.9 u rise) is a fall, a ledge or a spawn and snaps. The follow camera's boom pivot has its own light vertical ease (`look.follow_pivot_tau`, 0.12 s, snapping
+      past 4 u; horizontal follow and the look-around stay immediate). Picks, the selection ring and the name labels read the drawn y (they draw with it);
+      foot IK's ground is the terrain's own height, so a slope's lag is the leg reach's to take.
+    - **What the collision mesh is and isn't** (user 2026-11-19, verdict on kenshi-k16.2.389: "100% unusable for stairs"; it disagrees with the navmesh and a
+      character can stand inside it, which is fine). It is the original's barricade set: it blocks movement sideways (`depenetrate`) and line of sight, and
+      it feeds the picker, the camera boom and the occluder fade. It is **never** a stand height or a foot surface. Bodies stand on the drawn floors, stairs
+      and ramps (`WorldBuildings::groundDrawn`, the stand ray, kenshi-k16.2.382.2), else the drawn terrain. Foot IK reads only the drawn terrain
+      (`Characters::ground` = `terrainHeight`) and does nothing off it. Never add collision back to a stand or foot query. The rule, in the user's words (2026-11-19): "that stairway collision mesh is unusable
+      garbage for any of this. It's floating above the stair. It's a great representation of 'crossbow shots shouldn't pass through here', but
+      nothing else." Whether picks move off it too: kenshi-k16.2.396.
     - Characters (`SimView::pick`): a segment per character, vertical while standing, lying along the yaw (18 long) while down, 3 reach. `pick_nearest` (main.cpp) compares it with the world hit; the character wins up to 3 u past it (a click at its feet). MINE: segment sizes; the original's PhysX pick shapes are asked of kenshi-inspect.
     - Interactables (SIMLINK 6 INTERACTABLE, order 60, event 13; 2026-10-31): `pick_at` (main.cpp) is one nearest-wins pick over the world, characters, ground items (`SimView::pickItem`, a 4 u sphere 1 u above the item, MINE) and doors (the doorway collision shapes, `CollisionPick::ray(..., doors)`, matched to the nearest door interactable within 150 u, MINE). A container that a building's interior layout draws is picked by that piece's own oriented mesh boxes (the wire's kind 3 tail names the building and the piece, `WorldBuildings::setProps`): any visible part of a shop counter picks it, including a face the piece's collision proxy hugs a hair nearer than its mesh boxes (the click lands on the drawn box, `WorldBuildings::propBox`, so a wall really in front still wins), and a container on a floor the cut hides never picks, as a bed (k16.2.239.1). Cursors: pick_item; door / lock (locked) / spanner (damaged). RMB: pick up (7); open (1) a closed door, close (2) an open one; a locked door sends nothing (lockpick later). Ground items are drawn as a small ring (no meshes yet) with the name label (`Bread x3`) while ALT is held or hovered (MINE until kenshi-inspect measures the labels). The HUD line counts things and nav tiles. Verified live (squad): 24 things and 324 nav tiles received; labels show; pick_item cursor over the Katana, RMB pick up applied and both selected walk to it. Not yet seen: the pick-up completing, a door click. Event 13 goes to the HUD reply.
     - X toggles sneak for the selection (order 10 toggle 1; on unless all of it already sneaks; MINE key until the UI's sneak button). Verified live (squad): applied on / off, the follower walks with the sneak animation (CHAR_DYNAMIC stealth flag picks the anims).
@@ -559,6 +635,16 @@ Features:
   - send `set_view` (order 51) only when the camera's focus zone (4147-unit zones, zone + 8 neighbours, the original's re-centre hysteresis) changes. It is a logged sim command: small moves send nothing;
   - draw `lowDetail` characters as distant figures or squad markers, never with full-detail actions; respect the server's full-detail bounds;
   - send `set_interest` as a pure send filter (default 1 km).
+- [x] **Building loading stand-in** (kenshi-k16.2.258.4; the character pattern of kenshi-k16.2.258.1, user 2026-11-19: "If the load delay is just textures and lighting, then we can
+  use the same pure-black body trick as the character loader. It shows that SOMETHING is there."): per instance, all or nothing (`WorldBuildings::update`, the pack loop). Its
+  shell meshes not all through (Failed and fileless meshes never hold it): nothing drawn, no footprint box. Meshes through but a texture still streaming (the 298.1 per-part
+  test `partTexturesReady` stays the completion test): every part draws flat black, unlit, no texture, no shadow (`Group::standin`, mesh.glsl `inst_fs` `misc2.y` = 1, the
+  character silhouette's look). The last texture ready: the whole instance dithers into its real look over 0.2 s (`kStandinFade`; the real parts in `Group::fade` where
+  `ign < cover`, the black where `ign >= cover`, so one pixel is never both); never a frame of black and textured parts together outside that switch (`Stats::mixed`, `dump popin`'s
+  MIXED line: 0). `render.loading_standin` is the character's switch: silhouette = black; double has no building meaning (a neutral lit body is a character's identity-hiding
+  trick, a wall has none), so it is black too; off = per instance, nothing until every texture is ready, no mixing. An instance that cannot stand in (peeked / ghosted glass,
+  under construction) waits whole like `off`. TERRAIN-mode feature parts (stretch w is their biome row) switch without the dither. `dev.building_standin_hold` (dev
+  tools) keeps every building black until that many seconds after the first update (a script sets it to 0 to release them). Trees and leaves (foliage.cpp) keep the 298.2 per-part wait.
 - [ ] Interiors: lighting and doors (`docs/reference/INTERIORS.md`).
 - [ ] Construction, later (polish, after a working game): progress from the sim (needs a SIMLINK building record), placement ghost, per-piece assembly, 3D scaffold. See "Construction" above.
 - [ ] Rain splashes, mist, ash, lightning; rain clipped indoors.
@@ -644,18 +730,34 @@ a new directory only for a new subsystem (put it in this table). Platform-specif
 |---|---|
 | main.cpp | app, frame loop, load steps (`app.loadSteps`), camera, HUD, scenes/scripts (being split: kenshi-k16.2.369.2) |
 | host/ | the host: App state and the glue main.cpp hands out (orders, picking, HUD, UI wiring, logic frame); kenshi-k16.2.369.2 slices |
-| app/ | config, data-dir discovery and picker, load screen, embedded server, logic thread, work pool, event log, frame stats |
-| platform/ | sokol implementation unit, window geometry, the simlink socket, the local server child, default game installs, the GL loader (`*.hpp`); `linux/`, `macos/`, `windows/` the per-OS halves, `posix/` the Linux + macOS one (kenshi-379.31.1) |
-| assets/ | DDS and Ogre mesh loaders, materials, resource paths, mods, stb |
-| render/ | terrain, sky, water, foliage/grass, shadows, HDR, post/AO, particles, draw lists, render frame/queue, GPU timers |
-| world/ | buildings (records and world pass), towns, world map, weather, nav, floor follow, squads |
-| characters/ | skinned characters, ragdoll, physics, portraits, character creator |
-| net/ | SIMLINK decoder and I/O, sim view (snapshots, prediction), AI task names, progress feed |
-| input/ | picking, cursors, control hints, input queue |
-| audio/ | Wwise bank/vorbis decode, mixer, music, sound events |
-| ui/ | the UI library (UI worker's) |
 | dev/, debug/ | dev-only code behind `KCLIENT_DEV_TOOLS`; the debug view |
+| frame/ | the frame level: `render_frame`, trails, beam field, load screen, last-frame capture, the animation lab's frame (`labframe.hpp`) |
+| input/ | picking, cursors, control hints, input queue |
+| bridge/ | `SimView` (the wire -> Characters bridge: snapshots, prediction) and the ragdoll driver that reads it |
+| characters/ | skinned characters, ragdoll, physics, portraits, character creator |
+| ui/, audio/ | the UI library (UI worker's); Wwise bank/vorbis decode, mixer, music, sound events, the audio hook |
+| world/ | buildings (records and world pass), towns, world map, weather instances, nav, floor follow, squads, foliage, grass, world particles |
+| render/ | terrain, sky, water, shadows, HDR, post/AO, particles, weather map, draw lists, render queue, GPU timers, frame stats |
+| assets/ | DDS and Ogre mesh loaders, materials, resource paths, mods, stb |
+| platform/ | sokol implementation unit, window geometry and gate, data-dir discovery, the local server child, the simlink socket, default game installs, the GL loader; `linux/`, `macos/`, `windows/` the per-OS halves, `posix/` the Linux + macOS one (kenshi-379.31.1) |
+| net/ | the SIMLINK wire: decoder and I/O, AI task names, progress feed |
+| knobs/ | dev knobs read low in the stack (`ablate`, `lightterms`): headers that read as "off" in a release build |
+| app/ | config, data-dir picker, event log, logic thread, work pool, `threadsplit`, git hash: the core nothing else is below |
 | retired/ | code kept for reference, not built |
+
+### Libraries (kenshi-k16.2.369.15.1)
+
+Each directory is one CMake library (`kc_<dir>`, plus `kui` for `ui/` and `kaudio` for `audio/`), listed above from the top of the stack
+to the bottom. A library declares (`kc_layer(... DEPS ...)` in `client/CMakeLists.txt`) the libraries below it and nothing else: an
+upward `#include` fails the build in `tools/layer_check.py` (run first by every build), an upward symbol fails the link. Edges
+(`DEPS`): `kc_host` -> everything; `kc_dev` -> everything below `host`; `kc_debug` -> net; `kc_frame` -> input, bridge, characters, world, ui, render,
+assets, net, platform, knobs, app; `kc_input` -> bridge, characters, render, net, app; `kc_bridge` -> characters, net, platform, app;
+`kc_characters` -> render, assets, knobs, app; `kui` and `kaudio` -> render, app; `kc_world` -> render, assets, net, platform, knobs, app; `kc_render` -> assets,
+net, platform, knobs, app; `kc_platform` and `kc_assets` -> app; `kc_net`, `kc_knobs`, `kc_app`: none (`client/build/layers.txt` is the generated list).
+Where a new file goes: the lowest directory whose library already has everything it includes (a file that needs a library above its directory
+belongs in the higher directory). Higher layers reach down only; a lower layer that must call up takes a hook set at start (`framehooks` in
+`frame/renderframe.hpp`: the dev lab and view draws), a forward declaration, or a split header. `ui/` is the UI worker's; its target is declared in
+the same file. A new directory: add its `kc_layer` call and its row here.
 
 Shaders in `client/shaders/`: `lighting.inc` (the shared deferred light model), `biome.inc` (terrain splat), `terrain`, `mesh` (buildings/features/foliage), `sky`, `hdr`, `post`, `ao`, `particles`, `fogvolume`, `character` (body / armour / hair / shadow). Formulas and their game sources: `docs/reference/LIGHTING.md` (sections 1-15).
 

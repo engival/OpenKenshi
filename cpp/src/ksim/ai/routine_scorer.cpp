@@ -54,6 +54,10 @@ constexpr double kCatchSight = 60.0;
 // (216's route constants are world_resolvers.hpp kSearchPointsMin ... kSearchSnapReach: the same route runs for a world squad.)
 // Pretend labour works at a producer BUILDING within this of the home point (UNSURE: the data has no work-station marker of a town).
 constexpr double kWorkReach = 250.0;
+// Wardens watching one cage (183) each take their own spot round it: ring radius, ring step (more than a body's R = 8 apart) and the members per ring.
+constexpr double kWatchRing = 8.0;
+constexpr double kWatchRingStep = 6.0;
+constexpr int kWatchPerRing = 3;
 // Residents standing at the home point spread over a disc of this radius, per member.
 constexpr double kHomeJitter = 3.0;
 // STAY_IN_HOME is "ordinary life at home": a member already this close to its home point is at home and does not shuffle to a spot (OURS;
@@ -1318,6 +1322,9 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 	// Someone unlocked a home door (a returning resident does, as the owner): the squad is not locked in any more.
 	if (routineSquad.homeLocked != 0 && hd.any && !hd.anyLocked)
 		setLocked(0);
+	// The flag is derived from the doors (k16.6.12.4): every home door is locked once the lock orders have run their course.
+	if (routineSquad.homeLocked == 0 && hd.any && hd.anyLocked && !hd.canLock)
+		setLocked(1);
 	f.houseLocked = routineSquad.homeLocked != 0;
 	const bool publicHome = ai_ != nullptr && ai_->registry().squad(instance->templateSid).behaviour == Behaviour::ShopKeeper;
 	// A stranger: a conscious player character inside the home building (UNSURE: 5.6 says every perceived, non-slave, non-ally character;
@@ -1886,7 +1893,7 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 			// reading the member's sensor list (task BU), with no radius beyond its own sight (ours: kCatchSight, the intruder sight).
 			// The scorer only picks and walks: stepSlaveTrade (carry.cpp) restrains it and chains it. OURS/UNSURE (5.19): a free cage of
 			// the home is required, else the catch has nowhere to go and the carrier would hold it for ever.
-			if (r.chainTarget != 0)
+			if (r.chainTarget != 0 && r.goal == candidate.task) // not a stale hand of another goal (58's patient)
 			{
 				// Mid-chain: stay on the body this member picked (only the executor ends or drops a chain). The cuff ends the capture
 				// (167's goal state, s58); the caging goal 112 takes over, and its plan lifts a body that is not yet carried.
@@ -2007,8 +2014,15 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 			skip = !realHome || watched == nullptr;
 			if (!skip)
 			{
-				e.x = watched->x;
-				e.z = watched->z;
+				// One spot per squad-mate (the member's rank by Id in its squad), spread round the cage: wardens sharing the cage's own point
+				// stack on one body (kenshi-k16.6.442). OURS: "watch spots spread round the cage" (SLAVERY.md, deferred: playtesting).
+				int rank = 0;
+				ecs.query_builder<const state::Id>().with<state::MemberOf>(squad).build().each([&](const state::Id& mate) { rank += mate.value < id; });
+				const double ring = rank / kWatchPerRing;
+				const double angle = 2.0 * std::numbers::pi * (rank % kWatchPerRing) / kWatchPerRing + ring * std::numbers::pi / kWatchPerRing;
+				const double radius = kWatchRing + kWatchRingStep * ring;
+				e.x = watched->x + radius * std::cos(angle);
+				e.z = watched->z + radius * std::sin(angle);
 				e.spot = true;
 			}
 			break;
@@ -2326,6 +2340,14 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 		}
 	}
 	Eval fallback;
+	if (best == nullptr && !realHome && squad.has<state::TraderTrip>() && f.carrying == 0)
+	{
+		// A wandering trader's SquadRoutine is only its bar table (attachBarTables): a member of it with nothing to plan and no home to hold is
+		// the world pipeline's again (167 / 58 / follow), not a 43 sitter that shuts the selector out (k16.6.414: a caravan after 58 and a KO).
+		routineBook_.release(id);
+		member.remove<state::Routine>();
+		return;
+	}
 	if (best == nullptr)
 	{
 		// Nothing plannable: STAY_IN_HOME at the home point. It cannot fail.
@@ -2489,7 +2511,15 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 	// A door goal acts when the member is within reach of a door (a placed member acts at once); the next look is soon, to move on.
 	if (best->doorStep && (placement || (hd.any && hd.nearest <= kDoorReach)))
 	{
-		applyDoors(goal != routines::task::OpenUpShopDoors);
+		if (goal == routines::task::OpenUpShopDoors)
+		{
+			applyDoors(false);
+		} else if (placement) {
+			applyDoors(true); // a placed member has no time to walk: the placement's own instant lock (kenshi-k16.6.12.4: flagged)
+		} else if (!orderHomeDoorLock(id, hd, goal == routines::task::LockDoorsStayOutside ? DoorSide::Outside : DoorSide::Inside)) {
+			setLocked(1); // no home door is lockable any more (locked, or not ours): the squad's flag follows
+			f.houseLocked = true;
+		}
 		if (!placement)
 		{
 			r.nextScore = now + kLookTicks;
@@ -2498,7 +2528,7 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 		}
 	}
 	if (best->lockAlso)
-		applyDoors(true);
+		applyDoors(true); // 239 only reaches here as a placement (a walking member gets the door step first)
 	// The warden's cage lock (T3e2): one key, every cage of the home locked at once; the squad flag follows like homeLocked. The goal acts
 	// from inside the home (its precondition), so there is no walk to make; the next look is soon, to move on.
 	// The emergency wake (208): the shared get-out action, then the next look is at once - the bed claim is gone, so the sleeper scores
@@ -3403,6 +3433,31 @@ void Simulation::applyHomeDoors(const std::vector<flecs::entity>& doors, bool lo
 	}
 }
 
+bool Simulation::orderHomeDoorLock(std::uint64_t id, const HomeDoors& doors, DoorSide side)
+{
+	if (const flecs::entity self = fighterEntity(id); self.is_valid() && self.has<state::InteractTask>())
+		return true; // the last order (a walk to the door, a lock) is still running
+	const state::Fighter* f = combat_ != nullptr ? combat_->find(id) : nullptr;
+	if (f == nullptr)
+		return false;
+	// Nearest first; a door the actor cannot reach or does not own is passed over for the next (the order is refused).
+	std::vector<std::pair<double, flecs::entity>> order;
+	for (const flecs::entity door : doors.doors)
+		if (const state::Door* d = door.get<state::Door>(); d != nullptr && d->state < 2)
+			order.emplace_back(std::hypot(f->x - d->x, f->z - d->z), door);
+	std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+	for (const auto& [dist, door] : order)
+	{
+		const state::Door* d = door.get<state::Door>();
+		if (orderShutDoor(id, door.get<state::Id>()->value, d->state == 0 ? DoorSide::Near : side, d->state == 1))
+		{
+			townStats_.doorsLocked += d->state == 1 ? 1 : 0; // a lock order given (the door's own step does the lock)
+			return true;
+		}
+	}
+	return false;
+}
+
 bool Simulation::resolveDoorRow(std::uint64_t id, std::uint16_t task, const HomeDoors& doors, bool homeLocked, bool stranger) const
 {
 	// 155 / 197 (dt24_155): the door-list resolver, then the registry row's plan - no strangers in the house, else the plan grows the
@@ -3609,7 +3664,7 @@ void Simulation::stepRoutines()
 			|| (f.walking() && f.routeSeq != 0)
 			|| f.goal.kind != state::IndividualKind::None
 			|| entity.has<state::InteractTask>() || entity.has<state::DoorStep>() || (entity.has<state::CarryStep>() && !chainedCarry)
-			|| entity.has<state::TakeOut>() || entity.has<state::GateDuty>() || arrestOrders_.count(members[i].id) != 0
+			|| entity.has<state::TakeOut>() || arrestOrders_.count(members[i].id) != 0
 			|| talkHold != nullptr) // the player is talking to it: it stands still (state::TalkHold)
 		{
 			state::Routine r = *routine;

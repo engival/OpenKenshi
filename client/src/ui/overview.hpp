@@ -56,12 +56,22 @@ namespace ui
 		bool operator==(const MapState&) const = default;
 	};
 
+	// The MAP page's view, for the host to set a default and to save and restore it (k16.2.435): zoom in pixels a map texel (MapState::texels;
+	// 0 = fit the whole world), (cx, cz) the world point at the view's centre.
+	struct MapView
+	{
+		double zoom = 0;
+		double cx = 0, cz = 0;
+		bool operator==(const MapView&) const = default;
+	};
+
 	struct MapActions
 	{
 		// At the UI list's replay (render side), under the markers, popups and tooltips: draw the map with sokol-gl for the frame (the projection is the screen in
 		// pixels, y down; clipped to the rect; the UI's state comes back afterwards).
 		std::function<void(const MapFrame&)> draw;
 		std::function<void(double x, double z, bool queue)> moveTo;	// a right-click on the map: the selection's move order (Shift: queued)
+		std::function<void(const MapView&)> viewChanged;	// the player ended a change of the view (a wheel step, a drag or a scroll bar released, - / + / O)
 	};
 
 	class Overview
@@ -80,7 +90,9 @@ namespace ui
 		const std::string& caption() const;	// the one showing
 		void setMap(MapActions map) { map_ = std::move(map); }
 		void updateMap(const MapState& s);	// every frame while shown (the original refreshes the dots once a second)
-		void centreMap();	// on the camera, the zoom kept (O, and opening the MAP page)
+		void centreMap();	// on the camera, the zoom kept (O, and opening the MAP page until the host sets a view)
+		MapView mapView() const;	// the view showing (zoom 0 while fitted)
+		void setMapView(const MapView& v);	// shown from now on, clamped to the image (valid before the page was ever shown); opening the page keeps it
 		// For scripted tests.
 		Widget* window() const;
 		Widget* tab(OverviewPage p) const;
@@ -97,10 +109,11 @@ namespace ui
 		static const char* mapLabelFont();
 		static float mapCameraUnits();
 	private:
-		class MapView;
+		class MapArea;
 		CaptionWindow* win_ = nullptr;
 		TabView* tabs_ = nullptr;
-		MapView* mapView_ = nullptr;
+		MapArea* mapView_ = nullptr;
+		bool hostView_ = false;	// the host set a view: opening the page no longer centres it
 		Button* mapButtons_[3] = {};
 		OverviewActions act_;
 		MapActions map_;

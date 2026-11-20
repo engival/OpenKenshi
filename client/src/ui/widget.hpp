@@ -344,11 +344,16 @@ namespace ui
 		bool vertical;
 		double min = 0, max = 1, value = 0, page = 0.1, step = 0.05;
 		std::function<void(double)> onChange;
+		std::function<void()> onDone;	// a press released (after the onChange calls it made: an arrow, the track, a thumb drag)
 		Rect thumb() const;	// pixels
 		Rect arrow(bool far) const;	// pixels: up / left, or down / right
 		bool onPress(Btn b, float x, float y) override;
 		void onDrag(float x, float y) override;
-		void onRelease(Btn, float, float) override { grab_ = -1; }
+		void onRelease(Btn, float, float) override
+		{
+			grab_ = -1;
+			if (onDone) { onDone(); }
+		}
 
 	protected:
 		void paint() const override;

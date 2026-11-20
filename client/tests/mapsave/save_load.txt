@@ -1,0 +1,32 @@
+# mapsave live (kenshi-k16.2.435): the world map's view. M opens the MAP page at the default overview (centred on the Hub, Stack just inside the
+# top edge); the wheel zooms, M closes and reopens the same view; a quicksave at that zoom, a change away from it, then the quickload brings the
+# saved view back. The `dump map` lines are the checks (run.sh live OUT compares them). A shot's own log line has no newline, so the saves' lines
+# come after one (as in camerasave).
+# The pointer sits in the middle of the map (720p: the window is centred, its map over most of it) so the wheel reaches the MAP page.
+150 key M down
+152 key M up
+240 dump map
+260 screenshot OUTDIR/default.png
+300 mouse pos 640 300
+310 scroll 3
+330 dump map
+360 screenshot OUTDIR/zoomed.png
+400 key M down
+402 key M up
+440 key M down
+442 key M up
+500 dump map
+520 screenshot OUTDIR/reopened.png
+560 key F5 down
+562 key F5 up
+620 dump map
+660 scroll -5
+680 dump map
+700 screenshot OUTDIR/moved.png
+750 key CTRL down
+752 key F9 down
+754 key F9 up
+756 key CTRL up
+860 dump map
+880 screenshot OUTDIR/restored.png
+920 quit

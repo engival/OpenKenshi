@@ -22,6 +22,7 @@
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -33,9 +34,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
 #endif
 
 namespace {

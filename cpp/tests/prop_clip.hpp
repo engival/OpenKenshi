@@ -16,6 +16,8 @@
 #include <string>
 #include <utility>
 
+namespace prop_clip_detail { inline constexpr double kPi = 3.14159265358979323846; } // M_PI is not in MinGW's strict -std=c++20 <cmath>
+
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
 #endif
@@ -150,7 +152,7 @@ public:
 		std::string in = inside(x, y, z);
 		for (int i = 0; in.empty() && i < 16 && radius > 0.0; ++i)
 		{
-			const double a = i * (M_PI / 8.0);
+			const double a = i * (prop_clip_detail::kPi / 8.0);
 			in = inside(x + radius * std::sin(a), y, z + radius * std::cos(a));
 		}
 		return in;

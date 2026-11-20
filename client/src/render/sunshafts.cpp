@@ -47,7 +47,7 @@ void SunShafts::shutdown()
 	shd_ = {};
 }
 
-bool SunShafts::render(const Camera& c, const LightParams& light, const Shadow& shadow, float scale, float lampScale, float sunY, sg_view depth, int debug)
+bool SunShafts::render(const Camera& c, const LightParams& light, const Shadow::FrameData& shadow, float scale, float lampScale, float sunY, sg_view depth, int debug)
 {
 	const lightvol::Binding& lv = lightvol::binding();
 	const bool sun = scale > 0.0f && shadow.active() && sunY > 0.0f;	// below the horizon: night
@@ -56,8 +56,8 @@ bool SunShafts::render(const Camera& c, const LightParams& light, const Shadow& 
 	sg_bindings bd = {};
 	bd.views[VIEW_depth_tex] = depth;
 	bd.samplers[SMP_depth_smp] = smp_;
-	bd.views[VIEW_shadow_tex] = shadow.view();
-	bd.samplers[SMP_shadow_smp] = shadow.sampler();	bd.views[VIEW_vol_use] = lv.use;
+	bd.views[VIEW_shadow_tex] = shadow.view;
+	bd.samplers[SMP_shadow_smp] = shadow.sampler;	bd.views[VIEW_vol_use] = lv.use;
 	bd.views[VIEW_vol_lamp] = lv.lamp;	// lamp_vis (render.lamp_beams)
 	bd.samplers[SMP_vol_smp] = lv.smp;
 	drawstats::bindings(&bd);
@@ -82,7 +82,7 @@ bool SunShafts::render(const Camera& c, const LightParams& light, const Shadow& 
 	p.dbg[1] = lampScale * kLampGain;
 	p.dbg[2] = sun ? 1.0f : 0.0f;
 	sg_apply_uniforms(UB_light_params, { &light, sizeof light });
-	sg_apply_uniforms(UB_shadow_params, { &shadow.params(), sizeof(ShadowParams) });
+	sg_apply_uniforms(UB_shadow_params, { &shadow.params, sizeof(ShadowParams) });
 	sg_apply_uniforms(UB_light_volumes, { lv.params, sizeof lv.params });
 	sg_apply_uniforms(UB_shaft_params, SG_RANGE(p));
 	drawstats::draw(0, 3, 1);

@@ -131,9 +131,9 @@ int main()
 			require(!arena->find(1)->stealthKo.active(), "cancelStealthKo stops it");
 		}
 
-		// ---- the approach is itself a risk: a sneaking assassin within the victim's halved noise range (40 u at Stealth 100) may be heard by the
-		// noise roll before it is at 14 u, which aborts the task (perception.hpp "Noise"). The roll is a hash of the two dice keys: find a key that
-		// is heard and one that is not. ----
+		// ---- the noise roll is not an abort (rwh.152, k16.6.419: heard only halves the chance). A sneaking assassin within the victim's halved noise
+		// range may be heard before it is at 14 u: that key still reaches the roll. A key that is never heard at all is the quiet one the later cases
+		// use (a hash of the two dice keys). ----
 		std::uint64_t heardKey = 0;
 		std::uint64_t quietKey = 0;
 		for (std::uint64_t k = 1; k < 200 && (heardKey == 0 || quietKey == 0); ++k)
@@ -141,16 +141,22 @@ int main()
 			key = k;
 			auto arena = arenaWith(50.0, 1.0, 0.0);
 			arena->orderStealthKo(1, 2);
+			bool heard = false;
 			for (int i = 0; i < 20 * 30 && arena->find(1)->stealthKo.active(); ++i)
+			{
 				arena->step(0.05);
+				heard = heard || perception::aware(*arena->find(2), 1);
+			}
 			const auto notes = arena->takeStealthKos();
-			if (!notes.empty() && notes[0].result == 2)
+			if (notes.empty())
+				continue;
+			if (heard && notes[0].result != 2)
 				heardKey = heardKey == 0 ? k : heardKey;
-			else if (!notes.empty() && notes[0].result == 0)
+			else if (!heard && notes[0].result == 0)
 				quietKey = quietKey == 0 ? k : quietKey;
 		}
-		require(heardKey != 0, "no dice key makes the victim hear the approach (the noise roll is not in play)");
-		require(quietKey != 0, "no dice key lets the assassin through (the approach never works)");
+		require(heardKey != 0, "no dice key makes the victim hear the approach and still reach the roll (heard must not abort)");
+		require(quietKey != 0, "no dice key lets the assassin through unheard (the approach never works)");
 		key = quietKey;
 
 		// ---- success from behind on an unaware victim: KO for the forced-KO time, Assassination XP ----
@@ -268,6 +274,23 @@ int main()
 			require(arena->find(2)->target != 1 && arena->find(1)->target != 2, "the aborted neutral KO started a fight");
 		}
 
+		// ---- rwh.152: heard is not known. A victim aware only through the noise roll (seen, not knownNow) does not abort the approach and halves the chance;
+		// the neutral victim that SAW it (knownNow) aborts (above). ----
+		{
+			auto arena = arenaWith(50.0, 1.0, 0.0);
+			perception::notice(*arena->find(2), 1);
+			for (state::SightRecord& r : arena->find(2)->sight)
+			{
+				r.knownNow = false;
+				r.sighted = true;
+			}
+			require(perception::aware(*arena->find(2), 1) && !stealthko::victimKnows(*arena->find(2), 1), "a heard-only victim is not knowing");
+			const double heardChance = stealthko::chance(*arena->find(1), *arena->find(2), 1);
+			arena->find(2)->sight.clear();
+			const double unheardChance = stealthko::chance(*arena->find(1), *arena->find(2), 1);
+			require(std::abs(heardChance * 2.0 - unheardChance) < 1e-9 && unheardChance > 0.0, "a heard-only victim halves the chance");
+		}
+
 		// ---- SIMLINK event 50: one CombatEvent::StealthKo per attempt, at the roll (0 KO, 1 failed, chance on it) or at the abort (2, chance 0); who = the
 		// victim, other = the assassin ----
 		{
@@ -332,9 +355,9 @@ int main()
 			for (const Row& row : rows)
 				std::printf("30 u behind, Stealth %3.0f: %d of 100 dice keys abort (mean %.2f u walked), %d reach the roll\n", row.stealth, row.aborted,
 					row.aborted > 0 ? row.walked / row.aborted : 0.0, row.ko);
-			require(rows[0].aborted >= 90 && rows[1].aborted >= 90, "an untrained or half-trained sneaker 30 u behind is heard on most dice keys");
-			require(rows[2].aborted > 0 && rows[2].ko > 0, "a master sneaker 30 u behind is heard on some dice keys and reaches the roll on others");
-			require(rows[0].walked / rows[0].aborted < 3.0 && rows[1].walked / rows[1].aborted < 4.0, "the abort does not come within the first scans");
+			// rwh.152: the noise roll (heard) no longer aborts, only halves the chance; what still aborts is sight (the sneak meter past 1.0).
+			require(rows[0].ko > rows[0].aborted && rows[1].ko > rows[1].aborted && rows[2].ko > rows[2].aborted,
+				"a sneaker heard 30 u behind a victim that faces away mostly reaches the roll (heard never aborts)");
 		}
 
 		// ---- the Simulation: the order, and EV 0x38 when the roll fails ----

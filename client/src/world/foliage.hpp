@@ -45,14 +45,10 @@ public:
 	GrassSource grassSource() const;	// empty (gd == nullptr) until ready()
 
 	static constexpr int kLevels = 3;	// shadow node levels (see foliage.cpp)
-	struct Draw		// one (group, part): every submesh of the part is drawn with the group's instances
+	struct Draw		// one (group, part): every submesh of the part is drawn with the group's instances, resolved by prepare() (FrameData::list)
 	{
-		int cell;	// into the render side's buffer table
-		int first, count;	// the group's instances in the cell buffer
-		uint32_t part;
-		int subs;
-		float base[3];
-		float fadeEnd;	// camera distance where the fade reaches zero
+		int buf;	// FrameData::bufs slot of the cell's instance buffer
+		int first, subs;	// FrameData::list.opaque[first, first + subs): the opaque pass's draws; with `band`, the next `subs` are the fade band's
 		bool band;	// some instance may lie in the fade band (drawn again by renderFadeBand)
 	};
 	struct ShadowCand	// one (group, part) that may cast a shadow this frame
@@ -75,6 +71,13 @@ public:
 	struct FrameData
 	{
 		std::vector<Draw> draws;
+		// The resolved draws (kenshi-k16.2.205.12.116, overlap review T20): the opaque and fade band draws of `draws`, and the shadow draws of the level lists'
+		// candidates, built by prepare() through WorldBuildings::resolveDraw / resolveShadow; the render side replays them and reads no building table.
+		// A cell's instance buffer is a resource job's: named by `bufs` slot (the replay puts it into the draw).
+		WorldBuildings::DrawList list;
+		std::vector<rq::Handle<sg_buffer>> bufs;
+		struct ShadowRef { int first = -1; int buf = -1; };	// the candidate's draws in list.shadow [first, first + cand.subs); first -1: none this frame
+		std::vector<ShadowRef> shadowRef[kLevels];	// per level, parallel to that level's list.cands
 		// Per node level: null unless prepare() was asked for the level. Immutable and shared between packets: the list is rebuilt only when its key changes
 		// (cell generation, which parts are drawable, the ranges, the camera drifting kShadowListDrift from the list's origin), not every frame (kenshi-k16.2.205.12.37).
 		std::shared_ptr<const ShadowList> shadow[kLevels];
@@ -134,10 +137,22 @@ private:
 		std::vector<Group> shadowGroups[2];
 		size_t instances = 0, children = 0;
 		uint64_t lastUsed = 0;
+		rq::Handle<sg_buffer> buf;	// the instance buffer, published by its resource job (valid: hasBuf)
+		bool hasBuf = false;
 	};
 	void buildShadowList(const double cam[3], int level, ShadowList& list);
 	struct ShadowCache { std::shared_ptr<const ShadowList> list; uint64_t key = 0; bool valid = false; };
 	ShadowCache shadowCache_[kLevels];	// logic side: the level's last list and the key it was built under
+	// A shadow list holds many candidates of one part (a candidate is one record in one cell): what resolveShadow fixes by part -- the shader mode, the
+	// alpha cut, the list slots, the vertex uniforms with a zero base -- is resolved once per part per frame, and each candidate only fills in its
+	// origin, fade and instances (kenshi-k16.2.205.12.119: foliage.prep-shadow was ~1.8 ms of the logic frame). The slots name one packet's DrawList,
+	// so a template lives one prepare frame (the stamp).
+	struct ShadowPart { uint64_t stamp = 0; bool ok = false; std::vector<WorldBuildings::ResolvedShadow> subs; };	// by part id
+	std::vector<ShadowPart> shadowPart_;
+	// The same idea for the draw list: a part's submeshes resolve once per prepare frame (both fade modes), and each group only fills in what resolveDraw
+	// takes from the group -- its instances, origin and fade (ResolvedDraw::base/fade, kenshi-k16.2.205.12.119). subs[mode - 1][sub].
+	struct DrawPart { uint64_t stamp = 0; std::vector<WorldBuildings::ResolvedDraw> subs[2]; };
+	std::vector<DrawPart> drawPart_;
 	uint64_t shadowKey() const;
 	double fadeEnd(const Group& g, double meshRadius) const;	// draw distance of a group: class distance x range, size limit, load radius, drawLimit
 	void worker();
@@ -165,6 +180,7 @@ private:
 	std::vector<std::vector<uint32_t>> recordParts_;	// per record: part ids in WorldBuildings, registered on first use
 	std::vector<char> recordPartsDone_;
 	uint64_t frame_ = 0;
+	std::unordered_map<int, int> bufSlot_;	// prepare(): cell -> FrameData::bufs slot
 	uint64_t cellGen_ = 0;	// a cell was accepted or freed (FrameData::gen)
 	std::unordered_map<int, sg_buffer> gpu_;	// render side: cell index -> its instance buffer (made and destroyed by resource jobs)
 	Stats stats_;

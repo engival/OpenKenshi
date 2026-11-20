@@ -42,8 +42,21 @@ void renderIdle();
 bool running();	// start() ran and stop() has not
 // Render thread, once per frame() after start(): waits up to boundMs for a filled slot. Found: flips it to drawing (the slot drawn before goes
 // free), runs hooks.render, and lets logic go on (true). Not found: false, nothing drawn (the caller keeps the window's last frame). A wait that
-// ran out is counted; the next draw logs how long the window went without one.
+// ran out is counted; a run of them over kMissLogMs prints one line when it ends (kenshi-k16.2.437.1), shorter runs stay in takeMisses().
 bool renderFrame(double boundMs);
+// A run of missed packets longer than this prints; at 144 Hz one frame is 6.9 ms, so a shorter run is one or two repeated frames (the user's
+// 2026-11-20 spam, kenshi-k16.2.437.1).
+constexpr double kMissLogMs = 50.0;
+// Render thread only, the frames without a pass since the last call (kenshi-k16.2.437.1; the pace log reads it, dev/pacelog.hpp): repeats =
+// those frames, runs = runs of them that ended, longest = the longest run's frames, longestMs its wall time (today's printed ms), printed = the
+// runs that were over kMissLogMs (each printed one line). A frame without a pass redraws the kept frame (frame/lastframe.hpp), which the pace
+// log counts beside the callback interval.
+struct MissStats { long repeats = 0, runs = 0, longest = 0, printed = 0; double longestMs = 0; };
+MissStats takeMisses();
+// Logic thread, at the end of a world frame's logic half (kenshi-k16.2.437.1): the packet's logic ms (FramePacket::logicMs), published atomically
+// so the pace log can put it against the render thread's bound; the render thread may read it while logic writes the next one.
+void noteLogicMs(double ms);
+double lastLogicMs();	// any thread: the newest published value (0 before the first world frame)
 // Render thread, from cleanup() (rule 8): stop flag, notify, join. Logic finishes the frame it is in (a long load step included) and exits.
 // Returns the join's wall time in ms (0 when no thread runs).
 double stop();

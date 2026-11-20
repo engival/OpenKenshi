@@ -13,6 +13,7 @@
 #include "ksim/core/simulation.hpp"
 
 #include "kworld/loadorder.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cstdint>
 #include <cstdlib>

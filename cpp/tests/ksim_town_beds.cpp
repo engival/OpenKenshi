@@ -22,6 +22,7 @@
 
 #include "test_util.hpp"
 #include "sim_access.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -37,12 +38,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
-#endif
-#ifndef KSIM_BINARY_DIR
-#error KSIM_BINARY_DIR must be defined
 #endif
 
 namespace {
@@ -378,6 +373,9 @@ HomeRig setupHome(Simulation& sim, const Pick& pick, std::uint8_t doorState)
 	door.building = rig.building;
 	door.x = rig.cx + 6.0;
 	door.z = rig.cz;
+	door.y = fighterOf(sim, idOf(rig.members.front())).y; // the interact reach is 30 above or below: a door at y 0 is out of reach of a hill's keeper
+	if (const state::Allegiance* faction = rig.members.front().get<state::Allegiance>())
+		door.ownerSid = faction->factionSid; // a home door is the resident's faction's own (isObjectMine: only the owner locks it)
 	door.state = doorState;
 	rig.door = sim.spawnDoor(door);
 	// Side by side across the doorway, one footprint sum (8) apart: stacked members would be pushed out into a line (the depenetration, BQ16), and with no
@@ -449,13 +447,21 @@ std::uint64_t shopNight(const kworld::LoadOrder& order, const std::shared_ptr<co
 	bool asleepAtNight = false;
 	bool reopened = false;
 	bool tradeRefused = false;
+	bool sawLockStep = false; // the keeper's lock ran as a DoorStep (phase 6) on a shut, unlocked door
 	std::uint64_t saved = 0;
 	const std::uint64_t end = tickAt(2, 8, 0);
 	while (sim.clockTick() < end)
 	{
-		sim.run(std::min<std::uint64_t>(kTicksPerGameHour / 8, end - sim.clockTick()));
+		// The lock window runs tick by tick: the lock is the plan's own order (k16.6.12.4), so its steps can be seen.
+		const bool lockWindow = verify && hourOf(sim) >= 22.0 && hourOf(sim) < 23.6;
+		sim.run(std::min<std::uint64_t>(lockWindow ? 4 : kTicksPerGameHour / 8, end - sim.clockTick()));
 		const double hour = hourOf(sim);
 		keeperGoals.insert(keeper.get<state::Routine>()->goal);
+		if (lockWindow && doorState(rig) != 2 && keeper.get<state::Routine>()->goal != 0)
+		{
+			const state::DoorStep* step = keeper.get<state::DoorStep>();
+			sawLockStep = sawLockStep || (step != nullptr && step->phase == 6 && doorState(rig) == 1);
+		}
 		if (!savePath.empty() && saved == 0 && sim.clockTick() >= tickAt(2, 2, 0))
 		{
 			sim.saveGame(savePath);
@@ -496,6 +502,7 @@ std::uint64_t shopNight(const kworld::LoadOrder& order, const std::shared_ptr<co
 	{
 		test::require(lockedAtNight && asleepAtNight && reopened && tradeRefused, "the whole night was observed");
 		test::require(keeperGoals.count(20) != 0 && keeperGoals.count(239) != 0, "the keeper ran Shopkeeper and the secure bed");
+		test::require(sawLockStep, "the keeper's lock ran as a lock order (DoorStep phase 6) on the door, not an instant act");
 		test::require(sim.townScorerStats().doorsLocked >= 1 && sim.townScorerStats().doorsOpened >= 1, "doors were locked and opened by residents");
 		test::require(rig.door.get<state::Door>()->version >= 3, "each change bumped the door version (the door stream's trigger)");
 		std::cout << "shop night ok (package " << pick->package << ", " << rig.members.size() << " people, keeper goals:";

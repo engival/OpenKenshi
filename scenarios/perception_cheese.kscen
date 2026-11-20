@@ -1,0 +1,18 @@
+# perception_cheese (kenshi-k16.5.17, rebuilt k16.5.20 from rwh.191, findings/perception_cheese_mourn_hold.md): the user's cheese spot at Mourn, Abandoned HQ
+# (Ancient Lab). The Great White Gorillo (98509-rebirth.mod, faction Wildlife) stands at his home (12519, 1192, 65674) inside the tower; one player character, a
+# Ranger with a crossbow and Bolts [Regulars], stands on the tower ring behind the wall at (12365, 1186, 65658), 154 u away, holding the ranged attack on him
+# with HOLD. Live: the ranged task pays Perception and Crossbows XP on its range test before the line-of-sight decision, and a ranged attacker the gorillo
+# cannot see is never on his target list, so he never leaves and no bolt lands. Gorillos are neutral to the player here (relation 0, the save); the test
+# makes the squad hostile for its second case. Only the player is ever ordered (SCENARIO_IMPORT.md "Rule").
+# Open questions, deferred: playtesting: Perception 1.0 start (live 16.9; the template's own is used).
+KSCEN 2
+scenario title=Perception%20cheese%20at%20Mourn setup=A%20crossbow%20ranger%20stands%20on%20the%20tower%20ring%20behind%20the%20wall%2C%20154%20u%20from%20the%20Great%20White%20Gorillo%2C%20holding%20a%20ranged%20attack%20on%20him. look_for=Watch%20the%20ranger%27s%20Perception%20and%20Crossbows%3A%20they%20rise%20with%20no%20bolt%20landing%2C%20and%20the%20gorillo%20stays%20home. bead=kenshi-h2v.36 metrics=targeted_player
+source save=PerceptionCheese game=1.0.68 radius=0 centre=12440,65666 leader=Ranger
+clock day=124 hour=14 minute=36
+squad id=1 name=Ranger faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Ranger template=1533662-rebirth.mod faction=204-gamedata.base x=12365 y=1186 z=65658 yaw=1.5708 leader=1 player=1 chase=1 ranged=1 hold=1
+item char=1 sid=66169-Newwworld.mod section=back
+item char=1 sid=95781-rebirth.mod section=main qty=20
+squad id=2 name=Great%20White%20Gorillo faction=3943-gamedata.base hostile=0 player=0
+char id=2 squad=2 name=Great%20White%20Gorillo template=98509-rebirth.mod faction=3943-gamedata.base x=12519 y=1192 z=65674 yaw=4.71239
+order char=1 attack=2

@@ -31,13 +31,8 @@ public:
 	using DoorOffset = std::function<bool(const kworld::WorldShape&, double offset[3])>;
 	bool ray(const double origin[3], const double dir[3], double maxT, double& t, float bounds[6] = nullptr, const DoorOffset& door = {}, kworld::DoorKey* key = nullptr,
 		bool* solid = nullptr, bool* building = nullptr, std::string* hitName = nullptr) const;
-	// Standing height (kenshi-k16.2.344): a vertical ray down from (x, wireY + up, z) onto the building collision shapes (not foliage, not door leaves, not
-	// thin props) and the hit NEAREST wireY wins (not the first: a lintel or an upper floor above, a sunk floor below must not take it); range up above and
-	// down below wireY. Returns 1 hit (y set), 0 no shape in the window, -1 the collision under (x, z) is not gathered (the zone cell is outside the newest
-	// gather's 3x3). gen: the gather's address (a new gather invalidates a caller's cache).
-	int groundY(double x, double z, double wireY, double up, double down, double& y, const void** gen = nullptr) const;
-	// Every building collision triangle the vertical line through (x, z) crosses with y in [lo, hi] (the height probe, dev/heightprobe.cpp): groundY's
-	// geometry without its filters, each hit flagged by what groundY does with it (door: a NavUse::Door leaf, skipped; thin: a thin() prop, skipped).
+	// Every building collision triangle the vertical line through (x, z) crosses with y in [lo, hi] (the height probe, dev/heightprobe.cpp): the retired stand ray's
+	// geometry without its filters, each hit flagged by the filters the retired stand ray applied (retired/stand_ray_collision_groundy.cpp) (door: a NavUse::Door leaf, skipped; thin: a thin() prop, skipped).
 	// Returns 1, 0 when there is none, -1 when the collision under (x, z) is not gathered. y ascending is not promised.
 	struct ColumnHit { double y; bool door, thin; std::string name; };
 	int column(double x, double z, double lo, double hi, std::vector<ColumnHit>& out) const;

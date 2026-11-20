@@ -13,6 +13,7 @@
 #include "kworld/loadorder.hpp"
 
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -23,9 +24,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_BINARY_DIR
-#error KSIM_BINARY_DIR must be defined
 #endif
 
 namespace {
@@ -143,7 +141,7 @@ struct Rig
 					w.grids.push_back({body[21 + 3 * i], body[22 + 3 * i], body[23 + 3 * i]});
 				const std::size_t head = 21 + 3 * ns;
 				const std::uint16_t n = at<std::uint16_t>(body, head);
-				test::require(n == w.items.size() && body.size() == head + 2 + 13u * n, "ITEM_GRID length");
+				test::require(n == w.items.size() && body.size() == head + 2 + 14u * n, "ITEM_GRID length (13 B per item + the steal tail, 1 B per item)");
 				for (std::size_t i = 0; i < n; ++i)
 				{
 					const std::size_t o = head + 2 + 13 * i;
@@ -1042,6 +1040,32 @@ int main(int argc, char** argv)
 					}
 				}
 			}
+		}
+
+		// ---- creation overflow (rwh.194): main stays 8 x 10, the worn backpack takes the rest, what is left is destroyed ----
+		{
+			const std::string straw = named(*gd, "ITEM", "Wheatstraw")->stringID; // 5 x 5, stackable 1
+			const std::string woodenBag = named(*gd, "CONTAINER", "Wooden Backpack")->stringID; // 8 x 8, cap 9
+			const auto spawnWith = [&](std::int32_t count, bool backpack)
+			{
+				state::Fighter f = rig.fighter(rig.duel.enemy);
+				f.playerControlled = false;
+				f.weapon.sid.clear();
+				f.armour.clear();
+				f.spawnPack = {{straw, count}};
+				f.spawnBackpack = backpack ? woodenBag : std::string();
+				return rig.sim->spawnFighter(std::move(f)).get<state::Id>()->value;
+			};
+			const state::Inventory fits = rig.sim->settledInventory(spawnWith(10, true));
+			test::require(fits.gridW == 8 && fits.gridH == 10 && fits.carried(straw) == 10 && fits.wornBackpack() != nullptr, "ten Wheatstraw did not all fit main + the Wooden Backpack: "
+				+ std::to_string(fits.carried(straw)) + " in a " + std::to_string(fits.gridW) + " x " + std::to_string(fits.gridH));
+			test::require(fits.wornBackpack()->contents.size() == 1 && fits.wornBackpack()->contents[0].count == 8, "the bag did not take the eight as one stack");
+			const state::Inventory over = rig.sim->settledInventory(spawnWith(40, true));
+			test::require(over.gridW == 8 && over.gridH == 10 && over.carried(straw) == 11, "40 Wheatstraw: the grid grew or the leftover was kept ("
+				+ std::to_string(over.carried(straw)) + " carried in " + std::to_string(over.gridW) + " x " + std::to_string(over.gridH) + "; want 11 in 8 x 10)");
+			const state::Inventory bare = rig.sim->settledInventory(spawnWith(10, false));
+			test::require(bare.gridW == 8 && bare.gridH == 10 && bare.carried(straw) == 2, "no backpack: main alone keeps 2 Wheatstraw, got " + std::to_string(bare.carried(straw)));
+			std::cout << "creation overflow: fixed 8 x 10, then the worn backpack, the rest destroyed\n";
 		}
 
 		std::cout << "ksim_inventory_grid ok\n";

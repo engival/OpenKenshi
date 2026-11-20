@@ -40,6 +40,7 @@
 
 #include "world/buildings.hpp"
 #include "world/foliage.hpp"
+#include "world/plants.hpp"
 #include "world/grass.hpp"
 #include "render/gputimer.hpp"
 #include "app/cpustage.hpp"
@@ -82,7 +83,6 @@
 #include "kworld/towns.hpp"
 #include "render/navoverlay.hpp"
 #include "app/config.hpp"
-#include "platform/datadir.hpp"
 #include "platform/windowgeom.hpp"
 #include "platform/process.hpp"	// plat::unsetEnv
 #include "platform/windowgate.hpp"
@@ -169,6 +169,7 @@
 #include "world/worldbuildings.hpp"
 #include "world/worldmap.hpp"
 #include "host/app.hpp"
+#include "host/uihost.hpp"
 #include "host/pick.hpp"
 #include "host/orders.hpp"
 #include "host/hud.hpp"
@@ -179,7 +180,6 @@ namespace host
 {
 
 constexpr int kRecordsFrameMs = 16;	// the characters step's panel records per frame (kenshi-k16.2.26): the budget is the loading screen's own frame
-const cfg::Bool kStandRayFaces{ cfg::Group{ "Simulation" }, "sim.stand_ray_faces", false, "Standing ray fallback (kenshi-k16.2.344): where no collision shape is under a standing character, the nearest drawn building triangle stands in. Off by default: the first decode of a building mesh costs ~100 ms on the logic thread, and in the Heft crowd it found 70 of 4606 misses" };
 const cfg::Bool kStandRay{ cfg::Group{ "Simulation" }, "sim.stand_ray", true, "Standing height (kenshi-k16.2.344): a drawn standing character is placed by a vertical ray from its wire y onto the client collision (nearest hit) and the heightmap; off draws the wire y" };
 
 // Whether this run needs the game data and character assets (kenshi-k16.2.26): the characters step loads them, and the first step starts that load on a
@@ -254,6 +254,7 @@ void init()
 	td.logger.func = slog_func;
 	sdtx_setup(&td);
 	init_ui();
+	plants::load(client_data_dir());	// client/data/foliage_plants.txt, the FCS ids the material rule gets wrong (kenshi-k16.2.420.6.1); before any part is made
 	// The rest of the startup is a list of steps (a step returns false to be retried next frame). Scripted runs (screenshots, scenes) run them all here;
 	// interactive runs run one per frame behind the loading screen (frame_loading), so the window presents and stays responsive.
 	app.loadSteps = {
@@ -285,9 +286,6 @@ void init()
 			app.shadow.init();
 			app.shadow.enabled = app.opt.shadows;
 			app.shadow.stagger = app.opt.shadowStagger >= 0 ? app.opt.shadowStagger > 0 : !app.scripted();
-			app.terrain.shadow = &app.shadow;
-			app.buildings.shadow = &app.shadow;
-			app.chars.shadow = &app.shadow;	// with the others, not in the lazy characters step: a run without characters still calls chars.render (k16.2.281)
 			return true;
 		} },
 		{ "terrain: biome map", []()
@@ -432,7 +430,6 @@ void init()
 					app.grass.rangeScale = app.opt.grassRange;
 					app.grass.density = app.opt.grassDensity;
 					app.grass.paintMap = app.opt.grassPaint;
-					app.grass.shadow = &app.shadow;
 					app.grass.init(&app.res, &app.foliage, app.opt.data);
 					app.grassOn = true;
 				}
@@ -529,12 +526,11 @@ bool init_characters()
 				try { app.dataHash = app.hashFut.get(); }
 				catch (const std::exception& e) { app.hashErr = e.what(); }
 			}
-			app.chars.shadow = &app.shadow;
 			app.chars.culled = char_cut_hidden;	// on a floor the cut hides (user 2026-11-05: the guard on the roof at floor 0; k16.2.264.1: by the wire's own floor, shared with the tags and labels)
 			app.chars.init(&app.res, *app.gdPending);
 			// the animation lab's own character set: never drawn in the world (it renders offscreen only). Setup is cheap; the lab inits on its first
 			// open or `lab` op (every game start used to pay for it), and a failure there is a warning: the client runs on.
-			dev::labSetup(app.res, app.opt.data, app.shadow);
+			dev::labSetup(app.res, app.opt.data);
 			app.charsPhase = 1;
 			return false;	// the panel records next frames: they and the asset build used to be one 134 ms step (kenshi-k16.2.26)
 		}
@@ -821,13 +817,24 @@ void sim_opened()
 {
 	logicthread::renderIdle();	// overlap (rule 12): the new game's link, collision and the buildings' callbacks change under no draw
 	app.collide.start(app.opt.data, &*app.hm);
+#ifdef KCLIENT_DEV_TOOLS
 	app.sim.ylogAlt = [](double x, double z) { return app.hm->height(x, z); };	// KYLOG: the bilinear height() beside the drawn-triangle terrainHeight()
+#endif
 	app.sim.setDepenetrate([](double x, double z, double y, double r, double cap, double out[2], std::string* why) { return app.collide.depenetrate(x, z, y, r, cap, out, why); });
 	if (kStandRay.get())
 	{
-		app.sim.setGroundRay([](double x, double z, double wy, double up, double down, double& y, const void** gen) { int r = app.collide.groundY(x, z, wy, up, down, y, gen); double dy; if (r == -1 && !app.buildings.groundDrawn(x, z, wy, 12.0, 12.0, dy)) { return 3; } /* k16.2.382.1: collision not loaded, no building drawn over x,z: open ground */ if (r == 0 && kStandRayFaces.get() && app.buildings.groundDrawn(x, z, wy, up, down, y)) { return 2; } return r; },
-			[]() -> const void* { const auto g = app.collide.gathered(); return g.get(); });
+		// kenshi-k16.2.382.2: the standing ray's only building source is the DRAWN floors / stairs / ramps (WorldBuildings::groundDrawn); collision meshes left the
+		// stand search (user 2026-11-18: they are y-axis barricades, not the ground). 2: a drawn surface in [wire - kDrawnDown, wire + up]; -1: a building
+		// near x,z has a mesh still loading; 0: drawn surface over x,z but none in the window; 3: nothing drawn over x,z (open ground, terrain decides).
+		app.sim.setGroundRay([](double x, double z, double wy, double up, double down, double& y, const void** gen) {
+				*gen = app.buildings.groundDrawnGen();
+				const int r = app.buildings.groundDrawn(x, z, wy, up, std::max(down, SimView::kDrawnDown), y);
+				return r == 1 ? 2 : r; },
+			[]() -> const void* { return app.buildings.groundDrawnGen(); });
 	}
+	// kenshi-k16.2.414.2: the ground solver's terrain (the drawn terrain triangles) and its sunk-dune rule: inside an interior mask whose BUILDING has `interior terrain` 0 the terrain is not ground
+	app.sim.setTerrainFn([](double x, double z) { return app.hm->terrainHeight(x, z); },
+		[](double x, double y, double z) { const double p[3] = { x, y, z }; return app.buildings.insideInterior(p, nullptr, nullptr, nullptr, true); });
 #ifdef KCLIENT_DEBUG_VIEW
 	app.debugView.reset();
 	app.debugSubscribed = false;
@@ -895,7 +902,7 @@ void cleanup()
 	windowgeom::save();	// before cfg::save() below writes it
 	audiohook_shutdown();	// before the early returns: the audio thread may be running from the loading screen on
 	cfg::save();
-	if (!dev::viewing()) { app.hud.reset(); app.options.reset(); app.items.reset(); app.nameLabels.reset(); app.speechBubbles.reset(); app.dialogue.reset(); app.squadsUi.reset(); app.research.reset(); app.crafting.reset(); app.faction.reset(); app.prompt.reset(); app.overview.reset(); app.prospect.reset(); app.build.reset(); app.creatorUi.reset(); app.tutorials.reset();
+	if (!dev::viewing()) { app.hud.reset(); app.options.reset(); app.items.reset(); app.nameLabels.reset(); app.speechBubbles.reset(); app.dialogue.reset(); app.squadsUi.reset(); app.research.reset(); app.crafting.reset(); app.faction.reset(); app.prompt.reset(); app.overview.reset(); app.minimap.reset(); app.prospect.reset(); app.build.reset(); app.creatorUi.reset(); app.tutorials.reset();
 #ifdef KCLIENT_DEV_TOOLS
 		dev::resetDebugPanels(); dev::resetAnimBrowser();
 #endif

@@ -2,6 +2,7 @@
 #include "app/cpustage.hpp"
 
 #include <chrono>
+#include <algorithm>
 #include <deque>
 #include <mutex>
 #include <utility>
@@ -20,7 +21,10 @@ namespace
 		const char* tag;
 		std::function<void()> fn;
 		size_t bytes;
+		PrioPtr prio;
+		bool taken = false;
 	};
+	uint64_t gDrainId = 0;
 	std::mutex gMu;
 	std::deque<Job> gFrame, gStream;
 	uint64_t gSerial = 0;	// the packet logic is filling
@@ -34,10 +38,18 @@ namespace
 	Stats gStats;
 }
 
-void push(const char* tag, std::function<void()> job, Lane lane, size_t bytes)
+void push(const char* tag, std::function<void()> job, Lane lane, size_t bytes, PrioPtr prio)
 {
 	std::lock_guard<std::mutex> lk(gMu);
-	(lane == Lane::kFrame ? gFrame : gStream).push_back({ gSerial, tag, std::move(job), bytes });
+	(lane == Lane::kFrame ? gFrame : gStream).push_back({ gSerial, tag, std::move(job), bytes, std::move(prio) });
+}
+
+size_t pendingStreamBytes()
+{
+	std::lock_guard<std::mutex> lk(gMu);
+	size_t b = 0;
+	for (const Job& j : gStream) { b += j.bytes; }
+	return b;
 }
 
 uint64_t beginPacket()
@@ -66,6 +78,7 @@ void drain(uint64_t serial)
 		budgetMs = gTimeBudgetMs;
 		rate = gMsPerByte;
 		budget = gBudget;
+		gDrainId++;
 	}
 	for (Job& j : run)	// the frame lane first, all of it, in submit order
 	{
@@ -81,12 +94,37 @@ void drain(uint64_t serial)
 	size_t streamRun = 0, bytes = 0;
 	double measuredMs = 0;
 	size_t measuredBytes = 0;
-	for (; streamRun < eligible; streamRun++)
+	// The order (kenshi-k16.2.258.3): jobs without a Prio first, in submit order; then by their Prio's value (read once a drain: Prio::snap), ties in submit
+	// order. The best 64 of the eligible jobs are picked at a time (a partial sort), so a deep backlog costs a scan, not a sort, per drain.
+	std::vector<std::pair<float, size_t>> order;
+	size_t oi = 0, taken = 0;
+	auto refill = [&] {
+		order.clear();
+		oi = 0;
+		std::lock_guard<std::mutex> lk(gMu);
+		for (size_t i = 0; i < eligible; i++)
+		{
+			Job& f = gStream[i];
+			if (f.taken) { continue; }
+			float key = -1e30f;
+			if (f.prio)
+			{
+				if (f.prio->stamp != gDrainId) { f.prio->snap = f.prio->want.load(std::memory_order_relaxed); f.prio->stamp = gDrainId; }
+				key = f.prio->snap;
+			}
+			order.push_back({ key, i });
+		}
+		const size_t k = std::min<size_t>(64, order.size());
+		std::partial_sort(order.begin(), order.begin() + (ptrdiff_t)k, order.end());
+		order.resize(k);
+	};
+	for (;; streamRun++)
 	{
+		if (oi == order.size()) { refill(); if (order.empty()) { break; } }
 		Job j;
 		{
 			std::lock_guard<std::mutex> lk(gMu);
-			Job& f = gStream.front();
+			Job& f = gStream[order[oi].second];
 			if (streamRun > 0)
 			{
 				if (bytes + f.bytes > budget) { break; }
@@ -94,7 +132,9 @@ void drain(uint64_t serial)
 				if (budgetMs > 0 && spent + (double)f.bytes * rate > budgetMs) { break; }
 			}
 			j = std::move(f);
-			gStream.pop_front();
+			f.taken = true;
+			oi++;
+			taken++;
 		}
 		bytes += j.bytes;
 		CPUSTAGE_ACC(j.tag);
@@ -129,7 +169,8 @@ void drain(uint64_t serial)
 	std::lock_guard<std::mutex> lk(gMu);
 	gStats.streamJobs += streamRun;
 	gStats.streamBytes += bytes;
-	if (streamRun < eligible) { gStats.deferredFrames++; }
+	gStream.erase(std::remove_if(gStream.begin(), gStream.end(), [](const Job& j) { return j.taken; }), gStream.end());	// the picked ones (their slots are tombstones)
+	if (taken < eligible) { gStats.deferredFrames++; }
 	if (measuredBytes > 0) { gMsPerByte += kRateBlend * (measuredMs / (double)measuredBytes - gMsPerByte); }	// a running mean of the create rate
 }
 

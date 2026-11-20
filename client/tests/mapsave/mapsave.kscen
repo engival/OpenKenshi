@@ -1,0 +1,7 @@
+# mapsave (kenshi-k16.2.435): one Wanderer at the Hub, a still world for the world map view check (the default overview, close / reopen, quicksave,
+# its load).
+KSCEN 2
+source save=playtest game=1.0.68 radius=0 centre=-52747.7,1934.56 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-52747.7 y=1025.41 z=1934.56 yaw=0 leader=1 player=1

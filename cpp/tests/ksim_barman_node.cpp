@@ -4,6 +4,7 @@
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
 #include "trade_rig.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cmath>
 #include <cstdio>

@@ -60,6 +60,9 @@ struct Stats
 	std::uint8_t state = 0;
 	std::uint8_t lockLevel = 0;
 	std::string goal;
+	std::uint8_t extraKind = 0xEE;
+	std::uint8_t extraSkill = 0xEE;
+	float extra = -1.0f;
 	std::map<std::uint8_t, float> skills;
 	float runSpeed = 0.0f;
 	float koPoint = 0.0f;
@@ -148,8 +151,9 @@ struct Rig
 		s.lockLevel = c.get<std::uint8_t>();
 		s.goal = session->strings().text(c.get<std::uint32_t>());
 		c.get<float>(); // encumbrance
-		c.get<std::uint8_t>(); // extraKind
-		c.get<float>(); // extra
+		s.extraKind = c.get<std::uint8_t>();
+		s.extraSkill = c.get<std::uint8_t>();
+		s.extra = c.get<float>();
 		test::require(c.get<std::uint8_t>() <= 2, "weaponClass 0..2");
 		const std::uint8_t n = c.get<std::uint8_t>();
 		for (std::uint8_t i = 0; i < n; ++i)
@@ -326,6 +330,7 @@ int main(int argc, char** argv)
 					&& s.skills.at(12) == static_cast<float>(f.skills.unarmed),
 				"ids 0 strength, 12 martial arts, 16 stealth carry the fighter's values");
 			test::require(s.state == 0 && s.goal.empty(), "the player: Normal, Aimless");
+			test::require(s.extraKind == 0 && s.extraSkill == 0xFF && s.extra == 0.0f, "idle: row 6 kind 0, skill 0xFF, extra 0 on the wire");
 			test::require(s.goalEnum == 0xFFFF && s.source == 0, "the idle character's tail: no goal enum, source 0");
 			test::require(s.stepEnum == 0xFFFF && s.stepIndex == 0 && s.stepCount == 0, "the idle character has no plan step");
 			test::require(s.targetId == 0 && std::isnan(s.targetX) && std::isnan(s.targetZ), "the idle character has no target point");
@@ -533,11 +538,40 @@ int main(int argc, char** argv)
 		const_cast<state::Fighter*>(rig.sim->combat()->find(player))->cageBuilding = 0;
 		rig.run(21);
 		test::require(rig.last(player).state != 5 && rig.last(player).state != 6 && rig.last(player).lockLevel == 0, "out of the cage: no cage state, lock level 0");
+		// ---- row 6, the skill in use (k16.6.472): first match wins; ids are row 8's ----
+		{
+			state::Fighter& f = *const_cast<state::Fighter*>(rig.sim->combat()->find(player));
+			const state::Fighter saved = f;
+			const auto row = [&] { return rig.sim->charStats(player); };
+			f.target = 0;
+			f.technique = -1;
+			f.state = state::CombatState::Hub;
+			f.sneak = false;
+			f.velX = f.velZ = 0.0;
+			test::require(row().extraKind == 0 && row().extraSkill == 0xFF, "idle: 0 / 0xFF");
+			f.velX = 12.0;
+			test::require(row().extraKind == 2 && row().extraSkill == 3 && row().extra == static_cast<float>(f.skills.athletics), "running: 2 Athletics");
+			f.sneak = true;
+			test::require(row().extraKind == 1 && row().extraSkill == 16 && row().extra == static_cast<float>(f.skills.stealth), "sneaking beats running: 1 Stealth");
+			f.target = enemy;
+			f.state = state::CombatState::Attack;
+			f.weapon.weaponType = 5;
+			test::require(row().extraKind == 5 && row().extraSkill == 12 && row().extra == static_cast<float>(f.skills.unarmed), "combat-ready unarmed: 5 Martial Arts");
+			f.weapon.weaponType = 0;
+			test::require(row().extraKind == 5 && row().extraSkill == 7 && row().extra == static_cast<float>(f.skills.katana), "combat-ready katana: 5 Katana");
+			f.weapon.weaponType = 8;
+			test::require(row().extraSkill == 13 && row().extra == static_cast<float>(f.skills.poles), "polearm: 13");
+			f.weapon.weaponType = 4;
+			test::require(row().extraSkill == 9, "hackers: 9");
+			f = saved;
+			rig.run(21);
+		}
+
 		// ---- the stats window tail (rows 21-23 and skill ids 19-32, kenshi-k16.6.54) ----
 		{
 			rig.run(21);
 			const state::Fighter& f = *rig.sim->combat()->find(player);
-			const char* keys[] = {"perception", "swimming", "robotics", "weapon smith", "armour smith", "bow smith", "farming", "cooking", "ff"};
+			const char* keys[] = {"swimming", "robotics", "weapon smith", "armour smith", "bow smith", "farming", "cooking", "ff"};
 			// The duel's characters have no template link: give the player a known one, a CHARACTER whose STATS carry a perception above 1.
 			const kdata::Record* character = nullptr;
 			for (const kdata::Record* record : gd->byType(kworld::itemTypeByName("CHARACTER")))
@@ -558,8 +592,12 @@ int main(int argc, char** argv)
 			// 19-23 are the fighter's; 24-32 the template's STATS record (keys by the data: `ff` is precision shooting, `bow smith` the crossbow smith).
 			test::require(s.skills.at(19) == static_cast<float>(f.skills.engineer) && s.skills.at(20) == static_cast<float>(f.skills.crossbows)
 					&& s.skills.at(21) == static_cast<float>(f.skills.turrets) && s.skills.at(22) == static_cast<float>(f.skills.thievery)
-					&& s.skills.at(23) == static_cast<float>(f.skills.assassination),
-				"ids 19-23 carry the fighter's engineer, crossbows, turrets, thievery, assassination");
+					&& s.skills.at(23) == static_cast<float>(f.skills.assassination) && s.skills.at(24) == static_cast<float>(f.skills.perception),
+				"ids 19-24 carry the fighter's engineer, crossbows, turrets, thievery, assassination, perception");
+			// The trained value, not the template's: raise it and the row follows.
+			const_cast<state::Fighter&>(f).skills.perception = f.skills.perception + 7.5;
+			rig.run(25);
+			test::require(rig.last(player).skills.at(24) == static_cast<float>(f.skills.perception), "id 24 follows the trained perception");
 			const kdata::Record* stats = gd->find(character->findRefs("stats")->entries.front().targetID);
 			test::require(stats != nullptr, "the STATS record resolves");
 			bool nonDefault = false;
@@ -567,9 +605,9 @@ int main(int argc, char** argv)
 			{
 				const float want = stats->floatOr(keys[i], 1.0f);
 				nonDefault = nonDefault || want != 1.0f;
-				test::require(s.skills.at(static_cast<std::uint8_t>(24 + i)) == want, std::string("id ") + std::to_string(24 + i) + " is the template's " + keys[i]);
+				test::require(s.skills.at(static_cast<std::uint8_t>(25 + i)) == want, std::string("id ") + std::to_string(25 + i) + " is the template's " + keys[i]);
 			}
-			std::cout << "template STATS: perception " << s.skills.at(24) << ", swimming " << s.skills.at(25) << ", ff " << s.skills.at(32) << (nonDefault ? "" : " (all 1)") << "\n";
+			std::cout << "template STATS: swimming " << s.skills.at(25) << ", ff " << s.skills.at(32) << (nonDefault ? "" : " (all 1)") << "\n";
 			// Row 21: the same ids as row 8, the fractional part of each value.
 			test::require(s.progress.size() == s.skills.size(), "row 21 n equals row 8 n");
 			for (const auto& [skill, value] : s.skills)

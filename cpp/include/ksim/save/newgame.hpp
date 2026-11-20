@@ -69,7 +69,7 @@ struct NewGameOutcome
 
 // The squad a start-off gives without a character creation (n = 0): the members of its `squad` refs as they are. Each is a CHARACTER
 // sid and the SQUAD_TEMPLATE it came from ("" for a bare CHARACTER ref). Counts are deterministic from `rng` (ranges drawn, `choosefrom
-// list` drawn as the default-world spawner does); animals and a template's other lists (`housemates`, `slaves`, `prisoners`) are not
+// list` drawn as the default-world spawner does); a template's `animals` lists are (the dog); its `housemates`, `slaves` and `prisoners` are not
 // spawned. `rng` is a RngStream-style draw: pass nullptr to take every range at its minimum (the count a Spec list must match).
 struct StartMember
 {

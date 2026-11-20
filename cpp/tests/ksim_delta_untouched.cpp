@@ -26,7 +26,9 @@ using namespace delta_scene;
 // members' placement after the walk moves, the delta store is untouched by it; same hash on ds/stagger-slices alone and on ksim 8097e86).
 // Repinned for kenshi-k16.8.26 (a follower's route re-plans on the slot's 2 u drift and is kept to its end when planned for this slot; merged on the k16.7.89 ring's code,
 // replacing its pin 17417856568400189656; 7989452899866182258 before that merge); followers' placement only, the delta store is untouched by it.
-constexpr std::uint64_t kPinned = 6976828997182875623ull; // the members' hash after the round trip
+// Repinned for kenshi-k16.8.24 (chases outside buildings slew the velocity: the members' placement after the walk moves, the delta store is untouched by it; 6976828997182875623 before).
+// Repinned for kenshi-k16.8.24 (chases outside buildings slew the velocity: the members' placement after the walk moves, the delta store is untouched by it; 17183893509936566136 before).
+constexpr std::uint64_t kPinned = 10960152686983995781ull; // the members' hash after the round trip
 
 void mix(std::uint64_t& hash, const std::string& text)
 {

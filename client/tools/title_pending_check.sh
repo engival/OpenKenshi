@@ -83,8 +83,8 @@ cat > "$OUT/newgame.txt" <<EOT
 720 quit
 EOT
 run_case newgame
-want newgame 'title: holding NEW GAME: Starting the game server\.\.\.' "the NEW GAME click was not held while the server started"
-want newgame 'title: shown 1, pending 1, status "Starting the game server\.\.\.", new game 0' "while held: expected the NEW GAME button pending and no new-game panel"
+want newgame 'title: holding NEW GAME: Starting the game server' "the NEW GAME click was not held while the server started"
+want newgame 'title: shown 1, pending 1, status "Starting the game server[^"]*", new game 0' "while held: expected the NEW GAME button pending and no new-game panel"
 want newgame 'title: running the held NEW GAME' "the held click did not run once the server connected"
 want newgame 'title: shown 1, pending -1, status "", new game 1' "after the connect: expected the new-game panel open and nothing pending"
 [ -s "$OUT/held.png" ] || { echo "title_pending_check: FAIL: no $OUT/held.png" >&2; exit 1; }

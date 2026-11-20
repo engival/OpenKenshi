@@ -2,6 +2,7 @@
 
 #include "ksim/core/rng.hpp"
 #include "ksim/core/state.hpp"
+#include "ksim/world/spawn.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/coords.hpp"
@@ -143,9 +144,14 @@ public:
 		, factionType_(kworld::itemTypeByName("FACTION"))
 	{
 		// BIOME_GROUP only: the exe never reads a BIOMES record's lists
-		// (retired/placement_biomes_homeless_lists.txt).
+		// (retired/placement_biomes_homeless_lists.txt). A nest whose own `world state` fails is no source (spawn.cpp).
+		flecs::world scratch;
+		RngStream unused(1);
+		const SquadBuilder judge(scratch, data_, unused);
+		judge_ = &judge;
 		for (const kdata::Record* record : data_.byType(groupType_))
 			collect(*record);
+		judge_ = nullptr;
 	}
 
 	PlacementReport run(flecs::world& ecs)
@@ -200,7 +206,7 @@ private:
 		forEachRef(record, "nests", [&](const kdata::RefEntry& nestEntry)
 		{
 			const kdata::Record* nest = data_.find(nestEntry.targetID);
-			if (nest == nullptr || nest->type != townType_)
+			if (nest == nullptr || nest->type != townType_ || !judge_->worldStateHolds(*nest))
 				return;
 			const double expected = count * std::max(nestEntry.v0, 0) / nests;
 			for (const char* list : kNestLists)
@@ -343,6 +349,7 @@ private:
 	}
 
 	const kdata::GameData& data_;
+	const SquadBuilder* judge_ = nullptr; // only while the constructor collects
 	AreaMap areas_;
 	kworld::Heightmap terrain_;
 	RngStream rng_;

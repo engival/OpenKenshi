@@ -12,6 +12,8 @@
 #include <thread>
 #include <unordered_map>
 
+#include "app/userdirs.hpp"
+
 namespace lightbake
 {
 namespace
@@ -650,12 +652,10 @@ void Baker::runSun(const float groundAlb[3], const float sunDirIn[3], int bounce
 	grid_.sunSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 }
 
+// The per-user cache root (app/userdirs.hpp; kenshi-379.31.3: on Windows %LOCALAPPDATA%\OpenKenshi\cache, never the Linux HOME).
 std::string cacheDir()
 {
-	const char* xdg = getenv("XDG_CACHE_HOME");
-	const char* home = getenv("HOME");
-	if (xdg && *xdg) { return std::string(xdg) + "/kclient"; }
-	return std::string(home ? home : ".") + "/.cache/kclient";
+	return plat::userCacheDir() + "/kclient";
 }
 
 }

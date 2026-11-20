@@ -1,5 +1,7 @@
 #include "ksim/ai/ai.hpp"
 #include "ksim/ai/routines.hpp"
+#include "ksim/ai/goalsel.hpp"
+#include "ksim/ai/goap.hpp"
 #include "ksim/core/simdata.hpp"
 
 #include "ksim/core/clock.hpp"
@@ -85,7 +87,7 @@ constexpr Weights kWeights[kBehaviourCount] = {
 	{0.6, 1.5, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 6.0, 0.8, 0.8, 0.3, 250.0, 1500.0},
 	// Raid: ordinary life like the fallback; a faction's order outranks it.
 	{0.4, 1.2, 0.0, 0.25, 0.3, 40000.0, 8000.0, 2.0, 8.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-	// ManTheGate: a crew holds its post (kManGateScore); without a gate it is a post holder like StayHome.
+	// ManTheGate: a crew holds its post (the package's 180 row, candidates()); without a gate it is a post holder like StayHome.
 	{0.6, 1.5, 0.0, 0.0, 0.0, 1.0, 0.0, 4.0, 12.0, 0.0, 0.0, 0.0, 0.0, 0.0},
 	// TradeCircuit: the circuit picks its towns itself (circuitSelect); these rows only serve a squad that cannot act (blind: rest, look again).
 	{0.4, 1.2, 0.0, 0.0, 0.0, 1.0, 0.0, 2.0, 8.0, 0.0, 0.0, 0.0, 0.0, 0.0},
@@ -100,9 +102,6 @@ constexpr Weights kWeights[kBehaviourCount] = {
 	{0.6, 1.5, 0.0, 0.0, 0.0, 1.0, 0.0, 4.0, 12.0, 0.0, 0.0, 0.0, 0.0, 0.0},
 };
 
-// MAN_THE_GATE has no precondition but the gate itself (GATES_CARRY_LIVE.md a): no alert, enemy, time, relation or crime
-// check, hours 0-24. A crew always wants its post, above every ordinary goal; only a faction's order outranks it.
-constexpr double kManGateScore = 5.0;
 // A crew standing within this of its post holds it (xz units).
 constexpr double kPostReach = 2.0;
 // A staying trader squad within this of its table (xz) stays where it stands (TOWN_LIFE_SLICE 5.17). The table is cut from the navmesh
@@ -243,7 +242,9 @@ struct UtilityGroupLayer::Candidate
 	// Local goals: the point is found (a Detour snap) only when the candidate is tried.
 	bool lazy = false;
 	double radius = 0.0;
+	bool packaged = false; // chosen through goalsel from a package row: outranks the ambient candidates, below an order
 	bool returning = false; // Raid: the way back to the origin
+	bool far = false; // a goal in a zone that is not loaded: the route ends at the exit of the squad's zone, the next step asks again (k16.6.482)
 };
 
 UtilityGroupLayer::UtilityGroupLayer(const Navigator* navigator,
@@ -263,12 +264,6 @@ double UtilityGroupLayer::tokenSpeed(double x, double z) const
 		return distance(x, z, town.x, town.z) <= town.radius;
 	});
 	return std::min(inTown ? kTokenTownSpeed : kTokenTravelSpeed, kTokenSpeedCap);
-}
-
-Traveller UtilityGroupLayer::traveller(const GroupContext& context, double toX, double toZ) const
-{
-	return Traveller{context.access == nullptr ? 0
-		: context.access->travellerClass(context.squad.faction.id, context.x, context.z, toX, toZ)};
 }
 
 double UtilityGroupLayer::jitter(const GroupContext& context, std::uint64_t salt) const
@@ -296,7 +291,7 @@ std::optional<state::GroundPoint> UtilityGroupLayer::patrolPoint(const GroupCont
 		z += ring * std::sin(angle);
 	}
 	const std::optional<state::GroundPoint> ground =
-		navigator_->nearestReachableFor(traveller(context, x, z), x, z, radius * 0.4 + 32.0,
+		navigator_->nearestReachableFor(Traveller{}, x, z, radius * 0.4 + 32.0,
 			context.x, context.z);
 	if (!ground || distance(ground->x, ground->z, context.anchorX, context.anchorZ) > radius * kLocalLeash)
 		return std::nullopt;
@@ -314,7 +309,7 @@ std::optional<state::GroundPoint> UtilityGroupLayer::roamPoint(const GroupContex
 	const double goalX = context.anchorX + ring * std::cos(angle);
 	const double goalZ = context.anchorZ + ring * std::sin(angle);
 	const std::optional<state::GroundPoint> ground = navigator_->nearestReachableFor(
-		traveller(context, goalX, goalZ), goalX, goalZ, radius * 0.2 + 32.0, context.x, context.z);
+		Traveller{}, goalX, goalZ, radius * 0.2 + 32.0, context.x, context.z);
 	if (!ground || distance(ground->x, ground->z, context.anchorX, context.anchorZ) > radius * kLocalLeash)
 		return std::nullopt;
 	return ground;
@@ -343,16 +338,27 @@ std::vector<UtilityGroupLayer::Candidate> UtilityGroupLayer::candidates(
 	if (blind)
 		return list;
 
-	if (context.hasPost)
+	// MAN_THE_GATE 180 from the package row (GATES_CARRY_LIVE.md a: no alert, enemy, time, relation or crime check; the row's window is
+	// the only gate): the one goalsel offer of the squad's package. A squad whose package has no 180 row, or whose window is shut, has none.
+	if (context.hasPost && context.postRow != nullptr)
 	{
-		Candidate post;
-		post.kind = GoalKind::ManGate;
-		post.target = state::EntityRef{0};
-		post.score = kManGateScore;
-		post.x = context.postX;
-		post.z = context.postZ;
-		post.targetId = context.postKey;
-		list.push_back(post);
+		const routines::GoalRow& row = *context.postRow;
+		const goalsel::Offer offer = routines::makeOffer(row.task, row.tier, routines::effectiveWeight(row),
+			goap::rowOf(row.task)->utility, context.postKey, 0, row.start, row.end);
+		const goalsel::Current running{context.ai.goal == GoalKind::ManGate ? row.task : std::uint16_t{0}, context.postKey, false};
+		const goalsel::Choice choice = goalsel::select({offer}, running, context.hour);
+		if (choice.found)
+		{
+			Candidate post;
+			post.kind = GoalKind::ManGate;
+			post.target = state::EntityRef{0};
+			post.score = choice.score;
+			post.packaged = true;
+			post.x = context.postX;
+			post.z = context.postZ;
+			post.targetId = context.postKey;
+			list.push_back(post);
+		}
 	}
 
 	if (ai.order.status == state::OrderStatus::Issued)
@@ -481,9 +487,11 @@ bool UtilityGroupLayer::adopt(GroupContext& context, const Candidate& candidate,
 		ai.until = context.now
 			+ static_cast<std::uint64_t>(candidate.hours * kTicksPerHour);
 	} else {
-		const Traveller who = traveller(context, candidate.x, candidate.z);
+		const Traveller who;
 		Route route = candidate.lazy
 			? navigator_->localRouteFor(who, context.x, context.z, candidate.x, candidate.z)
+			: candidate.far
+			? navigator_->farRouteFor(who, context.x, context.z, candidate.x, candidate.z)
 			: navigator_->routeFor(who, context.x, context.z, candidate.x, candidate.z);
 		ai.bashGate = 0;
 		ai.bashUntil = 0;
@@ -617,10 +625,12 @@ void UtilityGroupLayer::select(GroupContext& context, GroupResult& result) const
 	}
 
 	std::vector<Candidate> list = candidates(context);
-	std::sort(list.begin(), list.end(), [](const Candidate& left, const Candidate& right)
+	// A faction's order (score >= kOrderScore) first, then the package's own goals, then the ambient candidates.
+	const auto rank = [](const Candidate& candidate) { return candidate.score >= kOrderScore ? 2 : candidate.packaged ? 1 : 0; };
+	std::sort(list.begin(), list.end(), [&rank](const Candidate& left, const Candidate& right)
 	{
-		return std::tuple(-left.score, static_cast<int>(left.kind), left.targetId)
-			< std::tuple(-right.score, static_cast<int>(right.kind), right.targetId);
+		return std::tuple(-rank(left), -left.score, static_cast<int>(left.kind), left.targetId)
+			< std::tuple(-rank(right), -right.score, static_cast<int>(right.kind), right.targetId);
 	});
 	for (Candidate& candidate : list)
 	{
@@ -700,6 +710,7 @@ void UtilityGroupLayer::advance(GroupContext& context, GroupResult& result) cons
 			// The delivery's own goal point: the depot, or the mesh point toward it when the depot is off the mesh (k16.6.21 step 2).
 			again.x = ai.goalX;
 			again.z = ai.goalZ;
+			again.far = context.holdsPlayer && !navigator_->covers(again.x, again.z);
 		} else {
 			again.x = town != towns_.end() ? town->x : context.homeX;
 			again.z = town != towns_.end() ? town->z : context.homeZ;
@@ -923,7 +934,7 @@ bool UtilityGroupLayer::deliverySelect(GroupContext& context, GroupResult& resul
 			result.deliveryFailed = holding ? AiReason::None : AiReason::OutsideWindow;
 			result.deliveryEdge = holding ? 0 : 2;
 			// An off-mesh depot: the squad goes on from the edge as a token (k16.7.15).
-			if (!navigator_->covers(site->x, site->z) && startTokenLeg(context, *site, result))
+			if (!context.holdsPlayer && !navigator_->covers(site->x, site->z) && startTokenLeg(context, *site, result))
 				return true;
 			ai.route.clear();
 			ai.length = 0.0;
@@ -943,6 +954,9 @@ bool UtilityGroupLayer::deliverySelect(GroupContext& context, GroupResult& resul
 	delivery.x = site->x;
 	delivery.z = site->z;
 	delivery.targetId = site->id;
+	// A squad with the player captive (built, k16.6.468) walks an off-mesh depot one zone at a time, as the exe's far move goal (k16.6.482);
+	// any other squad is a token off the mesh and takes the edge walk and the token leg (k16.7.15).
+	delivery.far = context.holdsPlayer && !navigator_->covers(site->x, site->z);
 	const auto failedBefore = result.failures;
 	if (!adopt(context, delivery, result))
 	{
@@ -958,7 +972,7 @@ bool UtilityGroupLayer::deliverySelect(GroupContext& context, GroupResult& resul
 			result.deliveryEdge = 1;
 			return true;
 		}
-		if (!navigator_->covers(site->x, site->z) && startTokenLeg(context, *site, result))
+		if (!context.holdsPlayer && !navigator_->covers(site->x, site->z) && startTokenLeg(context, *site, result))
 			return true;
 		if (holding)
 		{
@@ -984,7 +998,7 @@ bool UtilityGroupLayer::deliveryEdge(GroupContext& context, const TownSite& site
 		return false;
 	const double dx = (site.x - context.x) / toDepot;
 	const double dz = (site.z - context.z) / toDepot;
-	const Traveller who = traveller(context, site.x, site.z);
+	const Traveller who;
 	std::optional<GroundPoint> best;
 	double bestProgress = kEdgeMinProgress;
 	for (double along = kEdgeStep; along < toDepot; along += kEdgeStep)
@@ -1774,6 +1788,19 @@ void AiSystem::squadStep(flecs::world& ecs, RegionEngine& engine, std::uint64_t 
 			context.postX = crew->postX;
 			context.postZ = crew->postZ;
 			context.postKey = crew->gate;
+			context.hour = std::fmod(static_cast<double>(tick), kTicksPerGameDay) / kTicksPerGameDay * 24.0;
+			const routines::CompiledPackage* package = packages_ != nullptr ? packages_->find(resolved.package) : nullptr;
+			for (const routines::Role role : {routines::Role::Leader, routines::Role::Squad, routines::Role::Squad2})
+			{
+				if (package == nullptr || context.postRow != nullptr)
+					break;
+				for (const routines::GoalRow& row : package->list(role))
+					if (row.task == routines::task::ManTheGate)
+					{
+						context.postRow = &row;
+						break;
+					}
+			}
 			context.hasHome = true;
 			context.homeX = crew->postX;
 			context.homeZ = crew->postZ;
@@ -1795,6 +1822,7 @@ void AiSystem::squadStep(flecs::world& ecs, RegionEngine& engine, std::uint64_t 
 			context.carried = true;
 			context.holding = carry->second.holding;
 			context.slaveGap = carry->second.slaveGap;
+			context.holdsPlayer = carry->second.holdsPlayer;
 			context.x = carry->second.x;
 			context.z = carry->second.z;
 		}

@@ -70,6 +70,7 @@
 #include "dev/devhooks.hpp"
 #ifdef KCLIENT_DEV_TOOLS
 #include "dev/pickmask.hpp"
+#include "dev/routepreview.hpp"
 #endif
 #include "knobs/lightterms.hpp"
 #include "net/aitask.hpp"
@@ -82,7 +83,6 @@
 #include "kworld/towns.hpp"
 #include "render/navoverlay.hpp"
 #include "app/config.hpp"
-#include "platform/datadir.hpp"
 #include "platform/windowgeom.hpp"
 #include "platform/process.hpp"	// plat::unsetEnv
 #include "platform/windowgate.hpp"
@@ -170,6 +170,7 @@
 #include "world/worldmap.hpp"
 
 #include "host/app.hpp"
+#include "host/uihost.hpp"
 #include "host/pick.hpp"
 #include "host/orders.hpp"
 #include "host/hud.hpp"
@@ -180,9 +181,57 @@
 namespace host
 {
 
+#ifdef KCLIENT_DEV_TOOLS
+// debug.route_preview (dev/routepreview.cpp): the one selected character as a click would plan for it. Its race is on the wire (the appearance's sid), its
+// routing body comes from the client's RACE records exactly as ksim's CombatData::body derives it (radius, water cost scale; no water scale for an unknown race).
+static bool route_subject(dev::routepreview::Subject& s)
+{
+	const std::vector<uint64_t> sel = app.sim.selected();
+	if (sel.size() != 1) { return false; }
+	double yaw = 0;
+	const simlink::Route* rt = nullptr;
+	if (!app.sim.pose(sel[0], s.from, yaw, rt)) { return false; }
+	const auto ch = app.sim.decoder().chars.find(sel[0]);
+	if (ch == app.sim.decoder().chars.end()) { return false; }
+	s.id = sel[0];
+	float water = 1.0f;
+	s.water.reset();
+	if (app.chars.pathBody(app.chars.nameOf(app.sim.decoder().str(ch->second.look.race)), s.radius, water)) { s.water = water; }
+	return true;
+}
+void route_preview_frame()
+{
+	if (!app.opt.debug) { return; }
+	dev::routepreview::Subject s;
+	const bool one = dev::routepreview::on() && route_subject(s);
+	dev::routepreview::update(app.nav, one ? &s : nullptr, app.hoverHitOk ? app.hoverHit : nullptr, app.sim.tick());
+}
+void route_preview_order(const double goal[3], uint32_t seq)
+{
+	dev::routepreview::Subject s;
+	if (app.opt.debug && dev::routepreview::on() && route_subject(s)) { dev::routepreview::onOrder(app.nav, s, goal, seq, app.sim.tick()); }
+}
+void route_preview_arrived(uint32_t seq)
+{
+	if (!app.opt.debug || !dev::routepreview::on()) { return; }
+	for (const uint64_t id : app.sim.selected())
+	{
+		double now[3], yaw = 0;
+		const simlink::Route* rt = nullptr;
+		if (app.sim.pose(id, now, yaw, rt) && rt && rt->clientSeq == seq && !rt->points.empty()) { dev::routepreview::onServerRoute(app.nav, seq, rt->points, rt->flags, now, app.sim.tick()); return; }
+	}
+}
+#else
+void route_preview_frame() {}
+void route_preview_order(const double[3], uint32_t) {}
+void route_preview_arrived(uint32_t) {}
+#endif
+
 // Each door's pose for this frame, shared by the drawn leaf (WorldBuildings::setDoors) and the pick (pick_at): the wire's state sets the target
 // (open / broken: 1, closed / locked: 0) and the openness slides to it at `door move speed` per second (the Door_Shut cue's 1 / speed travel; the
-// original's own motion curve is not known: UNSURE, linear), a door seen for the first time stands at its target. The offset is doorpose.hpp's.
+// original's own motion curve is not known: UNSURE, linear). A door seen for the first time eases to its target from the authored pose when it was
+// already drawn at that pose (the town approach: the gate no longer teleports open), and stands at it when it is first drawn with its state known
+// (kenshi-k16.2.258.10.1). The offset is doorpose.hpp's.
 void update_doors(double dt)
 {
 	const auto shapes = app.collide.gathered();
@@ -209,6 +258,11 @@ void update_doors(double dt)
 				if (th.kind == simlink::Interactable::kDoor && d2 < near) { near = d2; pose.thing = id; }
 			}
 		}
+		// The leaf has now been drawn at least a frame (this pass draws every door of the gathered world each frame, the ones outside the view
+		// included: UNSURE, a leaf behind the camera counts as drawn too). A door drawn before its state was known eases into that state from its
+		// authored pose, like a later change (kenshi-k16.2.258.10.1); one first drawn with its state already known stands at it.
+		const bool wasDrawn = pose.drawn;
+		pose.drawn = true;
 		const simlink::Interactable* th = pose.thing ? app.sim.thing(pose.thing) : nullptr;
 #ifdef KCLIENT_DEV_TOOLS
 		// kenshi-k16.2.241.2 (dev only, --debug runs): the run line for a leaf's match — an unmatched leaf draws at its authored pose
@@ -222,8 +276,8 @@ void update_doors(double dt)
 		const auto slide = app.doorSlides.find(app.sim.sidOf(th->record));
 		const DoorSlide d = slide == app.doorSlides.end() ? DoorSlide{} : slide->second;
 		const double target = th->state == simlink::Interactable::kOpen || th->state == simlink::Interactable::kBroken ? 1.0 : 0.0;
-		if (!pose.seen) { pose.open = target; pose.seen = true; }
-		else if (pose.open < target) { pose.open = std::min(target, pose.open + dt * d.speed); }
+		if (!pose.seen) { pose.open = wasDrawn ? 0.0 : target; pose.seen = true; }	// 0: the authored (closed) pose it was drawn at
+		if (pose.open < target) { pose.open = std::min(target, pose.open + dt * d.speed); }
 		else if (pose.open > target) { pose.open = std::max(target, pose.open - dt * d.speed); }
 		pose.exact = doorOffset(s, d, pose.open, pose.off);
 #ifdef KCLIENT_DEV_TOOLS
@@ -360,6 +414,9 @@ static void logic_paths(FramePacket& pk)
 	// A live session with no camera target yet streams and draws nothing (k16.2.112.1): black or the session loading screen, never the world.
 	if (!app.worldTarget) { frame_await_target(pk, dt); return; }
 	if (!app.firstWorldFrame) { app.firstWorldFrame = true; printf("first_world_frame: x=%.0f z=%.0f reason=%s\n", app.pos[0], app.pos[2], app.targetReason); screenshot_world_frame(); }
+	// An offline flight (play.sh fly: no sim, no session) gets the same ready-set gate as a session: the load screen stands over the first world frames until
+	// the load ring is created (session.loading_screen: 1 live runs only, 2 scripted too; kenshi-k16.2.258.3)
+	if (!app.offlineGateDone && !app.sim.active() && !dev::viewing() && app.hm && app.buildings.hasData()) { app.offlineGateDone = true; begin_session_load(); }
 	camera_restore_frame();	// a load's camera sidecar, at its first snapshot (k16.2.134.1)
 	if (app.follow) { update_follow(dt); }
 	else if (app.rts) { update_rts(dt); }
@@ -391,6 +448,7 @@ static void logic_paths(FramePacket& pk)
 			if (order_route_end(end))
 			{
 				app.orderRouted = true;
+				route_preview_arrived(app.orderSeq);
 				uint64_t clickTick = 0, arrived = 0, waypoints = 0;
 				uint8_t flags = 0;
 				const std::vector<uint64_t> sel = app.sim.selected();
@@ -422,6 +480,7 @@ static void logic_paths(FramePacket& pk)
 #ifdef KCLIENT_DEV_TOOLS
 		pick_mask_update();
 #endif
+		route_preview_frame();
 		place_session_camera();
 		CPUSTAGE("sim.peek+hover");
 	}
@@ -560,8 +619,10 @@ static void logic_paths(FramePacket& pk)
 	CPUSTAGE("sky+weather+audio+shadow.update");
 	float mvp[16];
 	cam.mvp(mvp);
+	pk.buildings.draws.clear();
 	pk.buildings.inst.clear();	// every field every frame (§7.1 rule 2): buildings.update below refills it when it runs
 	pk.buildings.shadowSig = 0;
+	pk.buildings.volumes.clear();
 	if (app.bldSet && !app.wmap.full)
 	{
 		// The props list (kenshi-k16.2.205.11): dirty-tracked. The sim sends an interactable on first sight and when its version changes
@@ -571,7 +632,9 @@ static void logic_paths(FramePacket& pk)
 		const uint32_t thingsSerial = app.sim.thingsSerial();
 		const uint32_t buildSerial = app.sim.decoder().buildingsSerial;	// the player buildings' records (BUILDING 47)
 		const uint64_t cutSig = app.buildings.cutSig();
-		const bool dirty = !app.propsValid || thingsSerial != app.propsSerial || buildSerial != app.propsBuildSerial || cutSig != app.propsCut
+		double thingYSig = 0;	// the drawn y of the items and containers (SimView::thingY): a building mesh that loads moves it without a new thing version (k16.2.412.4)
+		for (const auto& [id, th] : app.sim.things()) { if (th.kind == simlink::Interactable::kItem || th.kind == simlink::Interactable::kContainer) { thingYSig += app.sim.thingY(id, th); } }
+		const bool dirty = !app.propsValid || thingYSig != app.propsThingY || thingsSerial != app.propsSerial || buildSerial != app.propsBuildSerial || cutSig != app.propsCut
 			|| app.propsLive || app.scriptBuild >= 0;
 		if (dirty && !ablate::on("noprops"))	// KCLIENT_ABL: noprops keeps the list empty (an upper-bound measurement)
 		{
@@ -579,7 +642,8 @@ static void logic_paths(FramePacket& pk)
 			props.clear();
 			for (const auto& [id, th] : app.sim.things())
 			{
-				const double at[3] = { th.pos[0], th.pos[1], th.pos[2] };
+				// an item or container is drawn at the ring's y (SimView::thingY: lifted out of the terrain it is buried in, k16.2.412.4); a producer keeps the wire's
+				const double at[3] = { th.pos[0], th.kind == simlink::Interactable::kItem || th.kind == simlink::Interactable::kContainer ? app.sim.thingY(id, th) : th.pos[1], th.pos[2] };
 				if (th.kind == simlink::Interactable::kContainer)
 				{
 					WorldBuildings::Prop p{ id, app.sim.sidOf(th.record), { at[0], at[1], at[2] }, false, false, 0, cut_hidden(at) };
@@ -627,6 +691,7 @@ static void logic_paths(FramePacket& pk)
 			app.propsSerial = thingsSerial;
 			app.propsBuildSerial = buildSerial;
 			app.propsCut = cutSig;
+			app.propsThingY = thingYSig;
 			app.propsLive = live;
 			app.buildings.setProps(props);
 		}
@@ -716,8 +781,10 @@ static void logic_paths(FramePacket& pk)
 		app.buildings.seenBuilding = seenCh != app.sim.decoder().chars.end() ? seenCh->second.cur.building : 0;
 		// The follow camera (kenshi-k16.2.289.1): the boom keeps solid walls off the line, so the cone is only what is left: thin props (a sign, its frame,
 		// a rail), faded to a dither whether or not they carry a collision shape. The cone is narrower there than the RTS camera's (MINE, units).
+		// The RTS camera gets the cone too (kenshi-k16.2.353.4 point 8: anything solid inside the boom's minimum fades, foliage and rocks as well as
+		// buildings), with or without the whole-building ghost (the ghost only knows buildings; the cone reaches a rock or a tree).
 		const bool followCone = app.follow && app.buildings.hasSeen;
-		if (app.buildings.hasSeen && (followCone || !kOccluderGhost.get()))
+		if (app.buildings.hasSeen)
 		{
 			const float kRadius = followCone ? 16 : 40;	// MINE: the cone's widest, units
 			for (int k = 0; k < 3; k++) { app.buildings.xray[k] = (float)(at[k] + (k == 1 ? 10.8 : 0) - app.pos[k]); }
@@ -733,10 +800,27 @@ static void logic_paths(FramePacket& pk)
 		app.buildings.wind[0] = (float)std::sin(windYaw);
 		app.buildings.wind[1] = (float)std::cos(windYaw);
 		app.buildings.wind[2] = app.windForce >= 0 || app.sky.weather.windValid ? 1.0f : 0.0f;
-		app.buildings.windSpeed = app.windForce < 0 && app.sky.weather.windValid ? app.sky.weather.windSpeed : -1.0f;	// a scene's wind=DEG has no speed
+		app.buildings.windSpeed = app.windSpeedForce >= 0 ? (float)app.windSpeedForce : app.windForce < 0 && app.sky.weather.windValid ? app.sky.weather.windSpeed : -1.0f;	// a scene's wind=DEG has no speed
 		// its mesh and texture creates and evicts are render queue jobs, its instances a packet upload (kenshi-k16.2.205.12.35)
 		app.buildings.update(app.pos, mvp, app.opt.fog, app.scripted() && !kStreamScripted.get(), sim_time(), app.shadow.active() ? Shadow::kRadius[Shadow::kCascades - 1] : 0.0, pk.buildings);
 		CPUSTAGE("buildings.update");
+		// render.interior_light / shafts / lamps / sun bounce (overlap review T19): the baked buildings' volumes, collected here (it starts the bakes and reads the building tables), carried in
+		// the packet; the draw side only uploads them (renderframe worldSetup). The conditions are the ones the draw used to evaluate on the packet's copies.
+		if (!editor)
+		{
+			const float strength = (float)(1.0 - kInteriorLight.get());
+			const bool shafts = kSunShafts.get() > 0.0 || kDustMotes.get() > 0.0 || kLampBeams.get() > 0.0 || app.buildings.lampOcclusion;
+			const bool sunBounce = kSunBounce.get() > 0.0 && strength > 0.0f;
+			const LightParams& sl = app.sky.light();
+			if (sunBounce && sl.v[0][1] > 0.0f)
+			{
+				float ground[3] = { 0.3f, 0.3f, 0.3f };
+				if (app.sky.hasGround) { for (int k = 0; k < 3; k++) { ground[k] = app.sky.groundAlbedo[k]; } }
+				if (strength > 0.0f || shafts) { app.buildings.lightVolumes(cam.pos, 500.0, lightvol::kMax, pk.buildings.volumes, true, sl.v[0], ground); }
+			}
+			else if (strength > 0.0f || shafts) { app.buildings.lightVolumes(cam.pos, 500.0, lightvol::kMax, pk.buildings.volumes); }
+		}
+		CPUSTAGE("buildings.lightVolumes");
 		if (app.foliageOn)
 		{
 			if (app.scripted()) { wait_ready([] { return app.foliage.ready() || app.foliage.failed(); }); }
@@ -837,7 +921,16 @@ static void logic_paths(FramePacket& pk)
 		const std::vector<std::string> beamScripts = app.beams.scripts();
 		std::vector<Particles::PlacedSystem> placed = app.particleWorld.systems();
 		for (Particles::PlacedSystem& s : app.weatherInst.systems(beamScripts)) { placed.push_back(std::move(s)); }
-		if (app.sim.active() && app.beamsOn) { app.beams.systems(app.sim.tick(), app.hm ? &*app.hm : nullptr, placed); }
+		if (app.sim.active() && app.beamsOn)
+		{
+			// The original's loaded-cell gate on the draw set (kenshi-k16.2.409.3, rwh.211); `debug.venge_beams_gate 0` is the dev A/B (the old look)
+#ifdef KCLIENT_DEV_TOOLS
+			const bool gate = kVengeBeamsGate.get();
+#else
+			constexpr bool gate = true;
+#endif
+			app.beams.systems(app.sim.tick(), app.hm ? &*app.hm : nullptr, cam, players, kVengeBeamsMax.get(), gate, placed);
+		}
 		// `debug weff SCRIPT DX DZ`: a dev A/B aid that pins one weather-style system at the pivot + offset on the terrain (a twister for a shot)
 		for (size_t i = 0; i < app.weff.size(); i++)
 		{
@@ -852,6 +945,25 @@ static void logic_paths(FramePacket& pk)
 			placed.push_back(std::move(p));
 		}
 		app.particles.setPlaced(placed);
+		if (app.sim.active() && app.beamsOn)
+		{
+			if (const char* lv = getenv("KBEAMSLOG")) { if (atoi(lv) >= 2) { app.beams.fadeLog(app.sim.tick(), (long)app.frames); } }
+			if (getenv("KBEAMSLOG"))		// a line per second: beams on the wire / in their burst / drawn / fading out
+			{
+				static double lastLog = -1e9;
+				const double t = app.sim.tick();
+				if (t - lastLog >= 20.0)
+				{
+					lastLog = t;
+					const BeamField::Stats& st = app.beams.stats();
+					size_t tp = 0, tnear = 0;
+					const size_t tail = app.particles.tailSystems(app.beams.keys(), &tp, cam.pos, 3000.0, &tnear);
+					// inview: the drawn beams whose column is in the camera frustum (the ask's "visible at once", rwh.175 0-2); focus/cells: the
+					// gate's focus cell and its loaded-cell count (rwh.211, kenshi-k16.2.409.3)
+					fprintf(stderr, "beamlog tick %.0f wire %zu burst %zu drawn %zu inview %zu fading %zu tail %zu tailparts %zu dup %zu stale %zu max %d burst3k %zu drawn3k %zu tail3k %zu drawnfar %.0f focus %d,%d cells %zu burstview %zu burstopenview %zu nearest %.0f newview %zu\n", t, st.wire, st.burst, st.drawn, st.inview, st.fading, tail, tp, st.dup, st.stale, kVengeBeamsMax.get(), st.burstNear, st.drawnNear, tnear, st.drawnFar, st.focusX, st.focusZ, st.cells, st.burstView, st.burstOpenView, st.drawnNearest, app.beams.newViewTotal());
+				}
+			}
+		}
 		app.particlesDrawn = app.particles.prepare(pf, pk.particles);
 	}
 	app.blood.age(app.scripted() ? 0.0 : dt, app.sky.clock.paused ? 0.0 : app.sky.clock.speed);
@@ -946,6 +1058,13 @@ static void record_overlay(FramePacket& pk);
 // The characters' frame data (kenshi-k16.2.205.12.26; review kenshi-k16.2.205.12.15 3.3): the palettes, the part records and the instance lists of
 // every pass, built from the live poses here in the logic half into the packet (renderframe.cpp's worldSetup uploads them; the draw reads no pose).
 // The cascades are shadow.update's (logic_paths): resolve() in the draw changes which tiles it restores, not renders(). Every field, every path.
+static void snapshot_shadow(FramePacket& pk)
+{
+	// the atlas is not trustworthy while the pass does not run (the draw's else branch forgets its cache): logic's half of that is here, so the draw never writes Shadow state
+	if (!(app.shadow.active() && !pk.worldMap && !pk.editor)) { app.shadow.invalidate(); }
+	app.shadow.snapshot(pk.shadow);
+}
+
 static void prepare_chars(FramePacket& pk)
 {
 	if (pk.path != FramePath::kWorld) { pk.chars.clear(); return; }
@@ -962,7 +1081,13 @@ void logic_frame(FramePacket& pk)
 {
 	dev::packetPoison(pk);	// dev builds, KCLIENT_PACKET_POISON: wipe the slot so a field this frame does not write shows (dev/packetdigest.hpp)
 	pk.serial = rq::beginPacket();	// first: every resource job queued below (the paths and the tail) belongs to this packet (docs/RENDER_THREAD.md §7.2)
-	rq::setStreamTimeBudget(kStreamMs.get());
+	{	// the ready-set gate (kenshi-k16.2.258.3): under the session load screen nothing of the world is on show, so the stream lane's play budgets are lifted
+		const bool gate = app.sessionLoad && kLoadGate.get();
+		rq::setStreamTimeBudget(gate ? kLoadStreamMs.get() : kStreamMs.get());
+		rq::setStreamBudget(gate ? (size_t)256 << 20 : (size_t)8 << 20);
+		app.buildings.streamAll = gate;
+		app.buildings.streamPriority = kStreamPriority.get();
+	}
 	dds_set_slice((size_t)kStreamSliceMb.get() << 20);
 	dev::SgLogicScope sgLogic;	// --sg-owner-logic: the logic half owns no sokol (an sg_* call here aborts, as on the logic thread to come); the tail too
 	readback::beginPacket(pk.serial);	// the readback requests made from here on (the dones below included) belong to this packet
@@ -1035,6 +1160,7 @@ void logic_frame(FramePacket& pk)
 	record_overlay(pk);	// sitting 11: the overlay's debug views, sim markers and map / HUD, after the overlay block's flags
 	// the portrait jobs' poses and frame data (kenshi-k16.2.205.12.67): in the logic half beside prepare_chars, after every change of the frame
 	if (pk.path == FramePath::kWorld && pk.scene.simActive) { Portraits::pose(app.chars, pk.portraitJobs); }
+	snapshot_shadow(pk);	// the shadow data every draw reads, once shadow.update and the frame's path are final (kenshi-k16.2.205.12.113)
 	prepare_chars(pk);	// last: the poses after every change of the frame (the tail's script ops included), as when it ran in the draw
 	CPUSTAGE("logic.tail+packet");	// the tail, the UI and overlay recording, the poses: their own stage, not folded into the draw's first (kenshi-k16.2.205.12.74)
 	CPUSTAGE_HALF_END();	// the logic half's marks go to the shared hand-off; the draw's thread merges them at its line (kenshi-k16.2.205.12.94)
@@ -1075,6 +1201,10 @@ static void record_debug_views(const FramePacket& pk, ovl::List& out, ovl::List&
 		std::copy(hp.hit, hp.hit + 3, bands.hoverAt);
 		draw_navmesh(*app.nav.mesh(), mvp, cam.pos, app.rts ? app.focus : app.pos, view::widthf(), view::heightf(), bands);
 	}
+	if (app.opt.debug)	// debug.collision, the flip partner of the navmesh overlay (dev/colloverlay.cpp: off by default, and off in an OFF build)
+	{
+		dev::collisionOverlay(app.collide, app.hm ? &*app.hm : nullptr, app.rts ? app.focus : app.pos, mvp, cam.pos, view::widthf(), view::heightf());
+	}
 	if (kLightProbes.get())	// the baked light probes of the nearest building (kenshi-jj3.1.1); off: nothing runs
 	{
 		static std::vector<WorldBuildings::ProbePoint> probes;
@@ -1113,10 +1243,9 @@ static void record_debug_views(const FramePacket& pk, ovl::List& out, ovl::List&
 static void record_map_hud()
 {
 	const TownSet* towns = app.townsReady ? &app.towns : nullptr;
-	// The corner minimap and the top-left command-line text are development views: --debug only (client/CLAUDE.md). The full map stays: it is
-	// the fallback map of a run without the UI layer (toggle_map) and the debug key's view.
+	// The top-left command-line text is a development view: --debug only (client/CLAUDE.md). The full map stays: it is the fallback map of a run
+	// without the UI layer (toggle_map) and the debug key's view. The corner minimap is the UI's window now (ui::Minimap, uihost.cpp, ui.minimap).
 	if (app.wmap.full) { app.wmap.drawFull(app.pos[0], app.pos[2], app.yaw, towns, &app.squads, ui::keys::label(app.uiOn ? "debug.full_map" : "toggle_map")); }
-	else if (app.opt.debug) { app.wmap.drawMinimap(app.pos[0], app.pos[2], app.yaw, towns, &app.squads); }
 	if (app.opt.debug) { draw_hud(); }
 }
 
@@ -1156,6 +1285,7 @@ void start_logic_thread()
 		{
 			const double ms = pk.logicMs;
 			if (ms < 250) { app.logicMs = app.logicMs == 0 ? ms : app.logicMs * 0.9 + ms * 0.1; }
+			logicthread::noteLogicMs(ms);	// kenshi-k16.2.437.1: the pace log's "logic ms vs bound" (atomic; the render thread reads it)
 		}
 		const logicthread::IdleStats idle = logicthread::takeIdle();
 		if (idle.waits && logicthread::mode() == logicthread::Mode::kOverlap)	// rule 6's skip: the packets taken back, the frames run meanwhile

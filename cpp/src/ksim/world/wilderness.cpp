@@ -123,7 +123,9 @@ struct WildernessSpawner::Impl
 			forEachRef(*group, "nests", [&](const kdata::RefEntry& entry)
 			{
 				const kdata::Record* nest = data.find(entry.targetID);
-				if (nest == nullptr || nest->type != townType || entry.v0 <= 0)
+				// A nest TOWN's own `world state` gates it as a squad's does ("Fog Deathyard Invasion" holds only once the west hive queen is
+				// not okay): a nest whose state fails is no source of this group.
+				if (nest == nullptr || nest->type != townType || entry.v0 <= 0 || !judge.worldStateHolds(*nest))
 					return;
 				NestEntry nestEntry;
 				nestEntry.weight = entry.v0;

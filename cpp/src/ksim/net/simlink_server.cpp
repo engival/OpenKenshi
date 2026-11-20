@@ -1,30 +1,19 @@
 // The TCP half of the SIMLINK server: one single-threaded loop that accepts a client, reads
-// order frames, ticks the simulation in real time and writes snapshots. POSIX sockets only.
+// order frames, ticks the simulation in real time and writes snapshots. Sockets through kutil/platform/socket.hpp (POSIX or Winsock).
 
 #include "ksim/net/simlink.hpp"
 #include "kutil/crashlog.hpp"
 
-#include <arpa/inet.h>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
-#include <fcntl.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <poll.h>
 #include <stdexcept>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include <cstdio>
 #include <fstream>
 #include <memory>
 #include <optional>
 #include <set>
-
-#ifndef MSG_NOSIGNAL	// macOS: no per-call flag (SO_NOSIGPIPE is set on the socket instead)
-#define MSG_NOSIGNAL 0
-#endif
 
 namespace ksim::simlink {
 
@@ -37,14 +26,14 @@ constexpr double kMenuGraceSeconds = 30.0; // DIALOGUE.md 13.3: the session grac
 constexpr int kFlushGraceMs = 2000; // after ERROR: time the client gets to read it before the close
 constexpr double kBehindLimit = 1.0; // wall seconds of lag after which pacing resyncs
 
-[[noreturn]] void fail(const std::string& what)
+[[noreturn]] void fail(const std::string& what, const std::string& reason)
 {
-	throw std::runtime_error("simlink: " + what + ": " + std::strerror(errno));
+	throw std::runtime_error("simlink: " + what + ": " + reason);
 }
 
 struct Client
 {
-	int fd = -1;
+	kutil::net::Socket fd = kutil::net::kNoSocket;
 	std::vector<std::uint8_t> in;
 	std::vector<std::uint8_t> out;
 	std::size_t outSent = 0;
@@ -68,29 +57,16 @@ SimLinkServer::SimLinkServer(Simulation& sim, ServerContext& context, ServerOpti
 
 SimLinkServer::~SimLinkServer()
 {
-	if (listenFd_ >= 0)
-		::close(listenFd_);
+	kutil::net::tcpClose(listenFd_);
 }
 
 int SimLinkServer::listen()
 {
-	listenFd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-	if (listenFd_ < 0)
-		fail("socket");
-	const int one = 1;
-	::setsockopt(listenFd_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-	sockaddr_in address{};
-	address.sin_family = AF_INET;
-	address.sin_port = htons(static_cast<std::uint16_t>(options_.port));
-	if (::inet_pton(AF_INET, options_.host.c_str(), &address.sin_addr) != 1)
-		throw std::runtime_error("simlink: not an IPv4 address: " + options_.host);
-	if (::bind(listenFd_, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0)
-		fail("bind " + options_.host + ":" + std::to_string(options_.port));
-	if (::listen(listenFd_, 1) != 0)
-		fail("listen");
-	socklen_t length = sizeof(address);
-	::getsockname(listenFd_, reinterpret_cast<sockaddr*>(&address), &length);
-	const int port = ntohs(address.sin_port);
+	std::string err;
+	int port = 0;
+	listenFd_ = kutil::net::tcpListen(options_.host, options_.port, 1, port, err);
+	if (listenFd_ == kutil::net::kNoSocket)
+		throw std::runtime_error("simlink: " + err);
 	if (options_.onListening)
 		options_.onListening(port);
 	return port;
@@ -98,7 +74,7 @@ int SimLinkServer::listen()
 
 void SimLinkServer::run(const std::atomic<bool>& stop)
 {
-	if (listenFd_ < 0)
+	if (listenFd_ == kutil::net::kNoSocket)
 		throw std::logic_error("SimLinkServer::run before listen");
 	std::ofstream record;
 	if (!options_.recordPath.empty())
@@ -111,8 +87,7 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 	Client client;
 	const auto drop = [&]()
 	{
-		if (client.fd >= 0)
-			::close(client.fd);
+		kutil::net::tcpClose(client.fd);
 		// A gone client leaves nothing running away: its driven characters stop (SIMLINK.md
 		// section 12). One client is served at a time, so every driven character is its.
 		if (client.session && sim_.combat() != nullptr)
@@ -140,14 +115,15 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 	{
 		while (client.outSent < client.out.size())
 		{
-			const ssize_t n = ::send(client.fd, client.out.data() + client.outSent, client.out.size() - client.outSent,
-				MSG_NOSIGNAL | MSG_DONTWAIT);
-			if (n > 0)
+			std::size_t n = 0;
+			std::string sendError;
+			const kutil::net::Io io = kutil::net::tcpSend(client.fd, client.out.data() + client.outSent, client.out.size() - client.outSent, n, sendError);
+			if (io == kutil::net::Io::Ok)
 			{
-				client.outSent += static_cast<std::size_t>(n);
+				client.outSent += n;
 				continue;
 			}
-			if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+			if (io == kutil::net::Io::WouldBlock)
 				break;
 			return false; // reset or broken pipe
 		}
@@ -163,7 +139,7 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 	// Whatever is already in `out` is whole frames, so the ERROR lands on a frame boundary.
 	const auto end = [&](const std::string& text, bool sendError)
 	{
-		if (client.fd < 0 || client.closeAfterFlush)
+		if (client.fd == kutil::net::kNoSocket || client.closeAfterFlush)
 			return;
 		if (sendError && client.session)
 		{
@@ -199,7 +175,7 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 	// the admin's `paused`, so a joining session never unpauses what an admin paused, and the speed is never touched.
 	const auto updateIdle = [&]()
 	{
-		const bool ready = client.fd >= 0 && client.session && client.session->ready() && !client.closeAfterFlush;
+		const bool ready = client.fd != kutil::net::kNoSocket && client.session && client.session->ready() && !client.closeAfterFlush;
 		ctx_.idle = !options_.runWithoutClients && !ready;
 	};
 	updateIdle();
@@ -209,7 +185,7 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 	std::set<std::pair<std::uint64_t, std::uint32_t>> graceEnded;
 	const auto checkGrace = [&]()
 	{
-		const bool ready = client.fd >= 0 && client.session && client.session->ready() && !client.closeAfterFlush;
+		const bool ready = client.fd != kutil::net::kNoSocket && client.session && client.session->ready() && !client.closeAfterFlush;
 		if (ready)
 		{
 			noClientSince.reset();
@@ -252,25 +228,19 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 			timeoutMs = wait <= 0.0 ? 0 : static_cast<int>(std::min(50.0, wait * 1000.0 + 0.999));
 		}
 
-		pollfd fds[2];
-		fds[0] = {listenFd_, static_cast<short>(client.fd < 0 ? POLLIN : 0), 0};
-		fds[1] = {client.fd, static_cast<short>(POLLIN | (client.outSent < client.out.size() ? POLLOUT : 0)), 0};
-		const int ready = ::poll(fds, client.fd >= 0 ? 2 : 1, timeoutMs);
-		if (ready < 0 && errno != EINTR)
-			fail("poll");
+		kutil::net::PollEntry fds[2];
+		fds[0] = {listenFd_, client.fd == kutil::net::kNoSocket, false, false, false};
+		fds[1] = {client.fd, true, client.outSent < client.out.size(), false, false};
+		std::string pollError;
+		if (kutil::net::pollSockets(fds, client.fd != kutil::net::kNoSocket ? 2 : 1, timeoutMs, pollError) < 0)
+			fail("poll", pollError);
 
-		if (client.fd < 0 && (fds[0].revents & POLLIN))
+		if (client.fd == kutil::net::kNoSocket && fds[0].readable)
 		{
-			sockaddr_in peer{};
-			socklen_t peerLen = sizeof(peer);
-			const int fd = ::accept(listenFd_, reinterpret_cast<sockaddr*>(&peer), &peerLen);
-			if (fd >= 0)
+			bool loopback = false;
+			const kutil::net::Socket fd = kutil::net::tcpAccept(listenFd_, loopback);
+			if (fd != kutil::net::kNoSocket)
 			{
-				const int one = 1;
-				::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-#ifdef SO_NOSIGPIPE	// macOS has no MSG_NOSIGNAL
-				::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
-#endif
 				client.fd = fd;
 				client.lastFrame = client.rateWindow = Clock::now();
 				try
@@ -278,8 +248,6 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 					client.session = std::make_unique<Session>(sim_, ctx_);
 					client.session->setOrderRateLimit(options_.orderRate);
 					// The admin session (SIMLINK.md SAVES) and the debug view's peer check: for now the loopback client.
-					const bool loopback = peerLen >= sizeof(sa_family_t) && peer.sin_family == AF_INET
-						&& (ntohl(peer.sin_addr.s_addr) >> 24) == 127;
 					client.session->setAdmin(loopback);
 					client.session->setDebugPeer(loopback);
 					std::vector<std::uint8_t> bytes;
@@ -292,14 +260,16 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 			}
 		}
 
-		if (client.fd >= 0 && (fds[1].revents & (POLLIN | POLLHUP | POLLERR)))
+		if (client.fd != kutil::net::kNoSocket && fds[1].readable)
 		{
 			std::uint8_t buffer[65536];
-			const ssize_t n = ::recv(client.fd, buffer, sizeof(buffer), MSG_DONTWAIT);
-			if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR))
+			std::size_t n = 0;
+			std::string recvError;
+			const kutil::net::Io io = kutil::net::tcpRecv(client.fd, buffer, sizeof(buffer), n, recvError);
+			if (io == kutil::net::Io::Closed || io == kutil::net::Io::Error)
 			{
 				drop();
-			} else if (n > 0 && !client.closeAfterFlush) {
+			} else if (io == kutil::net::Io::Ok && !client.closeAfterFlush) {
 				if (client.in.empty())
 					client.frameStarted = Clock::now();
 				client.in.insert(client.in.end(), buffer, buffer + n);
@@ -353,7 +323,7 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 		}
 
 		// Timeouts. A silent socket must not hold the slot (SIMLINK.md section 11).
-		if (client.fd >= 0 && !client.closeAfterFlush)
+		if (client.fd != kutil::net::kNoSocket && !client.closeAfterFlush)
 		{
 			const auto t = Clock::now();
 			const auto since = [&](Clock::time_point from) { return std::chrono::duration_cast<std::chrono::milliseconds>(t - from).count(); };
@@ -378,7 +348,7 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 			const auto t = Clock::now();
 			if (std::chrono::duration<double>(t - due).count() > kBehindLimit)
 				due = t;
-			const auto sending = [&] { return client.fd >= 0 && client.initialSent && client.session->ready() && !client.closeAfterFlush; };
+			const auto sending = [&] { return client.fd != kutil::net::kNoSocket && client.initialSent && client.session->ready() && !client.closeAfterFlush; };
 			int pending = 0;
 			const auto sendSnapshot = [&]
 			{
@@ -412,7 +382,7 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 				sendSnapshot();
 		} else {
 			due = Clock::now();
-			if (client.fd >= 0 && client.initialSent && client.session->ready() && !client.closeAfterFlush)
+			if (client.fd != kutil::net::kNoSocket && client.initialSent && client.session->ready() && !client.closeAfterFlush)
 			{
 				try
 				{
@@ -426,7 +396,7 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 			}
 		}
 
-		if (client.fd >= 0)
+		if (client.fd != kutil::net::kNoSocket)
 		{
 			if (!flush())
 				drop();

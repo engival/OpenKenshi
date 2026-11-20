@@ -8,6 +8,7 @@
 #include "ksim/law/crime.hpp"
 #include "ksim/world/factions.hpp"
 #include "ksim/save/save.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cstdio>
 

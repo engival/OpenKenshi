@@ -1,6 +1,7 @@
 #pragma once
 
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cstdio>
 #include <string>

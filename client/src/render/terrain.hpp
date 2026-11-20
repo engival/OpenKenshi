@@ -42,7 +42,7 @@ public:
 	void renderView(const float mvp[16], const LightParams& light, int view);
 
 	// Sun shadow map to sample (set once; must outlive render()); renderShadow() draws the terrain into one cascade of it (inside Shadow::beginPass/endPass).
-	const Shadow* shadow = nullptr;
+	const Shadow::FrameData* sfd = nullptr;	// this frame's shadow data (the packet's; the render side points it there at the start of the draw)
 	const BloodDecals* blood = nullptr;	// ground blood (set once, before render())
 	void renderShadow(const double cam[3], const ShadowCascade& c, int maxLoads);
 	uint64_t shadowGen() const { return chunkGen_; }	// changes when the resident chunk set does: part of the shadow cache's key (kenshi-k16.2.205.12.2)

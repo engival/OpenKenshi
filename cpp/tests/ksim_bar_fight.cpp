@@ -32,15 +32,10 @@
 #include <vector>
 #include "nav_source.hpp"
 #include "sim_access.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_BINARY_DIR
-#error KSIM_BINARY_DIR must be defined
-#endif
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
 #endif
 
 namespace {
@@ -766,9 +761,9 @@ void barFight(const std::string& bake, std::uint64_t banditSquad, bool engage)
 			// Hits held so far landed before this KO event (a KO blow, or hits on a woken body that is now put down again): not
 			// hits on a body that was down. Every KO transition has its event now, medical ones included.
 			pending[e.who].clear();
-			KoRecord& r = ko[e.who];
-			if (r.koTick != 0)
-				return; // a second KO of a body that woke: the first one counts
+			// A second KO event is a body that woke (a shallow KO) and was put down again: the sink restarts from this KO, at the vital value it has
+			// now (kenshi-k16.8.52: 41221 went down at -4, woke after 0.9 h at -25, took four more hits and was down again at -58, dead 1.5 h
+			// later; measured from the first KO the model said 3.7 h, from the last it is within it). The sample's hit check still needs a body down at both samples.
 			recordKo(e.who);
 		} else if (e.kind == CombatEvent::Kind::Death) {
 			KoRecord& r = ko[e.who];
@@ -811,6 +806,7 @@ void barFight(const std::string& bake, std::uint64_t banditSquad, bool engage)
 		sampleKos();
 	}
 	std::size_t deaths = 0;
+	std::size_t bleedOuts = 0;
 	std::size_t kos = 0;
 	double deepest = 0.0;
 	for (const auto& [id, r] : ko)
@@ -831,12 +827,21 @@ void barFight(const std::string& bake, std::uint64_t banditSquad, bool engage)
 		++deaths;
 		const double actual = static_cast<double>(r.deathTick - r.koTick) / static_cast<double>(kTicksPerGameHour);
 		say() << ", dead after " << actual << " game h (sink model predicts " << r.predictedHours << " h)\n";
+		if (r.predictedHours <= 0.0)
+		{
+			// No vital part was below zero at the KO: the body went down of blood loss (a severed limb bleeding, kenshi-k16.7.110: bandit 41225 at vital +16.7,
+			// blood -86, bleed 0.28/s) and the untreated sink has nothing to say about it; it bleeds out on its own clock. The hour floor and the sink
+			// bound are claims about the sink; a bleed-out is counted, printed and held to the rest (down first, no hit after the KO).
+			++bleedOuts;
+			continue;
+		}
 		test::require(actual > 1.0, "5: bandit " + std::to_string(id) + " died within an hour of its KO");
 		test::require(actual >= 0.9 * r.predictedHours - 1.0e-9, "5: bandit " + std::to_string(id) + " died sooner than the untreated sink allows ("
 			+ std::to_string(actual) + " h, model " + std::to_string(r.predictedHours) + " h)");
 	}
 	for (const auto& [id, r] : ko)
 		test::require(!r.diedWithoutKo, "5: bandit " + std::to_string(id) + " died of a hit without a KO first");
+	say() << "5 bleed-outs (blood-loss KOs, not the vital sink): " << bleedOuts << "\n";
 	say() << "5 deaths: " << deaths << " of " << kos << " KO'd bandits died, deepest vital part at a KO " << deepest << "\n";
 	sim.setCombatObserver(nullptr);
 	say() << "   fight ends at " << static_cast<double>(sim.clockTick()) / static_cast<double>(kTicksPerGameHour) << " h: bandits alive " << count(false) << " dead " << count(true) << ", player hp "

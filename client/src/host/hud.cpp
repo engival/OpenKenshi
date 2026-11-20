@@ -66,6 +66,7 @@
 #include "dev/devhooks.hpp"
 #ifdef KCLIENT_DEV_TOOLS
 #include "dev/pickmask.hpp"
+#include "dev/routepreview.hpp"
 #endif
 #include "knobs/lightterms.hpp"
 #include "net/aitask.hpp"
@@ -78,7 +79,6 @@
 #include "kworld/towns.hpp"
 #include "render/navoverlay.hpp"
 #include "app/config.hpp"
-#include "platform/datadir.hpp"
 #include "platform/windowgeom.hpp"
 #include "platform/process.hpp"	// plat::unsetEnv
 #include "platform/windowgate.hpp"
@@ -342,6 +342,13 @@ bool order_route_end(double out[3])
 	return false;
 }
 
+// kenshi-k16.2.414.2: a sim (navmesh) point drawn on the ground solver's drawn ground (SimView::groundAt), the same lookup as the body's feet; y moves, x and z stay. Nothing found: the point stands.
+static void on_drawn_ground(double p[3])
+{
+	double y;
+	if (app.sim.groundAt(p[0], p[2], p[1], y) >= 1) { p[1] = y; }
+}
+
 // Sim markers in the overlay (no depth test): a ring under each selected character, its route as a line along the ground, a fading ring at the last
 // move_to click. Lines hug the terrain, except between points standing above it (a floor, a deck: MINE 2 u), which keep the sim's y (raised to the
 // terrain where it would dip under); lifted a little. A segment with an end behind the camera is dropped.
@@ -509,7 +516,8 @@ void draw_sim_markers(const FramePacket& pk)
 		double at[3] = { m.pos[0], m.pos[1], m.pos[2] };
 		for (const auto& p : m.route->points)
 		{
-			const double next[3] = { p[0], p[1], p[2] };
+			double next[3] = { p[0], p[1], p[2] };
+			on_drawn_ground(next);	// the route's waypoints are navmesh points: drawn where the body would stand there
 			segment(at, next);
 			std::copy(next, next + 3, at);
 		}
@@ -521,6 +529,21 @@ void draw_sim_markers(const FramePacket& pk)
 			approach = true;
 		}
 	}
+#ifdef KCLIENT_DEV_TOOLS
+	if (app.opt.debug && dev::routepreview::on() && !dev::routepreview::points().empty())	// debug.route_preview: the sim planner's route to the cursor, magenta (the route marker is white)
+	{
+		ovl::c4f(1.0f, 0.2f, 0.9f, 0.95f);
+		const auto& rp = dev::routepreview::points();
+		for (size_t i = 1; i < rp.size(); i++)
+		{
+			double a[3] = { rp[i - 1][0], rp[i - 1][1], rp[i - 1][2] }, b[3] = { rp[i][0], rp[i][1], rp[i][2] };
+			on_drawn_ground(a);
+			on_drawn_ground(b);	// the planner's points are navmesh points (k16.2.412.4)
+			segment(a, b);
+		}
+		if (dev::routepreview::approach()) { double e[3] = { rp.back()[0], rp.back()[1], rp.back()[2] }; on_drawn_ground(e); ring(e, 2.5); }
+	}
+#endif
 	// ground items: their record's mesh (WorldBuildings::setProps, BuildingSet::items); a small ring for one without (MINE), and the name label (the original's DropItemLabels) while ALT is held
 	// (UNSURE: whether the original shows them only then) or the item is hovered, the hovered one highlighted
 	// containers: their BUILDING mesh (WorldBuildings::setProps); a square of kContainerReach for one without, red once a theft event named it
@@ -530,7 +553,7 @@ void draw_sim_markers(const FramePacket& pk)
 		if (th.kind == simlink::Interactable::kItem && !app.buildings.hasMesh(id))
 		{
 			ovl::c4f(1.0f, hover ? 1.0f : 0.85f, hover ? 0.6f : 0.3f, 0.9f);
-			const double c[3] = { th.pos[0], th.pos[1], th.pos[2] };
+			const double c[3] = { th.pos[0], app.sim.thingY(id, th), th.pos[2] };
 			ring(c, 1.5);
 		}
 		else if (th.kind == simlink::Interactable::kContainer && !app.buildings.hasMesh(id))
@@ -538,7 +561,8 @@ void draw_sim_markers(const FramePacket& pk)
 			const double r = SimView::kContainerReach * 0.7;
 			if (app.sim.foreign(id)) { ovl::c4f(1.0f, 0.3f, 0.2f, 0.9f); }
 			else { ovl::c4f(0.6f, hover ? 1.0f : 0.8f, 1.0f, 0.9f); }
-			const double corner[4][3] = { { th.pos[0] - r, th.pos[1], th.pos[2] - r }, { th.pos[0] + r, th.pos[1], th.pos[2] - r }, { th.pos[0] + r, th.pos[1], th.pos[2] + r }, { th.pos[0] - r, th.pos[1], th.pos[2] + r } };
+			const double y = app.sim.thingY(id, th);
+			const double corner[4][3] = { { th.pos[0] - r, y, th.pos[2] - r }, { th.pos[0] + r, y, th.pos[2] - r }, { th.pos[0] + r, y, th.pos[2] + r }, { th.pos[0] - r, y, th.pos[2] + r } };
 			for (int k = 0; k < 4; k++) { segment(corner[k], corner[(k + 1) % 4]); }
 		}
 	}
@@ -552,7 +576,7 @@ void draw_sim_markers(const FramePacket& pk)
 	{
 		double pinAt[3];	// the click point until the sim's route arrives, then the route's own end (k16.2.259: the marker shows the target the sim walks to)
 		std::copy(app.orderAt, app.orderAt + 3, pinAt);
-		order_route_end(pinAt);
+		if (order_route_end(pinAt)) { on_drawn_ground(pinAt); }
 		auto project = [&](const double w[3], float& sx, float& sy)
 		{
 			const float q[3] = { (float)(w[0] - eye[0]), (float)(w[1] - eye[1]), (float)(w[2] - eye[2]) };
@@ -732,6 +756,7 @@ std::vector<HudLine> hud_lines()
 		if (fl.following && fl.leadFloor >= 0) { snprintf(line + m, sizeof line - m, "  lead on floor %d", fl.leadFloor); }
 		out.push_back({ "building", line, 1.0f, 0.85f, 0.6f });
 	}
+	if (std::string collision; dev::collisionLegend(collision)) { out.push_back({ "collision", collision, 0.75f, 1.0f, 0.75f }); }	// debug.collision's counts (dev/colloverlay.cpp)
 	if (app.sim.active()) { out.push_back({ "sim", app.sim.status(), 0.6f, 1.0f, 0.9f }); }
 #if KCLIENT_PROFILE
 	sim_profile_lines(out);

@@ -1,7 +1,5 @@
 #include "knav/door.hpp"
 
-#include "kworld/error.hpp"
-
 #include <DetourNavMesh.h>
 
 namespace knav {
@@ -21,16 +19,6 @@ void DoorBook::setState(DoorKey door, DoorState state)
 	store(door, setting);
 }
 
-void DoorBook::setAccess(DoorKey door, int doorClass, bool allowed)
-{
-	if (doorClass < 0 || doorClass >= kDoorClasses)
-		throw kworld::Error("door class out of range");
-	DoorSetting setting = get(door);
-	const auto bit = static_cast<std::uint8_t>(1u << doorClass);
-	setting.denied = allowed ? setting.denied & ~bit : setting.denied | bit;
-	store(door, setting);
-}
-
 DoorSetting DoorBook::get(DoorKey door) const noexcept
 {
 	const auto found = settings_.find(door);
@@ -40,8 +28,8 @@ DoorSetting DoorBook::get(DoorKey door) const noexcept
 DoorPaint doorPaint(const DoorSetting& setting) noexcept
 {
 	const Area area = setting.state == DoorState::Open ? Area::DoorOpen : Area::DoorClosed;
-	const unsigned denied = setting.state == DoorState::Locked ? 0xffu : setting.denied;
-	return { static_cast<std::uint16_t>(areaFlag(area) | denied << kDoorDeniedShift), static_cast<std::uint8_t>(area) };
+	const unsigned locked = setting.state == DoorState::Locked ? kDoorLockedFlag : 0u;
+	return { static_cast<std::uint16_t>(areaFlag(area) | locked), static_cast<std::uint8_t>(area) };
 }
 
 void paintDoor(dtNavMesh& mesh, std::uint32_t polyRef, const DoorSetting& setting)

@@ -441,7 +441,26 @@ run_other_building()
 	if [ -z "$a" ] || [ -z "$b" ] || [ "$a" = "$b" ] || [ "$b" = "building 0" ]; then echo "FAIL other_building: the fixture is not the case (want the wire in one building, then another): first '$a', last '$b'"; fail=1; return; fi
 	finish other_building "$d" '^3 0 1 0$' '*shown 0/*(following)*level 0'
 }
-for c in stairs_walk stairs_down stairs_click deck_click deck_edge stop_midflight_up stop_midflight_down reverse_midflight manual_hold manual_up_then_climb two_subjects follow_lost start_indoors other_building; do
+# stairs_stop_click (kenshi-k16.2.236.8.4.3; the user's 236.8.4.2 FAIL): the lead rests on the deck at the stair top, then is ordered to the user's seq 29 pick
+# (sim goal -50548.6 1134.76 -1276.2, a tread in and about 1.5 u under the descent line) and stands there. A flip of the view down and back is the flicker: a
+# fired hotspot stays cold until the feet are well clear. Dumps every 20 frames through the walk; the "floor: latch" lines carry the feet's height against the lines.
+run_stairs_stop_click()
+{
+	local d=$out/stairs_stop_click id
+	id=$(idof order_sounds Wanderer); mkdir -p "$d"
+	{
+		open; climb
+		echo "1000 move -50550 1140 -1266"
+		dumps 1060 1440 60 "$id"
+		echo "1500 move -50548.6 1134.76 -1276.2"
+		dumps 1500 1700 20 "$id"
+		dumps 1700 2400 100 "$id"
+		echo "2460 quit"
+	} > "$d/script.txt"
+	run_live "$d"
+	finish stairs_stop_click "$d" '^3 0 1$' '*shown 1/1*(following)*level 1'	# base: 3 0 1 0 1 (the flicker; findings/kenshi-k16.2.236.8.4.3/before)
+}
+for c in stairs_walk stairs_down stairs_click stairs_stop_click deck_click deck_edge stop_midflight_up stop_midflight_down reverse_midflight manual_hold manual_up_then_climb two_subjects follow_lost start_indoors other_building; do
 	if want_case "$c"; then run_$c; fi
 done
 

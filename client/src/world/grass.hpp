@@ -82,7 +82,7 @@ public:
 	Stats stats() const;	// the draw counters come from the FrameStats slot (the render side writes them)
 	std::string report() const { return report_; }
 
-	const Shadow* shadow = nullptr;
+	const Shadow::FrameData* sfd = nullptr;	// this frame's shadow data (the packet's; the render side points it there at the start of the draw)
 	// Draw distance = rangeScale x 10 x {50, 100, 800}[class] world units (the exe's table, 1406d3e30; the game ships rangeScale 1 = its `grass range` setting).
 	// The class is the `visibility range` of the FOLIAGE_LAYER that lists the GRASS record (every shipped grass layer says 1 = 1000 units at scale 1).
 	// The dithered fade covers each class's last 20 %. Tiles stay resident out to the largest class range, capped at kMaxReach.

@@ -130,6 +130,25 @@ struct WorldRuntime
 	// The original's roads (kworld::RoadNetwork), loaded from the game data on the first long walk, or set by a test. Never saved.
 	std::shared_ptr<const kworld::RoadNetwork> roads_;
 	bool roadsTried_ = false;
+	// A move order that walks in legs (far goal, or a road): the true goal, the road markers still to visit, and where the planned route ends
+	// (LOCOMOTION.md D9). Runtime only: a loaded game's walker finishes the route it holds and stops.
+	struct FarOrder
+	{
+		std::uint32_t seq = 0; // the order's clientSeq: the walker's routeSeq while the order stands
+		double goalX = 0.0;
+		double goalZ = 0.0;
+		std::optional<double> goalY;
+		std::vector<kworld::RoadNetwork::Marker> markers;
+		std::size_t next = 0; // the marker being walked to; markers.size() is the goal
+		bool done = false; // the last leg is planned: nothing more to add
+		bool blocked = false; // the goal could not be routed: a 20 s blocked target, no more asks
+		std::uint64_t blockedUntil = 0;
+		std::uint32_t legs = 0; // legs planned so far (a clamp or a marker each)
+		std::uint32_t clamps = 0; // of them, clamped at a zone exit
+		bool restored = false; // loaded from a save: the walker's routeSource / clearWhy are transient, so the first step adopts it by routeSeq alone; runtime only
+	};
+	std::unordered_map<std::uint64_t, FarOrder> farOrders_;
+	bool locationsChecked_ = false; // stepBuildings has re-derived every fighter's floor once since this Simulation was built or loaded; runtime only
 	PathRetries pathRetries_; // the failed-route ladder per walker (path_retry.hpp); runtime only
 	std::uint64_t retriesDoorPaints_ = 0; // MeshNavigator::doorPaints() the ladders were last valid for
 	// The aggressors' bond set (CombatArena::setBonded) was built for these faction ids at this tick; rebuilt when the ids change or 200 ticks
@@ -377,6 +396,8 @@ public:
 	// next ask is offset sideways, then the road-network hook, then not made at all (path_retry.hpp). `routeStuck`: every rung is used up, the
 	// failure an owner acts on (drops the goal, picks another). The first ask is plain routeFrom.
 	Route routeRetry(std::uint64_t id, const state::Fighter& f, double toX, double toZ, std::optional<double> toY, bool planned);
+	// The leg-by-leg order of a walker, or null (tests: far_orders).
+	const FarOrder* farOrder(std::uint64_t id) const { const auto it = farOrders_.find(id); return it == farOrders_.end() ? nullptr : &it->second; }
 	bool routeStuck(std::uint64_t id) const { return pathRetries_.stuck(id); }
 	// Every ladder starts over, as after a load (the ladder is runtime only, never saved): a caller that wants the running game to continue exactly as its
 	// own save would (ksim_world_follow) calls this at the save point.
@@ -440,6 +461,7 @@ public:
 	// Places every fighter with no building by its position (buildingAt): the fighters that spawned before the doors existed.
 	void placeInBuildings();
 	const CombatArena* combat() const noexcept { return combat_.get(); }
+	bool townOursForTest(double x, double z, std::uint64_t faction) const { return townOursAt(x, z, faction); } // the occupancy map's reader (ksim_slice_load_parity)
 	// New interactables (interact.hpp): instance entities with a state::Id from the characters' counter.
 	flecs::entity spawnDoor(state::Door door);
 	// A town gate ceases to exist (state::GatesGone): its crew rebinds on the next second (gatebind.hpp). Idempotent.
@@ -801,7 +823,10 @@ public:
 	{
 		std::string clip;
 		std::uint64_t start = 0;
+		std::uint8_t skill = 0xFF; // the skill id (SIMLINK.md row 8) the producer's `stat used` trains
 	};
+	// Whether the fighter is in combat mode (CHAR_DYNAMIC flag bit 0, and CHAR_STATS row 6 kind 5): the one test for both.
+	bool combatMode(const state::Fighter& fighter) const;
 	std::optional<OperateAction> operateAction(std::uint64_t id) const;
 	// The clip and start tick of a capturer at work now (CHAR_DYNAMIC action, rwh.114): "medic" through the strip 181 and the cuff 166 (one kneel; the clip
 	// loops), "shoulder lift left" through a lift (plays once). Else nothing. `loop` is the actionFlags bit 0.
@@ -869,7 +894,8 @@ public:
 		std::uint8_t lockLevel = 0;
 		std::string goal; // "" = Aimless
 		float encumbrance = 0.0f; // percent
-		std::uint8_t extraKind = 0; // 0 none, 1 Stealth, 2 Athletics
+		std::uint8_t extraKind = 0; // 0 none, 1 Stealth, 2 Athletics, 3 job skill, 4 ranged (never), 5 melee weapon, 6 swimming (never: no swim state)
+		std::uint8_t extraSkill = 0xFF; // the row-8 skill id of the kind, 0xFF = none
 		float extra = 0.0f;
 		std::uint8_t weaponClass = 0; // 0 martial arts, 1 attack + defence, 2 crossbows
 		std::vector<Skill> skills;
@@ -1295,6 +1321,7 @@ public:
 		Working, // the task continues next tick
 		Done, // the task finished (flagTaskDone): the lock is open, or there was nothing to do
 		Refused, // flagImpossible: the precondition failed (no tools, not strong enough, nobody to release)
+		TooHard, // a pick at the lock with the skill below the floor: ends like Refused, event 13 result 8 (k16.6.377)
 	};
 	// One tick of a lock task by `id` on `victim` (0 = the actor itself, its own cage or shackles): 76 PICK_LOCK, 285 CUT_LOCK and 286
 	// BRUTE_FORCE_LOCK on the cage the target is in; 201 PICK_LOCK_ON_SHACKLES, 185 CUT_SHACKLES and 186 BRUTE_FORCE_SHACKLES on the target's
@@ -1456,9 +1483,11 @@ public:
 	std::size_t lockOrderCount() const noexcept { return lockOrders_.size(); }
 
 	// LOCK_DOOR 77 / LOCK_DOOR_FROM_INSIDE 162 / _OUTSIDE 198 (goap.cpp door rows): walk to the door (its inside / outside stand point for
-	// 162 / 198), then lock it (DoorStep phase 6). False when the door is not a shut door of the actor's faction, or there is no route. Not
-	// wired to the scorer: 155 / 197 still lock through DoorOverrides.
+	// 162 / 198), then lock it (DoorStep phase 6). False when the door is not a shut door of the actor's faction, or there is no route. The
+	// town scorer and the world executor lock a home through orderHomeDoorLock (155 / 197).
 	bool orderLockDoor(std::uint64_t actor, std::uint64_t door, DoorSide side);
+	// 77 LOCK_DOOR's shut step on a door: `lock` locks a shut door, else it closes an open one (the plan's own order for a door left open).
+	bool orderShutDoor(std::uint64_t actor, std::uint64_t door, DoorSide side, bool lock);
 	// Where the walk-to-the-door tasks 82 / 83 / 163 / 199 stand (door_plan.hpp doorStandPoint): `door` is the plan hand (0 for 83 = the door of the
 	// building the actor is in). false when no such door exists.
 	bool doorWalkPoint(std::uint16_t task, std::uint64_t actor, std::uint64_t door, double& x, double& z);
@@ -1482,6 +1511,16 @@ private:
 	// After the interactions: starts the next queued order (state::OrderQueue) of every character that has finished its last
 	// (interact.cpp). A character that is down loses its queue.
 	void stepOrderQueues();
+	// After the combat step: a walker on a leg-by-leg move order (farOrders_) gets the next leg appended to its route when the end is near, or
+	// planned afresh when the route ran out (interact.cpp's neighbour, far_orders.cpp).
+	void stepFarOrders();
+	// Starts a move order for `f` towards the true goal: far goals and road moves walk in legs, anything else is one route. False: no first leg
+	// (no navmesh, the start off it, no exit with ground): the order is not started. `fromRoute`: the route already planned for a near goal.
+	bool startMoveOrder(std::uint64_t id, state::Fighter& f, double goalX, double goalZ, std::optional<double> goalY, std::uint32_t seq, bool far);
+	// Plans the next leg of `order` from `from`: skips road nodes that cannot be routed (Skip road node), advances the marker when the leg is
+	// not clamped. False: the goal's leg is not routable (order.blocked is set by the caller).
+	bool planFarLeg(const state::Fighter& f, FarOrder& order, const knav::Position& from, Route& leg) const;
+	void ensureRoads();
 	// After the combat step: advances the door steps (state::DoorStep) and stops walkers at shut doors on their route
 	// (interact.hpp, DOORS.md section 6).
 	void stepDoorSteps();
@@ -1608,9 +1647,7 @@ private:
 	// The squad's applied package (G1): the board after one tick, its CompiledPackage; null with no board or none applied. The one
 	// lookup every reader of a squad's package takes (the town scorer, the join goals, the fight-goal window), world squad or resident.
 	const routines::CompiledPackage* appliedPackage(flecs::entity squad);
-	// After stepIntruders (gatecrew.cpp): the gate crews' leaders (state::GateDuty) manning their gates.
-	void stepGateCrews();
-	// After stepGateCrews (residents.cpp), once a second: the residents of a town squad at Full detail in routine mode become Fighters
+	// After stepTorture (residents.cpp), once a second: the residents of a town squad at Full detail in routine mode become Fighters
 	// (promoteResidents), and those of a squad that left Full or routine mode go back to the token (demoteResidents); a dead resident
 	// loses its Routine and its reservation (TOWN_LIFE_SLICE 5.3, T3b1).
 	void stepResidents();
@@ -1623,9 +1660,6 @@ private:
 	bool runWeaponPrefix(std::uint64_t id, std::uint16_t goal);
 	// Every tick: a fighter with a target and a bare hand that carries a weapon draws it (the plan's 6 before an attack).
 	void stepRearm();
-	// Members that took a target at least once (stepRearm): only these stand down when the fight is over, so an untouched world squad keeps
-	// its spawn state. Not saved: a loaded run stands a member down only after its next fight (k16.6.288, UNSURE).
-	std::set<std::uint64_t> fought_;
 	// One scorer pass for one promoted member (its squad is `squad`); `placement` puts it at the winner's site instead of walking
 	// (promotion, residents.cpp). Writes the Routine, the reservation and the member's route.
 	void scoreMember(flecs::entity member, flecs::entity squad, bool placement);
@@ -1738,6 +1772,10 @@ private:
 	// is written while the set of regions is the same. MULTIPLAYER.md 4c item 4: until now only the SetPlayerAreas command made an area. Only for a game started by NEW_GAME (a player
 	// faction with a start-off); scenario factions keep their commanded areas.
 	void stepPlayerAreas();
+public:
+	// A scenario file with player characters: marks the player faction so stepPlayerAreas keeps the area (and the nav tiles) on them as they walk.
+	void markPlayerFactionLive();
+private:
 	// corpses.cpp, before dropGoneFighters: decay of dead characters (corpses.hpp, ARCHITECTURE.md "Corpses"; state::CorpseDecay, save v54).
 	void stepCorpses();
 	// Streaming navmesh (navcoverage.cpp; a MeshNavigator::openWorld mesh only, else nothing): the mesh holds the zones of the full-detail areas
@@ -1950,13 +1988,19 @@ private:
 	bool stealRollCaught(std::uint64_t who, std::uint64_t container, const std::string& item, const Storage& storage);
 	// THE one place a caught act is recorded (kenshi-k16.6.329 hooks the "Got caught stealing" message, SIMLINK event 51, here): crime 3 with
 	// the 30 s timer against the victim faction, and event 8 EV_THIEF_CAUGHT_STEALING_FROM_ME from `victim` (0 = nobody of the owner is
-	// near: no event). TEMP_ENEMY 4 on the victim is not modelled (no tag store).
-	void recordCaughtStealing(std::uint64_t thief, std::uint64_t victim, const std::string& ownerSid);
+	// near: no event). Also: event 0x2f for a victim asleep in a bed, the victim's crouch zeroed, TEMP_ENEMY 4 (the victim's squad lists the thief).
+	void recordCaughtStealing(std::uint64_t thief, std::uint64_t victim, std::uint64_t container, const std::string& ownerSid);
+	// Thievery XP of a roll (40 pass / 160 caught, chance < 0.98, not caged).
+	void stealXp(std::uint64_t thief, double chance, bool caught);
 public:
 	// The steal chance of `who` taking `item` out of `container` (a container or a character), 0..2.5: the number a "Stealing chance: N%"
 	// tooltip shows (int(chance * 100)) and the roll uses. 1.0 for a take that needs no roll (own or ownerless container, a disabled body).
 	// Observation only.
 	double stealChance(std::uint64_t who, std::uint64_t container, const std::string& item) const;
+	// The percent SIMLINK ITEM_GRID's steal tail carries: int(stealChance * 100) clamped to 0..100, or kStealNoRoll (255) when the take
+	// is not rolled (a non-player taker, an own or ownerless container, no such container).
+	static constexpr std::uint8_t kStealNoRoll = 255;
+	std::uint8_t stealPercent(std::uint64_t who, std::uint64_t container, const std::string& item) const;
 private:
 	// Starts the EVENT 51 bookkeeping for the crime just reported (cause 1 take, 2 lockpick); the first witness sends it (stepCrime).
 	void noteCaughtAct(std::uint64_t who, std::uint8_t cause, std::uint64_t container);
@@ -1983,6 +2027,10 @@ public:
 	// closed door and a plan. Both the town scorer and the world selector call it with their own context.
 	// The lock (state 2) or the open (0) on every door of the list that is not broken; the 155 / 197 / 86 steps, the scorer's and the world's.
 	void applyHomeDoors(const std::vector<flecs::entity>& doors, bool lock);
+	// 155 / 197's planned steps [163 / 199 walk, 162 / 198 lock] as real orders: the nearest home door that is not locked gets one
+	// order (the lock of a shut door, the close of an open one, through the interact step); true while a lock order is running or was
+	// just issued, false when no door is left to lock. The scorer and the world executor both step the goal with it.
+	bool orderHomeDoorLock(std::uint64_t id, const HomeDoors& doors, DoorSide side);
 	bool resolveDoorRow(std::uint64_t id, std::uint16_t task, const HomeDoors& doors, bool homeLocked, bool stranger) const;
 	// A free site (or my own) of one kind in one building, from the keyed roll (rows 20 / 255 and the bed / guard finders; the town
 	// scorer's findSite and the world selector's Resolved switch both call it). `nearestTo` takes the free site nearest that point;
@@ -2013,6 +2061,7 @@ public:
 	void pointObedientRow(std::uint64_t slave, std::uint64_t captor);
 	// The captor a loaded slave had: its 187 row's target, else its follow target.
 	std::uint64_t savedCaptor(std::uint64_t slave) const;
+	std::optional<state::GroundPoint> storedCharacterPoint(std::uint64_t id) const; // a character out of the arena: its (token) position
 	// The slave state machine (slave_state.cpp, rwh.99 section 6): the one writer of Fighter::slaveState (the exe's 1405a4940). 0 -> 1 with the captor
 	// (the hand at char+0x328; 0 keeps the one it has): orders wiped, the 187 row added; leaving 1 removes only that row; 2 sets the 250 s heat.
 	void setSlaveState(std::uint64_t id, std::uint8_t state, std::uint64_t captor = 0);

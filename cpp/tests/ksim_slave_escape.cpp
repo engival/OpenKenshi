@@ -20,6 +20,7 @@
 #include "kworld/loadorder.hpp"
 #include "caravan_unhurt.hpp"
 #include "test_util.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -32,12 +33,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
-#endif
-#ifndef KSIM_SCENARIOS_DIR
-#error KSIM_SCENARIOS_DIR must be defined
 #endif
 
 using namespace ksim;
@@ -101,6 +96,24 @@ struct Run
 	}
 
 	state::Fighter& fighter(std::uint64_t id) { return *const_cast<state::Fighter*>(sim.combat()->find(id)); }
+	void wake(const std::uint64_t id)
+	{
+		state::Fighter& slave = fighter(id);
+		for (state::FighterPart& part : slave.parts)
+		{
+			part.health = part.maxHealth;
+			part.stun = 0.0;
+			part.collapsed = false;
+			part.pool = 0.0;
+		}
+		slave.blood = sim.combat()->rules().maxBlood(slave);
+		slave.wounds.clear();
+		slave.bleeding = 0.0;
+		slave.koTimer = 0.0;
+		slave.koLatch = false;
+		slave.unconscious = false;
+		slave.down = false;
+	}
 	void run(int ticks)
 	{
 		for (int i = 0; i < ticks; ++i)
@@ -121,16 +134,18 @@ void leash()
 	r.order({77, r.player, 0, 0, view.rows[0].jobId, 0, 0});
 	test::require(!r.hasRow187(), "the 187 row is dismissed");
 	// 3000 u from the captor is inside the leash: still a slave after 3 s.
-	state::Fighter& slave = r.fighter(r.player);
-	const state::Fighter& hand = *r.sim.combat()->find(captor);
-	slave.x = hand.x + 3000.0;
-	slave.z = hand.z;
-	slave.clearRoute();
+	// The arena may reorder when the area follows the slave (the captor leaves full detail): look the fighters up by id, never hold a reference.
+	const auto slave = [&]() -> state::Fighter& { return r.fighter(r.player); };
+	const double handX = r.sim.combat()->find(captor)->x;
+	const double handZ = r.sim.combat()->find(captor)->z;
+	slave().x = handX + 3000.0;
+	slave().z = handZ;
+	slave().clearRoute();
 	r.run(60);
-	test::require(slave.slaveState == 1, "3000 u from the captor is not an escape");
-	slave.x = hand.x + 3600.0;
+	test::require(slave().slaveState == 1, "3000 u from the captor is not an escape");
+	slave().x = handX + 3800.0; // the slave walks back toward its hand (~135 u per update, the area now follows it), so well past 3535 u
 	r.run(30);
-	test::require(slave.slaveState == 2, "beyond 3535 u the slave escapes (state 2)");
+	test::require(slave().slaveState == 2, "beyond 3535 u (3800 placed) the slave escapes (state 2)");
 	test::require(std::fabs(r.sim.slaveHeatSeconds(r.player) - 250.0) < 2.0, "the escape heat is 250 s: " + std::to_string(r.sim.slaveHeatSeconds(r.player)));
 	test::require(!r.hasRow187(), "the 187 row is not re-added by the escape");
 	// rwh.106 (kenshi-k16.6.126): the timers run on the world clock from the stamp of the last change into 2 or 3: 2 -> 3 strictly past 12.0 game
@@ -143,20 +158,20 @@ void leash()
 		for (int i = 0; i < 40; ++i)
 		{
 			r.sim.tick();
-			if (slave.slaveState != from)
+			if (slave().slaveState != from)
 				return gameHoursIn(r.sim.clockTick()) - stamp;
 		}
 		return -1.0;
 	};
-	const double escaped = slave.slaveStamp;
+	const double escaped = slave().slaveStamp;
 	test::require(std::fabs(escaped - gameHoursIn(r.sim.clockTick())) < 0.05, "the escape stamped the world clock: " + std::to_string(escaped));
 	atHoursAfter(escaped, 11.9);
 	r.run(3);
-	test::require(slave.slaveState == 2, "11.9 game hours after the escape: still escaping");
+	test::require(slave().slaveState == 2, "11.9 game hours after the escape: still escaping");
 	atHoursAfter(escaped, 11.999);
 	const double toEx = flipAfter(escaped, 2);
-	test::require(slave.slaveState == 3 && toEx > 12.0 && toEx < 12.0 + 2.0 / perHour, "2 -> 3 at 12.0 game hours, within a tick: " + std::to_string(toEx));
-	const double exStamp = slave.slaveStamp;
+	test::require(slave().slaveState == 3 && toEx > 12.0 && toEx < 12.0 + 2.0 / perHour, "2 -> 3 at 12.0 game hours, within a tick: " + std::to_string(toEx));
+	const double exStamp = slave().slaveStamp;
 	test::require(std::fabs(exStamp - gameHoursIn(r.sim.clockTick())) < 2.0 / perHour, "2 -> 3 re-stamped the clock: " + std::to_string(exStamp));
 	// The stamp is saved: a reload keeps the time left (the clock is the save's, the stamp the same).
 	atHoursAfter(exStamp, 50.0);
@@ -207,23 +222,7 @@ void captorDies(const bool heir)
 	test::require(captor != 0, "a captor");
 	// The hand-over runs for a slave that is up (an incapacitated one is not tested, slave_state.cpp). The caravan walks to the Hub bar (k16.6.254), so
 	// the medics are out of reach and the slave is still down and carried at the cuff: wake it, as the aid used to.
-	{
-		state::Fighter& slave = r.fighter(r.player);
-		for (state::FighterPart& part : slave.parts)
-		{
-			part.health = part.maxHealth;
-			part.stun = 0.0;
-			part.collapsed = false;
-			part.pool = 0.0;
-		}
-		slave.blood = r.sim.combat()->rules().maxBlood(slave);
-		slave.wounds.clear();
-		slave.bleeding = 0.0;
-		slave.koTimer = 0.0;
-		slave.koLatch = false;
-		slave.unconscious = false;
-		slave.down = false;
-	}
+	r.wake(r.player);
 	for (std::uint64_t id = r.boss; id < r.boss + 8; ++id)
 		if (r.sim.combat()->find(id) != nullptr && (!heir || id == captor))
 			r.fighter(id).dead = true;
@@ -237,6 +236,28 @@ void captorDies(const bool heir)
 	test::require(r.fighter(r.player).slaveState == 1, "44 s on, no captor yet: still a slave");
 	r.run(40 * 20 + 80);
 	test::require(r.fighter(r.player).slaveState == 2, "no captor and no heir for 45 s: the slave escapes");
+}
+
+// An out-of-detail captor (its squad demoted to a token: no arena fighter, the entity stays) is still the captor, at its token: the slave near it
+// stays a slave with no heir hand-over, and one beyond 3535 u of the token escapes at the next interval (the original tests the hand's distance).
+void captorToken(const bool far)
+{
+	Run r(1);
+	const std::uint64_t captor = r.sim.slaveCaptor(r.player);
+	test::require(captor != 0, "a captor");
+	r.wake(r.player);
+	r.sim.removeFighter(captor);
+	test::require(r.sim.combat()->find(captor) == nullptr, "the captor has no arena fighter");
+	if (far)
+		r.fighter(r.player).x += 100000.0;
+	r.run(90);
+	if (!far)
+	{
+		test::require(r.fighter(r.player).slaveState == 1, "the captor out of detail is still the captor: no escape");
+		test::require(r.sim.slaveCaptor(r.player) == captor, "no heir took the slave over from a captor that is only a token");
+		return;
+	}
+	test::require(r.fighter(r.player).slaveState == 2, "beyond 3535 u of the captor's token the slave escapes");
 }
 
 } // namespace
@@ -254,6 +275,8 @@ int main()
 		escapeKeepsOtherJobs();
 		captorDies(true);
 		captorDies(false);
+		captorToken(false);
+		captorToken(true);
 		std::cout << "ksim_slave_escape ok\n";
 	} catch (const std::exception& e) {
 		std::cerr << "ksim_slave_escape: " << e.what() << "\n";

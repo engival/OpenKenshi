@@ -71,6 +71,9 @@ struct ServerConfig
 	std::string record;
 	std::string orderLog;
 	std::string saveDir;
+	std::string importSave; // --import-save SAVEDIR: the world is saveimport::importSave of that original save folder (a failure ends the server)
+	std::string importReport; // --import-report PATH: the import's id map as JSON, format 1 (docs/formats/IMPORT_REPORT.md)
+	bool paused = false; // --paused: start with the admin pause set; the first client speed or pause order releases it
 	std::string crashDir; // --crash-dir: a crash report's directory; empty = ~/.local/share/ksim/crashes
 	std::string dumpSnapshot;
 	std::string dumpBin;

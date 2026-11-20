@@ -13,6 +13,7 @@
 
 #include "test_util.hpp"
 #include "sim_access.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -20,9 +21,6 @@
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_BINARY_DIR
-#error KSIM_BINARY_DIR must be defined
 #endif
 
 namespace {
@@ -492,7 +490,7 @@ int main(int argc, char** argv)
 				const double dx = s.fighter().x - x0, dz = s.fighter().z - z0;
 				speed = std::fabs(s.fighter().forwardSpeed);
 				along = dx * std::sin(heading) + dz * std::cos(heading);
-				side = dx * std::cos(heading) - dz * std::sin(heading);
+				side = dz * std::sin(heading) - dx * std::cos(heading); // + = the body's right (-x at heading 0, k16.8.38)
 			};
 			bool done = false;
 			for (int k = 0; k < 16 && !done; ++k)

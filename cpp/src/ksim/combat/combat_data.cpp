@@ -265,6 +265,13 @@ std::shared_ptr<const CombatData> CombatData::build(const kdata::GameData& gameD
 		race.carriable = record->boolOr("carriable", true);
 		race.isRobot = record->boolOr("is robot", false);
 		race.vampiric = record->boolOr("vampiric", false); // RACE +0x7d (dt39 Q8): the blood-drain eater (spiders, skimmer, land bat)
+		for (const kdata::FieldInt& field : record->ints)
+		{
+			if (field.key.starts_with("stats good"))
+				race.statsGood.push_back(field.value);
+			else if (field.key.starts_with("stats bad"))
+				race.statsBad.push_back(field.value);
+		}
 		race.extraAttackSlots = record->intOr("extra attack slots", 0);
 		// `weather immunity0..N`: the VALUE is the affect type, a 0 is skipped (kinspect RaceData::load), so a race that lists 2
 		// is immune to acid rain.
@@ -740,6 +747,7 @@ state::Fighter CombatData::makeFighter(const kdata::GameData& gameData,
 		s.crossbows = numberOr(*stats, "bow", 1.0);
 		s.turrets = numberOr(*stats, "turrets", 1.0);
 		s.thievery = numberOr(*stats, "thievery", 1.0);
+		s.perception = numberOr(*stats, "perception", 1.0);
 	} else {
 		const double spread = character->intOr("stats randomise", 3);
 		auto jitter = [&](double base) { return std::max(1.0, base + (rng.uniform01() * 2.0 - 1.0) * spread); };
@@ -902,9 +910,26 @@ state::Fighter CombatData::makeFighter(const kdata::GameData& gameData,
 		quality.uniform = uniform;
 		f.armour.push_back(buildArmour(armour, quality));
 	}
+	// The `backpack` list (v0 >= 1; weight v1, 0 read as 100: vf88 14062d12b) is picked and worn before the `inventory` list; its grid takes
+	// what the 8 x 10 main cannot (rwh.194).
+	if (!f.animal)
+	{
+		std::vector<Choice> bags;
+		if (const kdata::RefCategory* refs = character->findRefs("backpack"))
+		{
+			for (const kdata::RefEntry& entry : refs->entries)
+			{
+				const kdata::Record* bag = entry.opaqueEntry || entry.v0 < 1 ? nullptr : gameData.find(entry.targetID);
+				if (bag != nullptr && bag->type == typeIndex("CONTAINER"))
+					bags.push_back({bag, entry.v1 == 0 ? 100.0 : static_cast<double>(entry.v1)});
+			}
+		}
+		if (!bags.empty())
+			f.spawnBackpack = roulette(bags, rng).record->stringID;
+	}
 	// The CHARACTER's `inventory` list: the kits and tools it spawns carrying (Slaver Caravan Guard: a Standard first aid kit x1, a Splint
 	// Kit x0). v0 is the count; the entries' v1 is 0 there, so no chance is applied (UNSURE: the clothing lists read v1 as a percent).
-	// The pack the guard's goal 58 needs (k16.6.287); `backpack` is not carried (no pack-size model on the spawn path).
+	// The pack the guard's goal 58 needs (k16.6.287).
 	if (const kdata::RefCategory* packed = f.animal ? nullptr : character->findRefs("inventory"))
 		for (const kdata::RefEntry& entry : packed->entries)
 		{
@@ -912,6 +937,28 @@ state::Fighter CombatData::makeFighter(const kdata::GameData& gameData,
 			if (item != nullptr && item->type == typeIndex("ITEM"))
 				f.spawnPack.emplace_back(item->stringID, entry.v0);
 		}
+	// `starting health` (LOCATIONAL_DAMAGE refs, v0 -100..100 = that part's health in percent of its max; below -100 = amputated: Rock
+	// Bottom's Naked dude, Left Arm -150). A severed limb takes the state combat_rules' sever leaves (max 5, sunk to -3 x max), no blood loss.
+	if (const kdata::RefCategory* starting = f.animal ? nullptr : character->findRefs("starting health"))
+		for (const kdata::RefEntry& entry : starting->entries)
+		{
+			const kdata::Record* location = entry.opaqueEntry ? nullptr : gameData.find(entry.targetID);
+			for (state::FighterPart& p : f.parts)
+			{
+				if (location == nullptr || p.name != location->name)
+					continue;
+				if (entry.v0 <= -100 && p.limb())
+				{
+					p.maxHealth = state::FighterPart::kSeveredMax;
+					p.health = -3.0 * state::FighterPart::kSeveredMax;
+				} else if (entry.v0 > -100) {
+					p.health = std::min(p.maxHealth, p.maxHealth * entry.v0 * 0.01);
+				}
+			}
+		}
+	// The CHARACTER's `slave` flag (IS_SLAVE; The Slaves' "start slave"): spawns in slave state 1 (STARTS_CAGES_STATIC a6).
+	if (!f.animal && character->intOr("slave", 0) != 0)
+		f.slaveState = 1;
 	f.blood = f.minBlood + (f.maxBloodRace - f.minBlood) * s.strength * 0.01;
 	rngState = rng.state();
 	return f;

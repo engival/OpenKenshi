@@ -1,5 +1,8 @@
 #include "ui/menus.hpp"
 
+#include <cmath>
+
+#include "ui/progressbars.hpp"
 #include "ui/prompt.hpp"
 #include "ui/savepanel.hpp"
 #include "ui/ui.hpp"
@@ -44,6 +47,47 @@ namespace ui
 			const float u0 = uv[0] + du * (1 - fu) / 2, v0 = uv[1] + dv * (1 - fv) / 2;
 			gfx::textured(art.tex, screen_, u0, v0, u0 + du * fu, v0 + dv * fv, {});
 		}
+	};
+
+	// The status panel's step bar (kenshi-k16.2.431.1): flat, a thin track and fill; original, the skinned Kenshi_ProgressBarFill.
+	class MainMenu::StepBar : public Widget
+	{
+	public:
+		float progress = 0;
+		Size preferred() const override { return { rect.w, style().natural(Look::kSlotBar).h > 12 ? 20.0f : 8.0f }; }
+
+	protected:
+		void paint() const override
+		{
+			if (style().natural(Look::kSlotBar).h > 12)
+			{
+				drawProgressBar(screen_, progress, scale_);
+				return;
+			}
+			const Rect fill{ screen_.x, screen_.y, std::round(screen_.w * std::clamp(progress, 0.0f, 1.0f)), screen_.h };
+			style().draw(Look::kProgressTrack, screen_, scale_, State::kNormal, false);
+			if (fill.w > 0) { style().draw(Look::kProgressFill, fill, scale_, State::kNormal, false); }
+		}
+	};
+
+	// The working cue: three dots, one lit in turn (a step a third of a second), so a long stage never looks frozen.
+	class MainMenu::Cue : public Widget
+	{
+	public:
+		Size preferred() const override { return { 3 * kDot + 2 * kGap, kDot }; }
+
+	protected:
+		void paint() const override
+		{
+			const Color lit = style().colour("Accent", Color{ 0.85f, 0.64f, 0.26f, 1 });
+			const Color dim{ lit.r, lit.g, lit.b, 0.3f };
+			const int on = (int)std::fmod(now() * 3, 3.0);
+			const float d = std::round(kDot * scale_), y = std::round(screen_.y + (screen_.h - d) / 2);
+			for (int i = 0; i < 3; i++) { gfx::fill({ std::round(screen_.x + i * (kDot + kGap) * scale_), y, d, d }, i == on ? lit : dim); }
+		}
+
+	private:
+		static constexpr float kDot = 8, kGap = 6;
 	};
 
 	MainMenu::MainMenu(MainMenuActions actions, SavePanel* saves) : act_(std::move(actions)), saves_(saves)
@@ -102,16 +146,35 @@ namespace ui
 		version_->shadow = true;
 		setVersion({});
 
-		// The offline line: under EXIT, from the column's left edge, wrapped (a long server error takes a few lines; 1080 - 955 leaves room
-		// for five).
-		offline_ = &art_->add<Label>("", "Kenshi_StandardFont_Medium");
-		offline_->halign = A::kCenter;
-		offline_->valign = A::kStart;
-		offline_->rect = { 500 + 260 - 960, kMainTops[6] + 69 + 16, 520, 0 };
+		// The status panel (kenshi-k16.2.431.1, user 2026-11-20: "The main menu needs better feedback if the server isn't ready"): right of the
+		// column, from CONTINUE's top, clear of the credits box (from 410) for a few lines of failure text. A heading with the working cue, the
+		// host's text wrapped, the step bar and "2 / 4", the held click's line.
+		const float kStatusW = 540, kStatusPad = 16, kTextW = kStatusW - 2 * kStatusPad;
+		status_ = &art_->add<Panel>(Look::kPanel, kStatusPad);
+		status_->halign = A::kCenter;	// as the column: its centre's offset from the screen's, so it keeps its place at any aspect
+		status_->valign = A::kStart;	// its top at CONTINUE's, growing down
+		status_->rect = { 500 + 300 + 30 + kStatusW / 2 - 960, kMainTops[0], kStatusW, 0 };
+		status_->visible = false;
+		Box& col = status_->add<Box>(true, 10);
+		Box& head = col.add<Box>(false, 14);
+		heading_ = &head.add<Label>("", "Kenshi_PaintedTextFont_Medium");
+		heading_->valign = A::kCenter;
+		cue_ = &head.add<Cue>();
+		cue_->valign = A::kCenter;
+		offline_ = &col.add<Label>("", "Kenshi_StandardFont_Large");
 		offline_->wrap = true;
-		offline_->shadow = true;
-		offline_->colour = Color{ 1, 1, 1, 0.9f };	// over the light sand of the art: as the credits text, a little dimmer
-		offline_->visible = false;
+		offline_->rect.w = kTextW;
+		Box& row = col.add<Box>(false, 12);
+		stepRow_ = &row;
+		bar_ = &row.add<StepBar>();
+		bar_->rect.w = kTextW - 70;
+		bar_->valign = A::kCenter;
+		stepsText_ = &row.add<Label>("", "Kenshi_StandardFont_Medium");
+		stepsText_->valign = A::kCenter;
+		pendingText_ = &col.add<Label>("", "Kenshi_StandardFont_Medium");
+		pendingText_->wrap = true;
+		pendingText_->rect.w = kTextW;
+		pendingText_->visible = false;
 		applyButtons();	// LOAD GAME greyed without a save panel
 	}
 
@@ -143,13 +206,44 @@ namespace ui
 		applyButtons();
 	}
 
-	void MainMenu::setOffline(const std::string& hint)
+	void MainMenu::setOffline(const std::string& text, int step, int steps) { applyStatus(text, step, steps, false); }
+	void MainMenu::setError(const std::string& text) { applyStatus(text, 0, 0, !text.empty()); }
+
+	void MainMenu::applyStatus(const std::string& text, int step, int steps, bool error)
 	{
-		if (hint == offline_->text) { return; }
-		offline_->text = hint;
-		offline_->visible = !hint.empty();
-		applyButtons();
+		steps = std::max(steps, 0);
+		step = std::clamp(step, 0, steps);
+		if (text == offline_->text && step == step_ && steps == steps_ && error == error_) { return; }
+		const bool tips = text != offline_->text;
+		offline_->text = text;
+		step_ = step;
+		steps_ = steps;
+		error_ = error;
+		status_->visible = !text.empty();
+		const Color main = style().colour("Main", Color{ 1, 1, 1, 1 }), bad = style().colour("BadBright", Color{ 0.93f, 0.46f, 0.37f, 1 });
+		heading_->text = error ? "GAME SERVER ERROR" : "GAME SERVER STARTING";
+		heading_->colour = error ? bad : style().colour("Accent", main);	// "Title" is a dark red in the original style, unreadable on its panel
+		offline_->colour = error ? bad : main;
+		cue_->visible = !error;
+		stepRow_->visible = !error && steps > 0;
+		bar_->progress = steps > 0 ? (float)step / steps : 0;
+		stepsText_->text = std::to_string(step) + " / " + std::to_string(steps);
+		stepsText_->colour = style().colour("Secondary", main);
+		applyPendingLine();
+		if (tips) { applyButtons(); }
 	}
+
+	// While the host holds a click and the server is on its way: which button will run.
+	void MainMenu::applyPendingLine()
+	{
+		pendingText_->visible = pending_ >= 0 && !error_ && !offline_->text.empty();
+		pendingText_->text = pending_ >= 0 ? std::string(kMainCaptions[pending_]) + " will start when the server is ready" : std::string();
+		pendingText_->colour = style().colour("Accent", Color{ 0.85f, 0.64f, 0.26f, 1 });
+	}
+
+	float MainMenu::statusFill() const { return bar_->progress; }
+	Widget* MainMenu::statusBar() const { return bar_; }
+	Widget* MainMenu::statusCue() const { return cue_; }
 
 	// CONTINUE from setContinue, LOAD GAME from the save panel; offline greys nothing (the host holds the click), the hint is their tip.
 	void MainMenu::applyButtons()
@@ -167,6 +261,7 @@ namespace ui
 	{
 		pending_ = button >= 0 && button < 4 ? button : -1;
 		for (int i = 0; i < 4; i++) { buttons_[i]->held = i == pending_; }
+		applyPendingLine();
 	}
 
 	void MainMenu::setCredits(const std::string& text) { creditsText_->text = text; }

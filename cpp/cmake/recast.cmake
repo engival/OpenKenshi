@@ -21,3 +21,12 @@ if(NOT TARGET RecastNavigation::Detour)
 		endif()
 	endforeach()
 endif()
+# Recast builds as C++98, where MinGW's <stdint.h> hides INTPTR_MAX (RecastAlloc.h's RC_SIZE_MAX) unless __STDC_LIMIT_MACROS; PUBLIC because
+# consumer TUs include RecastAlloc.h too (kenshi-379.31.4).
+if(MINGW)
+	foreach(t Recast Detour DetourCrowd DetourTileCache DebugUtils)
+		if(TARGET ${t})
+			target_compile_definitions(${t} PUBLIC __STDC_LIMIT_MACROS __STDC_CONSTANT_MACROS)
+		endif()
+	endforeach()
+endif()

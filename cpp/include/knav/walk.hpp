@@ -144,7 +144,7 @@ public:
 
 	// Direct drive for dt seconds at `speed` units/s along `heading` (radians, 0 = +z, increasing
 	// towards +x, as the sim's yaw). Backward moves against the heading at kBackpedalFactor of the
-	// speed; the facing is the caller's business. `strafe` (-1 left, +1 right of the heading, SIMLINK order 20) adds a sideways
+	// speed; the facing is the caller's business. `strafe` (-1 left, +1 right of the heading, i.e. -x at heading 0, SIMLINK order 20) adds a sideways
 	// move at kStrafeFactor, the whole normalised by driveLocal; Stop with a strafe is a pure sidestep. `speed` is the gait speed.
 	StepResult drive(const Position& from, Drive mode, double heading, double speed, double dt, int strafe = 0) const;
 

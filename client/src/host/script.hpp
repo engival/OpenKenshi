@@ -30,6 +30,13 @@ void free_camera();
 void teleport(double x, double z);
 void set_weather(const std::string& name);
 void creator_slider(const std::string& name, float v);
+// The creator preview's orbit (kenshi-k16.2.433.1; the UI panel is the ui agent's, the camera is the host's): a drag of dx / dy pixels in the
+// preview area turns the character and the platform about the pivot (creator_turn takes the same in radians), the wheel zooms toward the point
+// under the pointer and makes it the pivot, and creator_point_at puts the pointer on a bone (the scripted shots).
+void creator_drag(float dx, float dy);
+void creator_turn(float yaw, float tilt);
+void creator_zoom(float notches, double mx, double my);
+bool creator_point_at(const char* what);
 bool char_cut_hidden(uint64_t id, const double pos[3]);
 uint64_t camera_subject();
 dev::Context& dev_context();

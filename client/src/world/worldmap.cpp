@@ -22,7 +22,6 @@ namespace
 
 constexpr double kWorld = 294912.0;
 constexpr double kHalf = kWorld / 2;
-constexpr float kMiniSize = 256.0f;
 constexpr float kMargin = 16.0f;
 constexpr float kPi = 3.14159265f;
 constexpr float kWedgeHalfAngle = 35.0f * kPi / 180.0f;
@@ -126,12 +125,6 @@ WorldMap::Rect WorldMap::fullRect() const
 	return { (view::widthf() - side) / 2, (view::heightf() - side) / 2, side };
 }
 
-WorldMap::Rect WorldMap::miniRect() const
-{
-	// top right under the HUD's speed panel (0.08 of the height): the bottom right is the jobs list's (the original has no minimap)
-	return { view::widthf() - kMiniSize - kMargin, view::heightf() * 0.09f, kMiniSize };
-}
-
 WorldMap::Region WorldMap::region(double cx, double cz, double span) const
 {
 	span = std::min(span, kWorld);
@@ -183,68 +176,6 @@ void WorldMap::marker(float sx, float sy, double yaw, float wedgeLen) const
 	ovl::v2f(sx - 3, sy - 3); ovl::v2f(sx + 3, sy - 3); ovl::v2f(sx + 3, sy + 3); ovl::v2f(sx - 3, sy + 3);
 	ovl::count_quads();
 	ovl::end();
-}
-
-void WorldMap::drawMinimap(double cx, double cz, double yaw, const TownSet* towns, const Squads* squads) const
-{
-	const Rect r = miniRect();
-	const double span = 4608.0 * (double)(1 << zoom);
-	const double x0 = cx - span / 2, z0 = cz - span / 2;
-
-	draw_panel(r.x, r.y, r.side, r.side);
-	// The part of the window inside the world, as map uv and screen coordinates.
-	const double wx0 = std::max(x0, -kHalf), wx1 = std::min(x0 + span, kHalf);
-	const double wz0 = std::max(z0, -kHalf), wz1 = std::min(z0 + span, kHalf);
-	if (wx1 > wx0 && wz1 > wz0)
-	{
-		const float sx0 = to_px(wx0, x0, span, r.x, r.side), sx1 = to_px(wx1, x0, span, r.x, r.side);
-		const float sy0 = to_px(wz0, z0, span, r.y, r.side), sy1 = to_px(wz1, z0, span, r.y, r.side);
-		const float u0 = (float)((wx0 + kHalf) / kWorld), u1 = (float)((wx1 + kHalf) / kWorld);
-		const float v0 = (float)((wz0 + kHalf) / kWorld), v1 = (float)((wz1 + kHalf) / kWorld);
-		ovl::enable_texture();
-		ovl::texture(tex_);
-		ovl::begin_quads();
-		ovl::c3f(1.0f, 1.0f, 1.0f);
-		ovl::v2f_t2f(sx0, sy0, u0, v0); ovl::v2f_t2f(sx1, sy0, u1, v0); ovl::v2f_t2f(sx1, sy1, u1, v1); ovl::v2f_t2f(sx0, sy1, u0, v1);
-		ovl::count_quads();
-		ovl::end();
-	}
-	ovl::disable_texture();
-	if (towns)
-	{
-		ovl::begin_quads();
-		ovl::c3f(1.0f, 0.5f, 0.0f);
-		for (const Town& t : towns->towns)
-		{
-			if (t.x < x0 || t.x >= x0 + span || t.z < z0 || t.z >= z0 + span) { continue; }
-			const float sx = to_px(t.x, x0, span, r.x, r.side), sy = to_px(t.z, z0, span, r.y, r.side);
-			ovl::v2f(sx - 2, sy - 2); ovl::v2f(sx + 2, sy - 2); ovl::v2f(sx + 2, sy + 2); ovl::v2f(sx - 2, sy + 2);
-		}
-		ovl::count_quads();
-		ovl::end();
-	}
-	if (squads && squads->on)
-	{
-		ovl::begin_quads();
-		for (const Squads::Dot& d : squads->dots())
-		{
-			if (d.x < x0 || d.x >= x0 + span || d.z < z0 || d.z >= z0 + span) { continue; }
-			const float sx = to_px(d.x, x0, span, r.x, r.side), sy = to_px(d.z, z0, span, r.y, r.side);
-			ovl::c3f(d.r, d.g, d.b);
-			ovl::v2f(sx - 1.5f, sy - 1.5f); ovl::v2f(sx + 1.5f, sy - 1.5f); ovl::v2f(sx + 1.5f, sy + 1.5f); ovl::v2f(sx - 1.5f, sy + 1.5f);
-		}
-		ovl::count_quads();
-		ovl::end();
-	}
-	marker(to_px(cx, x0, span, r.x, r.side), to_px(cz, z0, span, r.y, r.side), yaw, r.side * 0.22f);
-	ovl::begin_line_strip();
-	ovl::c3f(1.0f, 1.0f, 1.0f);
-	ovl::v2f(r.x, r.y); ovl::v2f(r.x + r.side, r.y); ovl::v2f(r.x + r.side, r.y + r.side); ovl::v2f(r.x, r.y + r.side); ovl::v2f(r.x, r.y);
-	ovl::count_quads();
-	ovl::end();
-	char buf[48];
-	snprintf(buf, sizeof buf, "N  %.1f km across", span / 10000.0);
-	draw_text(r.x + 4, r.y + 4, 1.0f, 1.0f, 1.0f, buf);
 }
 
 // The map square r showing the world square (x0, z0) .. + span: texture, towns, squad dots, the camera marker, town labels.

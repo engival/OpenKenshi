@@ -15,7 +15,8 @@
 #   the fallback, whose build has them baked in or beside it. SRV_SIMDATA is the sim-data part alone, for a server the
 #   CLIENT starts (--local-server: session.server_args; the client passes --data itself).
 #   Prints the one line the run logs: 'server: shared PATH' or 'server: built (REASON)', the reason being
-#   shared_server.sh's decline ('cpp/ changed', 'no shared binary for <hash8>', ...).
+#   shared_server.sh's decline ('cpp/ changed', 'no shared binary for <hash8>', ...) or, for a shared one, its rule-3
+#   note ('(w7: cpp/ unchanged since the merge base, ...)'); SERVER never carries that note (kenshi-k16.2.399).
 pick_server()
 {
 	local tree=$1 fallback=$2 line reason data sim cache
@@ -31,7 +32,9 @@ pick_server()
 		fi
 		case $line in
 			shared\ *)
+				# Rule 3 answers 'shared PATH (wN: ...)' (the reason on the line, kenshi-k16.2.399): the path alone runs.
 				SERVER=${line#shared } SHARED=1
+				SERVER=${SERVER%% (*}
 				echo "server: $line"
 				;;
 			*)

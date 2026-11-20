@@ -655,8 +655,8 @@ std::uint64_t protectOwnSquad143(const state::Fighter& self, const sensor::Conte
 	sensor::sensed(self, sensor::kSameFaction, sensor::kDead | sensor::kIncapacitated | sensor::kInObject, ctx, lookup,
 		[&](std::uint64_t id, const state::Fighter& other, std::uint32_t)
 		{
-			// The exe's gate is the record's seen flag (+0x38): aware, not necessarily sighted by the last scan.
-			if (self.squad == 0 || other.squad != self.squad || !perception::aware(self, id))
+			// FRESH (rwh.212, 14099d510): +0x38 || +0x39, seen or heard by the last scan.
+			if (self.squad == 0 || other.squad != self.squad || !perception::sensedNow(self, id))
 				return;
 			const double score = combatScore14099a190(other);
 			if (score > bestScore)
@@ -678,8 +678,8 @@ std::uint64_t protectAllies15(const state::Fighter& self, const sensor::Context&
 	sensor::sensed(self, sensor::kAlly, sensor::kIncapacitated | sensor::kInObject, ctx, lookup,
 		[&](std::uint64_t id, const state::Fighter& other, std::uint32_t)
 		{
-			if (!perception::aware(self, id))
-				return; // the record's seen flag (exe +0x38), not the last scan's sighting
+			if (!perception::sensedNow(self, id))
+				return; // FRESH (rwh.212, 14099ca10): +0x38 || +0x39
 			double score = combatScore14099a190(other);
 			if (score <= 0.0)
 				return;
@@ -708,7 +708,7 @@ bool attackEnemies16(const state::Fighter& self, const sensor::Context& ctx, std
 	const state::SightRecord* record = perception::find(self, id);
 	const state::Fighter* other = lookup(id);
 	if (record == nullptr || other == nullptr || other->dead || !perception::aware(self, id))
-		return false; // the record's seen flag (exe +0x38), not the last scan's sighting
+		return false; // FRESH (rwh.212, 14059f3a0): +0x38 || +0x39
 	return sensor::matches(sensor::flags(ctx, self, *other, *record), sensor::kHostile,
 		sensor::kIncapacitated | sensor::kInObject);
 }
@@ -774,7 +774,7 @@ bool troubleMaker34(const state::Fighter& self, const sensor::Context& ctx, std:
 	// stands in for the exe's place branch of 14099b820 (the place the target stands in, dt24_34.md), not decoded: kenshi-k16.6.94.
 	const bool defending = self.homeBuilding != 0 && other->building == self.homeBuilding
 		&& (other->combatGoal == routines::task::SelfPreservation || other->combatGoal == routines::task::ProtectOwnSquad
-			|| other->combatGoal == routines::task::ProtectAllies);
+			|| other->combatGoal == routines::task::ProtectAllies || other->combatGoal == routines::task::ProtectAlliesStayInTown);
 	const bool criminal = (other->target != 0 && !defending) || tagged(other->squad);
 	const double dx = other->x - self.x;
 	const double dz = other->z - self.z;
@@ -1608,7 +1608,7 @@ struct MedicPick
 // selector's (it registers a chosen target).
 template <typename Lookup, typename Claimed, typename Blocked, typename Kit, typename SameTown>
 MedicPick medic58(std::uint64_t selfId, const state::Fighter& self, const sensor::Context& ctx, Lookup&& lookup, Claimed&& claimed,
-	Blocked&& blocked, Kit&& kit, SameTown&& sameTown, bool healsStrangers)
+	Blocked&& blocked, Kit&& kit, SameTown&& sameTown, bool healsStrangers, std::span<const std::uint64_t> owned = {})
 {
 	const Kits kits = kitsOf(selfId, self, kit);
 	if (!kits.any())
@@ -1624,44 +1624,59 @@ MedicPick medic58(std::uint64_t selfId, const state::Fighter& self, const sensor
 
 	const auto pass = [&](std::uint32_t include, std::uint32_t exclude, bool strangers)
 	{
-		for (const state::SightRecord& record : self.sight)
+		const auto consider = [&](const state::SightRecord& record)
 		{
 			const state::Fighter* body = lookup(record.target);
 			if (body == nullptr)
-				continue;
+				return;
 			const std::uint32_t bits = sensor::flags(ctx, self, *body, record);
 			// My faction's slave: an ally for this goal (see above), whatever its own faction's relation to mine.
 			const bool mySlave = !strangers && body->captorFaction != 0 && body->captorFaction == self.faction
 				&& body->slaveState != 0;
 			if (!mySlave && !sensor::matches(bits, include, exclude))
-				continue;
+				return;
 			if (body->dead || perception::inCombat(*body) || blocked(record.target))
-				continue;
+				return;
 			if (strangers && body->faction != 0)
-				continue; // dt24 pass 2: a stranger has no faction
+				return; // dt24 pass 2: a stranger has no faction
 			if (!self.playerControlled && !mySlave && (bits & sensor::kNotSeen) != 0)
-				continue; // dt16 gate 6: the record must be seen/heard (our stand-in for "inside my building"); my own slave is known without a sighting (OURS)
+				return; // dt16 gate 6: the record must be seen/heard (our stand-in for "inside my building"); my own slave is known without a sighting (OURS)
 			if (body->carriedBy != 0)
 			{
 				const state::Fighter* carrier = lookup(body->carriedBy);
 				if (carrier != nullptr && sensor::enemy(ctx, self, *carrier))
-					continue; // dt16 gate 4
+					return; // dt16 gate 4
 			}
 			const double need = injury(*body);
 			if (need <= 0.0)
-				continue;
+				return;
 			const double dx = body->x - self.x;
 			const double dz = body->z - self.z;
-			double score = need * healDistance(dx * dx + dz * dz, sameTown(record.target, *body));
+			// My own captured slave is reached at any range (the squad walks back to it): the 0.4 floor of the distance term.
+			double score = need * healDistance(dx * dx + dz * dz, mySlave || sameTown(record.target, *body));
 			if (score <= 0.0)
-				continue;
+				return;
 			if (body->faction != self.faction)
 				score *= relationFactor(ctx, self, *body);
 			if (claimed(record.target))
 				score *= 0.05; // dt16 step 4: another squadmate is registered on it
 			if (score > best.score)
 				best = {record.target, score};
-		}
+		};
+		for (const state::SightRecord& record : self.sight)
+			consider(record);
+		// The squad's own captives are known without a sighting (k16.6.413): one out of the scan range is still the squad's to treat.
+		if (!strangers)
+			for (const std::uint64_t slave : owned)
+			{
+				const auto known = std::lower_bound(self.sight.begin(), self.sight.end(), slave,
+					[](const state::SightRecord& r, std::uint64_t id) { return r.target < id; });
+				if (known != self.sight.end() && known->target == slave)
+					continue;
+				state::SightRecord record;
+				record.target = slave;
+				consider(record);
+			}
 	};
 	pass(sensor::kAlly, sensor::kDead, false);
 	if (healsStrangers)

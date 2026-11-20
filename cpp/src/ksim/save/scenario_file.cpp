@@ -306,8 +306,8 @@ File parseFile(const std::string& path)
 			const Char* target = charById(file, o.attack);
 			if (who == nullptr || target == nullptr)
 				fail(path, line, "order names a char that is not defined above it");
-			if (who->player || who->id == target->id)
-				fail(path, line, "order: char must be a non-player and not its own target");
+			if (who->id == target->id)
+				fail(path, line, "order: a char cannot attack itself");
 			file.orders.push_back(o);
 		} else if (tag == "building") {
 			if (file.version < 2)
@@ -555,8 +555,10 @@ void applyChar(const kdata::GameData& gd, const CombatData& data, const Char& c,
 	for (const Item& it : c.items)
 	{
 		const kdata::Record& record = *gd.find(it.sid);
-		if (onBody(it.section) && isWeapon(record) && !wielded)
+		if (record.type == kworld::itemTypeByName("CROSSBOW") && !f.ranged.armed())
 		{
+			f.ranged = data.makeRanged(record, it.level > 0 ? it.level / 100.0 : 0.5); // the crossbow is the character's gun, loaded (kStartAmmo); no melee weapon
+		} else if (onBody(it.section) && isWeapon(record) && !wielded) {
 			f.weapon = data.buildWeapon(gd, record, qualityOf(it, true, false));
 			wielded = true;
 		} else if (onBody(it.section) && isArmour(record) && record.intOr("slot", -1) != 12) {
@@ -714,6 +716,7 @@ Placed apply(Simulation& sim, const kdata::GameData& gd, const CombatData& data,
 	if (!playerFaction.empty())
 	{
 		sim.createPlayerFaction(playerFaction);
+		sim.markPlayerFactionLive();
 		for (const Squad& s : file.squads)
 		{
 			if (s.player)

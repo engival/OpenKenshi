@@ -28,10 +28,9 @@ enum class Area : std::uint8_t
 
 inline constexpr int kAreaCount = 6;
 
-// Polygon flags above the area bits: bit (kDoorDeniedShift + class) set = that traveller class
-// may not use this door now. A filter excludes its own class's bit (TravelFilter::doorClass).
-inline constexpr int kDoorDeniedShift = 8;
-inline constexpr int kDoorClasses = 8;
+// Polygon flag above the area bits: set = the door is locked (a wall for every traveller). The original has no class, faction or
+// owner test on a door (findings/rwh199_nav_validity_static.md section 2): only the door's own state refuses.
+inline constexpr unsigned kDoorLockedFlag = 1u << 8;
 
 // The polygon flag of an area (one bit each); a filter includes the flags it allows.
 constexpr std::uint16_t areaFlag(Area area) noexcept
@@ -64,8 +63,8 @@ struct TravelFilter
 	// Door areas are always allowed here: a door is refused per class by the door state, not by this mask.
 	std::uint16_t allowed = areaFlag(Area::Land) | areaFlag(Area::Shallow) | areaFlag(Area::Swim)
 		| areaFlag(Area::DoorOpen) | areaFlag(Area::DoorClosed) | areaFlag(Area::Edge);
-	// Which access policy of a door applies to this traveller (0..kDoorClasses-1).
-	std::uint8_t doorClass = 0;
+	// True: locked doors stay in the search (a bash, or a lookup that ignores door state).
+	bool throughLocks = false;
 	// The traveller's footprint radius (race pathfind footprint radius x size factor, docs/formats/NAVMESH_CACHE.md
 	// "Clearance"). 0 = none: the mesh was eroded at bake time. Above 0 the path keeps this far from the mesh's walls.
 	float radius = 0.0f;

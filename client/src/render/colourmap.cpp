@@ -11,6 +11,7 @@
 #include <thread>
 #include <vector>
 
+#include "app/userdirs.hpp"
 #include "stb_dxt.h"
 #include "stb_image.h"
 
@@ -80,12 +81,10 @@ void compress_into(uint8_t* levelBuf, int levelW, const std::vector<uint8_t>& im
 	}
 }
 
+// The per-user cache root (app/userdirs.hpp; kenshi-379.31.3: on Windows %LOCALAPPDATA%\OpenKenshi\cache, never the Linux HOME).
 std::string cache_dir()
 {
-	const char* xdg = getenv("XDG_CACHE_HOME");
-	const char* home = getenv("HOME");
-	if (xdg && *xdg) { return std::string(xdg) + "/kclient"; }
-	return std::string(home ? home : ".") + "/.cache/kclient";
+	return plat::userCacheDir() + "/kclient";
 }
 
 std::string tile_path(const std::string& dir, int x, int y) { return dir + "/colour." + std::to_string(x) + "." + std::to_string(y) + ".png"; }

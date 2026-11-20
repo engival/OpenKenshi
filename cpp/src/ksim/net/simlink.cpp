@@ -517,6 +517,10 @@ Session::Session(Simulation& sim, ServerContext& context)
 			o.pos[1] = sim_.navigation() != nullptr ? f(e.y) : 0.0f;
 			o.pos[2] = f(e.z);
 		} else {
+			// EVENT 13 is for a player-controlled actor only (approved 2026-11-19, k16.6.427): the client words it as the player's own.
+			const state::Fighter* actor = sim_.combat() != nullptr ? sim_.combat()->find(e.who) : nullptr;
+			if (actor == nullptr || !actor->playerControlled)
+				return;
 			o.kind = 13;
 			o.action = e.action;
 			o.result = e.result;
@@ -1034,6 +1038,13 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 				goalZ += radius * std::cos(angle);
 			}
 			Route route;
+			// A goal in a zone that is not loaded is never refused here (kenshi-k16.6.481, rwh208): the walk goes by legs along the line
+			// and the roads, and the goal is routed when the walker's zone is its own (Simulation::startMoveOrder).
+			if (nav != nullptr && nav->farGoal(arena->find(id)->x, arena->find(id)->z, goalX, goalZ))
+			{
+				commands.push_back(Command::fighterMoveFar(state::Id{id}, goalX, goalZ, yValid ? y : arena->find(id)->y, seq, queue));
+				continue;
+			}
 			if (nav != nullptr)
 			{
 				const state::Fighter& fighter = *arena->find(id);
@@ -1768,7 +1779,7 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 			reject = "bad_value";
 			break;
 		}
-		apply = [this, paused]() { ctx_.paused = paused != 0; };
+		apply = [this, paused]() { ctx_.paused = paused != 0; ctx_.pausedUntilOrder = false; };
 		break;
 	}
 	case 41: // set speed
@@ -1783,7 +1794,15 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 			reject = "bad_value";
 			break;
 		}
-		apply = [this, speed]() { ctx_.speed = speed; };
+		apply = [this, speed]()
+		{
+			ctx_.speed = speed;
+			if (ctx_.pausedUntilOrder)
+			{
+				ctx_.paused = false; // a --paused start ends at the client's first speed order
+				ctx_.pausedUntilOrder = false;
+			}
+		};
 		break;
 	}
 	case 80: // save_game: name
@@ -2462,7 +2481,18 @@ void Session::writeItemGrid(RecordWriter& out, std::uint64_t tick, const InvReco
 		out.strid("colour", entry.colour.empty() ? 0 : sid(entry.colour));
 	}
 	out.listEnd();
+	// Steal tail (kenshi-k16.6.392): one u8 per item above, in the same order, after the list so an older decoder stops before it.
+	for (std::size_t i = 0; i < flat.size(); ++i)
+		out.u8("steal", i < record.steal.size() ? record.steal[i] : Simulation::kStealNoRoll);
 	out.end();
+}
+
+std::vector<std::uint8_t> Session::stealTail(std::uint64_t actor, const InvRecord& record) const
+{
+	std::vector<std::uint8_t> percents;
+	for (const state::Inventory::Entry* entry : flatEntries(record.inventory))
+		percents.push_back(sim_.stealPercent(actor, record.id, entry->itemSid));
+	return percents;
 }
 
 std::uint32_t Session::navMeshId()
@@ -2585,32 +2615,6 @@ void Session::writeWeather(RecordWriter& out, std::uint64_t tick)
 	out.end();
 }
 
-namespace {
-
-// The least distance from (px, pz) to the beam's path, a polyline through the segment ends (every segment is straight).
-double beamDistance(const Beam& beam, double px, double pz) noexcept
-{
-	double x = beam.x;
-	double z = beam.z;
-	double best = std::hypot(px - x, pz - z);
-	for (const BeamSegment& segment : beam.segments)
-	{
-		const double length = static_cast<double>(beam.speed) / 20.0 * segment.ticks;
-		const double nx = x + std::sin(static_cast<double>(segment.yaw)) * length;
-		const double nz = z + std::cos(static_cast<double>(segment.yaw)) * length;
-		const double dx = nx - x;
-		const double dz = nz - z;
-		const double span = dx * dx + dz * dz;
-		const double along = span > 0.0 ? std::clamp(((px - x) * dx + (pz - z) * dz) / span, 0.0, 1.0) : 0.0;
-		best = std::min(best, std::hypot(px - (x + dx * along), pz - (z + dz * along)));
-		x = nx;
-		z = nz;
-	}
-	return best;
-}
-
-} // namespace
-
 std::vector<Session::BeamsOut> Session::beamsDue(std::uint64_t tick, bool initial, const CombatArena* arena)
 {
 	std::vector<BeamsOut> out;
@@ -2650,15 +2654,16 @@ std::vector<Session::BeamsOut> Session::beamsDue(std::uint64_t tick, bool initia
 			sent.clear();
 			beamEpochSent_[g] = group.epoch;
 		}
+		// Every live beam of the group goes to a session inside the zone or within view range of it (h2v.14.14); none to one farther out.
+		const bool watching = std::any_of(refs.begin(), refs.end(), [&](const std::pair<double, double>& ref)
+			{ return field->nearZone(group.colour, ref.first, ref.second, kBeamRange); });
 		for (const BeamSlot& slot : group.slots)
 		{
 			for (const Beam* beam : {&slot.current, &slot.next})
 			{
 				if (beam->effect == nullptr || beam->spawnTick > tick + kBeamLeadTicks || beam->endTick <= tick || sent.contains(beam->id))
 					continue;
-				const bool near = std::any_of(refs.begin(), refs.end(), [&](const std::pair<double, double>& ref)
-					{ return beamDistance(*beam, ref.first, ref.second) <= kBeamRange; });
-				if (!near)
+				if (!watching)
 					continue;
 				sent.emplace(beam->id, beam->endTick);
 				entry.beams.push_back(beam);
@@ -2690,6 +2695,7 @@ void Session::writeBeams(RecordWriter& out, std::uint64_t tick, const std::vecto
 			out.strid("effect", strid(beam->effect->sid));
 			out.u64("spawnTick", beam->spawnTick);
 			out.u64("endTick", beam->endTick);
+			out.u16("visibleTicks", beam->visibleTicks);
 			out.f32("x", beam->x);
 			out.f32("z", beam->z);
 			out.f32("speed", beam->speed);
@@ -3177,17 +3183,7 @@ void Session::writeDynamic(RecordWriter& out, std::uint64_t tick, const CombatAr
 {
 	const state::Fighter& fighter = m.fighter;
 	std::uint32_t flags = 0;
-	// A KO'd or dead fighter may keep its target in the sim but is not fighting. The run-in to the target (Approach, 11; 10 is folded in) is not
-	// combat mode: the original's approach plays jog / run lower clips, which are is-combat-mode NO (COMBAT_ANIM.md 3, kenshi-k16.6.129); the flag
-	// comes on from the hub / circle / wait / attack / defend states or a technique.
-	// The pre-approach states (hub, between) with the target beyond the approach distance (150 u, combat.cpp kTuneApproachDistance) are the run-in
-	// too: an attack order lands there for a few ticks before the move-in task starts (kenshi-k16.6.164).
-	const state::Fighter* enemy = fighter.target != 0 ? sim_.combat()->find(fighter.target) : nullptr;
-	const bool farHub = (fighter.state == state::CombatState::Hub || fighter.state == state::CombatState::Between) && enemy != nullptr
-		&& std::hypot(enemy->x - fighter.x, enemy->z - fighter.z) > 150.0;
-	if (!fighter.unconscious && !fighter.dead
-		&& (fighter.technique >= 0 || fighter.state == state::CombatState::Attack || fighter.state == state::CombatState::Defend
-			|| (fighter.target != 0 && fighter.state != state::CombatState::Approach && !farHub)))
+	if (sim_.combatMode(fighter))
 		flags |= kFlagCombat;
 	if (fighter.weapon.weaponType != 5) // the weapon in the hand: task 6 puts it there, task 7 (Inventory::kSheathed) takes it out (rwh.105)
 		flags |= kFlagDrawn;
@@ -3337,6 +3333,7 @@ void Session::writeCharStats(RecordWriter& out, std::uint64_t tick, std::uint64_
 	out.strid("goal", sid(stats.goal));
 	out.f32("encumbrance", stats.encumbrance);
 	out.u8("extraKind", stats.extraKind);
+	out.u8("extraSkill", stats.extraSkill);
 	out.f32("extra", stats.extra);
 	out.u8("weaponClass", stats.weaponClass);
 	out.list("skills", stats.skills.size(), 8);
@@ -4408,16 +4405,29 @@ void Session::sendTick(RecordWriter& out, bool initial)
 		if (open->second.empty())
 		{
 			knownInventory_.erase(open->first);
+			stealSent_.erase(open->first);
 			open = openLoots_.erase(open);
 			continue;
 		}
 		const flecs::entity opened(sim_.world().ecs().c_ptr(), storage.entity);
 		const state::Inventory* held = opened.get<state::Inventory>();
 		const auto known = knownInventory_.find(open->first);
-		if (held != nullptr && (known == knownInventory_.end() || known->second != held->version))
+		if (held != nullptr)
 		{
-			knownInventory_[open->first] = held->version;
-			inventories.push_back({open->first, sim_.settledInventory(open->first)});
+			// The steal percents are the first looter's (the lowest id; a set keeps them ordered); they are resent (ITEM_GRID alone) when they change.
+			const std::uint64_t actor = *open->second.begin();
+			const bool fresh = known == knownInventory_.end() || known->second != held->version;
+			InvRecord record{open->first, sim_.settledInventory(open->first)};
+			record.steal = stealTail(actor, record);
+			auto& sent = stealSent_[open->first];
+			const bool changed = sent.first != actor || sent.second != record.steal;
+			if (fresh || changed)
+			{
+				sent = {actor, record.steal};
+				knownInventory_[open->first] = held->version;
+				record.gridOnly = !fresh;
+				inventories.push_back(std::move(record));
+			}
 		}
 		++open;
 	}
@@ -4840,10 +4850,14 @@ void Session::sendTick(RecordWriter& out, bool initial)
 			writeInteractable(w, tick, r);
 		for (const InvRecord& r : inventories)
 		{
-			writeInventory(w, tick, r);
-			writeItemQuality(w, tick, r);
+			if (!r.gridOnly)
+			{
+				writeInventory(w, tick, r);
+				writeItemQuality(w, tick, r);
+			}
 			writeItemGrid(w, tick, r);
-			writeItemLock(w, tick, r);
+			if (!r.gridOnly)
+				writeItemLock(w, tick, r);
 		}
 		for (const TradeOut& t : tradesOut)
 			writeTrade(w, tick, t);

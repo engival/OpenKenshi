@@ -14,7 +14,7 @@
 #include "render/renderqueue.hpp"
 
 class Characters;
-class Shadow;
+#include "render/shadow.hpp"
 class ResourceIndex;
 namespace kdata { class GameData; }
 
@@ -97,7 +97,7 @@ namespace animlab
 
 		// Cheap: records where to init from. The Characters set, the render target and the character are built on the first open or `lab` op,
 		// not at startup (every game start paid for them), so a game that never opens the browser pays nothing.
-		void setup(const ResourceIndex* res, const std::string& dataDir, const Shadow* shadow);	// the shadow's views: the character pipeline binds them (its own light is the portrait one)
+		void setup(const ResourceIndex* res, const std::string& dataDir);	// the shadow's views: the character pipeline binds them (its own light is the portrait one)
 		bool available() const { return res_ != nullptr; }	// set up: the browser may open (it inits on the way)
 		void shutdown();
 
@@ -132,7 +132,7 @@ namespace animlab
 
 		void update(double dt);	// advances the clip time (playing)
 		void frame(dev::LabFrame& f);	// logic thread, at the packet's fill: the draw's values (f.draw false: nothing to render)
-		static void render(const dev::LabFrame& f);	// render thread: the offscreen pass from the frame alone, outside any pass (like Portraits::update)
+		static void render(const dev::LabFrame& f, const Shadow::FrameData& shadow);	// render thread: the offscreen pass from the frame alone, outside any pass (like Portraits::update)
 		bool csv(const std::string& path);	// per-frame rows, one loop
 		bool shot(const std::string& path);	// the last offscreen render as a PNG
 

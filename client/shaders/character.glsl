@@ -270,7 +270,7 @@ void main()
 	vec3 vw = -normalize(v_cpos);
 	vec4 ao = light_ao(v_cpos);
 	vec3 bounce;	// render.sun_bounce
-	const vec2 vol = light_vol(v_cpos, n, bounce);	// interior light (lighting.inc lighting_vol)
+	const vec2 vol = light_vol(v_cpos, n, ng, bounce);	// interior light (lighting.inc lighting_vol)
 	const float ao_spec = ao.a * vol.y;
 	const float ao_bounce = ao.a;
 	ao.a *= vol.x;
@@ -346,7 +346,7 @@ void main()
 	vec3 vw = -normalize(v_cpos);
 	vec4 ao = light_ao(v_cpos);
 	vec3 bounce;	// render.sun_bounce
-	const vec2 vol = light_vol(v_cpos, n, bounce);	// interior light (lighting.inc lighting_vol)
+	const vec2 vol = light_vol(v_cpos, n, ng, bounce);	// interior light (lighting.inc lighting_vol)
 	const float ao_spec = ao.a * vol.y;
 	const float ao_bounce = ao.a;
 	ao.a *= vol.x;
@@ -405,7 +405,7 @@ void main()
 	vec3 vw = -normalize(v_cpos);
 	vec4 ao = light_ao(v_cpos);
 	vec3 bounce;	// render.sun_bounce
-	const vec2 vol = light_vol(v_cpos, n, bounce);	// interior light (lighting.inc lighting_vol)
+	const vec2 vol = light_vol(v_cpos, n, n, bounce);	// interior light (lighting.inc lighting_vol)
 	const float ao_spec = ao.a * vol.y;
 	const float ao_bounce = ao.a;
 	ao.a *= vol.x;
@@ -457,7 +457,7 @@ void main()
 	vec3 vw = -normalize(v_cpos);
 	vec4 ao = light_ao(v_cpos);
 	vec3 bounce;	// render.sun_bounce
-	const vec2 vol = light_vol(v_cpos, n, bounce);	// interior light (lighting.inc lighting_vol)
+	const vec2 vol = light_vol(v_cpos, n, n, bounce);	// interior light (lighting.inc lighting_vol)
 	const float ao_spec = ao.a * vol.y;
 	const float ao_bounce = ao.a;
 	ao.a *= vol.x;

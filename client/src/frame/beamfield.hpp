@@ -1,8 +1,12 @@
 #pragma once
+#include <array>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
+#include "render/camera.hpp"
 #include "render/particles.hpp"
 #include "net/simlink.hpp"
 
@@ -16,6 +20,8 @@ namespace kworld { class Heightmap; }
 // advance notice is the wind-up: the beam is registered before it strikes so it appears exactly at its spawnTick, and nothing is drawn
 // during the lead (the original has no pre-strike visual). The client drops a beam at endTick; the particle system it started is kept a
 // little longer at that last point, because in the original the psys outlives the handler's damage window (rwh.48 4.4).
+// A beam is SEEN only over its burst [spawnTick, spawnTick + visibleTicks) (BEAMS visibleTicks, kenshi-h2v.14.12; 0 = its whole life): at the
+// burst's end the system stops emitting and its particles die out (the tail runs from there); the decoder keeps the beam to endTick for damage.
 class BeamField
 {
 public:
@@ -25,11 +31,24 @@ public:
 	void clear();
 	// Copies the decoder's beams when its BEAMS serial moved (a BEAMS frame is at most a few ticks old). Returns true when it changed.
 	bool sync(const simlink::SimLinkDecoder& d);
-	// The placed systems of the beams drawn at `tick` (the render tick), appended to `out`. Nothing before a beam's spawnTick. Every beam
-	// the sim sends is placed, whatever its distance: the original has no view distance for these (rwh.48: `maximum view distance` 0), and
-	// a 16 000 u column is seen from across the biome (the user's standing direction: match the look, not the draw ranges). Cost is the
-	// particle count `dump beams` / the HUD report; the instance cap only ever truncates the farthest scripts.
-	void systems(double tick, const kworld::Heightmap* hm, std::vector<Particles::PlacedSystem>& out) const;
+	// The placed systems of the beams drawn at `tick` (the render tick), appended to `out`. Nothing before a beam's spawnTick. The sim
+	// runs every beam; only the `maxBeams` nearest the camera `cam` whose own zone cell is loaded (cellLoaded, the original's gate) are drawn
+	// (render.venge_beams_max, kenshi-k16.2.409.1; 0 = none). `players` are the player-faction characters' positions (the gate's per-character
+	// cells); `gate` false bypasses the cell test (a KCLIENT_DEV_TOOLS A/B, the pre-409.3 look). A beam in the set stays until it is
+	// kHysteresis x farther than the X-th; one that joins or leaves fades over kFadeTicks (PlacedSystem::fade) instead of popping. Cost is
+	// the particle count `dump beams` / the HUD report.
+	void systems(double tick, const kworld::Heightmap* hm, const Camera& cam, const std::vector<std::array<double, 3>>& players, int maxBeams, bool gate, std::vector<Particles::PlacedSystem>& out);
+	static constexpr double kHysteresis = 1.1;
+	static constexpr double kFadeTicks = 20.0;	// one second
+	// The last systems() call: beams on the wire, in their burst, in the drawn set, fading out of it, of the drawn set in the view (its column
+	// against the camera frustum); the gate's focus cell and the number of loaded cells (a log line per second reads it).
+	struct Stats { size_t wire = 0, burst = 0, drawn = 0, inview = 0, fading = 0, dup = 0, stale = 0, burstNear = 0, drawnNear = 0, cells = 0, burstView = 0, burstOpenView = 0, newView = 0; double drawnFar = 0, drawnNearest = -1; int focusX = -1, focusZ = -1; };
+	// keys of the held beams (for counting their particle tails)
+	std::vector<uint64_t> keys() const { std::vector<uint64_t> k; for (const Beam& e : beams_) { k.push_back(e.key); } return k; }
+	// KBEAMSLOG=2: one line per frame for each beam in a join or leave fade
+	void fadeLog(double tick, long frame) const;
+	const Stats& stats() const { return stats_; }
+	size_t newViewTotal() const { return viewSeen_.size(); }	// distinct beams that have ever been drawn in the view (KBEAMSLOG rate)
 	// The particle scripts the sim is drawing: the weather's own local placement of them must not run as well (the sim's schedule is the truth).
 	std::vector<std::string> scripts() const;
 	std::string dump(double tick) const;	// a line per beam (id, group, spawn/end, the ground point at `tick`, scripts) (stdout)
@@ -40,7 +59,7 @@ public:
 	{
 		uint64_t key = 0, spawnTick = 0, endTick = 0;
 		uint32_t id = 0;
-		int state = 0;		// 1 live, 2 tail (the particles after endTick; the wind-up is not placed, so it is not a foot)
+		int state = 0;		// 1 burst, 2 tail (the particles after the burst's end; the wind-up is not placed, so it is not a foot)
 		std::string particles;
 		float x = 0, z = 0;
 	};
@@ -63,7 +82,22 @@ private:
 		std::string group, particles;
 		simlink::Beam b;
 	};
+	struct State { float fade = 0; double last = 0; bool in = false; };
+	// The original's loaded zone-cell set (kenshi-rwh.211; the weather gate 140100ba0): the 3x3 cells round the focus cell -- the camera's cell,
+	// re-centred only past 0.9 cell (4147.2 u) from the focus cell's centre per axis, the original's hysteresis -- plus every cell touched by a
+	// +-340 u box round each player-faction character (the "Fast zone hopping" radius is 0 in the default config, so just the touched cells).
+	// x * 64 + z for each loaded cell, rebuilt by cells() on every systems() call.
+	void cells(const double cam[3], const std::vector<std::array<double, 3>>& players);
+	// The draw gate: true when the zone cell under (x, z) is in the loaded set. The one predicate the beam gate is (140100ba0, rwh.211); the
+	// cell's biome group == the handler's owner group half of that gate is already the sim's population rule (a beam starts in a random zone
+	// cell of its own group, docs/reference/VENGE_BEAMS_STATIC.md), so nothing more is tested here.
+	bool cellLoaded(double x, double z) const;
+	std::unordered_map<uint64_t, State> state_;	// per beam in its burst: the drawn-set membership and its fade
+	Stats stats_;
 	std::vector<Beam> beams_;
+	int focusX_ = -1, focusZ_ = -1;	// the focus cell of the loaded set (per axis; -1 = not set yet)
+	std::vector<int> loaded_;		// the loaded zone cells of this frame (x * 64 + z)
 	uint32_t serial_ = 0;
+	std::unordered_set<uint64_t> viewSeen_;
 	uint32_t lastAim_ = 0;	// the beam the last aim() picked (`camera beam same`)
 };

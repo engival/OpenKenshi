@@ -47,14 +47,14 @@ RoutePlan planRoute(const NavMesh& mesh, const NavQuery& query, RouteSets& sets,
 	const double toZ = request.toZ;
 	const std::optional<double>& toY = request.toY;
 	const auto setOf = [&](const PolyLoc& loc) { return sets.of(mesh, loc); };
-	// Class kDoorClasses is no class: no denied-door bit is excluded, so locked doors stay in the search.
+	// A planned route keeps locked doors in the search.
 	TravelFilter travel;
 	travel.radius = static_cast<float>(request.radius);
 	if (request.water)
 		travel.setWaterCost(*request.water);
 	travel.straighten = request.straighten;
 	if (request.planned)
-		travel.doorClass = kDoorClasses;
+		travel.throughLocks = true;
 	RoutePlan route;
 	const float reach = static_cast<float>(kClickReach);
 	const Point start{static_cast<float>(from.x), static_cast<float>(from.y), static_cast<float>(from.z)};

@@ -325,9 +325,9 @@ void Terrain::drawList(const std::vector<Draw>& list, const float m[16], const L
 		b.index_buffer = ibuf_;
 		b.views[VIEW_hmap] = chunk->second.view;
 		b.samplers[SMP_smp] = smp_;
-		b.views[VIEW_shadow_tex] = shadow->view();
-		b.samplers[SMP_shadow_smp] = shadow->sampler();
-		b.samplers[SMP_shadow_raw] = shadow->rawSampler();
+		b.views[VIEW_shadow_tex] = sfd->view;
+		b.samplers[SMP_shadow_smp] = sfd->sampler;
+		b.samplers[SMP_shadow_raw] = sfd->rawSampler;
 		b.views[VIEW_biome] = biomeView_;
 		b.samplers[SMP_bsmp] = biomeSmp_;
 		b.views[VIEW_ground] = colour.view;
@@ -363,7 +363,7 @@ void Terrain::drawList(const std::vector<Draw>& list, const float m[16], const L
 		sg_apply_uniforms(UB_fs_params, SG_RANGE(fs));
 		sg_apply_uniforms(UB_light_params, { &light, sizeof light });
 		sg_apply_uniforms(UB_ao_params, SG_RANGE(ao_binding().params));
-		sg_apply_uniforms(UB_shadow_params, { &shadow->params(), sizeof(ShadowParams) });
+		sg_apply_uniforms(UB_shadow_params, { &sfd->params, sizeof(ShadowParams) });
 		drawstats::draw(0, (kCells + 2) * (kCells + 2) * 6, 1);
 	}
 }

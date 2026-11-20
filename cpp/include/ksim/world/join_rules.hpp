@@ -23,6 +23,7 @@ inline constexpr std::uint8_t kProtectSquad = 8; // goal 143
 inline constexpr std::uint8_t kAttackNeutrals = 16; // goal 21
 inline constexpr std::uint8_t kTerritorial = 32; // goal 144
 inline constexpr std::uint8_t kMasterEnemies = 64; // goal 41
+inline constexpr std::uint16_t kProtectAlliesTown = 512; // goal 288 PROTECT_ALLIES_STAY_IN_TOWN
 inline constexpr std::uint16_t kDefeatSquad = 128; // goal 101 DEFEAT_SQUAD (dt24_101)
 inline constexpr std::uint16_t kDefeatSquadChase = 256; // goal 248 DEFEAT_SQUAD_LIMIT_CHASE_RANGE (dt24_101)
 

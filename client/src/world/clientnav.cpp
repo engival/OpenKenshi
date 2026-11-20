@@ -39,6 +39,7 @@ void ClientNav::patch(const simlink::NavPatch& p)
 void ClientNav::rebuild(const simlink::SimLinkDecoder& dec)
 {
 	const bool fresh = !mesh_ || dec.nav.meshId != meshId_;
+	if (fresh) { routeSets_ = knav::RouteSets{}; }	// the preview's connected sets belong to one mesh
 	std::vector<knav::TileCoord> removed;
 	std::vector<knav::BakedTile> added;
 	if (!fresh)
@@ -109,6 +110,22 @@ ClientNav::Reach ClientNav::over(const double at[3], float halfY) const
 	const knav::Point ext = { kOverXZ, halfY, kOverXZ };
 	knav::Point near;
 	return query_->nearestPoint(p, ext, near) && std::hypot(near[0] - p[0], near[2] - p[2]) < 0.01f ? Reach::kYes : Reach::kNo;
+}
+
+// kenshi-k16.2.412.3: the drawn click hit -> the navmesh point a body stands on there (the click's reverse through the ground solver). The window is the
+// client's (ClientNav::kSnapXZ / kSnapY): the server's own goal snap is a box of knav::kClickReach = 340 u in 3D (knav/route.cpp:59,65), and a point that is
+// already on the mesh snaps to itself there, so this only has to land the hit exactly on the surface it hit.
+ClientNav::Reach ClientNav::snap(const double at[3], double out[3], float halfXZ, float halfY) const
+{
+	if (!query_ || tileSize_ <= 0) { return Reach::kUnknown; }
+	const std::array<int32_t, 3> key = { (int32_t)std::floor((at[0] - origin_[0]) / tileSize_), (int32_t)std::floor((at[2] - origin_[1]) / tileSize_), 0 };
+	if (!held_.count(key)) { return Reach::kUnknown; }
+	const knav::Point p = { (float)at[0], (float)at[1], (float)at[2] };
+	const knav::Point ext = { halfXZ, halfY, halfXZ };
+	knav::Point near;
+	if (!query_->nearestPoint(p, ext, near)) { return Reach::kNo; }
+	for (int k = 0; k < 3; k++) { out[k] = near[k]; }
+	return Reach::kYes;
 }
 
 ClientNav::Reach ClientNav::walkable(const double at[3]) const { return over(at, 5000); }

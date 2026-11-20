@@ -49,9 +49,10 @@ struct TileRect
 // A prop the bake gives a hard body clearance (kenshi-k16.7.89): a closed Obstacle or Projected solid that is not a rock shell
 // or a leaning hull. propClearanceHull: its footprint grown by `radius` (an octagon round the corners), xyz triples, y 0, counter-clockwise;
 // empty for a degenerate shape.
-// The clearance a body keeps from furniture. UNSURE: the original's own fixtures put bodies 1-2 u from these boxes, so this is
-// a placeholder, not the agent radius; the original's capsule radius is asked in oracle item kenshi-rwh.183 (then a follow-up changes it).
-constexpr float kFurnitureBodyClearance = 1.0f;
+// The clearance a body keeps from furniture (OURS, kenshi-k16.7.91). The original has no capsule: its follower (radius 4 u) slides
+// along an unEroded mesh's boundary, and only `path mode` != 0 pieces are cut (rwh.183); live, bodies stand 0.3-2 u from the
+// pieces' boxes (rwh.184, Heft Noble House). Our eroded mesh plus this small ring reproduces that spacing without a body inside a barrel.
+constexpr float kFurnitureBodyClearance = 0.75f; // not a whole number of cells: at 1.0 the hull edge (1.0 + half a 2 u cell) fell on cell centres and marked a column more, which closed the Bar's corridor to the raiders (k16.7.95)
 bool propClearanceShape(const kworld::WorldShape& shape);
 void propClearanceHull(const kworld::WorldShape& shape, float radius, std::vector<float>& out);
 
@@ -436,6 +437,8 @@ public:
 	// True when the straight leg `from` -> `to` walks: the slide reaches the end (blocked nowhere), and with `radius` above 0
 	// the two lines `radius` to either side of it walk too, so the body fits along the whole leg. The route test's skip check.
 	bool walkLeg(const Point& from, const Point& to, float radius, const TravelFilter& travel = {}) const;
+	// The straight-walk shortcut's width walk (planPath): clear for the body up to its width short of `to`, then as a point, crossing no door polygon.
+	bool straightWalk(const Point& from, const Point& to, const TravelFilter& travel) const;
 	// Distance from `point` (on polygon `loc`) to the nearest wall, up to `limit`; walls are mesh edges with no
 	// neighbour, whatever the areas.
 	float wallDistance(const PolyLoc& loc, float limit) const;

@@ -3,6 +3,7 @@
 #include "ksim/core/clock.hpp"
 #include "ksim/world/factions.hpp"
 #include "ksim/ai/perception.hpp"
+#include "ksim/combat/stealth_ko.hpp"
 #include "ksim/nav/placement.hpp"
 #include "ksim/core/simulation.hpp"
 
@@ -403,8 +404,7 @@ public:
 		const auto b = entities_.find(to);
 		if (a != entities_.end() && b != entities_.end())
 			return factionRelation(*data_, flecs::entity(ecs_.c_ptr(), a->second), flecs::entity(ecs_.c_ptr(), b->second));
-		const kdata::Record* record = find(from);
-		return record != nullptr ? record->intOr("default relation", 0) : 0.0;
+		return seededRelation(*data_, from, to);
 	}
 
 	// FactionRelations vf4 (1406b2ea0): `from`'s relation toward `to` takes one step of `reason`. False when a side has no faction
@@ -693,18 +693,55 @@ double Simulation::stealChance(std::uint64_t who, std::uint64_t container, const
 			}
 		}
 	} else {
+		// FUN_1407944d0 measures from the container to the nearest player-squad character (rwh.163 section 2), not the taker: the taker's
+		// own squad mates count, so a mate standing nearer the box lowers the distance factor.
 		in.distance = std::hypot(storage.x - thief->x, storage.z - thief->z);
+		for (const CombatArena::Member& mate : combat_->members())
+		{
+			if (mate.fighter.playerControlled && mate.fighter.squad == thief->squad && !mate.fighter.dead && !mate.fighter.unconscious)
+				in.distance = std::min(in.distance, std::hypot(storage.x - mate.fighter.x, storage.z - mate.fighter.z));
+		}
 		// UNSURE (deferred: playtesting): the ownership test behind ownPlatoon and FUN_1405499a0, and the victim's posture / floor: ours has
 		// no posture or floor model, so they stay false.
 	}
 	return crime::stealChance(in);
 }
 
-void Simulation::recordCaughtStealing(std::uint64_t thief, std::uint64_t victim, const std::string& ownerSid)
+std::uint8_t Simulation::stealPercent(std::uint64_t who, std::uint64_t container, const std::string& item) const
 {
-	reportCrime(thief, crime::kTheft, ownerSid, victim, crime::kTimerTheftReport);
+	const state::Fighter* thief = combat_ != nullptr ? combat_->find(who) : nullptr;
+	const Storage storage = findStorage(container);
+	if (thief == nullptr || !thief->playerControlled || storage.entity == 0 || !isForeignOwner(world_.ecs(), who, storage.ownerSid))
+		return kStealNoRoll;
+	return static_cast<std::uint8_t>(std::clamp(static_cast<int>(stealChance(who, container, item) * 100.0), 0, 100));
+}
+
+void Simulation::recordCaughtStealing(std::uint64_t thief, std::uint64_t victim, std::uint64_t container, const std::string& ownerSid)
+{
 	if (victim != 0)
+	{
+		// FUN_140794810's failure order: event 0x2f (a victim asleep in a bed, one coin flip), the victim stands up (posture 1 / 3 zeroed:
+		// ours is the crouch), event 8, the crime, TEMP_ENEMY 4 on the thief.
+		state::Fighter* who = combat_ != nullptr ? combat_->find(victim) : nullptr;
+		if (who != nullptr && lyingInBed(victim, *who) && rng_[static_cast<std::size_t>(Subsystem::FullDetail)].between(0, 1) == 1)
+			fireDialogue(victim, thief, crime::kEvAlmostWokeUp);
+		if (who != nullptr)
+			who->crouched = false;
 		fireDialogue(victim, thief, crime::kEvThiefCaughtStealingFromMe);
+	}
+	reportCrime(thief, crime::kTheft, ownerSid, victim, crime::kTimerTheftReport);
+	noteCaughtAct(thief, 1, container); // a caught take is a theft act as much as a landed one (EVENT 51 names the container, as reportTheft does)
+	if (victim != 0 && combat_ != nullptr)
+		combat_->markHostile(victim, thief);
+}
+
+void Simulation::stealXp(std::uint64_t thief, double chance, bool caught)
+{
+	// Thievery XP (stat 10): 40 on a pass, 160 on a catch, only while chance < 0.98 and the thief is not a cage occupant. UNSURE
+	// (deferred: playtesting): the exe's last gate char+0x180 < 10 is unread, and the raw XP number takes the stealth KO's kXpScale.
+	state::Fighter* f = combat_ != nullptr ? combat_->find(thief) : nullptr;
+	if (f != nullptr && chance < 0.98 && f->cageBuilding == 0)
+		combat_->rules().addXp(f->skills.thievery, (caught ? 160.0 : 40.0) * stealthko::kXpScale);
 }
 
 bool Simulation::stealRollCaught(std::uint64_t who, std::uint64_t container, const std::string& item, const Storage& storage)
@@ -713,7 +750,9 @@ bool Simulation::stealRollCaught(std::uint64_t who, std::uint64_t container, con
 	if (thief == nullptr || !thief->playerControlled || !isForeignOwner(world_.ecs(), who, storage.ownerSid))
 		return false;
 	const double chance = stealChance(who, container, item);
-	if (!crime::stealCaught(chance, rng_[static_cast<std::size_t>(Subsystem::FullDetail)].uniform01()))
+	const bool caught = crime::stealCaught(chance, rng_[static_cast<std::size_t>(Subsystem::FullDetail)].uniform01());
+	stealXp(who, chance, caught);
+	if (!caught)
 		return false;
 	std::uint64_t victim = storage.body ? container : 0;
 	if (!storage.body)
@@ -733,7 +772,7 @@ bool Simulation::stealRollCaught(std::uint64_t who, std::uint64_t container, con
 			}
 		});
 	}
-	recordCaughtStealing(who, victim, storage.ownerSid);
+	recordCaughtStealing(who, victim, container, storage.ownerSid);
 	return true;
 }
 
@@ -804,7 +843,7 @@ void Simulation::stepCrime(std::uint64_t now)
 		// OURS (k16.6.85): a defender answering its attacker (32 SELF_PRESERVATION, 143 PROTECT_OWN_SQUAD, 15 PROTECT_ALLIES) commits no assault; the
 		// live original's bar crew never answered the victim squad's hits on the player (rwh.82), and the exe's own test for that is not decoded.
 		if (attacker->combatGoal == routines::task::SelfPreservation || attacker->combatGoal == routines::task::ProtectOwnSquad
-			|| attacker->combatGoal == routines::task::ProtectAllies)
+			|| attacker->combatGoal == routines::task::ProtectAllies || attacker->combatGoal == routines::task::ProtectAlliesStayInTown)
 			continue;
 		const state::CrimeRecord* victimRecord = fighterEntity(note.victim).get<state::CrimeRecord>();
 		if (victimRecord != nullptr && (victimRecord->crime != crime::kNone || crime::bountyOf(*victimRecord, attackerSide->factionSid) > 0))

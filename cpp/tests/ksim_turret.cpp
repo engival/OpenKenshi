@@ -19,6 +19,8 @@
 #include <iostream>
 #include <string>
 
+namespace { constexpr double kPi = 3.14159265358979323846; } // M_PI is not in MinGW's strict -std=c++20 <cmath>
+
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
 #endif
@@ -110,9 +112,9 @@ int main()
 		require(!fight(0.0, 1500.0, 6.0, &fired, &task, &moved) && fired == 0, "a target beyond the turret's range was shot at");
 		// (The negative cases run 6 s: the target walks at the gunner and would, given longer, come round into the arc.)
 		// A 400 u target at 80 degrees is inside the 180 degree arc, one at 100 degrees is outside it.
-		require(fight(400.0 * std::sin(80.0 * M_PI / 180.0), 400.0 * std::cos(80.0 * M_PI / 180.0), 20.0, &fired, &task, &moved) && fired > 0,
+		require(fight(400.0 * std::sin(80.0 * kPi / 180.0), 400.0 * std::cos(80.0 * kPi / 180.0), 20.0, &fired, &task, &moved) && fired > 0,
 			"a target 80 degrees off the facing was not shot");
-		require(!fight(400.0 * std::sin(100.0 * M_PI / 180.0), 400.0 * std::cos(100.0 * M_PI / 180.0), 6.0, &fired, &task, &moved) && fired == 0,
+		require(!fight(400.0 * std::sin(100.0 * kPi / 180.0), 400.0 * std::cos(100.0 * kPi / 180.0), 6.0, &fired, &task, &moved) && fired == 0,
 			"a target 100 degrees off the facing was shot");
 
 		// ---- let go: told to, or moved off the post ----

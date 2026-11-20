@@ -51,6 +51,8 @@ using namespace ksim;
 
 constexpr double kBarX = -51181.0;
 constexpr double kBarZ = 2639.0;
+// Work per ray (tree boxes and triangles tested), pinned at ~1.5x the measured 103 / 80 street and 12 / 0 above the roofs.
+constexpr double kStreetNodes = 155.0, kStreetTris = 120.0, kRoofNodes = 19.0, kRoofTris = 5.0;
 
 std::string num(double v)
 {
@@ -461,24 +463,31 @@ int main(int argc, char** argv)
 			for (int i = 0; i + 1 < static_cast<int>(eyes.size()) && static_cast<int>(samples.size()) < rays; i += 2)
 				samples.push_back({ eyes[static_cast<std::size_t>(i)], eyes[static_cast<std::size_t>(i + 1)] });
 			rays_used = static_cast<int>(samples.size());
+			std::pair<double, double> lastWork{ 0.0, 0.0 }; // nodes, triangles tested per ray by the last run
 			const auto run = [&](const std::vector<std::pair<std::array<double, 3>, std::array<double, 3>>>& set)
 			{
 				int blocked = 0;
+				kworld::HullTree::work() = {};
 				const auto start = std::chrono::steady_clock::now();
 				for (const auto& [a, b] : set)
 					blocked += back.trace(a, b).blocked ? 1 : 0;
 				const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 				const double perRay = seconds / static_cast<double>(set.size()) * 1.0e9;
+				const kworld::HullTree::Work done = kworld::HullTree::work();
+				const double n = static_cast<double>(set.size());
+				lastWork = { static_cast<double>(done.nodes) / n, static_cast<double>(done.triangles) / n };
 				return std::pair<double, int>{ perRay, blocked };
 			};
 			const int streetRays = rays_used;
 			const auto [perRay, blocked] = run(samples);
+			const auto streetWork = lastWork;
 			// Above the roofs: rays that cross the whole region, the longest traversal a sight line can have.
 			std::vector<std::pair<std::array<double, 3>, std::array<double, 3>>> high;
 			high.reserve(rays);
 			for (const auto& [a, b] : samples)
 				high.push_back({ { a[0], a[1] + 200.0, a[2] }, { b[0], b[1] + 200.0, b[2] } });
 			const auto [perRayHigh, blockedHigh] = run(high);
+			const auto roofWork = lastWork;
 			// bar_crowd: 28 bandits against the bar's residents (~12), indoor sight 500: every pair is a candidate.
 			const int crowd = 40;
 			const double pairs = crowd * (crowd - 1) / 2.0;
@@ -486,7 +495,12 @@ int main(int argc, char** argv)
 				perRay / 1000.0, blocked, streetRays, perRayHigh, blockedHigh);
 			std::printf("cost: bar_crowd %d characters -> %.0f pairs, %.2f ms/tick at street level\n", crowd, pairs,
 				pairs * perRay / 1.0e6);
-			test::require(perRay < 20000.0 && perRayHigh < 20000.0, "a ray costs " + num(perRay / 1000.0) + " / " + num(perRayHigh / 1000.0) + " us");
+			std::printf("cost: work per ray, street %.2f nodes %.2f triangles; roofs %.2f nodes %.2f triangles\n", streetWork.first,
+				streetWork.second, roofWork.first, roofWork.second);
+			// The gate is the deterministic work (box and triangle tests per ray), not host time: the us/ray above is info only.
+			test::require(streetWork.first < kStreetNodes && streetWork.second < kStreetTris && roofWork.first < kRoofNodes && roofWork.second < kRoofTris,
+				"a ray's work: street " + num(streetWork.first) + " nodes / " + num(streetWork.second) + " tris, roofs " + num(roofWork.first)
+				+ " / " + num(roofWork.second));
 		}
 
 		// ---- 9. perception: the same geometry as sight outcomes (LINE_OF_SIGHT 4 tests 1-4) ----

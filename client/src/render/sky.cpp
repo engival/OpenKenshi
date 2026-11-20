@@ -820,7 +820,9 @@ void Sky::render(const SkyFrame& s, const double f[3], const double r[3], const 
 	const double radius[2] = { std::atan(kMoon1Size * tanT * kMoonMeshRadius), std::atan(kMoon2Size * tanT * kMoonMeshRadius) };
 	unit(kMoon1, p.moon_a, radius[0]);
 	unit(kMoon2, p.moon_b, radius[1]);
-	const double minutes = std::floor((s.hours + s.day * 24.0) * 60.0);
+	// +1e-3: a clock set to a whole minute (the scene's time=01:11, the sim's float hour) lands within a few 1e-5 of the boundary, and the floor
+	// flipped a minute (moon 2 spins 0.0033 rad per minute) with the last bit of the hour (kenshi-k16.2.328.1)
+	const double minutes = std::floor((s.hours + s.day * 24.0) * 60.0 + 1e-3);
 	p.moon_c[0] = (float)std::fmod(minutes * (kMoon1Spin / 1440.0), 2.0 * kPi);
 	p.moon_c[1] = (float)std::fmod(minutes * (kMoon2Spin / 1440.0), 2.0 * kPi);
 	// texture LOD: the lit hemisphere spans half the equirect width, over the disc's diameter in pixels

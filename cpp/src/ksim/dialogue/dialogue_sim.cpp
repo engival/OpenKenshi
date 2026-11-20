@@ -257,8 +257,7 @@ void Simulation::stepDialogue(std::uint64_t now, TalkProbe* probe)
 		{
 			value = factionRelation(*data, flecs::entity(ecs.c_ptr(), a->second), flecs::entity(ecs.c_ptr(), b->second));
 		} else {
-			const kdata::Record* record = data->find(from);
-			value = record != nullptr ? record->intOr("default relation", 0) : 0.0;
+			value = seededRelation(*data, from, to);
 		}
 		relationCache.emplace(from + "\n" + to, value);
 		return value;
@@ -702,19 +701,20 @@ void Simulation::stepDialogue(std::uint64_t now, TalkProbe* probe)
 		{
 			if (data_ == nullptr)
 				return false;
-			std::vector<std::int32_t> types; // the record types of the listed records (the data's lists are ITEM records)
-			for (const std::uint32_t id : ids)
-			{
-				const kdata::Record* record = data_->find(book_.sidOf(id));
-				if (record != nullptr)
-					types.push_back(record->type);
-			}
+			// The exe reads only the first list entry, by its ITEM record's `item function` (the loader's line+0x1b0), and compares
+			// it with each inventory item's function (item+0x124) in the flat main inventory only (carried entries: not worn gear, not a backpack's contents).
+			if (ids.empty())
+				return false;
+			const kdata::Record* listed = data_->find(book_.sidOf(ids.front()));
+			if (listed == nullptr)
+				return false;
+			const std::int32_t function = listed->intOr("item function", 0);
 			const auto pred = [&](const state::InventoryEntry& entry)
 			{
 				const kdata::Record* record = data_->find(entry.itemSid);
-				return record != nullptr && std::find(types.begin(), types.end(), record->type) != types.end();
+				return entry.slot == state::Inventory::kCarried && record != nullptr && record->intOr("item function", 0) == function;
 			};
-			return squadHolds(target, member, pred);
+			return squadHolds(target, member, pred, false);
 		}
 
 		bool illegalItem(std::uint64_t speaker, std::uint64_t who, std::uint64_t& member) const override
@@ -934,7 +934,7 @@ void Simulation::stepDialogue(std::uint64_t now, TalkProbe* probe)
 		}
 
 		// The target's squad (the target alone when it has none) holds an entry `pred` accepts; true and `member` = the holder.
-		bool squadHolds(std::uint64_t target, std::uint64_t& member, const std::function<bool(const state::InventoryEntry&)>& pred) const
+		bool squadHolds(std::uint64_t target, std::uint64_t& member, const std::function<bool(const state::InventoryEntry&)>& pred, bool deep = true) const
 		{
 			const auto test = [&](std::uint64_t who) -> bool
 			{
@@ -942,7 +942,7 @@ void Simulation::stepDialogue(std::uint64_t now, TalkProbe* probe)
 				if (f == nullptr || f->dead || f->carriedBy != 0)
 					return false;
 				const state::Inventory* stock = sim_.fighterEntity(who).get<state::Inventory>();
-				if (stock == nullptr || !anyEntry(stock->items, pred))
+				if (stock == nullptr || !(deep ? anyEntry(stock->items, pred) : std::any_of(stock->items.begin(), stock->items.end(), pred)))
 					return false;
 				member = who;
 				return true;

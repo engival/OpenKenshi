@@ -806,11 +806,11 @@ code `cpp/include/ksim/nav/doors.hpp`, data and exe notes in `docs/reference/DOO
 - **Navigator.** `Navigator::applyDoors(book)` (tick boundary: the end of the strategic step, or the
   next squad step after a command / a load) repaints every region mesh's door polygons and the
   windows built later (`NavMesh::applyDoors`, no tile rebuilt); `routeFor` / `localRouteFor` /
-  `nearestReachableFor` take a `Traveller` class and pass it to the coarse graph's
-  `DoorQuery` and to Detour's `TravelFilter::doorClass`. **Connected sets and doors**: the
+  `nearestReachableFor` take a `Traveller` (bash flag only; no door class) and pass it to the coarse graph's
+  `DoorQuery` and to Detour's `TravelFilter::throughLocks`. **Connected sets and doors**: the
   polygon sets are now labelled *without* door polygons; each door lists the sets beside it, and
-  a per-class table (built on first use after a book change) unions the sets of the doors that
-  class may pass. A goal pick is "same set as the squad as this class sees it", so a squad never
+  a table (built on first use after a book change) unions the sets of the doors that
+  are not locked. A goal pick is "same set as the squad", so a squad never
   picks a goal behind a gate it cannot pass; a coarse route whose ends are in different sets
   is answered at once (no graph search; DoorRefused when the sets are one with every door open),
   which also removed the whole-graph proof searches for plain unreachable pairs.
@@ -1149,10 +1149,8 @@ budget must stay inside spare worker time.
 - **(Decided, implemented 2026-10-31.) Door and gate links.** Every door (a child BUILDING of the
   `doors` list, placed with its parent's transform) is baked as walkable passage with its own
   polygons (areas DoorOpen / DoorClosed); tiles never depend on door state. A `knav::DoorBook`
-  holds per-door state {open, closed, locked} and a denied-traveller-class mask (8 classes, chosen
-  by the sim); `NavMesh::applyDoors` repaints the door polygons, no tile is rebuilt. Per traveller
-  (`TravelFilter::doorClass`): allowed and open = normal cost, allowed and closed = a wait cost
-  (DoorClosed, about 200 units of walking), denied or locked = excluded, so the search routes
+  holds per-door state {open, closed, locked}, no class or faction test (as the original); `NavMesh::applyDoors` repaints the door polygons, no tile is rebuilt. Open = normal cost, closed = a wait cost
+  (DoorClosed, about 200 units of walking), locked = excluded, so the search routes
   around or fails cleanly. The coarse graph keeps the doors each portal pair's path crosses and a
   door-avoiding bypass, and reads the book at query time (no cluster recomputed). Detail:
   `docs/formats/NAVMESH_CACHE.md` "Doors and gates". Capacity, queues and who sets the state
@@ -1161,8 +1159,7 @@ budget must stay inside spare worker time.
   gates (a closed gate would break its pathfinding), and high run speed lets
   anyone bypass town security. Ours:
   - Portal state (open / closed / opening) plus an access policy derived from
-    town state: time of day, alert level, security, siege. (The state and the per-class policy
-    are implemented in the nav layer; the first town rules that set them are in ksim/doors.*
+    town state: time of day, alert level, security, siege. (The state is implemented in the nav layer; the per-class policy was retired, k16.7.111; the first town rules that set them are in ksim/doors.*
     (alert from the owner's Defend intent or an incoming hostile raid, `is public`; no time of
     day, the data has none), see "Town gates, first slice". There is no "opening" state yet:
     closed has the wait cost.)

@@ -180,6 +180,10 @@ struct GroupContext
 	double postX = 0.0;
 	double postZ = 0.0;
 	std::uint64_t postKey = 0;
+	// The squad's package row for MAN_THE_GATE 180 (null: its package has none, so the crew offers no post goal), and the hour of day the
+	// row's window reads. The post goal is scored through goalsel from this row: tier, weight, window and the task's utility.
+	const routines::GoalRow* postRow = nullptr;
+	double hour = 0.0;
 	std::uint64_t now = 0;
 	// The squad's faction layer state (intent flowing down); null without one.
 	const state::FactionAI* factionAi = nullptr;
@@ -192,6 +196,9 @@ struct GroupContext
 	// A delivering squad's slowest slave on foot (k16.6.22): how far the farthest owned slave that follows its captor stands from the leader.
 	// The delivery's carrot waits while it is beyond kSlaveLeash.
 	double slaveGap = 0.0;
+	// The squad owns a living player-controlled slave: the player is in it, the area follows (k16.6.468), so it never goes on as a token and walks an
+	// off-mesh goal one zone at a time (k16.6.482).
+	bool holdsPlayer = false;
 	// A wandering trader (Behaviour::TradeCircuit): its circuit state, and the world's towns as the pick sees them (what trader::eligibleTown
 	// reads), called only when a town is picked; `current` is the town the squad stands in, or null. Both null for any other squad.
 	state::TraderTrip* trip = nullptr;
@@ -295,8 +302,6 @@ private:
 		std::uint64_t salt, double radius) const;
 	// A raid order ends badly: record why, drop the goal (a successor is picked).
 	void failOrder(GroupContext& context, state::AiReason reason, GroupResult& result) const;
-	// The squad as the gates of the place it is going to see it.
-	Traveller traveller(const GroupContext& context, double toX, double toZ) const;
 	// The trade circuit (TOWN_LIFE_SLICE T2). Active for a TradeCircuit squad that can act (a position, the navigation window, the town facts)
 	// and has no raid order; everything else is the ordinary group layer. circuitSelect replaces select() for it: arrival is stamped on the
 	// no-town -> town transition only, the stay is picked once per arrival, and the next town is uniform among the 4 nearest eligible ones.
@@ -433,6 +438,7 @@ public:
 		double z = 0.0;
 		bool holding = false;
 		double slaveGap = 0.0; // GroupContext::slaveGap
+		bool holdsPlayer = false; // GroupContext::holdsPlayer
 	};
 	std::map<std::uint64_t, Carry>& carried() noexcept { return carried_; }
 	// Every squad as (state::Id value, entity), in Id order: the cached list the squad step walks (k16.6.232: the per-slice passes use it).

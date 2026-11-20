@@ -191,6 +191,8 @@ int main(int argc, char** argv)
 				enemyStun += p.stun;
 			sim.enqueue(Command::fighterAttack(state::Id{ duel.player }, state::Id{ duel.enemy }));
 			sim.tick();
+			lastX = fighterOf(sim, duel.player)->x; // the order's own tick moves the crawler too (the chase slews to the crawl speed at once): sample from here
+			lastZ = fighterOf(sim, duel.player)->z;
 			std::printf("attack order: orderTarget %llu target %llu distance %.1f\n",
 				static_cast<unsigned long long>(fighterOf(sim, duel.player)->orderTarget),
 				static_cast<unsigned long long>(fighterOf(sim, duel.player)->target), before);

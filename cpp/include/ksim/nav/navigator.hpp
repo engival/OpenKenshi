@@ -69,14 +69,16 @@ struct Route
 	bool reseated = false;
 	// combat's routeForBody: this route is the radius-0 retry after the body's own search failed (kenshi-k16.7.62).
 	bool radiusFallback = false;
+	// MeshNavigator::routeFarFrom: the goal's zone is not loaded like the walker's, so the route ends at the exit of the walker's own zone
+	// along the line to the goal (rwh208 section 2), not at the goal: the owner asks again from that end (LOCOMOTION.md D9).
+	bool clamped = false;
 };
 
-// Who is asking, as far as gates are concerned: the traveller class (knav door classes, 0..7)
-// the door policy of the place it is going to treats it as (doors.hpp). The default is class 0.
+// Who is asking, as far as gates are concerned. Doors have no class, faction or owner test (as in the original): only a
+// locked door refuses, and a basher goes through it.
 struct Traveller
 {
-	int doorClass = 0;
-	// A raid that bashes its way through: gates are passable whatever their state or policy (the sets and the coarse
+	// A raid that bashes its way through: gates are passable whatever their state (the sets and the coarse
 	// graph see every door open). The caller adds the time the bashing takes (doors.hpp, DoorAccess::bashing).
 	bool bash = false;
 	// The traveller's body: the routing clearance radius (CombatData::pathRadius, NAVMESH_CACHE.md "Clearance").
@@ -108,6 +110,12 @@ public:
 		double toZ) const
 	{
 		return localRoute(fromX, fromZ, toX, toZ);
+	}
+	// A far goal (its zone not loaded) is walked one zone at a time: the route ends at the exit of the walker's zone (clamped), the caller asks again
+	// from there (MeshNavigator::routeFarFrom, kenshi-k16.6.482). The default is routeFor.
+	virtual Route farRouteFor(const Traveller& who, double fromX, double fromZ, double toX, double toZ) const
+	{
+		return routeFor(who, fromX, fromZ, toX, toZ);
 	}
 	virtual std::optional<state::GroundPoint> nearestReachableFor(const Traveller&, double x,
 		double z, double reach, double fromX, double fromZ) const
@@ -228,6 +236,7 @@ public:
 
 	bool covers(double x, double z) const override;
 	Route route(double fromX, double fromZ, double toX, double toZ) const override;
+	Route farRouteFor(const Traveller& who, double fromX, double fromZ, double toX, double toZ) const override;
 	std::optional<state::GroundPoint> nearestWalkable(double x, double z, double reach, double radius = 0.0) const override;
 #if KSIM_PROFILE
 	const NavStats* profileStats() const noexcept override { return &stats_; }
@@ -257,6 +266,17 @@ public:
 	// ITS height, not the floor level with the walker; internal callers that know the height leave it off (kenshi-k16.8.10).
 	Route routeFrom(const knav::Position& from, double toX, double toZ, std::optional<double> toY = std::nullopt,
 		bool planned = false, Body body = {}, bool straighten = true, bool clickGoal = false) const;
+	// Far goals (LOCOMOTION.md D9, rwh208 section 2). A zone is loaded when the mesh holds tiles of it (a streaming mesh: it is in the coverage).
+	bool zoneLoaded(kworld::ZoneCell zone) const;
+	// True when the goal lies in another zone than (fromX, fromZ) and that zone is not loaded: routeFarFrom clamps it.
+	bool farGoal(double fromX, double fromZ, double toX, double toZ) const;
+	// kZoneMargin: the loaded zone's box is grown by this (the exe's navsys+0x1d4, value not read: ours).
+	static constexpr double kZoneMargin = 50.0;
+	// routeFrom, except that a far goal is replaced by the exit of the walker's zone along the line walker -> goal (box grown by kZoneMargin, snapped
+	// to the mesh like any goal), `clamped` set on the route. The exit that gives no progress (a snap back over the border, no ground) widens the
+	// margin and tries sideways offsets along the crossed axis (the exe's ladder). Not found only when no exit has ground.
+	Route routeFarFrom(const knav::Position& from, double toX, double toZ, std::optional<double> toY = std::nullopt,
+		bool planned = false, Body body = {}, bool straighten = true, bool clickGoal = false) const;
 	// The talk / trade approach (docs/FEATURES.md "Talk / trade approach stops on the near side of a counter"): picks the GOAL first.
 	// Candidates are navmesh points on rings round the target (tx, ty, tz) within `reach` (xz; the stopped reach) that have a clear
 	// line to it (lineClear), each pathed with routeFrom; the one with the shortest path from `from` wins. Not found (found false)
@@ -270,6 +290,10 @@ public:
 	// between rooms has the same thin gap but its way round is through a door, far longer, so it blocks.
 	// UNSURE: no wall / furniture classification exists in the navmesh; this is the stand-in.
 	bool lineClear(double ax, double ay, double az, double tx, double ty, double tz) const;
+	// True when the straight leg (ax, ay, az) -> (tx, ty, tz) walks on the mesh with no hole in it: the original's melee line check, the
+	// navmesh-only straight walk behind cc+0x2c0 (kenshi-rwh.186 / .187). A table's cut (the furniture ring) breaks it, a wall does too; no
+	// body clearance, no detour allowance (lineClear's talk rule is the opposite). Not a collision test: a table never blocks sight or a shot.
+	bool straightWalk(double ax, double ay, double az, double tx, double ty, double tz) const;
 	static constexpr double kThinObstacle = 40.0;
 	static constexpr double kDetourRatio = 3.0;
 	static constexpr double kDetourSlack = 60.0;

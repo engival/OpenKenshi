@@ -111,7 +111,7 @@ struct Cluster
 	// The door information of a pair, or null when its path crosses no door.
 	const DoorEdge* doorEdge(std::size_t i, std::size_t j) const noexcept;
 
-	// What the pair costs a traveller of `doorClass` under `book` (null = doors as baked), and
+	// What the pair costs a traveller under `book` (null = doors as baked), and
 	// whether that is the bypass; -1 when every route inside the cluster is refused.
 	struct Crossing
 	{

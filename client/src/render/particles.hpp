@@ -13,6 +13,11 @@
 #include "render/sky.hpp"
 #include "render/camera.hpp"
 
+// far is an empty macro once <windows.h> is in scope (sokol_app.h and libc++'s <locale> include it); the member named far below is a plain
+// identifier (kenshi-379.31.3, caught by the local llvm-mingw cross-check).
+#undef near
+#undef far
+
 // Weather particle effects (docs/CLIENT_GOALS.md "Particles"): a small subset of Ogre ParticleUniverse, enough for the rain and dust scripts under data/particles/scripts.
 // The .pu format and the semantics of its attributes follow the public ParticleUniverse documentation (Henry van Bakel / Kenshi's Ogre plugin, MIT); the parser and the
 // simulation here are our own code. Per frame: simulate on the CPU (a few thousand billboards), write one instance buffer, draw instanced quads in their own pass after the fog
@@ -46,6 +51,8 @@ public:
 		bool outlive = false;
 	};
 	void setPlaced(const std::vector<PlacedSystem>& systems);
+	// KBEAMSLOG: placed systems of these keys that no longer emit but still hold particles (the tail), and those particles
+	size_t tailSystems(const std::vector<uint64_t>& keys, size_t* particles = nullptr, const double* cam = nullptr, double radius = 0, size_t* near = nullptr) const;
 	// Clears every system and reseeds, so the next setEffects starts from the same state (scene tests).
 	void reset(uint32_t seed);
 

@@ -1,32 +1,23 @@
 #pragma once
 
-// The running executable's path (macOS tester's Metal port, kenshi-379.32.16): _NSGetExecutablePath on Apple, /proc/self/exe elsewhere
-// (Windows: kenshi-379.19).
-#include <cstdint>
+// The running executable's path (macOS tester's Metal port, kenshi-379.32.16): _NSGetExecutablePath on Apple, /proc/self/exe elsewhere,
+// GetModuleFileNameW on Windows (kenshi-379.19, 379.31.5). Header only (the client's kui_demo includes it without linking kutil): the
+// OS code is in kutil/platform/<posix|windows>/executable.hpp.
 #include <filesystem>
 #include <system_error>
-#ifdef __APPLE__
-#include <mach-o/dyld.h>
-#include <vector>
+
+#ifdef _WIN32
+#include "kutil/platform/windows/executable.hpp"
+#else
+#include "kutil/platform/posix/executable.hpp"
 #endif
 
 namespace kutil {
 
+// An empty path with ec set on failure.
 inline std::filesystem::path executablePath(std::error_code& ec)
 {
-#ifdef __APPLE__
-	std::uint32_t size = 0;
-	_NSGetExecutablePath(nullptr, &size);
-	std::vector<char> path(size);
-	if (!size || _NSGetExecutablePath(path.data(), &size))
-	{
-		ec = std::make_error_code(std::errc::no_such_file_or_directory);
-		return {};
-	}
-	return std::filesystem::canonical(path.data(), ec);
-#else
-	return std::filesystem::read_symlink("/proc/self/exe", ec);
-#endif
+	return platform::executablePath(ec);
 }
 
 } // namespace kutil

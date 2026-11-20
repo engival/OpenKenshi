@@ -58,7 +58,7 @@ done
 
 case "$SCENARIO" in newgame|duel|squad) ;; *) echo "demo.sh: scenario must be newgame, duel or squad" >&2; exit 2 ;; esac
 case "$PORT" in *[!0-9]*) echo "demo.sh: bad port '$PORT'" >&2; exit 2 ;; esac
-PORT=$(pick_port "$PORT") || exit 3
+WANT_PORT=$PORT	# --port N: kept or fails; unset: picked at each server start (retried on a bind failure, kenshi-k16.2.417.1)
 
 pick_server "$ROOT" "$SERVER"	# prints 'server: shared PATH' / 'server: built (reason)'; SHARED=1 for the first two sources
 # A binary older than the last commit touching its sources is rebuilt (2026-11-07: an old OpenKenshi-server ignored the scenario wire silently
@@ -162,12 +162,6 @@ then
 	fi
 fi
 
-if ss -Hltn "sport = :$PORT" 2>/dev/null | grep -q .
-then
-	echo "demo.sh: port busy: $PORT is already in use (pick another with --port, or leave it out)" >&2
-	exit 1
-fi
-
 TMP=$(mktemp -d /tmp/kdemo.XXXXXX)
 LOG="$TMP/server.log"
 SPID=
@@ -190,31 +184,31 @@ cleanup()
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-(cd "$ROOT" && exec "$SERVER" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen "127.0.0.1:$PORT" --debug-view "${SCENARGS[@]}" "${NAVARGS[@]}" ${EXTRA[@]+"${EXTRA[@]}"}) >"$LOG" 2>&1 &	# from the repo root, as it is run in development
-SPID=$!
-
-echo "demo.sh: server pid $SPID (${SCENFILE:-$SCENARIO}, port $PORT, navworld $NAVWORLD, AI bake $AI), waiting for world + navmesh bake..."
-for ((i = 0; i < 120; i++))
+for try in 1 2 3
 do
-	if grep -q '^listening ' "$LOG"
-	then
-		break
-	fi
+	# from the repo root, as it is run in development
+	launch_server "$LOG" "$WANT_PORT" env -C "$ROOT" "$SERVER" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen "127.0.0.1:@PORT@" --debug-view "${SCENARGS[@]}" "${NAVARGS[@]}" ${EXTRA[@]+"${EXTRA[@]}"}
+	SPID=$SERVER_PID; PORT=$SERVER_PORT
+	echo "demo.sh: server pid $SPID (${SCENFILE:-$SCENARIO}, port $PORT, navworld $NAVWORLD, AI bake $AI), waiting for world + navmesh bake..."
+	for ((i = 0; i < 120; i++))
+	do
+		grep -q '^listening ' "$LOG" && break
+		kill -0 "$SPID" 2>/dev/null || break
+		sleep 0.5
+	done
+	grep -q '^listening ' "$LOG" && break
 	if ! kill -0 "$SPID" 2>/dev/null
 	then
+		if bind_retry "$LOG" "$WANT_PORT" "$try"; then SPID=; continue; fi
 		SPID=
 		echo "demo.sh: server exited early; log tail:" >&2
 		tail -n 20 "$LOG" >&2
 		exit 1
 	fi
-	sleep 0.5
-done
-if ! grep -q '^listening ' "$LOG"
-then
 	echo "demo.sh: server not listening after 60 s; log tail:" >&2
 	tail -n 20 "$LOG" >&2
 	exit 1
-fi
+done
 
 echo "demo.sh: server up, starting client"
 CSTATUS=0

@@ -131,20 +131,30 @@ int main()
 			facts.ownerKind = static_cast<std::int32_t>(FactionKind::Bandit);
 			check(decideDoor(facts).plan == DoorPlan::Pick, "a door nobody owns has no kind: no bash, weapon in hand: sheathe, pick");
 		}
-		// Gates: shared by up to 8, divided by the mates, not under melee attack; no weapon needed (UNSURE).
+		// Gates: shared by up to 8, divided by the mates, not under melee attack; rows 123 / 290 need hasWeaponEquipped = 1 (rwh.199).
 		{
 			DoorFacts facts = base();
 			facts.hostile = true;
 			facts.gate = true;
+			check(decideDoor(facts).plan != DoorPlan::Bash, "gate, unarmed, nothing carried: no bash (123 needs a weapon in hand)");
+			facts.weaponCarried = true;
 			DoorDecision d = decideDoor(facts);
-			check(d.plan == DoorPlan::Bash && d.utility == 1.0 && !d.equipFirst, "gate, unarmed, alone: bash 1.0");
+			check(d.plan == DoorPlan::Bash && d.equipFirst, "gate, carried weapon: bash after an equip step");
+			facts.weaponCarried = false;
+			facts.weaponInHand = true;
+			d = decideDoor(facts);
+			check(d.plan == DoorPlan::Bash && d.utility == 1.0 && !d.equipFirst, "gate, weapon in hand, alone: bash 1.0");
+			// An armed bash also has BASH_DOOR 81 (no crowd term), which outscores the gate row's 1/(mates+1) share, so the crowd cap shows only in the unarmed case.
 			facts.mates = 3;
 			d = decideDoor(facts);
-			check(d.plan == DoorPlan::Bash && std::fabs(d.utility - 0.25) < 1e-12, "gate with 3 mates on it: 1/4");
+			check(d.plan == DoorPlan::Bash && d.utility == 1.0, "gate with 3 mates on it, armed: BASH_DOOR still scores 1.0");
+			facts.weaponInHand = false;
+			facts.weaponCarried = false;
 			facts.mates = 8;
-			check(decideDoor(facts).plan == DoorPlan::Pick, "gate with 8 on it: bash dead, pick");
+			check(decideDoor(facts).plan == DoorPlan::Pick, "gate with 8 on it, unarmed: bash dead, pick");
 			facts.mates = 0;
 			facts.underAttack = true;
+			facts.weaponInHand = false;
 			check(decideDoor(facts).plan == DoorPlan::Pick, "gate under melee attack: bash dead, pick");
 			facts.weaponInHand = true;
 			check(decideDoor(facts).plan == DoorPlan::Bash, "gate under attack, weapon in hand: BASH_DOOR still scores");

@@ -29,8 +29,10 @@ there.
 a folder picker titled "Where is Kenshi installed?" opens before the game window (on Linux it needs `zenity`, `kdialog` or `qarma`
 installed; without one, or with Cancel, it prints where it looked and exits). Pick the Kenshi install folder or its `data` folder; a
 folder without `gamedata.base` is refused and the picker reopens. Your choice is saved as `data=PATH` in `~/.config/kenshi-client/data.conf`
-(`%APPDATA%\kenshi-client\` on Windows), so the next start does not ask. `--data DIR`, `KENSHI_DATA` and editing that file still work and
+(`%APPDATA%\OpenKenshi\kenshi-client\` on Windows), so the next start does not ask. `--data DIR`, `KENSHI_DATA` and editing that file still work and
 win over the saved choice; delete the line to be asked again.
+
+**Windows: log and console.** No console window opens. The log is `%LOCALAPPDATA%\OpenKenshi\data\logs\openkenshi.log` (the run before it: `openkenshi.log.1`); attach it to a bug report. To watch it live, start with `--console` (or set `KCLIENT_CONSOLE=1`): from cmd it prints there, otherwise a console window opens.
 
 **Window position.** The client remembers where its window was, its size and whether it was fullscreen, and puts it
 back at the next start. Each desktop layout (the set of monitors, their names, sizes and places) has its own entry in
@@ -63,9 +65,11 @@ The title art fills the screen. Bottom right: `OpenKenshi <version> - not affili
 - `SCENARIOS` — the playtest scenarios (2.6). Only in development builds, and only with `--debug` or `--playtest` (`play.sh title --playtest`, for a journey playtest).
 - `EXIT` — quits.
 
-Before the game server is up (or if it failed), a line under the buttons says why, and CONTINUE, NEW GAME, LOAD GAME
-and IMPORT GAME show it as their tooltip. They still take a click: the one you pressed stays held down, its caption lit, and goes ahead
-once the server answers. Pressing another changes your mind.
+Before the game server is up, a panel beside the buttons says GAME SERVER STARTING with what it is doing (with the seconds so far),
+a bar of its steps and three dots that keep moving while it works; if the server failed, the panel says GAME SERVER ERROR in red with
+why and what to run. CONTINUE, NEW GAME, LOAD GAME and IMPORT GAME show the same text as their tooltip. They still take a click: the one
+you pressed stays held down, its caption lit, the panel says e.g. "NEW GAME will start when the server is ready", and it goes ahead once
+the server answers. Pressing another changes your mind.
 
 ### 2.2 New game
 
@@ -90,7 +94,16 @@ A new game that has editable squad members opens the creator first. The loading 
 - **Left column**: name; race, subrace and gender (each cycled with its arrows); `IMPORT` / `EXPORT` / `CLOTHES`;
   `CHARACTER n/N` steps through the squad's editable members; the race's description and stats; `CONFIRM`, and
   `CANCEL` (the new game's editor has no CANCEL: CONFIRM is the way out).
-- **Middle**: the character, rendered live. Drag to turn it.
+- **Middle**: the character standing on the editor's platform, rendered live; the two are one assembly and move together.
+  - **Drag** it with the left button: side to side turns it around (yaw), up and down tilts it (short of tipping over).
+    The turn is about the point the view is framed on (see the wheel below), so the part you zoomed onto stays put.
+  - **Mouse wheel**: zooms in on the point of the model under the pointer — the hand under the pointer stays under the
+    pointer as you scroll — and that point becomes the point the drag turns about. With the pointer off the model the
+    zoom goes straight towards (or away from) that point.
+  - Zooming all the way back out drifts the view smoothly back to the default framing of the whole character — the
+    turn and the tilt you gave it ease back with it, the turn the shorter way round, so the character comes round to
+    face you again instead of snapping. Each wheel step glides there over about a quarter of a second; scrolling
+    on during a glide carries on from where it is going, and a drag takes over from what is on screen.
 - **Right column**: `BODY` / `FACE` / `HAIR` tabs over sliding pages of shape sliders and colour/hair/beard pickers
   (hair and beard have a "none" first entry; a race or sex with none shows the picker disabled). `RANDOMISE ALL`,
   `RANDOMISE` (this page) and `RESET` under the pages.
@@ -132,21 +145,22 @@ row's tooltip says so); changing it in Options keeps your new value and saves it
 
 **Find**: the bar across the top finds a setting in any tab without hiding anything. Press `Ctrl+F` while Options is open
 (the window or the world has the keyboard, not one of its boxes) and type: it finds every row, across every tab (Keys included), whose name, key
-(`render.shadow_soft`) or help has the text, any case, and goes to the best match first: settings whose name is the
-text or starts with it, then a word of the name (`sun` finds Sun bounce and Sun shafts), then the key, and last the
-ones that only mention it in their help (the Inset colour's "Sunken"). The tab switches, the row scrolls into view and
+(`render.shadow_soft`) or help has the text, any case, and goes to the best match first: the setting whose name is the
+text, then by where it is found, the name before the key before the help, and in each a whole word before the start of
+a word before the inside of a word (`sun` finds Sun bounce before a "Sunny ..." name, and a help saying "the sun's"
+before the Inset colour's "Sunken"). The tab switches, the row scrolls into view and
 is highlighted, and the count reads `1 of 7` (`0 matches` in red when nothing has it). `Enter` or `NEXT` goes to the
 next best match, which may be on another tab, `Shift+Enter` or `PREVIOUS` to the one before; both wrap around. Every tab and row
 stays where it is, so you always see which section you are in; the highlighted row works as usual, and clicking
 another tab keeps the find. `Escape` in the field clears the text and the highlight; a second `Escape` closes the window.
 
 **Sections and groups.** Every option belongs to a section (one tab: Graphics, Post-processing, Animation, Camera, Interface, Game, Audio,
-Mods, Debug) and a group inside it, so related settings sit together. The same grouping is used by the console, the saved file and
+Mods) and a group inside it, so related settings sit together. The same grouping is used by the console, the saved file and
 `kclient --print-defaults`. A group's options that depend on another are noted `needs ...`:
 
 | Section | Group | Keys |
 |---|---|---|
-| Graphics | Detail | `render.normal_maps`, `render.leaf_sway` |
+| Graphics | Detail | `render.normal_maps`, `render.leaf_sway` (on: trees bend and their leaves sway with the wind; off: static trees, as in the original) |
 | Graphics | Draw distance | `render.building_far` |
 | Graphics | Indoor lighting (experimental) | `render.interior_light`, `render.shadow_soft`, `render.sun_smooth`, `render.sun_bounce`, `render.sun_shafts`, `render.dust_motes`, `render.lamp_beams` |
 | Graphics | Interiors | `render.interior_mask`, `render.signs_indoors` |
@@ -175,23 +189,36 @@ Mods, Debug) and a group inside it, so related settings sit together. The same g
 | Game | Combat | `combat.fix_extra_attack_slots`, `combat.retarget_hold_s` |
 | Game | Off-screen world | `world.offscreen_medical`, `world.offscreen_fights`, `world.campaign_victory_ai` |
 | Game | Orders | `orders.foreign_walk_to` |
+| Game | Paths | `client.data_dir` |
 | Game | Single player | `session.server`, `session.server_args`, `session.loading_screen` |
 | Game | Skills | `xp.no_runaway_skills` |
 | Game | Squads and AI | `squad.follow_heading_fix`, `ai.token_speeds` |
 | Audio | Volume | `audio.master`, `audio.music`, `audio.environment`, `audio.effects` |
 | Mods | Installed mods | `mod.nicemap`, `mod.darkui`, `mod.slopeless`, `mod.bughouse` |
-| Debug | Debug keys | `key.debug_*` |
-| Debug | Light debug | `render.sun_shafts_debug`, `debug.light_probes` |
-| Debug | Logging | `debug.audio_trace`, `debug.simjump`, `debug.nonfinite` |
-| Debug | Navmesh | `debug.navmesh`, `debug.navmesh_stair`, `debug.navmesh_pruned`, `debug.navmesh_band` |
-| Debug | Paths | `client.data_dir` |
-| Debug | Pick mask | `debug.pick_mask` |
-| Debug | Run files | `anim.wire_still_ticks`, `anim.draw_y_off` |
-| Debug | Scripted runs | `debug.stream_scripted`, `debug.pick_wait` |
-| Debug | Simulation | `sim.drawn_force` |
-| Debug | Trails | `debug.trails`, `debug.trails_seconds`, `debug.trails_dump` |
-| Debug | UI development | `ui.layout_reload` |
-| Debug | kui_demo | `demo.volume`, `demo.gamma`, `demo.subtitles`, `demo.name` |
+| Keys | Debug keys | `key.debug_*` (with --debug) |
+| Debug (F8 > Settings) | Light debug | `render.sun_shafts_debug`, `debug.light_probes` |
+| Debug (F8 > Settings) | Logging | `debug.audio_trace`, `debug.simjump`, `debug.nonfinite` |
+| Debug (F8 > Settings) | Navmesh | `debug.navmesh`, `debug.navmesh_stair`, `debug.navmesh_pruned`, `debug.navmesh_band`, `debug.collision` |
+| Debug (F8 > Settings) | Pick mask | `debug.pick_mask` |
+| Debug (F8 > Settings) | Route preview | `debug.route_preview` |
+| Debug (F8 > Settings) | Run files | `anim.wire_still_ticks`, `anim.draw_y_off` |
+| Debug (F8 > Settings) | Scripted runs | `debug.stream_scripted`, `debug.pick_wait` |
+| Debug (F8 > Settings) | Simulation | `sim.drawn_force` |
+| Debug (F8 > Settings) | Trails | `debug.trails`, `debug.trails_seconds`, `debug.trails_dump` |
+| Debug (F8 > Settings) | UI development | `ui.layout_reload` |
+| Debug (F8 > Settings) | kui_demo | `demo.volume`, `demo.gamma`, `demo.subtitles`, `demo.name` |
+
+**Route preview** (`--debug`, `debug.route_preview`, default off; kenshi-k16.2.331.2). With exactly one character selected, the client plans the route a
+right click at the cursor's ground point would get, with the sim's own planner (`knav::planRoute`, the call the server makes) on the navmesh tiles the
+client holds, and draws it in magenta (the route marker line is white). Nothing is planned or drawn with the key off. Two lines go to the events file
+and stderr, loudly, as `WARN`:
+
+- `route_jump`: the cursor's ground point moved under 3 u since the last plan but the route length changed by x2 or more and by more than 20 u (not between two approach-point routes: the nearest reachable point slides with the cursor). It names
+  the tick, both cursor points, both routes' snapped start, goal and waypoints, and whether each was found / an approach point / reseated.
+- `route_mismatch`: on a click, the preview for that goal is compared with the server's route for the order when it arrives; a length differing by more than 25 %
+  and 20 u, or ends more than 5 u apart, logs both routes, the start positions (wire at the click vs the character at arrival), the goal and whether
+  both ends' tiles were held. Silent otherwise. The usual cause is the client's mesh (only streamed tiles, one layer per tile, door paint only from
+  tile patches) or a start / body input, since the planner is the same.
 
 `render.loading_standin` sets what a character still being built draws as: `silhouette` (the default) a flat black body of its race, `double` a plain neutral
 body of its race, `off` nothing until it is ready. When the real look is ready the stand-in's shape morphs into it over 0.25 s, then the real look fades in over 0.2 s.
@@ -392,6 +419,7 @@ the mouse wheel over the bar). A portrait:
 - a mark over the face: bars when the character is caged, a shackle when they wear shackles (open or locked; the bars win over the shackle), teeth when being eaten (not shown yet: the sim sends no such state);
 - behind the face: red stripes in combat, yellow when hungry; a red grid pulsing in and out when hurt (engaged in a fight or being eaten);
 - a faded face: the character is knocked out, dead, carried, or put in a bed (asleep there by their own routine or put in it); the same marks show in the squads window.
+- hovering it opens no tooltip; the name under it turns red while the character is down, and the `F6` control hints name the portrait.
 
 **Following.** The camera follows one of your characters after `Z` (focus), a double click on the character or its portrait, or a double
 number key. There is always exactly one follow target, and the floor view and the camera follow it:
@@ -562,9 +590,33 @@ speed diamond are hidden. Instead:
 
 ### 3.10 Nothing else in the view
 
-A plain run shows only the game's own interface, the panels and windows in this section and section 4. The corner
-minimap is a development view and appears only with `--debug`; the block of developer text at the top left needs
-`--debug` and the Debug option `debug.hud_text` (default off; section 6.10).
+A plain run shows the game's own interface, the panels and windows in this section and section 4, and the minimap
+(3.11, an addition of ours). The block of developer text at the top left needs `--debug` and the Debug option
+`debug.hud_text` (default off; section 6.10).
+
+### 3.11 The minimap
+
+A small square map at the top right, centred on the camera: the world map with your characters as dots, the places you
+have discovered as icons (no names) and a wedge showing the way the camera faces. It carries no text. The original game
+has no minimap; this is a deliberate addition.
+
+- **Drag** it anywhere (hold the left button on it) to put it where you like. It remembers the place across sessions and
+  stays on the screen when the window is resized.
+- **The wheel** over it changes the zoom, five levels from about 0.5 km across to 7 km; the default is the second, about
+  0.9 km. The level is remembered too.
+- **Options → Interface → Minimap** (`ui.minimap`, default on) turns it off. It is hidden with the full map, the title
+  screen, the character creator and loading, and `F7` hides it with the rest of the interface.
+
+### 3.12 The status popup
+
+A small panel at the top right (left of the minimap when that shows) that appears only when something is wrong with the
+server, and goes when it is fixed. It lists real conditions, one line each; it never shows the lockstep frame repeats
+(those are normal and not yours to correct).
+
+- **Server not responding**: the game is running (not paused, speed above 0) but no new tick has come from the server
+  for over a second. The line shows the seconds waited; past 10 s it turns red. It goes when ticks resume.
+- **Connection to the server lost**: the link closed or failed. There is no reconnect yet: the game stays frozen and you
+  leave to the title and start again (a message also names the cause).
 
 ## 4. Windows and pages
 
@@ -583,7 +635,9 @@ page (the conversation screen in 4.9 is separate).
 use `O` (centre), `-` and `+` (zoom); a touchpad or a fine-stepped wheel zooms by how far you scroll. The town icons grow
 steadily as you zoom in, from half size at the whole-map view to full size near the closest zoom. Options `ui.map_icons_stepped`
 brings back the original's way: icons keep their size on screen and grow in two steps (at about 5x and 9x the whole-map view).
-A right click on the map sends the selection there as a move order.
+A right click on the map sends the selection there as a move order. A new game opens the map on an area overview: the Hub in the middle and Stack
+just inside the top edge (a deviation from the original, which starts on the whole world); the zoom and the place you were looking at are
+remembered, across closing and reopening the map and through saving and loading a game.
 
 ### 4.2 Squads page
 
@@ -773,7 +827,9 @@ follows the selection; pin it (the caption's pin) and it stays on the character 
   the free camera). The keyboard camera keys are in section 7.
   The floating camera tilts up past the horizon, to about 80 degrees, so you can look at the sky: the original stops at 11.5. The
   ground (indoors the floor, walls and ceiling) comes between the focus and the camera as it tilts, so the camera moves in toward the
-  focus, and eases back out to your zoom as you tilt down again.
+  focus, and eases back out to your zoom as you tilt down again. It stops short of the followed character rather than going into it:
+  once the ground would push it any closer, the camera stays where it is and the view turns up around it, so the sky comes into view
+  with the character below the frame. The distance also eases when hills or a wall swing in behind you, instead of jumping.
 - **Direct drive**: `V`, or a double right click on one of your own characters, puts the camera behind that character
   at the default close distance, whatever the floating camera's zoom was (leaving and re-entering starts there again).
   `W` / `S` walk forward / back, `A` / `D` steer (stopped, they turn the character in place); with the right button held
@@ -795,18 +851,32 @@ These are development views. They exist only when the client runs with `--debug`
 
 `F8` opens a movable, resizable `DEBUG` window:
 
-- **Toggles**, each with its key: Navmesh overlay (`Ctrl+F5`), Navmesh: pruned polygons (no key; a settings key), Trails
+- **Toggles**, each with its key: Navmesh overlay (`Ctrl+F5`), Collision (the building collision shapes and the drawn terrain, `Ctrl+F7`; the navmesh
+  overlay's flip partner: the collision shapes in white, doorways yellow, the thin props grey — the barricades that block movement and line of sight,
+  which bodies do not stand on since kenshi-k16.2.382.2 — and the drawn terrain a body does stand on (`Heightmap::terrainHeight`, the drawn triangles) as a
+  green grid on its 18 u lattice, all fading out 900 u from the focus; a line in the developer text counts them. What a body stands on at a point (a
+  drawn floor, a stair, the terrain) is the `Ctrl+F10` height probe (6.5a) or `probe height X Z` from a script. Like the navmesh overlay it has no depth
+  test: indoors the terrain grid shows through floors — read the white wires there), Navmesh: pruned polygons (no key; a settings key), Height
+  probe (`Ctrl+F10`; the probe mode of 6.5a, the same switch as the key), Trails
   (`Ctrl+F6`), Squad overlay (`Ctrl+F4`), Shadows (`Ctrl+F3`), Walk on the ground (`Ctrl+G`), Follow camera
   (`Ctrl+C`, with a running game), Free camera (`Ctrl+F`; with Options open it goes to
   Options' Find instead), Autorun (`Ctrl+Q`, while following), Clock paused (`Ctrl+P`). Under them, the squads the client knows with their
   colours and counts (with the squad overlay).
-  The settings key `debug.light_probes` (experimental, off) draws the light probes of the nearest building with an interior as points, grey by how much
+  The panel also ticks the plain on/off settings (live, saved like the Options screen saves them): Developer text (`debug.hud_text`, the fps and timing lines of 6.10),
+  Light probes (`debug.light_probes`), Pick mask (`debug.pick_mask`) and Route preview (`debug.route_preview`). The `Settings...` button opens DEBUG
+  SETTINGS, the rest of the development options (the navmesh stair angle and level band, logging, and the others), a tab per group, with Find; it is shown
+  only with `--debug`. The window and Options > Keys > Debug keys hold the rest.
+  The setting `debug.light_probes` (experimental, off) draws the light probes of the nearest building with an interior as points, grey by how much
   sky reaches them and red inside walls; the first time it bakes that building on a background thread (seconds) and keeps the result in the cache.
 - **Scenes** — the scene bookmarks, as buttons. Offline only (no running game).
-- **Windows** — the buttons that open a window: `Animations` (the animation lab, 6.2; enabled when the lab can load the game data),
-  `Lights`, `Trails window`, `Full map`, `Keys` and `Decisions` (below). **Actions** — `Spawn bandit patrol` (with a running game and its towns loaded), and
-  `Character...`, which opens a small toolbar under it with the cheats, with a running game, a debug view and a character in the status panel (otherwise the button is dim): `Heal`, `Knock out`, `Wake` and `Kill`. They stay open after a click
-  (heal several characters in a row) and close on `Escape` or a click outside; they each act
+- **Windows** — the buttons toggle their window (a second press closes it; `Keys` is Options at its Keys tab) and open: `Animations` (the animation lab, 6.2; enabled when the lab can load the game data),
+  `Lights`, `Trails window`, `Full map`, `Keys` and `Decisions` (below). **Actions** — `Spawn bandit patrol` (with a running game and its towns loaded),
+  `Clear height probe` (live only while a probe is set: it forgets the probe, 6.5a), and
+  `Character...`, which shows or hides the CHARACTER toolbar with the cheats: `Heal`, `Knock out`, `Wake` and `Kill`, live with a running game,
+  a debug view and a character in the status panel (otherwise dim). The toolbar is a small window of its own: it stays up after a click (heal several
+  characters in a row), after a click elsewhere and after the debug panel closes, until its own close button (or `Escape` while it has the focus) or
+  `Character...` again. Drag it by its title bar; the client remembers where it is and whether it is shown, so the next start puts it back
+  (`debug.character_bar`, `debug.character_bar_x` / `_y`). Its buttons each act
   on the character the status panel shows — heal every part and stand
   up, drop it with a knock-out, clear the knock-out, or bleed it out. `Decisions` opens that character's DEBUG VIEW
   tree (6.4). `Lights` opens the LIGHTS window (`Shift+F7`), `Trails window` the trails window (`Shift+F6`), `Full map` the
@@ -870,14 +940,18 @@ white, and — from the F8 panel's "Navmesh: pruned polygons" — the polygons t
 ### 6.5a The vertical height probe
 
 `Ctrl+F10` turns probe mode on (it needs `--debug` and a dev build): a left click on the world then sets the probe at that
-x, z instead of acting. The probe lists, top to bottom in the developer text, every surface the vertical line through the
+x, z instead of acting. The same switch is the F8 panel's `Height probe (Ctrl+F10)` toggle (6.1). To drop a probe,
+`Clear height probe` in the panel's Actions forgets it — no chart, no line in the scene, no `probe:` lines in an F12 shot —
+and leaves the mode as it is (the button is live only while a probe is set). The probe lists, top to bottom in the developer text, every surface the vertical line through the
 point crosses, each with its y and source: the drawn building / layout triangles (cyan), the building collision triangles
-(orange; door leaves and thin props dimmer, `coll-skip`, the ones the standing ray ignores), the navmesh polygons on every
+(orange; door leaves and thin props dimmer, `coll-skip`, listed only: the standing ray no longer reads collision, kenshi-k16.2.382.2), the navmesh polygons on every
 storey (green, with the detour tile layer), the terrain (red `terr-tri`: `Heightmap::terrainHeight`, the drawn lattice triangle the standing
-ray stands on; yellow `terr-bilin`: the bilinear `Heightmap::height`, listed beside it because the two differ by up to ~0.5 u on rough ground).
+ray lands on, the ground a body stands on; yellow `terr-bilin`: the bilinear `Heightmap::height`, listed beside it because the two differ by up to ~0.5 u on rough ground).
 Where a character stands within 1 u of the point it
 adds the wire y, the standing ray's window (`wire - 4.5` .. `wire + 1.5`, the constants `SimView::kRayDown` / `kRayUp`; rows
-inside it are marked `W`) and the ray's pick (`STAND`: its y and what decided it: collision, drawn face, terrain or open ground, or `MISS` with the reason), by the same rule the body is placed with (`SimView::standRayAt` calls the `standTerrain` helper `update()` uses).
+inside it are marked `W`; a drawn floor is looked for down to `wire - 8`, `SimView::kDrawnDown`, its own row) and the ray's pick (`STAND`: its y and what decided it: drawn floor, terrain or open ground, or `MISS` with the reason), by the same rule the body is placed with (`SimView::standRayAt` calls the `standTerrain` helper `update()` uses).
+The column runs from 40 u under the terrain line to 100 u over it; a character within 1 u widens it to its wire y `+/- 14` u, so a body
+standing far above the ground (a high floor, a wire y floating over nothing) lists the surfaces where its ray looks (kenshi-k16.2.382.2).
 In the scene it draws a vertical line with a tick per crossing in the same colours. An F12 shot's `.txt` carries the same
 listing as `probe:` lines while a probe is set. From a script, `probe height X Z` (or `id=N`: at that character) sets the probe and prints the listing
 to stdout (`probe: ...` lines; `--debug` only).
@@ -891,7 +965,7 @@ to stdout (`probe: ...` lines; `--debug` only).
 - `Ctrl+Tab` mouse look on/off (the pointer is locked); with the free camera, `PageUp` / `PageDown` move it up and down
   and hold `Left Shift` for the fast rate. The wheel changes the fly speed.
 - `Ctrl+M` toggles the full-screen world map; a left click on it teleports the camera there, keeping the height above
-  the ground. `Ctrl+=` / `Ctrl+-` zoom the corner minimap (6.10).
+  the ground.
 - `Shift+F7` opens the `LIGHTS` window, the light debugger (a dev build; see-through, drag it by its title): one row per
   light term of the scene, grouped sun, ambient, lamps, emissive, fog, sky, air, post, with one row per lamp in view
   (nearest first; the rows change as you move). The tick turns that term off or on; `SOLO` leaves only that term on (and
@@ -915,7 +989,8 @@ second. It flickers as it falls, harms nobody, and comes with no thunder and no 
 ### 6.8 Screenshots
 
 `F12` (or `PrintScreen`) saves a screenshot of the next drawn frame; `Alt+F12` waits three seconds first (so a held key
-can show). A toast says where it went. The folder is the `screenshot.dir` setting, else `~/.local/share/kclient/screenshots`.
+can show). A toast says where it went. The folder is the `screenshot.dir` setting, else `~/.local/share/kclient/screenshots`
+(`%LOCALAPPDATA%\OpenKenshi\data\kclient\screenshots` on Windows).
 Beside the picture the client writes a text sidecar recreating the view. A `clicks:` block in it lists your last 6 clicks (newest first) with the exact camera, screen point and what the pick hit or passed, so a click that went somewhere odd can be explained from the shot even a second later. Its `options:` line lists every setting changed
 from its default (sorted `key=value`, window geometry left out, `(defaults)` when none), and the same settings follow
 the `recreate:` line as `--set KEY=VALUE`, so a look reproduces even after the settings file has changed; while the whole-fight trails record, a trails
@@ -936,20 +1011,16 @@ the ray crosses that did not take the pick) and `rule:` (the hover rule that cho
 The F8 panel's scenes place the client at a named camera bookmark for a screenshot or a look. They are for offline
 looks: with a running game the panel lists no scenes.
 
-### 6.10 The corner minimap and the developer text
+### 6.10 The developer text
 
-With `--debug` the view gains two things a plain run does not show:
-
-- the **corner minimap** at the top right: the world map with the town, player and squad markers and the camera's
-  view; `Ctrl+=` / `Ctrl+-` zoom it from one zone to the whole world.
-- a block of command-line text at the top left, while the interface is up and the option **Developer text:
+With `--debug` the view gains a block of command-line text at the top left, while the interface is up and the option **Developer text:
   debug.hud_text** (Options → Debug, default off, saved in `kclient.cfg`) is on: camera position, ground, altitude,
   zone, heading, the nearest town, the buildings and foliage drawn, the game time, the weather, the scene, shadow state,
   frame and GPU timings, the sim link line and the sim profile. Off, the block is not drawn, but the `F12` screenshot's
   `.txt` still lists every line as `hud.<key>:` (pos, camera, nearest, buildings, time, foliage, squads, weather, gpu,
   building, sim, simprofile).
 
-`F7` hides the minimap and the block with the rest of the interface.
+`F7` hides the block with the rest of the interface. (The minimap is the player's, 3.11.)
 
 ## 7. Keys
 
@@ -1018,6 +1089,7 @@ marked *inert* is bound today but the client does not act on it yet: **not built
 | Debug | `Ctrl+F4` | Squad overlay |
 | Debug | `Ctrl+F5` | Navmesh overlay |
 | Debug | `Ctrl+F6` | Trails (the last 30 s) |
+| Debug | `Ctrl+F7` | Collision overlay: the building collision shapes and the terrain bodies stand on |
 | Debug | `Ctrl+F10` | The vertical height probe mode (6.5a) |
 | Debug | `Shift+F6` | The trails panel (6.3) |
 | Debug | `Shift+F7` | The light debugger window (6.6) |
@@ -1034,7 +1106,6 @@ marked *inert* is bound today but the client does not act on it yet: **not built
 | Debug | `Ctrl+[` / `Ctrl+]` | Sky clock back / forward half an hour |
 | Debug | `Ctrl+Shift+[` / `Ctrl+Shift+]` | Sky clock back / forward 3 hours |
 | Debug | `Ctrl+,` / `Ctrl+.` | Previous / next weather |
-| Debug | `Ctrl+=` / `Ctrl+-` | Minimap zoom in / out |
 | Debug | `Ctrl+M` | Full-screen world map (click teleports) |
 | Debug | `Space`, `,` / `.`, `M`, `Escape` | In the animation lab's window only (6.2) |
 

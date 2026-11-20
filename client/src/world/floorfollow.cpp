@@ -9,10 +9,10 @@ namespace
 {
 constexpr double kOnFlightRises = 1.5;	// "on a flight": within about 1.5 rises of its slope (review section 3)
 // The switch lines (user answers kenshi-k16.2.236.13 Q3, the default): a climb shows the upper floor from kUpLineRises below the top tread, a descent
-// shows the lower floor from kDownLineRises below it; a flip back to the origin floor holds until the feet are kHoldRises past the line.
+// shows the lower floor from kDownLineRises below it; a flip back to the origin floor (the fired hotspot re-arming) waits until the feet are kRearmRises past the line.
 constexpr double kUpLineRises = 2.0;
 constexpr double kDownLineRises = 1.0;
-constexpr double kHoldRises = 0.5;
+constexpr double kRearmRises = 2.0;	// a fired hotspot is cold until the feet are about 2 steps past its line (or at the flight's end)
 }
 
 const char* reasonName(Reason r)
@@ -50,8 +50,8 @@ int FloorFollow::onFlight(const Sample& s)
 }
 
 // The latch's level for a frame on the flight. Above top - 1 rise: the upper floor; below top - 2 rises: the lower; between: the
-// floor that is not the origin (the one it is heading to). A flip back to the origin floor holds until the feet are half a rise past
-// the line it crossed (a stand on the line does not flicker); the flip away from it happens at once. prev == origin boards.
+// floor that is not the origin (the one it is heading to). A flip back to the origin floor waits until the feet are two rises past
+// the line it crossed, or at the flight's end (the hotspot is consumed; a stand on the line does not flicker); the flip away from it happens at once. prev == origin boards.
 int FloorFollow::sideOnFlight(const Flight& f, int origin, int prev, double y)
 {
 	const double top = f.topY, rise = f.rise;
@@ -60,9 +60,18 @@ int FloorFollow::sideOnFlight(const Flight& f, int origin, int prev, double y)
 	if (prev == want) { return prev; }
 	const int originSide = origin == f.upper ? f.upper : f.lower;
 	if (want != originSide) { return want; }
-	const double line = originSide == f.upper ? upperLine : lowerLine;
-	const bool past = originSide == f.upper ? y > line + kHoldRises * rise : y < line - kHoldRises * rise;
-	return past ? want : prev;
+	const double r = rearmY(f, originSide);
+	return (originSide == f.upper ? y > r : y < r) ? want : prev;
+}
+
+// The hotspot is consumable (kenshi-k16.2.236.8.4.3, the user: "walk away from the hotspot before it becomes hot again"): once the latch has flipped away from
+// its origin floor, it flips back only when the feet are kRearmRises (about 2 steps) past the line it crossed, or at the flight's own end if that comes first
+// (the top / foot tread: the lower of the two, so a flight shorter than that still re-arms at its end).
+double FloorFollow::rearmY(const Flight& f, int originSide)
+{
+	const double top = f.topY, rise = f.rise;
+	if (originSide == f.upper) { return std::min(top - kDownLineRises * rise + kRearmRises * rise, top - 0.1 * rise); }
+	return std::max(top - kUpLineRises * rise - kRearmRises * rise, (double)f.footY + 0.1 * rise);
 }
 
 void FloorFollow::resetLatch()
@@ -101,10 +110,18 @@ FloorFollow::Resolved FloorFollow::resolve(const Sample& s)
 			}
 			else
 			{
+				// A walk that has gone kRearmRises past the line it fired on is a real walk to the other end: that floor is now the origin, so a
+				// climb back up from there is a new crossing (it fires on the other line) instead of waiting for the old hotspot to re-arm.
+				if (latch_.origin == f.upper && s.pos[1] < f.topY - (kDownLineRises + kRearmRises) * f.rise) { latch_.origin = f.lower; }
+				else if (latch_.origin == f.lower && s.pos[1] > f.topY - (kUpLineRises - kRearmRises) * f.rise) { latch_.origin = f.upper; }
 				latch_.side = sideOnFlight(f, latch_.origin, latch_.side, s.pos[1]);
 			}
 			settled_ = latch_.side;
 			settledValid_ = true;
+			info_.on = true; info_.origin = latch_.origin; info_.side = latch_.side; info_.y = s.pos[1];
+			info_.upperLine = f.topY - kDownLineRises * f.rise; info_.lowerLine = f.topY - kUpLineRises * f.rise;
+			info_.fired = latch_.side != latch_.origin;
+			info_.rearmY = rearmY(f, latch_.origin == f.upper ? f.upper : f.lower);
 			return { s.building, latch_.side, Reason::kFlight };
 		}
 	}
@@ -114,6 +131,7 @@ FloorFollow::Resolved FloorFollow::resolve(const Sample& s)
 		settledValid_ = true;
 	}
 	resetLatch();
+	info_ = LatchInfo();
 	// 2. On a roof deck: the wire's indoors bit clear and the client's roof test names a building: that building's top floor.
 	if (!s.indoors && s.roof >= 0)
 	{

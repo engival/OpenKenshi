@@ -13,6 +13,7 @@
 #include "ksim/combat/body.hpp"
 #include "ksim/combat/fighter_state.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -175,6 +176,14 @@ struct RaceAnatomyEntry
 
 struct RaceCombat
 {
+	// The race's XP rate for a stat id (CharStats 1408c6430 reads it): 1.2 good, 0.8 bad, else 1.0 (bad wins, as it is read last).
+	double xpRate(std::int32_t stat) const noexcept
+	{
+		if (std::find(statsBad.begin(), statsBad.end(), stat) != statsBad.end())
+			return 0.8;
+		return std::find(statsGood.begin(), statsGood.end(), stat) != statsGood.end() ? 1.2 : 1.0;
+	}
+
 	std::string sid;
 	std::string name;
 	double strength = 1.0;
@@ -188,6 +197,8 @@ struct RaceCombat
 	double maxBlood = 150.0;
 	double bleedRate = 1.0;
 	double healRate = 1.0;
+	std::vector<std::int32_t> statsGood; // RACE `stats good N`: stat ids whose XP rate is 1.2 (RaceData loader 14042efa0)
+	std::vector<std::int32_t> statsBad; // RACE `stats bad N`: stat ids whose XP rate is 0.8
 	double hungerRate = 1.0; // RACE `hunger rate`: R of the hunger formula
 	double visionRangeMult = 1.0; // RACE `vision range mult`: x 1500 sight range (perception.hpp)
 	double pathfindAcceleration = 20.0; // RACE `pathfind acceleration` (Havok units: world u/s^2 = x10): the walker's ramp (knav/walk.hpp)

@@ -21,12 +21,10 @@
 #include <string>
 #include <vector>
 #include "nav_source.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_SCENARIOS_DIR
-#error KSIM_SCENARIOS_DIR must be defined
 #endif
 
 namespace {

@@ -317,6 +317,7 @@ struct InteractEvent
 	static constexpr std::uint8_t kIncapacitated = 4; // the actor was knocked out or died
 	static constexpr std::uint8_t kCancelled = 5; // replaced or cleared by an order that was not queued (running or queued)
 	static constexpr std::uint8_t kFull = 7; // a producer reached its cap: every operator stops
+	static constexpr std::uint8_t kTooHard = 8; // a lock pick reached the lock and the skill is below the floor: no pick ran (k16.6.377)
 	static constexpr std::uint8_t kPartial = 6; // a pick-up or loot took some, the rest did not fit (nothing fitting is kRefused)
 
 	Kind kind = Kind::Done;

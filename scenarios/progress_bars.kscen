@@ -8,7 +8,7 @@ clock day=1 hour=11 minute=0
 squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
 squad id=5 name=Shackled faction=204-gamedata.base player=1 money=0
 char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=68331 y=1174.3 z=-71190 yaw=0 leader=1 player=1 chase=1 ranged=1
-char id=2 squad=1 name=Lockpicker template=1533662-rebirth.mod faction=204-gamedata.base x=68331.3 y=1174.3 z=-71228.1 yaw=0 player=1 cage=near bounty=500 task=pick_cage chase=1 ranged=1
+char id=2 squad=1 name=Lockpicker template=1533662-rebirth.mod faction=204-gamedata.base x=68331.3 y=1174.3 z=-71228.1 yaw=0 player=1 cage=near bounty=500 task=pick_cage chase=1 ranged=1 stats=lockpicking:60
 char id=3 squad=1 name=Sawyer template=1533662-rebirth.mod faction=204-gamedata.base x=68345 y=1174.3 z=-71176 yaw=0 player=1 task=cut_shackles target=4 chase=1 ranged=1
 item char=3 sid=581-gamedata.base section=main qty=1
 char id=4 squad=5 name=Shackled template=1533662-rebirth.mod faction=204-gamedata.base x=68347 y=1174.3 z=-71176 yaw=0 player=1 shackled=1 leader=1 chase=1 ranged=1

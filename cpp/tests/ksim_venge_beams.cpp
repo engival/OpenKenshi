@@ -9,7 +9,9 @@
 //  4. the frame (BEAMS 58): decoded by hand; a beam goes out exactly 3 s before it strikes, once per session; a beam out of range of the
 //     session goes out later, once, when the camera comes within range; a replan (a pin) and a load reset the client's copy;
 //  5. the burn: 10 x dt x strength x (1 - P3) per organic part at a beam's centre, the ring's falloff, none outside, none indoors, none
-//     for a race immune to type 3.
+//     for a race immune to type 3; the burn is part health (the wear and stun pools stay 0);
+//  6. rwh.175: the visible burst (6.0 to 10.6 s) vs the damage window (10 to 30 s), the loaded-cell population (~7 of 40, 0 to 2 on
+//     screen, 2 to 3 new per minute in view).
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 
 #include "ksim/world/beams.hpp"
@@ -239,6 +241,8 @@ void testField(const std::shared_ptr<const kdata::GameData>& gd, const Venge& ve
 	const BeamGroup& group = vengeGroup(*sim, venge);
 	test::require(group.slots[0].current.x != group.slots[1].current.x || group.slots[0].current.z != group.slots[1].current.z, "two slots start together");
 
+	// The onset is staggered over the first 30 s (h2v.14.14): run past it, then every slot has a beam alive.
+	sim->run(601);
 	// Run 80 s: the incremental position is the pure function's, every tick; every beam hands over to its planned successor.
 	std::size_t handovers = 0;
 	std::vector<std::uint32_t> ids;
@@ -402,6 +406,7 @@ struct WireBeam
 	std::string effect;
 	std::uint64_t spawnTick = 0;
 	std::uint64_t endTick = 0;
+	std::uint16_t visibleTicks = 0;
 	float x = 0, z = 0, speed = 0, radius = 0, strength = 0;
 	std::string particles;
 	std::string sound;
@@ -482,6 +487,7 @@ struct Watch
 						beam.effect = text(c.get<std::uint32_t>());
 						beam.spawnTick = c.get<std::uint64_t>();
 						beam.endTick = c.get<std::uint64_t>();
+						beam.visibleTicks = c.get<std::uint16_t>();
 						beam.x = c.get<float>();
 						beam.z = c.get<float>();
 						beam.speed = c.get<float>();
@@ -651,7 +657,7 @@ void testFrame(const std::shared_ptr<const kdata::GameData>& gd, const Venge& ve
 				{
 					++checked;
 					test::require(b.effect == venge.effect->sid && b.particles == "SkyBeam" && b.sound == "Inferno", "the wire's effect, particles or sound");
-					test::require(b.spawnTick == mine->spawnTick && b.endTick == mine->endTick && b.x == mine->x && b.z == mine->z
+					test::require(b.spawnTick == mine->spawnTick && b.endTick == mine->endTick && b.visibleTicks == mine->visibleTicks && b.x == mine->x && b.z == mine->z
 							&& b.speed == mine->speed && b.radius == 200.0f && b.strength == 0.75f && b.segments.size() == mine->segments.size(),
 						"the wire's beam differs from the sim's");
 					for (std::size_t i = 0; i < b.segments.size(); ++i)
@@ -725,17 +731,137 @@ struct Rig
 	}
 };
 
+// The burn taken so far: the health the organic parts have lost (rwh.175: the beams take health, not the wear pool or stun).
 double wearOf(const state::Fighter& f)
 {
 	double sum = 0.0;
 	for (const state::FighterPart& p : f.parts)
-		sum += p.robotic ? 0.0 : p.wear;
+		sum += p.robotic ? 0.0 : p.maxHealth - p.health;
 	return sum;
+}
+
+// The wear and stun pools the beams must leave alone.
+double poolsOf(const state::Fighter& f)
+{
+	double sum = 0.0;
+	for (const state::FighterPart& p : f.parts)
+		sum += p.wear + p.stun;
+	return sum;
+}
+
+// Every part back to full health, so the long burn chain of one test never downs the character.
+void heal(state::Fighter& f)
+{
+	for (state::FighterPart& p : f.parts)
+		p.health = p.maxHealth;
 }
 
 std::size_t organicParts(const state::Fighter& f)
 {
 	return static_cast<std::size_t>(std::count_if(f.parts.begin(), f.parts.end(), [](const state::FighterPart& p) { return !p.robotic; }));
+}
+
+// rwh.175: two clocks per beam, and only the loaded-cell population reaches a client. Thresholds, all from the live readings:
+//  - visible burst 6.0 to 10.6 s (120 to 212 ticks, mean ~8.3 s), damage window 10 to 30 s (200 to 600 ticks); a burst never outlives
+//    its beam and most beams burn on after theirs ends;
+//  - loaded population: median 7 of 40 handlers, range 4 to 13 per snapshot (so the mean over a sim-minute lies in 4..10);
+//  - on screen near a character: 0 to 2 bursts at once on average (mean <= 2 within a view-sized 2500 u disc), and 2 to 3 new ones
+//    per minute in view (accepted 1..6: the test disc is only about a view).
+void testPopulation(const std::shared_ptr<const kdata::GameData>& gd, const Venge& venge)
+{
+	ks::ServerContext context;
+	context.gameData = gd;
+	context.dataHash = ks::dataHash(kworld::vanillaLoadOrder(KENSHI_DATA));
+	auto sim = makeSim(gd, 41, tickAt(3, 10, 0));
+	sim->run(1);
+	test::require(sim->pinWeather(venge.groupSid, venge.weatherSid), "pin failed");
+	sim->run(1);
+
+	// The reference point: the Venge cell centre nearest the median of the group's cells (the 10000 u disc is clipped by the strip edges there).
+	const AreaLookup& areas = *sim->weather()->areas();
+	std::vector<std::pair<double, double>> centres;
+	for (int index = 0; index < kworld::kZoneCount; ++index)
+	{
+		const kworld::ZoneCell cell = kworld::zoneCellOfIndex(index);
+		const double cx = kworld::zoneMinX(cell.x) + 0.5 * kworld::kZoneSize;
+		const double cz = kworld::zoneMinZ(cell.z) + 0.5 * kworld::kZoneSize;
+		if (areas.colourAt(cx, cz) == kVengeColour)
+			centres.emplace_back(cx, cz);
+	}
+	test::require(!centres.empty(), "no Venge cells");
+	std::vector<double> xs;
+	std::vector<double> zs;
+	for (const auto& c : centres)
+	{
+		xs.push_back(c.first);
+		zs.push_back(c.second);
+	}
+	std::sort(xs.begin(), xs.end());
+	std::sort(zs.begin(), zs.end());
+	const double medX = xs[xs.size() / 2];
+	const double medZ = zs[zs.size() / 2];
+	const auto ref = *std::min_element(centres.begin(), centres.end(), [&](const auto& a, const auto& b)
+		{ return std::hypot(a.first - medX, a.second - medZ) < std::hypot(b.first - medX, b.second - medZ); });
+	std::cout << "population: " << centres.size() << " Venge cells, reference (" << ref.first << ", " << ref.second << ")\n";
+
+	Watch watch(*sim, context);
+	watch.setView(static_cast<float>(ref.first), static_cast<float>(ref.second));
+	watch.frames.clear();
+
+	constexpr double kViewRadius = 2500.0;
+	constexpr int kSeconds = 600;
+	std::set<std::uint32_t> seen; // beam ids of the whole run: one slot-chain beam each (ids are unique inside the instance)
+	std::set<std::uint32_t> viewed;
+	std::size_t outlived = 0;
+	std::uint64_t minVisible = UINT64_MAX;
+	std::uint64_t maxVisible = 0;
+	double sumVisible = 0.0;
+	double loaded = 0.0;
+	double onScreen = 0.0;
+	std::size_t sent = 0;
+	for (int second = 0; second < kSeconds; ++second)
+	{
+		watch.tick(20);
+		const std::uint64_t now = sim->clockTick();
+		for (const BeamSlot& slot : vengeGroup(*sim, venge).slots)
+		{
+			const Beam& beam = slot.current;
+			if (seen.insert(beam.id).second)
+			{
+				const std::uint64_t life = beam.endTick - beam.spawnTick;
+				test::require(life >= 200 && life <= 600, "damage window " + std::to_string(life) + " ticks, not 10..30 s");
+				test::require(beam.visibleTicks >= 120 && beam.visibleTicks <= 212 && beam.visibleTicks <= life,
+					"visible burst " + std::to_string(beam.visibleTicks) + " ticks, not 6.0..10.6 s inside the life");
+				minVisible = std::min<std::uint64_t>(minVisible, beam.visibleTicks);
+				maxVisible = std::max<std::uint64_t>(maxVisible, beam.visibleTicks);
+				sumVisible += beam.visibleTicks;
+				outlived += life > beam.visibleTicks + 20u;
+			}
+			const double d = std::hypot(slot.px - ref.first, slot.pz - ref.second);
+			loaded += d <= kBeamRange;
+			if (d <= kViewRadius && beamVisibleAt(beam, now))
+			{
+				onScreen += 1.0;
+				viewed.insert(beam.id);
+			}
+		}
+	}
+	for (const WireFrame& frame : watch.frames)
+		sent += beamsIn(frame, venge.groupSid);
+	const double n = static_cast<double>(seen.size());
+	const double minutes = kSeconds / 60.0;
+	std::cout << "population: " << seen.size() << " beams, visible " << minVisible / 20.0 << ".." << maxVisible / 20.0 << " s (mean "
+		<< sumVisible / n / 20.0 << "), " << outlived << " burn on after their burst; loaded mean " << loaded / kSeconds << " of 40 within "
+		<< kBeamRange << " u, " << sent / minutes << " sent/min; in view (" << kViewRadius << " u) mean " << onScreen / kSeconds << " at once, "
+		<< viewed.size() / minutes << " per min\n";
+	test::require(minVisible < 140 && maxVisible > 190, "the visible burst does not spread over 6.0..10.6 s");
+	test::require(sumVisible / n / 20.0 > 7.5 && sumVisible / n / 20.0 < 9.1, "the mean burst is not about 8.3 s");
+	test::require(outlived > seen.size() / 2, "the damage window does not usually outlast the burst");
+	test::require(loaded / kSeconds >= 4.0 && loaded / kSeconds <= 10.0, "the loaded population is not about 7 of 40");
+	test::require(onScreen / kSeconds <= 2.0, "more than 2 bursts at once on average in view");
+	test::require(viewed.size() / minutes >= 1.0 && viewed.size() / minutes <= 6.0, "new bursts in view per minute are not 2..3");
+	// A session inside the zone gets every beam of the group (h2v.14.14: ~2 a second hand over; the client draws the closest few).
+	test::require(sent / minutes > 100.0 && sent / minutes < 150.0, "a session in the zone does not get every beam of the group");
 }
 
 void testBurn(const std::shared_ptr<const kdata::GameData>& gd, const std::shared_ptr<const CombatData>& data,
@@ -752,8 +878,12 @@ void testBurn(const std::shared_ptr<const kdata::GameData>& gd, const std::share
 	const BeamGroup& group = field.groups()[venge.group];
 	test::require(group.slots.size() == 40, "no beams after the pin");
 
+	// The onset is staggered over the first 30 s (h2v.14.14): wait it out so slot 0's beam is alive.
+	for (int t = 0; t < 601; ++t)
+		rig.sim->tick();
 	auto burnAtSlot = [&](std::size_t slot, double dx)
 	{
+		heal(rig.player());
 		const double before = wearOf(rig.player());
 		for (int t = 0; t < 20; ++t)
 		{
@@ -768,6 +898,8 @@ void testBurn(const std::shared_ptr<const kdata::GameData>& gd, const std::share
 	const double centre = burnAtSlot(0, 0.0);
 	std::cout << "burn: centre " << centre << " per part per second\n";
 	test::require(std::fabs(centre - 7.5) < 0.2, "the burn at a beam's centre is " + std::to_string(centre) + ", not 7.5 per part per second");
+	// rwh.175: the burn is part HEALTH; the wear pool and the stun stay at 0 (today's code filled the wear pool).
+	test::require(poolsOf(rig.player()) < 1.0e-9, "the beam filled the wear or stun pool: " + std::to_string(poolsOf(rig.player())));
 	// In the ring (250 u from the start of each tick, the beam moving 6.5 u a tick: d2 about 55000..62500, radius^2 = 40000): between the
 	// full burn and none, near 10 x 0.75 x (1 - 22500 / 40000) = 3.3 per part per second (the exact value depends on the heading).
 	const double ring = burnAtSlot(0, 250.0);
@@ -827,6 +959,7 @@ void testBurn(const std::shared_ptr<const kdata::GameData>& gd, const std::share
 	auto wearAt = [&](double x, double y, double z)
 	{
 		state::Fighter& f = rig.player();
+		heal(f);
 		f.x = x;
 		f.y = y;
 		f.z = z;
@@ -863,6 +996,7 @@ int main(int argc, char** argv)
 		testDeterminism(gd, venge);
 		testDayEnd(gd, venge);
 		testFrame(gd, venge);
+		testPopulation(gd, venge);
 		const std::shared_ptr<const CombatData> data = CombatData::build(*gd, KENSHI_DATA);
 		const std::shared_ptr<MeshNavigator> nav = MeshNavigator::load(argv[1]);
 		testBurn(gd, data, nav, kworld::vanillaLoadOrder(KENSHI_DATA), venge);

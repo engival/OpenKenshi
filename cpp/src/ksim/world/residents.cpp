@@ -376,7 +376,8 @@ void Simulation::stepPlayerAreas()
 	if (combat_ == nullptr || clockTick() % routines::kResidentIntervalTicks != 0)
 		return;
 	// Only a game started by NEW_GAME (a player faction with a start-off) has a living world around it. The scenario factions (the duel, the
-	// squad scenario and the tests built on them stand on the Hub barman's spot) keep the areas the commands give them, as before.
+	// squad scenario and the tests built on them stand on the Hub barman's spot) keep the areas the commands give them, as before. A scenario
+	// file with player characters (kScenarioStartoff) follows them like a new game: the Wanderer walking off must keep Full detail and nav tiles.
 	if (world_.ecs().count<state::PlayerFaction>() == 0)
 		return;
 	bool started = false;
@@ -1040,16 +1041,18 @@ void Simulation::prepareWorldCarry()
 			return;
 		const bool holding = squadFighting(*combat_, targetedByPlayer, members);
 		double slaveGap = 0.0;
+		bool holdsPlayer = false;
 		if (const auto board = boards_.find(id.value); board != boards_.end())
 		{
 			for (const std::uint64_t slaveId : board->second.owned)
 			{
 				const state::Fighter* slave = combat_->find(slaveId);
+				holdsPlayer = holdsPlayer || (slave != nullptr && slave->playerControlled && !slave->dead);
 				if (slave != nullptr && !slave->dead && !slave->down && !slave->unconscious && slave->carriedBy == 0 && slave->followTarget != 0)
 					slaveGap = std::max(slaveGap, std::hypot(slave->x - leader->x, slave->z - leader->z));
 			}
 		}
-		ai_->carried()[id.value] = AiSystem::Carry{leader->x, leader->z, holding, slaveGap};
+		ai_->carried()[id.value] = AiSystem::Carry{leader->x, leader->z, holding, slaveGap, holdsPlayer};
 		residentData_->carried.push_back({id.value, squad, leaderId, holding});
 		if (position->x != leader->x || position->z != leader->z)
 			moves.emplace_back(id.value, leader->x, leader->z);

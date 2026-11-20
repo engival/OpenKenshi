@@ -185,29 +185,29 @@ only; `AreaBuilding::nav.doors` lists a placement's keys. `NavMesh::doorKeys()` 
 give the door-to-polygons table (the tile records above, resolved to Detour refs at load and after
 `replaceTiles`).
 
-**State.** `DoorBook` holds, per door, `DoorState {Open, Closed, Locked}` and a denied-class
-bitmask (`kDoorClasses` = 8 classes, small integers the sim chooses, e.g. resident / ally /
-neutral / hostile); a door not in the book is open to all. `DoorSetting::verdict(class)`:
+**State.** `DoorBook` holds, per door, `DoorState {Open, Closed, Locked}`; a door not in the book is
+open to all. There is no class, faction or owner test on a door, as in the original (only a closed
+door refuses; findings/rwh199_nav_validity_static.md section 2; the per-class denied mask of the first
+slice is gone, kenshi-k16.7.111). `DoorSetting::verdict(throughLocks)`:
 
-| state | class allowed | class denied |
-|---|---|---|
-| Open | Free: DoorOpen cost | Blocked |
-| Closed | Wait: DoorClosed cost | Blocked |
-| Locked | Blocked | Blocked |
+| state | verdict |
+|---|---|
+| Open | Free: DoorOpen cost |
+| Closed | Wait: DoorClosed cost |
+| Locked | Blocked (Free for a bash: `throughLocks`) |
 
-A denied class is excluded even from an open door (decision: the access policy is the town's rule
-about who may use the gate; open only means no wait). Blocked is **excluded**, not a long wait, so a
+Blocked is **excluded**, not a long wait, so a
 search that has another way takes it and one that has none fails cleanly (`found` false) instead
 of queueing at the wall.
 
 `NavMesh::applyDoors(book)` repaints the polygons of the mesh's doors with Detour's `setPolyArea` /
-`setPolyFlags`: area DoorOpen (Open) or DoorClosed (Closed, Locked), flag bits
-`kDoorDeniedShift + class` for each denied class (all eight when Locked). Nothing is rebuilt, reloaded
+`setPolyFlags`: area DoorOpen (Open) or DoorClosed (Closed, Locked), flag bit
+`kDoorLockedFlag` (Locked). Nothing is rebuilt, reloaded
 or re-added (the test compares the Detour tile refs, and the baked bytes in `tiles()` never change);
 it costs the door polygons of the mesh. Like `replaceTiles` it is not safe against concurrent
 queries (tick boundary). The book is kept and re-applied to tiles that `replaceTiles` / `NavWorld::apply`
-bring in, so a rebuilt tile does not forget a locked door. `TravelFilter` gained `doorClass`
-(which bit its queries exclude), costs for the two new areas, and the door areas are always in
+bring in, so a rebuilt tile does not forget a locked door. `TravelFilter` gained `throughLocks`
+(whether its queries exclude the locked bit), costs for the two new areas, and the door areas are always in
 `allowed`. Costs (UNSURE, no speed in the data): DoorOpen 1; **DoorClosed 11** per unit of
 distance over the mat, i.e. a wait of about 200 units of walking (13 s at 15 u/s); `door move speed`
 has no stated unit, so it is not used. `PathResult` gained `cost` (the area-weighted length) and
@@ -230,7 +230,7 @@ route goes through. Graph file version 3 (below).
 
 **Use by ksim (2026-10-31, `ksim/navigator.*`, `ksim/doors.*`, `docs/reference/DOORS.md`).** The sim owns the
 book (town postures + overrides), calls `NavMesh::applyDoors` on every resident region mesh at a tick boundary and on each
-window mesh it builds, and queries with `TravelFilter::doorClass` / `DoorQuery{book, class}`. `PolyComponents` gained
+window mesh it builds, and queries with `TravelFilter::throughLocks` / `DoorQuery{book, throughLocks}`. `PolyComponents` gained
 `around(polys)`: the labels beside a door's polygons. The sim labels the connected sets with the door areas *excluded*
 (`allowed & ~(DoorOpen | DoorClosed)`), lists per door the sets beside it, and unions per traveller class the sets of the
 doors that class may pass (`Verdict != Blocked`), so a gate changing state relabels nothing. Door polygons themselves
@@ -758,7 +758,7 @@ a test or a tool) means no tree and no cache at all.
 - Our recipe: bump `recipeVersion` on any change to the conversion, the bake recipe or its tuning, or the `.knav` layout.
   The tuning is process-wide and not stored in a file ("Bake speed"), so the cache is only valid under the default tuning;
   a tool that changes it must not use the cache (UNSURE: a tuning hash in the tree key instead of a refusal).
-  Recipe history, latest: **21** (k16.7.89): furniture body ring (footprint + clearance + margin nulled, stairs and use-node paths spared) and the slide height fallback; 12-19: unused (k16.7.89 rounds). **11** (k16.7.67, before the renumber): the zone key folds the gathered geometry digest and the heightmap stamp (the bake is unchanged). **10** (k16.7.85): k16.7.50 made bakes deterministic; caches baked before it are rebuilt (no mesh rule change).
+  Recipe history, latest: **24** (k16.7.71), two rules. (1) A closed walkable furniture hull (`WorldShape::furniture`; 2 cells or more in x and z) keeps its top faces and loses its side sheets. The centre-based fill (fillShapes) is then its one rule: the conservative sheets took a floor cell on each side of a gap between two hulls (Noble House wall 2172 / shelf 2594: 11.2 u of hull gap came out 6.75 u in the mesh, 10.75 u without the sheets; a cell size of 1 gives the same). Other closed hulls keep their sheets: a building's floor slab (Squin Bar, General Shop) is walked onto, and its sheets are the step from the ground to its top face (dropping them cut the doorstep off); a closed obstacle hull's sheets are the keep-out of a solid (dropping them put fighters inside props: ksim_fight_prop, ksim_route_corners, ksim_storm_door; it would also open the Slave Shop's listed door, which stays a door-sweep gap). (2) A wall-band (Edge) piece whose contour simplifies away (under 3 vertices) is relabelled Land and the regions and contours are built again. Edge cells are their own regions (a region has one area), and the watershed cuts a strip one or two cells wide into small pieces whose contour collapses; such a piece left no polygon and the mesh wall moved in by the band's width (188 cells of zone 46,16 at the old recipe; the wider channels of rule 1 exposed 1278 and closed the Farm Shop route). 22 and 23 are taken by k16.7.74 and k16.7.94 in flight. **21** (k16.7.89): furniture body ring (footprint + clearance + margin nulled, stairs and use-node paths spared) and the slide height fallback; 12-19: unused (k16.7.89 rounds). **11** (k16.7.67, before the renumber): the zone key folds the gathered geometry digest and the heightmap stamp (the bake is unchanged). **10** (k16.7.85): k16.7.50 made bakes deterministic; caches baked before it are rebuilt (no mesh rule change).
   `navworld_v15` (baked 2026-11-15, `--threads 8`, before k16.7.50) is shipped data, not the patch cache, so the bump does not touch it; it may hold a tile in Recast's heap-noise variant (region_7_4 is known); not rebaked.
 - Game update: changes the merged data (`dataHash`), the shipped tiles (region keys) and, where the developers rebaked
   them, the stored hashes. Nothing stale is read.
@@ -1115,6 +1115,9 @@ The island test sees walkable regions the world cannot reach; this one asks the 
 - **Floor-0 gaps triaged (kenshi-k16.6.300, 2026-11-16).** Four of the six were the sweep's own outside points, not the mesh: the Stack Armory's door (-55416, -12236) stands at the top of a 40 u stair (a ramp slab, mesh y 1198 to 1242), and every candidate the sweep took (door height +-20 u) lay on a ledge beside the door that no stair joins, so the walk in from the street was never tried. Rays are now probed at the door's height and two lower (24, 48 u; window 60 u), every 10 u along 34 rays, thinned to 64 per building. Armory floor0, Armor Shop, Bar, Stack Residential and the Barracks/Slave Shop deep0 legs pass at radius 4 with no bake change (the mesh was never the gap; the knav_draw dump shows the ramp and a 13 u mat). Cost 22 s. Remaining of the six: Heft Noble House and Slave Shop floor0 (`out of search nodes`): not a bake fix yet. Noble House: radius 0 and 1 route, 2+ run out of nodes; the doorway mat (36 u, DoorOpen) joins a passage of 6-8 u (Edge band both sides) where the shipped interior face has one ~40 u wide (1518-1523 high, 10 corners). The interior is our rebake (stale hash), a walkable closed hull 41 x 72 u (y 1198..1608) covers that room; not verified that its fill is what removes the floor. Slave Shop: not examined past the candidate list. `knav_draw --probe` now prints the corners of each polygon.
 
 - **Deep-room gaps triaged (kenshi-k16.6.301, 2026-11-16).** Of the six `deep0` lines, four pass on current ksim (Residential Small 4607..., Thieves, Stack Armory, Stack General Storage; lines removed). The other two are real gaps, not a back room behind an interior door: the sim has no other door entity in either building (`SWEEP_VERBOSE=1` now prints, per failing leg, the target, the building's other doors and the route at radius 4..0.5 from the entrance point and from outside). Heft Clothing Shop: routes at radius 1 and 0.5 but not 2-4, so a 1-2 u passage between the entrance and the far room (same shape as the Noble House line). Hub Travel Gear (-63703, 16617): no route from the entrance room at any radius down to 0.5, so the far-room sample is not joined to the entrance room at all (an island or a closed wall; for an item). No test artefact found, so the target pick is unchanged.
+- **Deep-room gaps, second look (kenshi-k16.7.87, 2026-11-19).** Heft Clothing Shop is already gone from the gap file (k16.7.71's hull rule, recipe 24). Hub Travel Gear: the shipped ground floor (`knav_draw --native --box -63800 16560 -63620 16680 --y 436 452`) is one connected face set from the door mat through the middle to the far room (sample -63781 16585, y 446.4); the bake's (`--mesh navworld/region_4_8.knav --components`, 11 sets in the box, three on this floor) is cut into the far room + middle, the entrance strip, and a lower blob, with 10-20 u gaps where the original has floor. So not the original's narrowness. Not done (the worker guard forbids running `ksim_door_sweep` here, and the runtime rebake's navcache entry was not available): which bake step cuts them (prop hulls, wall band, closed-hull fill) and whether other `4104-D-TwoStorey` buildings share it. Next: `knav_draw --mesh <navcache zone entry>` on the runtime rebake (the bake in navworld may differ from it), then the same bake with props/hulls off.
+- **Travel Gear bisect (kenshi-k16.7.87, 2026-11-19; ksim 91f26330, recipe 24).** One-zone bake (`knav_bake --zones 18 35 18 35`, 3 s; zone cell = floor((v + 147456) / 4608)) matches navworld region 4,8: same cuts. `knav_draw --mesh ... --path -63650 16635 -63781 16585 --y 436 452` ends `partial` at the tip of the entrance corridor (x -63720, z 16638), a ~3 u gap short of the far room's tip; the lower blob (x -63750..-63690, z 16640..16670) is pruned (no seed). Obstacle props near the gap: Obstacle boxes 11 x 12 at (-63724..-63713, 16630..16642) y 442..454, 30 x 22 at (-63713..-63683, 16635..16657) and 21 x 31 at (-63771..-63750, 16625..16656). Ruled out (temporary debug switches, path still `partial`): the prop body clearance ring (k16.7.89), dropping all furniture Obstacle shapes (the gap narrows but stays), `--ledge off`, `--detail-cells 0`, `--partition layers` / monotone. Dropping a closed walkable hull (y 372/376) removes the floor itself (no path), (373/377) changes nothing. Not found: the shape or step that leaves the 3 u. The original has a 12 u neck at the same place with a hole where the 11 x 12 box stands. Next: dump the cells' area ids (wall band Edge vs null) at x -63720 z 16638 and the walkable shape whose side sheet crosses it; check a second 4104-D-TwoStorey building. The probe tools: `knav_draw --path` works on `--mesh`, not on `--native`.
+- **Travel Gear cause found (kenshi-k16.7.87, 2026-11-19).** Temporary dumps of the heightfield at the neck (-63708, 16627), tile by tile: the floor is rasterised whole (walkable span y 442.4..443.4, area 63); above it, from the terrain pass on, a non-walkable span y 454.4..458.4 (the dune the building is sunk into, steep so area 0), 11 u above the floor. `rcFilterWalkableLowHeightSpans` (agent height 18) nulls every floor span under it, which is the 3 u / 12 u cut: a diagonal band of the entrance vestibule. The building's interior mask has two boxes (-63739..-63627 x 16491..16608, y 638..822; -63814..-63632 x 16518..16714, y 419..814, AABBs of a yawed box) and `interior terrain` is off, so `carveInteriorTerrain` removes the terrain only inside them; the vestibule lies outside the yawed box, so its terrain roof stays. The original's interior mesh has the floor there (a 12 u neck round the 11 x 12 pillar box). Earlier suspects ruled out: obstacles, prop clearance, ledge filter, detail, partition, walkable hulls. Not a prop or wall-band problem, so not Heft-style. Fix options, none tried (each needs the shipped gate): (a) also carve terrain spans inside the building's closed walkable hulls grown up by the agent height (these hulls top out at 451, the roof span is at 454..458); (b) skip the low-height filter for a floor span whose ceiling is terrain and within a building's footprint hull; (c) a per-building exception. Other buildings: any sunk house whose entrance passage lies outside its mask box and under the dune shares this; not enumerated (a count of floor spans removed by the low-height filter with a terrain ceiling, per building, would list them).
 - The gap file is a bug list, not a baseline to keep: each line is a door the player cannot walk through on the mesh, or (`out of search nodes` on a 100-u route) a route the search gave up on; `deep0` lines may also be a closed-off room of a building that the sample grid picked (a back room with its own door). Not done: doors other than the first of a building, gates, buildings outside the four towns, interior doors between rooms.
 
 ## Findings

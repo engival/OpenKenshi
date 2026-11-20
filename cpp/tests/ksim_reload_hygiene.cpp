@@ -27,15 +27,10 @@
 #include <string>
 #include <vector>
 #include "nav_source.hpp"
+#include "ksim/dev/build_paths.hpp"
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
-#endif
-#ifndef KSIM_AI_TABLE
-#error KSIM_AI_TABLE must be defined
-#endif
-#ifndef KSIM_SCENARIO
-#error KSIM_SCENARIO must be defined
 #endif
 
 using namespace ksim;
@@ -105,7 +100,7 @@ int main(int argc, char** argv)
 	try
 	{
 		Rig rig;
-		rig.file = scenario::parseFile(KSIM_SCENARIO);
+		rig.file = scenario::parseFile(ksim::dev::srcPath("../scenarios/slavers_downed.kscen"));
 		const kworld::ZoneCell zone = kworld::zoneCellOf(rig.file.centreX, rig.file.centreZ);
 		if (argc < 2 || !test::worldRegionReady(std::string(argv[1]), zone.x, zone.z))
 		{

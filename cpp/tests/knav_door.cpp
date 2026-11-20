@@ -1,5 +1,5 @@
 // Doors and gates as navmesh links (docs/formats/NAVMESH_CACHE.md "Doors"): loads the Hub cache
-// (argv[1]) and checks that door state and per-class access change path cost and reachability
+// (argv[1]) and checks that door state and lock state change path cost and reachability
 // without rebuilding any tile, in the detailed query and in the coarse graph.
 
 #include "knav/area.hpp"
@@ -24,8 +24,6 @@ using knav::DoorState;
 using knav::Point;
 
 const Point kReach = { 40.0f, 60.0f, 40.0f };
-constexpr int kResident = 0;
-constexpr int kStranger = 1; // a class the door refuses
 
 // A house door the street reaches an interior floor through (the Hub's gates are ruins: no doors, user-checked 2026-11-04).
 struct Doorway
@@ -43,13 +41,6 @@ Point groundPoint(const kworld::Heightmap& terrain, double x, double z)
 bool crosses(const std::vector<DoorKey>& doors, DoorKey door)
 {
 	return std::find(doors.begin(), doors.end(), door) != doors.end();
-}
-
-knav::TravelFilter asClass(int doorClass)
-{
-	knav::TravelFilter filter;
-	filter.doorClass = static_cast<std::uint8_t>(doorClass);
-	return filter;
 }
 
 // The tile slots of the Detour mesh: a rebuilt or re-added tile gets another salt, so equal refs
@@ -247,7 +238,7 @@ int main(int argc, char** argv)
 							if (!walk.nearestPoint({ mat[0] + static_cast<float>(std::cos(angle)) * ring, mat[1],
 								mat[2] + static_cast<float>(std::sin(angle)) * ring }, tight, floor) || !indoors(floor))
 								continue;
-							const knav::PathResult path = walk.findPath(street, floor, kReach, asClass(kResident));
+							const knav::PathResult path = walk.findPath(street, floor, kReach);
 							in = path.complete && crosses(path.doors, key);
 							inside = floor;
 						}
@@ -262,7 +253,7 @@ int main(int argc, char** argv)
 									|| !indoors({ high[0], mat[1] + 10.0f, high[2] }))
 									continue;
 								++tries;
-								const knav::PathResult path = walk.findPath(street, high, kReach, asClass(kResident));
+								const knav::PathResult path = walk.findPath(street, high, kReach);
 								up = path.complete && crosses(path.doors, key);
 							}
 					entered += in;
@@ -286,7 +277,7 @@ int main(int argc, char** argv)
 		std::vector<Doorway> plain;
 		for (const Doorway& way : ways)
 		{
-			const knav::PathResult path = query.findPath(way.outside, way.inside, kReach, asClass(kResident));
+			const knav::PathResult path = query.findPath(way.outside, way.inside, kReach);
 			std::cout << "open: length " << path.length << " cost " << path.cost << " doors " << path.doors.size() << "\n";
 			test::require(path.complete, "no path from outside a door to its interior floor");
 			test::require(crosses(path.doors, way.key), "the way in does not go through the door's door polygons");
@@ -298,7 +289,7 @@ int main(int argc, char** argv)
 		// A door crossing costs about +5 over the walk (PATHFINDING_STATIC.md 2.3 / 6.3); with the door priced like land it costs nothing.
 		for (std::size_t i = 0; i < plain.size(); ++i)
 		{
-			knav::TravelFilter landPriced = asClass(kResident);
+			knav::TravelFilter landPriced;
 			landPriced.cost[static_cast<std::size_t>(knav::Area::DoorOpen)] = 1.0f;
 			landPriced.cost[static_cast<std::size_t>(knav::Area::DoorClosed)] = 1.0f;
 			const knav::PathResult flat = query.findPath(plain[i].outside, plain[i].inside, kReach, landPriced);
@@ -329,65 +320,49 @@ int main(int argc, char** argv)
 		// step for an unlocked door, it is not a path cost, so kDoorClosedCost is 1 (it was 11, "dearer by the opening wait").
 		book.setState(near.key, DoorState::Closed);
 		mesh.applyDoors(book);
-		const knav::PathResult closed = query.findPath(near.outside, near.inside, kReach, asClass(kResident));
+		const knav::PathResult closed = query.findPath(near.outside, near.inside, kReach);
 		std::cout << "closed: length " << closed.length << " cost " << closed.cost << "\n";
 		test::require(closed.complete && crosses(closed.doors, near.key), "an allowed traveller should still go through the closed door");
 		test::require(std::fabs(closed.cost - open[0].cost) < 1.0f && std::fabs(closed.length - open[0].length) < 1.0f,
 			"a closed door should cost what an open one does");
-		const knav::CoarsePath coarseClosed = graph.findPath(mesh, near.outside, near.inside, kReach, { &book, kResident });
+		const knav::CoarsePath coarseClosed = graph.findPath(mesh, near.outside, near.inside, kReach, { &book });
 		std::cout << "coarse open " << coarseOpen.cost << " closed " << coarseClosed.cost << "\n";
 		test::require(coarseClosed.found && crosses(coarseClosed.doors, near.key), "the coarse route should go through the closed door too");
 		test::require(std::fabs(coarseClosed.cost - coarseOpen.cost) < 1.0f, "the coarse route charges the closed door");
 
-		// Refused: a stranger is kept out of an open door, the resident is not. Same state, two answers.
+		// The original has no class, faction or owner test on a door (findings/rwh199_nav_validity_static.md section 2): an open
+		// door is passable to every traveller, and only the door's own state (locked, below) refuses. Same answer for everyone.
 		book.setState(near.key, DoorState::Open);
-		book.setAccess(near.key, kStranger, false);
 		mesh.applyDoors(book);
-		const knav::PathResult resident = query.findPath(near.outside, near.inside, kReach, asClass(kResident));
-		const knav::PathResult stranger = query.findPath(near.outside, near.inside, kReach, asClass(kStranger));
-		std::cout << "resident length " << resident.length << ", stranger "
-			<< (stranger.complete ? stranger.length : -1.0f) << " (doors " << stranger.doors.size() << ")\n";
-		test::require(resident.complete && crosses(resident.doors, near.key) && resident.length < open[0].length + 1.0f,
-			"the allowed class should still walk through");
-		test::require(!stranger.complete || (!crosses(stranger.doors, near.key) && stranger.length > resident.length * 1.2f),
-			"the refused class went through the door");
+		const knav::PathResult through = query.findPath(near.outside, near.inside, kReach);
+		std::cout << "open door length " << through.length << " (doors " << through.doors.size() << ")\n";
+		test::require(through.complete && crosses(through.doors, near.key) && through.length < open[0].length + 1.0f,
+			"an open door should be passable");
+		const knav::CoarsePath coarseThrough = graph.findPath(mesh, near.outside, near.inside, kReach, { &book });
+		test::require(coarseThrough.found && crosses(coarseThrough.doors, near.key), "the coarse route misses the open door");
 
-		const knav::CoarsePath coarseResident = graph.findPath(mesh, near.outside, near.inside, kReach, { &book, kResident });
-		const knav::CoarsePath coarseStranger = graph.findPath(mesh, near.outside, near.inside, kReach, { &book, kStranger });
-		std::cout << "coarse resident " << coarseResident.length << ", stranger "
-			<< (coarseStranger.found ? coarseStranger.length : -1.0f) << "\n";
-		test::require(coarseResident.found && crosses(coarseResident.doors, near.key), "the coarse resident route misses the door");
-		// complete, not found: a house door has no way round, and a partial path (found) ends outside it (as the locked check below).
-		test::require(coarseStranger.found == stranger.complete,
-			"coarse and detailed disagree on whether the refused class can get in");
-		test::require(!coarseStranger.found || !crosses(coarseStranger.doors, near.key), "the coarse refused route goes through the door");
-		if (coarseStranger.found)
-			test::require(coarseStranger.length > coarseResident.length * 1.2f, "the coarse refused route did not go round");
-
-		// Locked: nobody. Both classes go round or fail cleanly.
-		book.setAccess(near.key, kStranger, true);
+		// Locked: nobody. The route goes round or fails cleanly.
 		book.setState(near.key, DoorState::Locked);
 		mesh.applyDoors(book);
-		for (const int doorClass : { kResident, kStranger })
 		{
-			const knav::PathResult locked = query.findPath(near.outside, near.inside, kReach, asClass(doorClass));
-			const knav::CoarsePath coarse = graph.findPath(mesh, near.outside, near.inside, kReach, { &book, doorClass });
+			const knav::PathResult locked = query.findPath(near.outside, near.inside, kReach);
+			const knav::CoarsePath coarse = graph.findPath(mesh, near.outside, near.inside, kReach, { &book });
 			test::require(!locked.complete || !crosses(locked.doors, near.key), "a path goes through a locked door");
 			test::require(!coarse.found || !crosses(coarse.doors, near.key), "a coarse route goes through a locked door");
 			test::require(locked.complete == coarse.found, "coarse and detailed disagree about the locked door");
-			std::cout << "locked, class " << doorClass << ": " << (locked.complete ? locked.length : -1.0f) << " (coarse "
+			std::cout << "locked: " << (locked.complete ? locked.length : -1.0f) << " (coarse "
 				<< (coarse.found ? coarse.length : -1.0f) << ")\n";
 		}
 		// The other door is unaffected: from outside it, the way in is still direct.
-		const knav::PathResult other = query.findPath(ways[1].outside, ways[1].inside, kReach, asClass(kResident));
+		const knav::PathResult other = query.findPath(ways[1].outside, ways[1].inside, kReach);
 		test::require(other.complete && crosses(other.doors, ways[1].key) && other.length < open[1].length + 1.0f,
 			"locking one door changed the other");
 
 		// Both doors locked: whatever is left (a wall gap, a ramp) is what the two searches must agree on.
 		book.setState(ways[1].key, DoorState::Locked);
 		mesh.applyDoors(book);
-		const knav::PathResult shut = query.findPath(near.outside, near.inside, kReach, asClass(kResident));
-		const knav::CoarsePath coarseShut = graph.findPath(mesh, near.outside, near.inside, kReach, { &book, kResident });
+		const knav::PathResult shut = query.findPath(near.outside, near.inside, kReach);
+		const knav::CoarsePath coarseShut = graph.findPath(mesh, near.outside, near.inside, kReach, { &book });
 		std::cout << "both locked: detailed " << (shut.complete ? shut.length : -1.0f) << ", coarse "
 			<< (coarseShut.found ? coarseShut.length : -1.0f) << "\n";
 		test::require(shut.complete == coarseShut.found, "coarse and detailed disagree with both doors locked");
@@ -409,14 +384,14 @@ int main(int argc, char** argv)
 		std::cout << "clearance entries before replaceTiles " << cachedBefore << ", after " << query.clearanceEntries() << "\n";
 		test::require(query.clearanceEntries() == 0, "a stale clearance entry survived replaceTiles");
 		const knav::NavQuery requery(mesh);
-		const knav::PathResult afterReplace = requery.findPath(near.outside, near.inside, kReach, asClass(kResident));
+		const knav::PathResult afterReplace = requery.findPath(near.outside, near.inside, kReach);
 		test::require(!afterReplace.complete || !crosses(afterReplace.doors, near.key), "a replaced tile forgot the locked door");
 
 		// Back to open: the original paths return, and through all of it no tile was rebuilt.
 		book = {};
 		mesh.applyDoors(book);
 		const knav::NavQuery fresh(mesh);
-		const knav::PathResult reopened = fresh.findPath(near.outside, near.inside, kReach, asClass(kResident));
+		const knav::PathResult reopened = fresh.findPath(near.outside, near.inside, kReach);
 		test::require(reopened.complete && std::fabs(reopened.length - open[0].length) < 0.01f
 			&& std::fabs(reopened.cost - open[0].cost) < 0.01f, "reopening the door did not restore the path");
 		for (std::size_t i = 0; i < baked.size(); ++i)

@@ -13,7 +13,7 @@
 #include "app/cpustage.hpp"
 #include "app/eventlog.hpp"
 #include "kworld/loadorder.hpp"
-#include "platform/socket.hpp"
+#include "kutil/platform/socket.hpp"
 
 using namespace simlink;
 
@@ -34,23 +34,16 @@ static const cfg::Float kWarmSlackMs{ cfg::Group{ "Character loading" }, "sim.ch
 static const cfg::Float kAddBudgetMs{ cfg::Group{ "Character loading" }, "sim.char_add_budget_ms", 4.0, 0.5, 1000.0, "New characters (race, meshes, textures load on the main thread) are built per frame until this many ms are spent; the rest wait for the next frame (kenshi-k16.2.205.10)" };
 static const cfg::Bool kBodyNudge{ cfg::Group{ "Locomotion" }, "anim.body_nudge", true, "Display depenetration (kenshi-k16.2.345): a drawn standing body is nudged (cap 0.45 u, eased) out of the client collision and other bodies; never fed to the sim, picks or orders. Off = the drawn body stands at the sim's x, z" };
 static int64_t nudgeKey(int cx, int cz) { return ((int64_t)cx << 32) ^ (int64_t)(uint32_t)cz; }
-// kenshi-k16.2.382 / .382.1: the standing ray's result `res` (CollisionPick::groundY: 1 hit, 2 drawn face, 0 a shape covers x,z but none in the window, -1 a
-// building's collision not loaded, 3 open ground: nothing covers x,z) joined with the heightmap `th` under the same x, z. Open ground: the terrain is the
-// surface whatever the window (the coarse navmesh y is up to ~6 u off the curved terrain), bounded by kOpenMax from the wire y; beyond it the wire y stays
-// (res 0). Elsewhere the terrain competes inside [wy - down, wy + up] and wins when nearer the wire y (a floor under a dune, a dune over a floor); not
-// loaded (-1) keeps the wire y. Returns the new result, ry set when >= 1. One rule for both call sites.
-static int standTerrain(int res, double& ry, double th, double wy, double up, double down)
-{
-	constexpr double kOpenMax = 12.0;
-	if (res == 3)
-	{
-		if (std::fabs(th - wy) <= kOpenMax) { ry = th; return 1; }
-		return 0;
-	}
-	if (res != -1 && th <= wy + up && th >= wy - down && (res < 1 || std::fabs(th - wy) < std::fabs(ry - wy))) { ry = th; return 1; }
-	return res;
-}
+// kenshi-k16.2.395.1 (k16.2.395; user 2026-11-19: "Walking up the stairs is a jumpy jittery mess, because every new stair rung makes the character
+// teleport to a new height. It needs to interpolate between current height and new requested height."): the DRAWN body's y eases toward the stand
+// height the ray reports (kenshi-k16.2.382.2) with this time constant, render side only. 0 = off (the old per-tread step, the A/B's before).
+static const cfg::Float kStandEaseTau{ cfg::Group{ "Locomotion" }, "anim.stand_ease_tau", 0.03, 0.0, 1.0, "Locomotion: the drawn body's y eases toward the stand height (the drawn floor / stair / ramp ray) with this time constant (s), so a stair tread does not step it; a drop past 8 u (a fall, a ledge, a spawn) snaps. 0 = off (the body steps per tread)" };
 static const cfg::Float kSlopTau{ cfg::Group{ "Locomotion" }, "anim.slop_tau", 0.25, 0.0, 2.0, "Display slop: the drawn position eases to the sim with this time constant (s), speed-capped; a small offset rides. 0 = the capped catch-up chase" };
+// render.interest_radius (kenshi-k16.2.258.10.1, the town approach): the radius of the SET_INTEREST send filter. It is not simulation detail
+// (the full-detail bounds decide that): a character inside the bounds and inside this circle is sent at full detail, so a radius that reaches the
+// buildings the walk already draws brings a town's residents in with the town instead of ~2.7 km later (measured on the Stack approach: the
+// bounds covered the town at 4.74 km, the residents were only sent at 3.34 km with 2000). A change resends the interest at once.
+static const cfg::Float kInterestRadiusCfg{ cfg::Group{ "Character loading" }, "render.interest_radius", 2000.0, 200.0, 20000.0, "The radius (u) of the SET_INTEREST filter the camera sends: characters inside it and inside the full-detail bounds are sent and drawn (2000 = the old fixed value, SIMLINK 5)" };
 // The run file's three case lines (kenshi-k16.2.264.1). The user's 2026-11-15 walk into Outpost s-IV: "running in place ... movement spurts every
 // second or two", the body gone indoors while its tag drew, and nothing in the run file. kN: how long the wire's own position must stand still while
 // the legs walk before that is a stall. kX: how far the drawn y may sit off the wire's y; the deck blend is 4 u wide by design, so a placement error
@@ -94,15 +87,15 @@ bool SimView::open(const std::string& target, std::uint64_t dataHash, std::strin
 	if (colon == std::string::npos) { err = target + ": no such file (or HOST:PORT)"; return false; }
 	dataHash_ = dataHash;
 	std::string why;
-	fd_ = plat::tcpConnect(target.substr(0, colon), target.substr(colon + 1), why);
-	if (fd_ == plat::kNoSocket) { err = target + ": " + why; return false; }
+	fd_ = kutil::net::tcpConnect(target.substr(0, colon), target.substr(colon + 1), why);
+	if (fd_ == kutil::net::kNoSocket) { err = target + ": " + why; return false; }
 	mode_ = Live;
 	return true;
 }
 
 void SimView::end()
 {
-	plat::tcpClose(fd_);
+	kutil::net::tcpClose(fd_);
 	*this = SimView();
 }
 
@@ -121,8 +114,8 @@ void SimView::fail(const std::string& why)
 		evlog::add("link", tick_, 0, "%s", why.c_str());
 	}
 	error_ = why;
-	plat::tcpClose(fd_);
-	fd_ = plat::kNoSocket;
+	kutil::net::tcpClose(fd_);
+	fd_ = kutil::net::kNoSocket;
 }
 
 bool SimView::pump()
@@ -146,10 +139,10 @@ bool SimView::pump()
 	{
 		size_t n = 0;
 		std::string why;
-		const plat::Recv r = plat::tcpRecv(fd_, buf, sizeof buf, n, why);
-		if (r == plat::Recv::Data) { if (!dec_.feed(buf, n)) { fail(dec_.error()); return false; } continue; }
-		if (r == plat::Recv::Closed) { fail("server closed the connection"); return false; }
-		if (r == plat::Recv::WouldBlock) { break; }
+		const kutil::net::Io r = kutil::net::tcpRecv(fd_, buf, sizeof buf, n, why);
+		if (r == kutil::net::Io::Ok) { if (!dec_.feed(buf, n)) { fail(dec_.error()); return false; } continue; }
+		if (r == kutil::net::Io::Closed) { fail("server closed the connection"); return false; }
+		if (r == kutil::net::Io::WouldBlock) { break; }
 		fail("recv: " + why);
 		return false;
 	}
@@ -157,8 +150,14 @@ bool SimView::pump()
 	{
 		std::vector<uint8_t> out;
 		OrderWriter::hello(out, dataHash_, "kclient");
-		if (!send(out, "hello")) { return false; }
+		if (!sendNow(out, "hello")) { return false; }
 		helloSent_ = true;
+		if (!preHello_.empty())
+		{
+			std::vector<uint8_t> h;
+			h.swap(preHello_);
+			if (!sendNow(h, "held frames")) { return false; }
+		}
 		if (dec_.serverDataHash() != dataHash_) { fprintf(stderr, "kclient: simlink: data hash %016llx, server %016llx (the server will refuse)\n", (unsigned long long)dataHash_, (unsigned long long)dec_.serverDataHash()); }
 	}
 	if (helloSent_ && std::chrono::steady_clock::now() - lastSend_ >= std::chrono::seconds(5))
@@ -170,6 +169,43 @@ bool SimView::pump()
 	return true;
 }
 
+// kenshi-k16.2.414.2: the ONE ground solver, navmesh -> drawn (CLIENT.md Decisions "One ground solver, both directions"); the rule is 412.1's (kenshi-k16.2.382 / .382.1 / .412.1).
+// `raw` is the session's ray over WorldBuildings::groundDrawn, which sees only WALKABLE drawn parts (the navmesh bake's own set, BuildingPartDef::walkable): 2 a drawn floor / stair / ramp
+// triangle in the window, 0 a walkable surface within 12 u of the navmesh y covers x,z but none in the window (ry = the nearest such surface), -1 a walkable building mesh near x,z
+// still loading, 3 open ground: no walkable surface over x,z. `th` is the drawn terrain under the same x, z. Open ground: the terrain at any distance (the coarse navmesh y runs 12-33 u
+// under the drawn dune of the hill east of the Storm House, user 2026-11-19), so the body never stays at the navmesh y. A walkable surface outside the window (0): the nearer to the navmesh y of that
+// surface and the terrain, so a body on the terrain under a porch roof or on a bridge deck whose navmesh point sits low is not lifted onto it; the terrain is excluded only where it is
+// not ground, inside a carved interior (an interior mask whose BUILDING has `interior terrain` 0, the sunk-dune rule in data form: terrainMasked_ at the terrain point). In the window (1, 2)
+// the terrain competes and wins when nearer the navmesh y (a floor under a dune, a dune over a floor); not loaded (-1) keeps the navmesh y. Returns the new result, ry set when >= 1.
+int SimView::solveGround(int raw, double& ry, double x, double z, double th, double navY, double up, double down) const
+{
+	if (raw == 3) { ry = th; return 1; }
+	if (raw == 0)
+	{
+		if (!(terrainMasked_ && terrainMasked_(x, th, z)) && std::fabs(th - navY) < std::fabs(ry - navY)) { ry = th; }
+		return 1;
+	}
+	if (raw != -1 && th <= navY + up && th >= navY - down && (raw < 1 || std::fabs(th - navY) < std::fabs(ry - navY))) { ry = th; return 1; }
+	return raw;
+}
+
+int SimView::groundAt(double x, double z, double navY, double up, double down, double& y, const char** kind) const
+{
+	const char* k = "";
+	if (kind) { *kind = k; }
+	if (!groundRay_) { return -1; }
+	const double th = terrainFn_ ? terrainFn_(x, z) : navY;
+	const void* gen = nullptr;
+	double ry = 0;
+	const int raw = groundRay_(x, z, navY, up, std::max(down, kDrawnDown), ry, &gen);
+	const double before = ry;
+	const int res = solveGround(raw, ry, x, z, th, navY, up, kDrawnDown);
+	if (res >= 1) { k = raw == 3 ? "open ground (terrain)" : raw < 1 || ry != before ? "terrain" : "drawn floor"; y = ry; }
+	else { k = raw == -1 ? "building mesh still loading" : "no drawn floor in the window"; }
+	if (kind) { *kind = k; }
+	return res;
+}
+
 int SimView::standRayAt(double x, double z, double wireY, double terrain, double& y, const char** kind) const
 {
 	const char* k = "";
@@ -179,9 +215,9 @@ int SimView::standRayAt(double x, double z, double wireY, double terrain, double
 	double ry = 0;
 	const int raw = groundRay_(x, z, wireY, kRayUp, kRayDown, ry, &gen);
 	const double before = ry;
-	const int res = standTerrain(raw, ry, terrain, wireY, kRayUp, kRayDown);	// the one rule update() applies
-	if (res >= 1) { k = raw == 3 ? "open ground (terrain)" : raw < 1 || ry != before ? "terrain" : raw == 2 ? "drawn" : "collision"; y = ry; }
-	else { k = raw == 3 ? "open ground, terrain beyond the reach" : raw == -1 ? "collision not loaded" : "no collision in the window"; }
+	const int res = solveGround(raw, ry, x, z, terrain, wireY, kRayUp, kDrawnDown);	// the one rule update() applies
+	if (res >= 1) { k = raw == 3 ? "open ground (terrain)" : raw < 1 || ry != before ? "terrain" : "drawn floor"; y = ry; }
+	else { k = raw == 3 ? "open ground, terrain beyond the reach" : raw == -1 ? "building mesh still loading" : "no drawn floor in the window"; }
 	if (kind) { *kind = k; }
 	return res;
 }
@@ -571,6 +607,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		doorState_.clear();
 		doorFirst_.clear();
 		carried_.clear();
+		departing_.clear();	// a load / new world leaves no one to dither out (kenshi-k16.2.258.10.1)
 		pending_.clear();
 		soundsPrimed_ = false;
 	}
@@ -579,7 +616,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 	std::vector<uint64_t> ids;
 	for (const auto& [id, c] : dec_.chars) { if (c.hasAppearance && c.samples > 0) { ids.push_back(id); } }
 	std::sort(ids.begin(), ids.end());
-	bool rebuild = rebuild_ || worldReset || ids != order_;
+	bool rebuild = rebuild_ || worldReset || ids != order_ || chars.takeDepartDone();	// a finished departure is dropped by the next keep
 	rebuild_ = false;
 	for (size_t i = 0; i < ids.size() && !rebuild; i++) { rebuild = slots_[ids[i]].version != dec_.chars.at(ids[i]).look.version; }
 	if (rebuild)
@@ -604,7 +641,30 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 				from.push_back(o->second.index);
 			}
 		}
-		{ CPUSTAGE_ACC("sim.rebuild.keep"); chars.keep(from); }
+		// The characters that left the wire this frame dither out where they last stood instead of vanishing in one frame (render.char_fade,
+		// kenshi-k16.2.258.10.1): their build is kept (frozen) after the shown ones until the fade ends (Characters::takeDepartDone). A character
+		// that comes back inside the fade is built fresh below and its ghost dropped here (one frame of the old body, at its old spot).
+		std::vector<int> depart;
+		std::vector<uint64_t> departIds;
+		if (!worldReset)
+		{
+			for (const auto& [id, idx] : departing_)
+			{
+				if (std::binary_search(ids.begin(), ids.end(), id)) { continue; }	// back: the adds below build it again
+				if (idx < 0 || (size_t)idx >= chars.size() || chars.cover((size_t)idx) <= 0) { continue; }	// its dither ended (takeDepartDone): drop it
+				depart.push_back(idx);
+				departIds.push_back(id);
+			}
+			for (const auto& [id, o] : old)
+			{
+				if (o.index < 0 || slots_.count(id) || departing_.count(id) || std::binary_search(ids.begin(), ids.end(), id)) { continue; }
+				depart.push_back(o.index);
+				departIds.push_back(id);
+			}
+		}
+		{ CPUSTAGE_ACC("sim.rebuild.keep"); chars.keep(from, depart); }
+		departing_.clear();
+		for (size_t j = 0; j < depart.size(); j++) { departing_[departIds[j]] = (int)(from.size() + j); }
 		// Building a character loads its race, meshes and textures on this thread (2-4 ms each, 1.1 s for the 302 of a join: kenshi-k16.2.205.10), so
 		// the adds of one sync stop at a time budget and the rest wait for the next frame (their slot stays out, index -1, as an unbuildable one's does).
 		// At least one is built per frame, so a join always finishes.
@@ -765,7 +825,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		if (!(ib->flags & kYValid)) { p[1] = terrain; }
 		else if (groundRay_ && !((b.flags & (kSeated | kAsleep)) && b.poseClip))
 		{
-			// kenshi-k16.2.344: the wire y is the sim's point; the body stands on the nearest collision surface under its x, z (CollisionPick buildings) or the
+			// kenshi-k16.2.344: the wire y is the sim's point; the body stands on the nearest DRAWN floor / stair / ramp under its x, z (WorldBuildings::groundDrawn, .382.2) or the
 			// heightmap there, within [wire - kRayDown, wire + kRayUp]. No hit / not loaded: the wire y, counted.
 			const double wy = p[1] - (id == local_.id ? predictYOff_ : 0.0);	// the driven character's prediction carries the wire offset: ray from the navmesh point
 			const double rx = p[0], rz = p[2];
@@ -782,24 +842,20 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 				rayStats_.casts++; rayStats_.ms += ms; rayStats_.frameCasts++; rayStats_.frameMs += ms;
 				sl.rayX = rx; sl.rayZ = rz; sl.rayWireY = wy; sl.rayRes = res; sl.rayY = ry; sl.rayGen = gen;
 			}
-			res = standTerrain(res, ry, terrain, wy, kRayUp, kRayDown);
+			res = solveGround(res, ry, rx, rz, terrain, wy, kRayUp, kDrawnDown);
 			ylogRes = res;
 			if (res >= 1) { rayStats_.hits++; if (res == 2) { rayStats_.faces++; } rayStats_.sumShift += std::fabs(ry - p[1]); rayStats_.maxShift = std::max(rayStats_.maxShift, std::fabs(ry - p[1])); p[1] = ry; }
 			else
 			{
-				if (res == 0) { rayStats_.misses++; } else { rayStats_.unloaded++; }
+				rayStats_.unloaded++;
 				if (id == local_.id) { p[1] = wy + predictYOff_; }
 				if (std::hypot(rx - sl.missX, rz - sl.missZ) > 3.0)
 				{
 					sl.missX = rx; sl.missZ = rz;
-					evlog::add("standmiss", tick_, id, "standing ray: %s at %.1f,%.1f wire y %.2f (window %.1f up %.1f down); drawn at the wire y", res == 0 ? "no collision" : "collision not loaded", rx, rz, wy, kRayUp, kRayDown);
+					evlog::add("standmiss", tick_, id, "standing ray: building mesh still loading at %.1f,%.1f wire y %.2f; drawn at the wire y", rx, rz, wy);
 				}
 			}
 		}
-#ifdef KCLIENT_DEV_TOOLS
-		static const bool ylog = std::getenv("KYLOG") != nullptr;	// KYLOG=1: per character per frame: id tick x z sim terrain drawn ray-result (kenshi-kyat.2, k16.2.382.1)
-		if (ylog) { fprintf(stderr, "YLOG %llu %.0f %.2f %.2f %.2f %.2f %.2f %d %.2f\n", (unsigned long long)id, tick_, p[0], p[2], simY, terrain, p[1], ylogRes, ylogAlt ? ylogAlt(p[0], p[2]) : 0.0); }
-#endif
 		if (posed)
 		{
 			for (int k = 0; k < 3; k++) { p[k] = b.pose[k]; }
@@ -986,16 +1042,53 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 					const double wy = simY - (id == local_.id ? predictYOff_ : 0.0);
 					double ry = 0; const void* gen = nullptr;
 					int res = groundRay_(p[0], p[2], wy, 1.5, 4.5, ry, &gen);
-					res = standTerrain(res, ry, ground(p[0], p[2]), wy, 1.5, 4.5);
+					res = solveGround(res, ry, p[0], p[2], ground(p[0], p[2]), wy, 1.5, kDrawnDown);
 					if (res >= 1) { p[1] = ry; }
 				}
 			}
 			nudge_.frameMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - nudgeT0).count();
 		}
 		else { sl.nudge[0] = sl.nudge[1] = 0; }
+		// kenshi-k16.2.395.1 (k16.2.395; user 2026-11-19: "Walking up the stairs is a jumpy jittery mess, because every new stair rung makes the
+		// character teleport to a new height. It needs to interpolate between current height and new requested height."). The drawn body's y eases
+		// toward the stand height p[1] here (after the standing ray AND the nudge's re-ray), render side only: the sim's y (sl.sim / simPos), the
+		// standing ray and its result stay exact, and the floor view (ff::FloorFollow) reads the WIRE y (kenshi-k16.2.236.8.4.3), never this. A tread
+		// here is up to the flight's own rise (the Storm House's treads step the stand ray 3.9 u), so a short time constant (anim.stand_ease_tau)
+		// turns a tread into a ramp of a few frames; past kStandSnap (8 u, twice a 3.9 u tread) the target is a fall, a ledge or a
+		// spawn, not a tread, so it snaps (a delayed drop would read as floating). A paused frame holds it; posed
+		// (seated / asleep) and the first drawn frame snap. The picks, the selection ring and the name label read this, as they draw it (sl.pos).
+		// Foot IK (anim.foot_terrain) is terrain-only: it reads this smoothed body y (c.spec.pos) and sets the soles on the terrain's own height, so
+		// a slope's lag (under a tenth of a unit at a run) is the leg reach's to take, not a fight with it.
+		const double standTargetY = p[1];
+		if (!posed)	// every drawn standing body (sl.drawn is the drawn WEAPON: not this); seated / asleep snap as the pose does
+		{
+			// the step that is a drop, not a tread (a tread is 3.9 u; twice that) and the ease's rate cap, over which only a teleport goes
+			constexpr double kStandSnap = 8.0, kStandMax = 150.0;	// u, u/s
+			const double tau = kStandEaseTau.get();
+			if (!sl.drawYOn || tau <= 0) { sl.drawY = standTargetY; sl.drawYOn = true; }
+			else if (dtSim_ > 0)	// a paused frame holds the drawn y where it is
+			{
+				const double d = standTargetY - sl.drawY;
+				if (std::fabs(d) > kStandSnap) { sl.drawY = standTargetY; }
+				else
+				{
+					const double step = std::min(std::fabs(d) * (1.0 - std::exp(-dtSim_ / tau)), kStandMax * dtSim_);
+					sl.drawY += d > 0 ? step : -step;
+				}
+			}
+			p[1] = sl.drawY;
+		}
+		else { sl.drawY = standTargetY; sl.drawYOn = false; }
+#ifdef KCLIENT_DEV_TOOLS
+		// kenshi-k16.2.395.1 (the stairs diagnosis): the log sits here, after the standing ray, the nudge's re-ray and the ease, so `drawn` is the y the
+		// body is about to draw with and the appended `target` is the stand height it eased toward. Columns 1-9 are as kenshi-kyat.2 defined them
+		// (id tick x z sim terrain drawn ray-result bilinear terrain).
+		static const bool ylog = std::getenv("KYLOG") != nullptr;	// KYLOG=1: per character per frame: id tick x z sim terrain drawn ray-result (kenshi-kyat.2, k16.2.382.1)
+		if (ylog) { fprintf(stderr, "YLOG %llu %.0f %.2f %.2f %.2f %.2f %.2f %d %.2f %.2f\n", (unsigned long long)id, tick_, p[0], p[2], simY, terrain, p[1], ylogRes, ylogAlt ? ylogAlt(p[0], p[2]) : 0.0, standTargetY); }
+#endif
 		sl.catchV[0] = catchV[0]; sl.catchV[1] = catchV[1];
 		sl.basePrev[0] = baseX; sl.basePrev[1] = baseZ;	// the next frame's base-jump test
-		sl.sim[0] = baseX; sl.sim[1] = p[1]; sl.sim[2] = baseZ;	// gameplay reads the sim, never the display offset
+		sl.sim[0] = baseX; sl.sim[1] = (ib->flags & kYValid) ? simY : standTargetY; sl.sim[2] = baseZ;	// gameplay reads the sim, never the display offset: its y is the wire's, not the stand ray's (the floor latch saw a standing character jump 2.8 u up the flight onto the top tread, k16.2.236.8.4.3), and never the eased drawn y (k16.2.395.1: standTargetY is the stand y before the ease)
 		// the legs take the sim's own velocity, in the body frame (forward (sin, cos), lateral (cos, -sin), as the sim's), plus the catch-up's (user:
 		// nothing repositions without walking). No smoothing: the old drawn-motion derivative tailed off exponentially and froze the stride after the
 		// sim stopped (docs/CLIENT_GOALS.md "Locomotion fidelity" 2). Frozen (dt 0): the last value holds.
@@ -1023,6 +1116,15 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 			sl.vLat = kSpeedFilter.get() && !driven ? trimmed_mean8(sl.speedWin[1]) : lat;
 			// ds/stop-fix: the sim's own forward speed without the catch-up's: a catch-up step's end reads as a big decel and fired the stop steer mid-run
 			sl.vSim = (float)(wvx * std::sin(yaw) + wvz * std::cos(yaw));
+#ifdef KCLIENT_DEV_TOOLS
+			// kenshi-qaud.1: KSTEPLOG=1: per frame the sample pair behind the sim speed (what arms the stop steer), the route version, the drawn and the sim's position
+			static const bool steplog = std::getenv("KSTEPLOG") != nullptr;
+			if (steplog)
+			{
+				fprintf(stderr, "STEPLOG %llu render %.2f pair %llu..%llu iz %llu span %.0f vSim %.2f wire %.2f vFwd %.2f route %u drawn %.1f %.1f sim %.1f %.1f\n", (unsigned long long)id, tick_,
+					(unsigned long long)ia->tick, (unsigned long long)ib->tick, iz ? (unsigned long long)iz->tick : 0ULL, span, (double)sl.vSim, (double)b.fwd, (double)sl.vFwd, c.route.version, p[0], p[2], ib->pos[0], ib->pos[2]);
+			}
+#endif
 		}
 		else if (!sl.drawn)	// the first frame: the sim's own fwd / lat (a teleport or load snap reads as one huge tick, clamped to 2x run speed)
 		{
@@ -1153,6 +1255,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		s.move = sl.vFwd;	// the samples' own velocity (sl.vFwd), not the wire's fwd / lat fields: the displacement carries pushes
 		s.moveSim = sl.vSim;	// the same without the catch-up (ds/stop-fix: the stop steer's decel)
 		s.wireMove = b.fwd;	// the wire's own speed (its ramp); the stop steer reads it for the route end's dead stop (ds/run-stop-2)
+		s.routeEnd = c.route.points.empty() ? -1.0f : (float)std::hypot(b.pos[0] - c.route.points.back()[0], b.pos[2] - c.route.points.back()[2]);
 		s.wireGap = (float)std::hypot(p[0] - b.pos[0], p[2] - b.pos[2]);	// what the drawn body still has to walk to the newest sample
 		s.strafe = sl.vLat;
 		s.combat = (b.flags & kCombat) != 0;
@@ -1313,8 +1416,17 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 // Client frames are tiny (an order is < 2.1 KiB at 256 ids) next to the socket buffer, so a short write is treated as fatal rather than queued.
 bool SimView::send(const std::vector<uint8_t>& out, const char* what)
 {
-	if (fd_ == plat::kNoSocket) { return false; }
-	if (!plat::tcpSend(fd_, out.data(), out.size())) { fail(std::string("send ") + what + " failed"); return false; }
+	if (fd_ == kutil::net::kNoSocket) { return false; }
+	// HELLO is always the first frame (SIMLINK: "expected HELLO as the first frame"): the server's own HELLO is not decoded yet, so an order
+	// (a playtest load, a scenario frame) is held here whole and goes out right after ours, in order (kenshi-k16.2.406.1).
+	if (mode_ == Live && !helloSent_) { preHello_.insert(preHello_.end(), out.begin(), out.end()); return true; }
+	return sendNow(out, what);
+}
+
+bool SimView::sendNow(const std::vector<uint8_t>& out, const char* what)
+{
+	if (fd_ == kutil::net::kNoSocket) { return false; }
+	if (!kutil::net::tcpSendAll(fd_, out.data(), out.size())) { fail(std::string("send ") + what + " failed"); return false; }
 	lastSend_ = std::chrono::steady_clock::now();
 	return true;
 }
@@ -1329,23 +1441,31 @@ void SimView::answers()
 		if (e.kind == 8 && isPlayer(e.a)) { reply_ = "drive blocked"; continue; }
 		if (e.kind == 13)
 		{
-			static const char* const kResult[] = { "done", "refused on arrival", "unreachable", "target gone", "actor down", "cancelled", "partial", "full" };
+			static const char* const kResult[] = { "done", "refused on arrival", "unreachable", "target gone", "actor down", "cancelled", "partial", "full", "too hard" };
+			if (e.result == 8)	// too hard (SIMLINK event 13 result 8; approved kenshi-k16.6.376, implemented k16.6.377): a lock pick reached the lock and its
+			{					// skill is below the floor, so no pick ran. A door or container pick is action 3, a shackle pick 15 and a cage pick 18.
+				// The player's line is OURS: the original has no text for it (LOCKS_EQUIP_STOCK_STATIC D-lockpick-zero); the host's message box shows it.
+				if (isPlayer(e.a) && (e.dir == 3 || e.dir == 15 || e.dir == 18)) { lockTooHard_++; }
+				if (e.dir < 15 || e.dir > 17) { printf("interact done: %llu on %llu: action %u result 8 too hard\n", (unsigned long long)e.a, (unsigned long long)e.b, (unsigned)e.dir); }	// the shackle orders print their own line below
+			}
 			if (e.dir >= 15 && e.dir <= 17)	// the shackle orders (SIMLINK order 60 "Shackle orders"): the result as the player reads it; texts OURS
 			{
 				static const char* const kDone[] = { "Shackles unlocked", "Shackles cut", "Shackles broken!" };
 				static const char* const kRefused[] = { "The shackles would not open", "No tool to cut the shackles with", "Not strong enough to break the shackles" };
 				static const char* const kOther[] = { "", "", "Could not reach the shackles", "The shackles are gone", "Could not finish: down", "Stopped" };
-				const char* text = e.result == 0 ? kDone[e.dir - 15] : e.result == 1 ? kRefused[e.dir - 15] : e.result < 6 ? kOther[e.result] : "?";
+				const char* text = e.result == 0 ? kDone[e.dir - 15] : e.result == 1 ? kRefused[e.dir - 15] : e.result == 8 ? kResult[8] : e.result < 6 ? kOther[e.result] : "?";
 				say(text);
 				printf("shackles: %llu on %llu: action %u result %u: %s\n", (unsigned long long)e.a, (unsigned long long)e.b, (unsigned)e.dir, (unsigned)e.result, text);
 				continue;
 			}
-			say("interact " + std::to_string(e.dir) + " on " + std::to_string(e.b) + ": " + (e.result < 8 ? kResult[e.result] : "?"));
+			say("interact " + std::to_string(e.dir) + " on " + std::to_string(e.b) + ": " + (e.result < 9 ? kResult[e.result] : "?"));
 			continue;
 		}
 		if (e.kind == 14)
 		{
 			foreign_.insert(e.b);
+			// the event itself, whoever the thief is: the HUD reply below (player thieves only) was the one trace (k16.2.443)
+			printf("theft event: %llu took from %llu (owner %s) player %d\n", (unsigned long long)e.a, (unsigned long long)e.b, dec_.str(e.str).c_str(), isPlayer(e.a) ? 1 : 0);
 			if (isPlayer(e.a)) { say("theft: took from " + std::to_string(e.b) + " (owner " + dec_.str(e.str) + ")"); }
 			continue;
 		}
@@ -1510,12 +1630,14 @@ uint64_t SimView::pick(const double origin[3], const double dir[3], double* tOut
 	{
 		const Slot& sl = slots_.at(id);
 		if (sl.index < 0) { continue; }
-		// gameplay reads the sim's position, never the display slop's drawn one (kenshi-k16.2.74)
+		// gameplay reads the sim's x, z, never the display slop's drawn ones (kenshi-k16.2.74); the Y is the DRAWN body's (kenshi-k16.2.395.1): a click
+		// must land on the character where it draws (the stand ray's floor / stair y, eased), as the ring and the name label already do (sl.pos)
+		const double pickedY = sl.pos[1];
 		if (sl.down != Lying && sl.down != Asleep)	// seated: the standing box (the original's flattening is for prone only); asleep: the lying segment
 		{
 			// slab test against the box
-			const double lo[3] = { sl.sim[0] - sl.hull[0] * 0.5, sl.sim[1], sl.sim[2] - sl.hull[2] * 0.5 };
-			const double hi[3] = { sl.sim[0] + sl.hull[0] * 0.5, sl.sim[1] + (sl.down == Up || sl.down == Seated ? sl.hull[1] : std::max(sl.hull[0], sl.hull[2])), sl.sim[2] + sl.hull[2] * 0.5 };
+			const double lo[3] = { sl.sim[0] - sl.hull[0] * 0.5, pickedY, sl.sim[2] - sl.hull[2] * 0.5 };
+			const double hi[3] = { sl.sim[0] + sl.hull[0] * 0.5, pickedY + (sl.down == Up || sl.down == Seated ? sl.hull[1] : std::max(sl.hull[0], sl.hull[2])), sl.sim[2] + sl.hull[2] * 0.5 };
 			double t0 = 0, t1 = 1e30;
 			for (int k = 0; k < 3 && t0 <= t1; k++)
 			{
@@ -1562,7 +1684,7 @@ uint64_t SimView::pick(const double origin[3], const double dir[3], double* tOut
 		double a[3], u[3];	// segment start (relative to the ray origin) and its full extent
 		u[0] = std::sin(sl.yaw) * kLying; u[1] = 0; u[2] = std::cos(sl.yaw) * kLying;
 		for (int k = 0; k < 3; k++) { a[k] = sl.sim[k] - origin[k] - u[k] * 0.5; }
-		a[1] += kLift;
+		a[1] = pickedY - origin[1] + kLift;	// the drawn body's y (kenshi-k16.2.395.1), as the box above
 		// closest points of the ray origin + dir t (t >= 0) and the segment a + u s (0 <= s <= 1)
 		const double uu = u[0] * u[0] + u[1] * u[1] + u[2] * u[2], du = dir[0] * u[0] + dir[1] * u[1] + dir[2] * u[2];
 		const double da = dir[0] * a[0] + dir[1] * a[1] + dir[2] * a[2], ua = u[0] * a[0] + u[1] * a[1] + u[2] * a[2];
@@ -1580,13 +1702,15 @@ uint64_t SimView::pick(const double origin[3], const double dir[3], double* tOut
 
 void SimView::view(double x, double z)
 {
-	if (mode_ != Live || !helloSent_ || fd_ == plat::kNoSocket) { return; }
+	if (mode_ != Live || !helloSent_ || fd_ == kutil::net::kNoSocket) { return; }
 	std::vector<uint8_t> out;
-	if (!viewOnce_ || std::hypot(x - interestSent_[0], z - interestSent_[1]) > kInterestMove)
+	const double interest = kInterestRadiusCfg.get();	// render.interest_radius (kenshi-k16.2.258.10.1)
+	if (!viewOnce_ || interest != interestRadiusSent_ || std::hypot(x - interestSent_[0], z - interestSent_[1]) > kInterestMove)
 	{
-		quiet_.insert(orders_.setInterest(out, (float)x, (float)z, (float)kInterestRadius));
+		quiet_.insert(orders_.setInterest(out, (float)x, (float)z, (float)interest));
 		interestSent_[0] = x;
 		interestSent_[1] = z;
+		interestRadiusSent_ = interest;
 	}
 	if (!viewOnce_ || std::hypot(x - viewSent_[0], z - viewSent_[1]) > kViewMove)
 	{
@@ -2187,7 +2311,7 @@ uint64_t SimView::pickItem(const double origin[3], const double dir[3], double* 
 		if (t.kind != Interactable::kItem && t.kind != Interactable::kContainer) { continue; }
 		const bool box = t.kind == Interactable::kContainer;
 		const double reach = box ? kContainerReach : kItemReach;
-		const double c[3] = { t.pos[0] - origin[0], t.pos[1] + (box ? kContainerLift : kItemLift) - origin[1], t.pos[2] - origin[2] };
+		const double c[3] = { t.pos[0] - origin[0], thingY(id, t) + (box ? kContainerLift : kItemLift) - origin[1], t.pos[2] - origin[2] };
 		const double along = c[0] * dir[0] + c[1] * dir[1] + c[2] * dir[2];
 		const double d2 = c[0] * c[0] + c[1] * c[1] + c[2] * c[2] - along * along;
 		// skip last, so a caller's test (a thing on a hidden floor: kenshi-k16.2.259) runs only for the things the ray is near
@@ -2195,6 +2319,22 @@ uint64_t SimView::pickItem(const double origin[3], const double dir[3], double* 
 	}
 	if (tOut) { *tOut = bestEnter; }	// the sphere's entry: the thing's own hit point, not the point level with its centre (kenshi-k16.2.259)
 	return best;
+}
+
+double SimView::thingY(uint64_t id, const Interactable& t) const
+{
+	const void* gen = groundGen_ ? groundGen_() : nullptr;
+	ThingY& c = thingY_[id];
+	if (!c.set || c.x != t.pos[0] || c.y != t.pos[1] || c.z != t.pos[2] || c.gen != gen)
+	{
+		double y;
+		// An item's pos y is not always a navmesh point: one on a table, shelf or upper ledge sits 10-47 u over the floor or terrain the solver finds, and the solver would sink it there
+		// (measured on sunshafts_bar's bar items). So only the buried case is converted: the drawn ground ABOVE the pos y, within the coarse navmesh's own error (12-33 u under the hill
+		// east of the Storm House); a point the ground is under keeps its y.
+		c.drawn = groundAt(t.pos[0], t.pos[2], t.pos[1], y) >= 1 && y > t.pos[1] && y - t.pos[1] <= kBuriedMax ? y : t.pos[1];
+		c.x = t.pos[0]; c.y = t.pos[1]; c.z = t.pos[2]; c.gen = gen; c.set = true;
+	}
+	return c.drawn;
 }
 
 const Interactable* SimView::thing(uint64_t id) const
