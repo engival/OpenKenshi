@@ -68,6 +68,7 @@ public:
 		float exposure = 1;		// baked exposure (light.v[4][3])
 		float wind[2] = { 0, 0 };	// world x / z velocity added to wind affected systems (m/s)
 		float dt = 0;			// seconds to simulate (0 = frozen, scripted runs)
+		int warmSteps = 100;		// pre-warm steps one prepare may run across all new systems (kenshi-k16.2.437.4.4); a burst warms over frames
 	};
 	// One frame's instance data, in the frame packet slot (render hook 7a, kenshi-k16.2.205.12.14; double-buffered: one per packet).
 	// prepare() fills it on the logic side; upload() and render() read only it.
@@ -260,6 +261,7 @@ private:
 		std::vector<std::vector<EmitState>> em;		// per technique, per emitter
 		double time = 0;
 		bool warm = false;
+		int warmSteps = 0;	// pre-warm steps still to run (spread over frames by kWarmStepsPerFrame, kenshi-k16.2.437.4.4)
 		// A placed (world) system: particles are born at `pos` rotated by `quat`, its own RNG, and the driver's fade. Weather systems keep
 		// the camera-local emitter and the shared rng_ so their shots stay identical.
 		bool placed = false;

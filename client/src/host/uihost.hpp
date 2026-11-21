@@ -49,6 +49,7 @@ ui::ResearchState research_state();
 ui::SquadsActions squads_actions();
 ui::SquadsState squads_state();
 void begin_session_load();
+bool session_load_expected();	// this run will show a session load screen (session.loading_screen, scripted or not)
 void camera_sidecar_delete(const std::string& name);
 void camera_sidecar_save(const std::string& name);
 void cont_close(uint64_t id);

@@ -1089,6 +1089,7 @@ void Particles::step(Sim& s, const Frame& f, float dt)
 
 int Particles::prepare(const Frame& f, FrameData& out)
 {
+	int warmBudget = f.warmSteps;	// the host's cap (a scripted run warms at once: scene shots read the settled systems)
 	for (Sim& s : sims_)
 	{
 		if (s.warm)
@@ -1101,7 +1102,16 @@ int Particles::prepare(const Frame& f, FrameData& out)
 				for (const Emitter& E : T.emitters) { life = std::max(life, E.ttl.kind == Dyn::Random ? E.ttl.b : E.ttl.a); }
 			}
 			const float total = s.placed ? 1.0f : std::min(kPrewarmMax, life * 1.2f);	// placed: ~1 s of fixed 0.05 s steps
-			for (float t = 0; t < total; t += kPrewarmStep) { step(s, f, kPrewarmStep); }
+			s.warmSteps = 0;
+			for (float t = 0; t < total; t += kPrewarmStep) { s.warmSteps++; }	// the same float walk as before: the step count must not change by a rounding
+		}
+		if (s.warmSteps > 0)
+		{
+			const int n = std::min(s.warmSteps, warmBudget);
+			for (int i = 0; i < n; i++) { step(s, f, kPrewarmStep); }
+			s.warmSteps -= n;
+			warmBudget -= n;
+			if (s.warmSteps > 0) { continue; }	// still warming: the rest of its warm-up runs next frame, the frame's own step waits
 		}
 		if (f.dt > 0) { step(s, f, f.dt); }
 	}

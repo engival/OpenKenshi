@@ -86,7 +86,7 @@ in-process server (`KSIM_BAKE_DATA_PATH` follows `KCLIENT_DEV_TOOLS`, and the cl
 no options behaves as `play.sh title` — the title and its own server, also for a scripted/headless run; `--debug` keeps the offline fly-around
 and `--simlink` keeps joining a given server.
 
-**Windows log (kenshi-379.31.9.1).** `OpenKenshi.exe` is a GUI-subsystem program: no console window opens. Its stdout and stderr (client, embedded server, crash report) go to `%LOCALAPPDATA%\OpenKenshi\data\logs\openkenshi.log`; the previous run is kept as `openkenshi.log.1`. `--console` (or `KCLIENT_CONSOLE=1`) opts in to a console instead: the one it was started from (cmd, a terminal), else a new window (`src/platform/console.hpp`). Linux and macOS print to their terminal as before.
+**Windows log (kenshi-379.31.9.1).** `OpenKenshi.exe` is a GUI-subsystem program: no console window opens. Its stdout and stderr (client, embedded server, crash report) go to `%LOCALAPPDATA%\OpenKenshi\data\logs\openkenshi.log`; the previous run is kept as `openkenshi.log.1`. `--console` (or `KCLIENT_CONSOLE=1`) opts in to a console instead: the one it was started from (cmd, a terminal), else a new window (`src/platform/console.hpp`). Linux and macOS print to their terminal as before; here the client line-buffers its own stdout at startup (`src/platform/posix/console.cpp`, kenshi-k16.2.461), so a run whose stdout is redirected to a file or a pipe (a playtest / capture run log) writes each line as it prints it: every line up to the exit is in the file, whatever ends the run (a normal quit, a window close, SIGTERM from the wrapper, a crash).
 
 ## Play
 

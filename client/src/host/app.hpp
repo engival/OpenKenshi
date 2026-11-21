@@ -466,6 +466,7 @@ struct App
 	} seen;
 	// Session loading screen (begin_session_load): up until the world round the squad has streamed in; its own sim pause, undone only by itself
 	bool sessionLoad = false, sessionPaused = false;
+	bool sessionShown = false;	// a session's world has been shown once (end_session_load): until then the client's start is covered by the load screen's rule (kenshi-k16.2.437.4.4)
 	bool offlineGateDone = false;	// the offline flight's load screen was begun (or not wanted): once per run (kenshi-k16.2.258.3)
 	int sessionQuiet = 0, sessionPending = 0, sessionPeak = 0;
 	double sessionTime = 0;

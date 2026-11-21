@@ -189,7 +189,9 @@ void goalColour(uint8_t goalKind, float rgb[3])
 		{ 0.85f, 0.45f, 1.00f },	// roam
 		{ 1.00f, 0.25f, 0.25f },	// raid
 		{ 1.00f, 0.55f, 0.15f },	// man gate
+		{ 1.00f, 0.20f, 0.65f },	// fight (magenta-red, apart from raid red and man gate orange)
 	};
+	static_assert(sizeof kColours / sizeof kColours[0] >= ksim::debugview::kGoalKindCount, "goalColour: a row per GoalKind");
 	const float* c = goalKind < sizeof kColours / sizeof kColours[0] ? kColours[goalKind] : kColours[0];
 	for (int k = 0; k < 3; k++) { rgb[k] = c[k]; }
 }

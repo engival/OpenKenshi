@@ -223,6 +223,8 @@ App app;
 {
 	readback::flushWrites();	// a screenshot still on the writer thread (the load shot's done ends here)
 	app.server.stop(false);	// SIGKILL: no handler race, no unbounded wait (kenshi-k16.2.271.1)
+	fflush(stdout);	// _exit skips the C library's exit flush: a line half written (kenshi-k16.2.461; the lines are already out, platform/posix/console.cpp)
+	fflush(stderr);
 	_exit(code);
 }
 
@@ -3090,6 +3092,12 @@ void menu_pause(bool on)
 
 // The session loading screen (docs/CLIENT_GOALS.md "Session front end": no pop-in): from the camera's first placement on the squad or a reset (a load, a
 // new game) until the world round the camera has streamed in. The game is paused under it (MINE: the original's sim does not run while it loads).
+bool session_load_expected()
+{
+	const int mode = kSessionLoadScreen.get();
+	return mode == 2 || (mode == 1 && !app.scripted());
+}
+
 void begin_session_load()
 {
 	const int mode = kSessionLoadScreen.get();
@@ -3097,6 +3105,7 @@ void begin_session_load()
 	logicthread::renderIdle();	// overlap (rule 12): the whole session load runs gated (logic_paths' frame-start gate from the next frame on)
 	if (!app.sessionLoad) { app.loadScreen.init(app.opt.data, app.uiOn ? dl::gpu::view(ui::gfx::atlas()) : sg_view{}); }
 	app.sessionLoad = true;
+	logicthread::setLoadScreen(true);	// now, not at the next logic_frame's gate: the stall that ends in this frame's packet is the load's (kenshi-k16.2.437.4.4)
 	app.sessionQuiet = app.sessionPeak = 0;
 	app.sessionTime = 0;
 	app.sessionFrameMax = 0;
@@ -3127,6 +3136,7 @@ static void end_session_load()
 {
 	if (!app.sessionLoad) { return; }
 	app.sessionLoad = false;
+	app.sessionShown = true;
 #ifdef KCLIENT_DEV_TOOLS
 	app.buildings.popinLift();
 #endif
@@ -3984,6 +3994,7 @@ sapp_desc sokol_main(int argc, char* argv[])
 			if (hasCentre)
 			{
 				teleport(cx, cz);
+				begin_session_load();	// the world is drawn from here (the target is set), so the load screen stands over it from this frame, not from the squad's first snapshot (kenshi-k16.2.437.4.4)
 				set_camera_target("scenario");	// the scenario's centre is the camera's target (k16.2.112.1)
 			}
 		};

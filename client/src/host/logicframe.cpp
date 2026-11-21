@@ -886,6 +886,7 @@ static void logic_paths(FramePacket& pk)
 			const float wl = std::hypot(app.sky.weather.wind[0], app.sky.weather.wind[1]);
 			for (int k = 0; k < 2; k++) { pf.wind[k] = wl > 0 ? app.sky.weather.wind[k] / wl * app.sky.weather.windSpeed : 0.0f; }
 		}
+		pf.warmSteps = app.scripted() ? 1 << 30 : 100;	// live: a burst of new systems warms over frames (particles.cpp); scripted runs and scene shots warm at once
 		pf.dt = app.scripted() ? (float)app.particleScriptDt : app.sky.clock.paused ? 0.0f : (float)std::fmin(dt, 0.1);	// paused: weather and flames hold still
 		app.particles.setEffects(app.sky.weather.effects, app.rainForce, app.dustForce);
 		// The weather's world instances (types 2/3/7/8/9/10): the exe's group tick, spawned on the owner group's terrain cells (type 10: on a band
@@ -908,9 +909,11 @@ static void logic_paths(FramePacket& pk)
 		}
 		app.weatherInst.update(app.sky.clock.paused || dev::sceneTesting() ? 0.0 : dt * app.sky.clock.speed, app.sky.weather, app.wx.atlas(), app.hm ? &*app.hm : nullptr, owner,
 			pf.wind[0], pf.wind[1], app.pos, pivot, players);
+		CPUSTAGE("weatherInst.update");
 		// The placed flames: ParticleWorld diffs the visible effect instances, fades systems in and out, and hands them to the same simulation.
 		static const std::vector<WorldBuildings::PlacedEffectRt> none;
 		app.particleWorld.update(pf.dt, app.bldSet ? app.buildings.placedEffects() : none, app.buildings, app.buildings.night);
+		CPUSTAGE("particleWorld.update");
 		// The sim's beams (BEAMS): copy a new frame, then draw the ones at the render tick. Their scripts are kept off the local weather placement
 		// below, so each beam is drawn once and at the sim's own position (the wind-up is the lead the sim sent it with, SIMLINK "BEAMS").
 		if (app.sim.active() && app.sim.decoder().beamsSerial != app.beamsSeen)
@@ -918,6 +921,7 @@ static void logic_paths(FramePacket& pk)
 			app.beamsSeen = app.sim.decoder().beamsSerial;
 			app.beams.sync(app.sim.decoder());
 		}
+		CPUSTAGE("beams.sync");
 		const std::vector<std::string> beamScripts = app.beams.scripts();
 		std::vector<Particles::PlacedSystem> placed = app.particleWorld.systems();
 		for (Particles::PlacedSystem& s : app.weatherInst.systems(beamScripts)) { placed.push_back(std::move(s)); }
@@ -944,7 +948,9 @@ static void logic_paths(FramePacket& pk)
 			p.seed = (uint32_t)(0x5eedu + i);
 			placed.push_back(std::move(p));
 		}
+		CPUSTAGE("beams.systems+placed");
 		app.particles.setPlaced(placed);
+		CPUSTAGE("particles.setPlaced");
 		if (app.sim.active() && app.beamsOn)
 		{
 			if (const char* lv = getenv("KBEAMSLOG")) { if (atoi(lv) >= 2) { app.beams.fadeLog(app.sim.tick(), (long)app.frames); } }
@@ -965,6 +971,7 @@ static void logic_paths(FramePacket& pk)
 			}
 		}
 		app.particlesDrawn = app.particles.prepare(pf, pk.particles);
+		CPUSTAGE("particles.prepare");
 	}
 	app.blood.age(app.scripted() ? 0.0 : dt, app.sky.clock.paused ? 0.0 : app.sky.clock.speed);
 	app.blood.update(app.pos);
@@ -1083,7 +1090,9 @@ void logic_frame(FramePacket& pk)
 	pk.serial = rq::beginPacket();	// first: every resource job queued below (the paths and the tail) belongs to this packet (docs/RENDER_THREAD.md §7.2)
 	{	// the ready-set gate (kenshi-k16.2.258.3): under the session load screen nothing of the world is on show, so the stream lane's play budgets are lifted
 		const bool gate = app.sessionLoad && kLoadGate.get();
-		logicthread::setLoadScreen(gate);
+		// From the client's start until the first session's world is shown nothing of the world is on show either (the first frames create the
+		// pipelines behind the title or the load screen): the lockstep log counts that window as the load's (kenshi-k16.2.437.4.4)
+		logicthread::setLoadScreen(gate || (!app.sessionShown && session_load_expected()));
 		rq::setStreamTimeBudget(gate ? kLoadStreamMs.get() : kStreamMs.get());
 		rq::setStreamBudget(gate ? (size_t)256 << 20 : (size_t)8 << 20);
 		app.buildings.streamAll = gate;
