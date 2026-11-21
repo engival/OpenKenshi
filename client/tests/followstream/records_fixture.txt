@@ -1,0 +1,17 @@
+# fixture run: ids from the import report ({m0}.. members, {cx}.. the camera pivot). DELAY record
+0.5 align t=8.000000
+0.2 cam pos={cx+0},{cy+0},{cz+0} rot=0.965926,0.258819,0.000000,0.000000 zoom=250.000 floor=0
+0.2 speed v=0
+0.2 select ids={m0}
+0.2 frobnicate a=1
+2.0 cam pos={cx+60},{cy+0},{cz+40} rot=0.931110,0.206422,0.293578,-0.065085 zoom=180.000 floor=0
+0.5 cam pos=1,2 rot=1,0,0,0 zoom=100.000 floor=0
+0.2 cam pos=1,2 rot=1,0,0,0 zoom=100.000 floor=0
+3.0 speed v=1
+0.5 order kind=unmapped ids={m0} what="issue_task type=12 target=Barman"
+0.5 order kind=move ids={m0} to={cx+40},{cy+0},{cz+40} src=29
+0.5 order kind=move ids={m0} to={cx+40},{cy+0},{cz+40} src=99
+0.5 orig id={m0} pos={cx+0},{cy+0},{cz+0} yaw=0.500 t=8.001000
+2.0 cam pos={cx+120},{cy+0},{cz+80} rot=0.896201,0.282571,-0.326190,0.102847 zoom=300.000 floor=0
+8.0 speed v=0
+3.0 speed v=1

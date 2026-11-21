@@ -17,6 +17,7 @@
 #include "frame/labframe.hpp"
 #include "net/simlink.hpp"
 
+#include "dev/followstream.hpp"
 #include "dev/launchguard.hpp"	// launchGuard: no window from a Claude session outside gamescope (kenshi-k16.2.392)
 #endif
 
@@ -71,6 +72,19 @@ namespace dev
 	struct SgLogicScope { SgLogicScope(); ~SgLogicScope(); SgLogicScope(const SgLogicScope&) = delete; std::thread::id prev; };
 	struct SgAllowScope { explicit SgAllowScope(const char* why); ~SgAllowScope(); SgAllowScope(const SgAllowScope&) = delete; std::thread::id prev; };
 	void usage();	// their lines of the usage text
+	// Side-by-side follow mode (dev/followstream.cpp, docs/FOLLOW_STREAM.md, kenshi-cym.40.2.5): --follow-stream HOST:PORT --import-save DIR --import-report PATH.
+	bool followArg(int argc, char** argv, int& i);	// parseArg's: --follow-stream --import-save --import-report
+	void followLockToggle();	// the F8 panel's row
+	bool followLockOn();
+	bool followActive();	// --follow-stream was given (the panel shows its row)
+	void followValidate(bool debug);	// after parsing: the flags need --debug (and a well-formed address) or the run exits 2
+	bool followEnabled();	// --follow-stream was given: the title is skipped and the local server is started with the import
+	void followServerArgs(std::vector<std::string>& args);	// start_local_server: --import-save, --import-report, --paused
+	void followInit(const FollowHost& host);
+	void followPoll();	// every frame: the connection, the records, the camera easing, the clock beat
+	void followQuit();	// quitting: `bye`
+	bool mirrorLocked();	// the stream holds the player's camera and mouse orders
+	bool followCamera();	// the stream moves the camera (update_rts keeps the pivot height it was given)
 	void init(const Env& env);	// the store and, for --bead, the bd writer; call once the options are parsed
 	bool scenariosButton(bool debug);	// the SCENARIOS menu button shows (--debug or --playtest, never in a --bead run)
 	void openScenarios();	// the SCENARIOS button's action
@@ -180,6 +194,10 @@ namespace dev
 	struct SgLogicScope { SgLogicScope() {} };
 	struct SgAllowScope { explicit SgAllowScope(const char*) {} };
 	inline void usage() {}
+	inline bool followEnabled() { return false; }
+	inline void followServerArgs(std::vector<std::string>&) {}
+	inline bool mirrorLocked() { return false; }
+	inline bool followCamera() { return false; }
 	inline bool scenariosButton(bool) { return false; }
 	inline void openScenarios() {}
 	inline void createWindows() {}

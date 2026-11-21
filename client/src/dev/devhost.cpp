@@ -151,6 +151,7 @@ bool parseArg(int argc, char** argv, int& i, std::vector<std::string>& windowOff
 	State& s = st();
 	const std::string a = argv[i];
 	const bool more = i + 1 < argc;
+	if (followArg(argc, argv, i)) { return true; }	// --follow-stream --import-save --import-report (dev/followstream.cpp)
 	if (a == "--playtest") { s.playtestFlag = true; return true; }
 	if (a == "--play" && more) { s.play = argv[++i]; return true; }
 	if (a == "--bead" && more) { s.bead = argv[++i]; return true; }
@@ -167,6 +168,7 @@ void usage()
 		"               [--play NAME] (start NAME's recorded playtest run once connected, as Scenarios -> PLAY)\n"
 		"               [--bead ID] (a --play run's notes, verdict and F12 shots are also comments on that beads item)\n"
 		"               [--findings DIR] (where a --bead run's shots are copied; default <home>/git/kenshi/kenshi-inspect/findings)\n"
+		"               [--follow-stream 127.0.0.1:PORT [--import-save DIR [--import-report PATH]]] (side-by-side: follow the inspector agent's stream; needs --debug)\n"
 		"               [--sg-owner-probe] (an sg_* call from a second thread right after sg_setup: the thread-owner assert must abort)\n"
 		"               [--sg-owner-logic] (logic_frame owns no sokol: an sg_* call from the logic half aborts, as on the logic thread to come)\n"
 		"               [--scene-test OUTDIR [--scenes NAME,NAME] [--scene-file FILE]] [--scene-hud] [--scene-frames N]\n"
@@ -325,6 +327,7 @@ void leaveRun() { st().playtest.leave(); }
 void poll()
 {
 	State& s = st();
+	followPoll();	// side-by-side follow mode (dev/followstream.cpp), whether or not the playtest store is up
 	if (!s.ready) { return; }
 	const simlink::SimLinkDecoder& d = s.env.decoder();
 	// SCENARIO (SIMLINK "SCENARIO", the playtest's wire): the server's list, a load's answer and a run's metrics, to the playtest store
@@ -389,6 +392,7 @@ void poll()
 
 void cleanup()
 {
+	followQuit();	// `bye` to the agent
 	State& s = st();
 	if (s.ready)
 	{

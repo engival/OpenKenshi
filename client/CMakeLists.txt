@@ -430,6 +430,8 @@ if(KCLIENT_DEV_TOOLS)
 		src/dev/shotsidecars.cpp
 		src/dev/colloverlay.cpp
 		src/dev/launchguard.cpp
+		src/dev/followparse.cpp
+		src/dev/followstream.cpp
 	)
 endif()
 # The sim's DEBUG VIEW (docs/formats/SIMLINK.md "DEBUG VIEW"): src/debug/.
@@ -544,6 +546,11 @@ if(KCLIENT_DEV_TOOLS)
 	target_include_directories(kfloor_test PRIVATE src)
 	target_compile_options(kfloor_test PRIVATE -Wall -Wextra)
 
+
+	# The follow stream's parser (dev/followparse.cpp, docs/FOLLOW_STREAM.md) and the original's position store (dev/origstore.hpp): no game.
+	add_executable(kfollowparse_test tests/followstream/parse_test.cpp src/dev/followparse.cpp)
+	target_include_directories(kfollowparse_test PRIVATE src)
+	target_compile_options(kfollowparse_test PRIVATE -Wall -Wextra)
 
 	# SIMLINK decoder test CLI (docs/formats/SIMLINK.md): decodes a recorded server stream, or --selftest.
 	add_executable(ksimlink_dump src/dev/tools/ksimlink_dump.cpp src/net/simlink.cpp)

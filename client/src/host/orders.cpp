@@ -16,6 +16,7 @@
 #include "host/app.hpp"
 #include "host/logicframe.hpp"
 #include "host/orders.hpp"
+#include "dev/devhooks.hpp"
 #include "host/pick.hpp"
 #include "input/pick.hpp"
 #include "ui/ui.hpp"
@@ -753,6 +754,8 @@ void leave_follow()
 // member); the camera keeps min(0.2 d, 20) + 10 over the ground by lifting the focus. Auto-center: the focus is the character + kCenterLift, no lag.
 void update_rts(double dt)
 {
+	const bool mirror = dev::mirrorLocked();	// side-by-side follow mode: the stream moves the camera, the keys do not (kenshi-cym.40.2.5)
+	const auto held = [mirror](const char* action) { return !mirror && host::held(action); };
 	constexpr double kOrbitRate = 54 * M_PI / 180.0, kTiltRate = 12 * M_PI / 180.0, kZoomRate = 1.5, kSmooth = 8, kTether = 2250, kCenterLift = 10.8;	// rad/s, rad/s, e-folds/s (MINE), 1/s (MINE), u, u
 	constexpr double kMinPitch = -66.9 * M_PI / 180.0, kMaxPitch = 80.0 * M_PI / 180.0;	// the original stops at +11.5; past it the collision boom shortens the orbit (kenshi-k16.2.353.1)
 	const double panX = (held("camera_right") ? 1 : 0) - (held("camera_left") ? 1 : 0), panZ = (held("camera_forward") ? 1 : 0) - (held("camera_back") ? 1 : 0);
@@ -791,7 +794,7 @@ void update_rts(double dt)
 		const double lim = kHalfWorld - 1;
 		app.focus[0] = std::clamp(app.focus[0], -lim, lim);
 		app.focus[2] = std::clamp(app.focus[2], -lim, lim);
-		app.focus[1] += (ground_under(app.focus[0], app.focus[2], &app.focusOn) - app.focus[1]) * std::min(1.0, kSmooth * dt);
+		if (!dev::followCamera()) { app.focus[1] += (ground_under(app.focus[0], app.focus[2], &app.focusOn) - app.focus[1]) * std::min(1.0, kSmooth * dt); }	// the stream gives the pivot's height
 	}
 	double f[3];
 	forward_vec(app.yaw, app.pitch, f);

@@ -411,6 +411,7 @@ void createDebugPanels(const Context& cx, bool debug)
 	ui::DebugActions da;
 	da.toggle = [](const std::string& id)
 	{
+		if (id == "debug.follow_lock") { followLockToggle(); return; }
 		for (const auto& t : kCfgToggles) { if (id == t.key) { cfg::setUser(t.key, cfgOn(t.key) ? "off" : "on"); return; } }
 		host->debugToggle(id);
 	};
@@ -486,6 +487,7 @@ void debugPanelFrame(const Context& cx)
 	add("debug.squad_overlay", "Squad overlay", cx.squads.on);
 	add("debug.shadows", "Shadows", cx.shadow.enabled != cx.shadowFlip);
 	add("debug.walk", "Walk on the ground", cx.walk);
+	if (followActive()) { add("debug.follow_lock", "Follow mirror lock (camera + orders follow the original)", followLockOn(), false); }	// dev/followstream.cpp
 	if (cx.sim.active()) { add("debug.follow", "Follow camera", cx.follow); }
 	add("debug.free_camera", "Free camera", !cx.rts && !cx.follow);
 	if (cx.follow) { add("debug.autorun", "Autorun", cx.autorun); }

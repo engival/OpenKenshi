@@ -3197,6 +3197,7 @@ void start_local_server()
 	args.push_back("--data");
 	args.push_back(app.opt.data);
 	serverrows::append_flags(args);
+	dev::followServerArgs(args);	// --import-save, --import-report, --paused (side-by-side follow mode, kenshi-cym.40.2.5)
 	std::string err;
 	if (!app.server.start(exe, args, err))
 	{
@@ -3929,6 +3930,10 @@ sapp_desc sokol_main(int argc, char* argv[])
 	evlog::open((shot_dir().parent_path() / "events").string(),
 		"build: client " + std::string(kclient_git_hash()) + " sim " + std::string(o.localServer ? kclient_git_hash() : "?"));
 	ui::keys::setDebug(o.debug);	// --debug: the debug keys, the panel and the Options' Debug sections are live
+#ifdef KCLIENT_DEV_TOOLS
+	dev::followValidate(o.debug);	// --follow-stream / --import-save / --import-report need --debug (exit 2), dev/followstream.cpp
+	if (dev::followEnabled()) { o.localServer = true; }	// follow mode starts its own server with the import; the title goes once the world is in
+#endif
 	if (!o.debug && o.simspeed > 0) { fprintf(stderr, "kclient: --simspeed needs --debug (a measurement flag, kenshi-k16.2.205.7)\n"); exit(2); }
 	app.mods.discover(o.data);
 	Post::retireOptions();	// the retired post.* keys (k16.2.82): cfg::load() warns for any a cfg file still sets
@@ -4066,6 +4071,32 @@ sapp_desc sokol_main(int argc, char* argv[])
 		env.repoRoot = repo_root();
 		env.clientHash = kclient_git_hash();
 		dev::init(env);
+		{
+			dev::FollowHost fh;	// side-by-side follow mode (dev/followstream.cpp)
+			fh.sim = []() -> SimView& { return app.sim; };
+			fh.worldOn = [] { return app.firstWorldFrame; };
+			fh.beginSession = []
+			{
+				app.worldChosen = true;	// the imported world is the player's: place_session_camera takes CAMERA_START
+				app.gameMenu->show(false);
+				if (title_shown()) { app.mainMenu->show(false); }
+			};
+			fh.camSet = [](double yaw, double pitch, double dist, const double focus[3])
+			{
+				set_follow(false);
+				app.rts = true;
+				app.centerId = 0;
+				app.yaw = yaw;
+				app.pitch = pitch;
+				app.rtsDist = dist;
+				std::copy(focus, focus + 3, app.focus);
+			};
+			fh.camGet = [](double& yaw, double& pitch, double& dist, double focus[3]) { yaw = app.yaw; pitch = app.pitch; dist = app.rtsDist; std::copy(app.focus, app.focus + 3, focus); };
+			fh.setFloor = [](int floor) { app.buildings.restoreView(floor, 0); };
+			fh.toast = [](const std::string& m) { ui::message(m); };
+			fh.clientHash = kclient_git_hash();
+			dev::followInit(fh);
+		}
 		framehooks::labRender = &dev::labRender;	// the render half's dev draws: dev is above the frame layer (frame/renderframe.hpp)
 		framehooks::viewDraw = &dev::viewDraw;
 	}

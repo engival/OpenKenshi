@@ -222,6 +222,7 @@ void creator_event(const sapp_event* e)
 			}
 			break;
 		case SAPP_EVENTTYPE_MOUSE_SCROLL:
+			if (dev::mirrorLocked()) { break; }
 			if (r.contains(e->mouse_x, e->mouse_y)) { creator_zoom(e->scroll_y, e->mouse_x, e->mouse_y); }
 			break;
 		default: break;
@@ -466,7 +467,7 @@ void event(const sapp_event* e)
 	// true) and a Ctrl typed in one would otherwise stay held here for good. A press is tracked only when no window takes it (below), so typing
 	// W in an edit box does not pan the camera.
 	if (e->type == SAPP_EVENTTYPE_KEY_UP && (int)e->key_code < SAPP_MAX_KEYCODES) { app.keys[e->key_code] = false; }
-	box_event(e);
+	if (!dev::mirrorLocked()) { box_event(e); }	// follow mode: no selection box
 	creator_event(e);	// the creator preview's drag and wheel (k16.2.433.1), before ui::event: its panel consumes them and sends x only
 	// Mid-drag a right press is ignored, as the original's (kenshi-rwh.134): no camera grip, no hold menu, no window, no order on its release; the
 	// box keeps going. Before ui::event and the switch, so the press never reaches either.
@@ -500,7 +501,7 @@ void event(const sapp_event* e)
 			else if (ui::keys::pressed(*e, "screenshot")) { app.shotPending = true; }	// the shot key works over the title and the menus too (k16.2.146)
 			break;
 		case SAPP_EVENTTYPE_MOUSE_DOWN:
-			if (menu_shown()) { break; }	// a click no window took, under the title, the creator or a full-screen menu: no look, pick, selection box or order (kenshi-k16.2.472.1)
+			if (menu_shown() || dev::mirrorLocked()) { break; }	// follow mode (kenshi-cym.40.2.5): the player's clicks, look and orbit are locked	// a click no window took, under the title, the creator or a full-screen menu: no look, pick, selection box or order (kenshi-k16.2.472.1)
 			if (e->mouse_button == SAPP_MOUSEBUTTON_RIGHT)
 			{
 				app.look = true;
@@ -561,6 +562,7 @@ void event(const sapp_event* e)
 			}
 			break;
 		case SAPP_EVENTTYPE_MOUSE_UP:
+			if (dev::mirrorLocked() && !app.look && !app.orbit) { break; }
 			if (e->mouse_button == SAPP_MOUSEBUTTON_MIDDLE && app.orbit) { app.orbit = false; sappcmd::lockMouse(app.look); }
 			if (e->mouse_button == SAPP_MOUSEBUTTON_RIGHT && app.look)	// not after the hold menu took over the button
 			{
@@ -586,7 +588,7 @@ void event(const sapp_event* e)
 				dx = app.clickPend[0];
 				dy = app.clickPend[1];
 			}
-			if (app.look || app.orbit || held("mouse_rotate"))	// the floating camera clamps the pitch (update_rts)
+			if ((app.look || app.orbit || held("mouse_rotate")) && !dev::mirrorLocked())	// the floating camera clamps the pitch (update_rts)
 			{
 				if (app.follow && !driving()) { app.followOffset += dx * 0.0025; }	// orbit; while driving, mouse look steers
 				else { app.yaw += dx * 0.0025; }
