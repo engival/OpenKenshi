@@ -25,6 +25,15 @@ nice), printing a wait line when it has to queue; every other build is `nice -n 
 
 Needs X11/Xi/Xcursor and GL dev packages (Vulkan SDK for the vulkan backend).
 
+**A fresh checkout (kenshi-cym.40.2.13).** Two things the configure line above needs that a clone lacks: run `client/tools/get_shdc.sh` first (sokol-shdc is not in git; the
+configure fails without `client/bin/sokol-shdc`), and point the configure at the game's data folder with `-DKENSHI_DATA=<Steam>/Kenshi/data`. The default is
+`$KENSHI_DATA` from the environment, else the developer path in `cpp/cmake/dev_paths.cmake`, else the Steam library default
+(`~/.steam/steam/steamapps/common/Kenshi/data`; macOS `~/Library/Application Support/Steam/...`), so on any machine that is not the developer's, pass it.
+A build dir may be anywhere (`-B /tmp/kb`, not only `client/build`): a dev build started with only `--debug ...` then logs `kclient: data dir <path> (...)` (client/data beside
+the executable's parent, else the source tree the build was configured from; `client.data_dir` overrides) and, for a local server, `kclient: server <path> (...)` (the
+build's own `cpp/OpenKenshi-server`, else the shared master server from `client/tools/shared_server.sh` with `--sim-data <tree>/cpp/data`; `session.server` overrides). With
+neither found it stops with a line naming the cfg key.
+
 **Shared server.** `ksim_server` (the `cpp/` target `OpenKenshi-server`, the slow one) is usually identical across client worktrees, so a
 worktree with no `cpp/` change reuses master's build instead of making its own: the coordinator deploys it after every merge as
 `$HOME/git/kenshi/bin/OpenKenshi-server-<hash8>` (the newest 4 kept, `OpenKenshi-server-master` a link to the newest). The run scripts

@@ -17,6 +17,7 @@ namespace dev
 		std::function<void()> beginSession;	// the imported world is in: the title goes, the world is the player's (worldChosen)
 		std::function<void(double yaw, double pitch, double dist, const double focus[3])> camSet;	// the RTS camera: pivot, yaw / pitch (rad), orbit distance; ends auto-center and any follow
 		std::function<void(double& yaw, double& pitch, double& dist, double focus[3])> camGet;
+		std::function<bool(uint64_t id)> showSquadOf;	// make the HUD squad tab holding this character the active one (false: no squad list yet)
 		std::function<void(int floor)> setFloor;	// buildings.restoreView(floor, 0)
 		std::function<void(const std::string&)> toast;
 		std::string clientHash;

@@ -304,6 +304,8 @@ public:
 	std::vector<OrderAnswer> takeOrderAnswers() { return std::move(orderAnswers_); }	// every order answer since the last call
 	// The clientSeq of the order sent last (every send records it; no other order can slip in between a send and this read).
 	uint32_t lastSentSeq() const { return lastSentSeq_; }
+	// The wire's answer to the order with this clientSeq, without consuming it ("applied tick N" / "rejected REASON"; "" none yet): the follow log's ack line (kenshi-cym.40.2.13).
+	std::string orderResult(uint32_t seq) const { const auto r = orderResults_.find(seq); return r == orderResults_.end() ? std::string() : r->second; }
 	// Combat sounds (kenshi-h2v.29.7; findings audio_sfx_triggers.md sections 7 and 8): the posts the original makes from receiveHit and the ranged
 	// launcher, from SIMLINK events 1 (hit), 49 (shot) and 5 (death). Each is one post on a world object: `object` (a character's sim id, or a temporary
 	// object for a bolt's ground impact; `temporary`: the host removes it after the post) at `pos`, with the switches set first.

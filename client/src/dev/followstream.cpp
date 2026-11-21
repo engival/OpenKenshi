@@ -69,9 +69,14 @@ namespace
 		double pendSpeed = 0;	// > 0: the speed order sent and not yet seen
 		double lastFrameAt = 0, reconPauseAt = -10;
 
+		// orders sent, awaiting the sim's event 9 / 10 (matched by clientSeq)
+		struct PendingOrder { uint32_t seq; std::string text; double since; };
+		std::vector<PendingOrder> pendingOrders;
+
 		// selection
 		std::vector<uint64_t> wantSelect;
 		bool selectPending = false;
+		uint64_t squadShowId = 0;	// the selected character whose squad tab the HUD still has to show (the squad list may arrive after the select)
 		double selectSince = 0;
 
 		// the clock beat
@@ -201,6 +206,7 @@ namespace
 		for (size_t i = 0; i < ok.size(); i++) { sim.select(ok[i], i != 0); }
 		if (!all) { logLine("select: %zu of %zu ids are not player characters here, left out", s.wantSelect.size() - ok.size(), s.wantSelect.size()); }
 		logLine("select: %zu ids applied", ok.size());
+		s.squadShowId = ok.empty() ? 0 : ok[0];
 		s.selectPending = false;
 	}
 
@@ -244,6 +250,11 @@ namespace
 		else { sent = sim.interact(r.target, (uint8_t)r.action, r.queue, r.action == 5 ? 1 : 0); }
 		logLine("order %s ids=%s%s -> %s%s (src %d)", kindName, ids.c_str(), r.kind == follow::Kind::kMove ? (" to " + std::to_string(r.pos[0]) + "," + std::to_string(r.pos[1]) + "," + std::to_string(r.pos[2])).c_str() : "",
 			sent ? "sent" : "NOT sent", r.queue ? " queued" : "", r.src);
+		if (sent)
+		{
+			std::string what = std::string(kindName) + " ids=" + ids;
+			s.pendingOrders.push_back({ sim.lastSentSeq(), what, nowSec() });
+		}
 		for (size_t i = 0; i < keep.size(); i++) { sim.select(keep[i], i != 0); }
 	}
 
@@ -471,6 +482,20 @@ void followPoll()
 	}
 	else if (!s.connected && now >= s.retryAt) { startConnect(s); }
 #endif
+	if (s.squadShowId && s.host.showSquadOf && s.host.showSquadOf(s.squadShowId))
+	{
+		logLine("panel: squad tab of selected %llu shown", (unsigned long long)s.squadShowId);
+		s.squadShowId = 0;
+	}
+	for (size_t i = 0; i < s.pendingOrders.size();)
+	{
+		const S::PendingOrder& o = s.pendingOrders[i];
+		const std::string r = sim.orderResult(o.seq);
+		if (!r.empty()) { logLine("order %s clientSeq %u: %s", o.text.c_str(), o.seq, r.rfind("applied", 0) == 0 ? ("acked (" + r + ")").c_str() : r.c_str()); }
+		else if (now - o.since > 20.0) { logLine("order %s clientSeq %u: no answer from the sim in 20 s", o.text.c_str(), o.seq); }
+		else { i++; continue; }
+		s.pendingOrders.erase(s.pendingOrders.begin() + (long)i);
+	}
 	static bool wasConnected = false;
 	if (s.connected && !wasConnected)
 	{

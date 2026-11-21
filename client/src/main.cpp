@@ -46,6 +46,9 @@
 #ifdef KCLIENT_DEV_TOOLS
 #include "app/threadsplit.hpp"	// the logic / render split on the stages line (kenshi-k16.2.205.12.84)
 #endif
+#ifdef KCLIENT_DEV_TOOLS
+#include "dev/devpaths.hpp"
+#endif
 #include "dev/packetdigest.hpp"	// KCLIENT_PACKET_DIGEST / KCLIENT_PACKET_POISON (kenshi-k16.2.205.12.93)
 #include "knobs/ablate.hpp"	// KCLIENT_ABL removal switches (upper-bound measurements, kenshi-k16.2.205.7)
 #include "assets/sidorder.hpp"
@@ -1382,13 +1385,28 @@ std::string lower(std::string v)
 	return v;
 }
 
-const cfg::Text kDataDir{ cfg::Group{ "Paths" }, "client.data_dir", "", "Our own data files (UI layouts): empty = client/data, found from the executable (client/build/kclient)" };
+const cfg::Text kDataDir{ cfg::Group{ "Paths" }, "client.data_dir", "", "Our own data files (UI layouts): empty = client/data, found from the executable (client/build/kclient), else (dev build) the source tree it was built from" };
 
+// client.data_dir; else <exe dir>/../data (a build dir directly under client/); else a dev build's source tree client/data (a build in any other dir, kenshi-cym.40.2.13).
+// What it picked is logged once; none found keeps the exe-relative path, which session.cpp's fatal line names with the cfg key.
 std::string client_data_dir()
 {
+	static std::string picked;
 	if (!kDataDir.get().empty()) { return kDataDir.get(); }
+	if (!picked.empty()) { return picked; }
 	std::error_code ec;
-	return (kutil::executablePath(ec).parent_path().parent_path() / "data").string();
+	std::string how = "beside the executable";
+	std::filesystem::path p = kutil::executablePath(ec).parent_path().parent_path() / "data";
+#ifdef KCLIENT_DEV_TOOLS
+	if (!std::filesystem::is_directory(p / "ui", ec))
+	{
+		const std::string src = dev::sourceTreeDataDir();
+		if (!src.empty()) { p = src; how = "the source tree this build was configured from"; }
+	}
+#endif
+	picked = p.string();
+	fprintf(stderr, "kclient: data dir %s (%s)\n", picked.c_str(), how.c_str());
+	return picked;
 }
 
 // The repo root, found from the executable (client/build/kclient -> the repo root, one more level): where playtests/ and .beads/ are.
@@ -3185,14 +3203,32 @@ void start_local_server()
 {
 	app.serverErr.clear();	// a fresh start: the title's offline line goes with the previous failure (kenshi-k16.3.12)
 	std::string exe = kServerExe.get();
+	std::vector<std::string> args;
+	std::istringstream words(kServerArgs.get());
+	for (std::string w; words >> w;) { args.push_back(w); }
 	if (exe.empty())
 	{
 		std::error_code ec;
 		exe = (kutil::executablePath(ec).parent_path() / "cpp/OpenKenshi-server").string();	// cpp/build has the pre-move data path (TESTING)
+		std::string how = "built with this client";
+#ifdef KCLIENT_DEV_TOOLS
+		if (!std::filesystem::exists(exe, ec))
+		{
+			// No server in this build dir (a kclient-only build): the shared master server for the source tree (kenshi-cym.40.2.13).
+			const dev::SharedServer sh = dev::sharedServer();
+			if (!sh.path.empty())
+			{
+				exe = sh.path;
+				how = "shared master server for " + sh.tree;
+				bool hasSim = false;
+				for (const std::string& a : args) { hasSim = hasSim || a == "--sim-data"; }
+				if (!hasSim) { args.push_back("--sim-data"); args.push_back(sh.simData); }
+			}
+		}
+#endif
+		fprintf(stderr, "kclient: server %s (%s)\n", exe.c_str(), how.c_str());
+		if (!std::filesystem::exists(exe, ec)) { fprintf(stderr, "kclient: no server binary found: build target ksim_server or set session.server\n"); }
 	}
-	std::vector<std::string> args;
-	std::istringstream words(kServerArgs.get());
-	for (std::string w; words >> w;) { args.push_back(w); }
 	// The data dir the client resolved, so the server needs no built-in path (kenshi-379.13: the release binary carries none).
 	args.push_back("--data");
 	args.push_back(app.opt.data);
@@ -4092,6 +4128,16 @@ sapp_desc sokol_main(int argc, char* argv[])
 				std::copy(focus, focus + 3, app.focus);
 			};
 			fh.camGet = [](double& yaw, double& pitch, double& dist, double focus[3]) { yaw = app.yaw; pitch = app.pitch; dist = app.rtsDist; std::copy(app.focus, app.focus + 3, focus); };
+			fh.showSquadOf = [](uint64_t id)
+			{
+				const simlink::PlayerSquads& ps = app.sim.decoder().playerSquads;
+				if (!ps.valid) { return false; }
+				for (const simlink::PlayerSquads::Squad& q : ps.squads)
+				{
+					if (std::find(q.members.begin(), q.members.end(), id) != q.members.end()) { app.activeSquad = q.id; return true; }
+				}
+				return true;	// in no squad: nothing to show
+			};
 			fh.setFloor = [](int floor) { app.buildings.restoreView(floor, 0); };
 			fh.toast = [](const std::string& m) { ui::message(m); };
 			fh.clientHash = kclient_git_hash();

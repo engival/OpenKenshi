@@ -202,7 +202,7 @@ endif()
 if(KCLIENT_DEV_TOOLS)
 	# The build's own data dir as datasetting.cpp's extra search place: a dev build only (kenshi-379.13). A release resolves the game data at runtime,
 	# and a shipped binary must not carry the developer's home path (client/tools/dev_off_check.sh).
-	target_compile_definitions(kclient_base INTERFACE KCLIENT_DEV_TOOLS KENSHI_DATA="${KENSHI_DATA}")
+	target_compile_definitions(kclient_base INTERFACE KCLIENT_DEV_TOOLS KENSHI_DATA="${KENSHI_DATA}" KCLIENT_SRC_TREE="${KENSHI_TREE_ROOT}")
 endif()
 target_compile_options(kclient_base INTERFACE -Wall -Wextra)
 target_link_libraries(kclient_base INTERFACE kworld knav kdata kutil RecastNavigation::Detour Jolt Threads::Threads ${CMAKE_DL_LIBS} m ${KCLIENT_WIN32_LIBS})
@@ -408,6 +408,7 @@ if(KCLIENT_DEV_TOOLS)
 	set(KC_SRC_KNOBS src/knobs/lightterms.cpp)
 	set(KC_SRC_DEV
 		src/dev/devhost.cpp
+		src/dev/devpaths.cpp
 		src/dev/debughost.cpp
 		src/dev/gaitlog.cpp
 		src/dev/poslog.cpp
