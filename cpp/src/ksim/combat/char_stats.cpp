@@ -13,6 +13,7 @@
 #include "ksim/ai/routines.hpp"
 #include "ksim/ai/task_names.hpp"
 #include "ksim/economy/trader.hpp"
+#include "ksim/world/interact.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -40,7 +41,6 @@ constexpr std::uint16_t kFollowSlaveMaster = 171;
 constexpr std::uint16_t kGoToDeliverSlaves = 192;
 constexpr std::uint16_t kMoveOnFreeWillFast = 67; // the Summoned individual goal
 constexpr std::uint16_t kLiftPerson = 68;
-constexpr std::uint16_t kCarryWoundedSlaves = 168;
 constexpr std::uint16_t kManTheGate = 180;
 constexpr std::uint16_t kRunAwayForced = 280;
 constexpr std::uint16_t kRunAway = 35;
@@ -49,6 +49,9 @@ constexpr std::uint16_t kAttackEnemies16 = 16;
 // The AI tail (spectator mode, SIMLINK.md CHAR_STATS rows 16-20): no task, and where the running goal came from.
 constexpr std::uint16_t kNoTask = 0xFFFF;
 constexpr std::uint8_t kSourceNone = 0;
+constexpr std::uint8_t kSourceOrder = 1; // a player order (use_producer)
+constexpr std::uint8_t kSourceJob = 2; // a job / package row (state::Jobs::running)
+constexpr std::uint16_t kOperateMachinery = 87; // 'Operating machine': every producer, mine or research (CURSORS_LIVE, MINE_SELL_SLICE MQ9)
 constexpr std::uint8_t kSourceRoutine = 3; // the per-character layer (the routine slot; a dialogue's individual goal too)
 constexpr std::uint8_t kSourceGroup = 4;
 constexpr std::uint8_t kSourceCombat = 5;
@@ -90,6 +93,7 @@ std::uint16_t groupTask(state::GoalKind goal) noexcept
 		return kManTheGate;
 	case state::GoalKind::None:
 	case state::GoalKind::Idle:
+	case state::GoalKind::Fight:
 		return 0;
 	}
 	return 0;
@@ -354,6 +358,25 @@ Simulation::CharStats Simulation::charStats(std::uint64_t id) const
 				live.z = town.z;
 				stepOverride = kTravelToTargetTown;
 			});
+		}
+	}
+	// Operating a producer (k16.6.471): the goal while the character is in the producer's operator list. Fights, fleeing and carrying keep theirs.
+	if (live.source == kSourceNone || live.source == kSourceRoutine || live.source == kSourceGroup)
+	{
+		const state::InteractTask* order = entity.is_valid() ? entity.get<state::InteractTask>() : nullptr;
+		if (operateAction(id).has_value() && order != nullptr)
+		{
+			const InteractTarget found = findInteractTarget(world_.ecs(), nullptr, order->target);
+			const state::Producer* producer = flecs::entity(world_.ecs().c_ptr(), found.entity).get<state::Producer>();
+			const state::Jobs* jobs = entity.get<state::Jobs>();
+			live = {};
+			live.task = kOperateMachinery;
+			live.name = taskName(live.task);
+			live.source = jobs != nullptr && jobs->running != 0 ? kSourceJob : kSourceOrder;
+			live.target = order->target;
+			live.hasPoint = true;
+			live.x = producer->x;
+			live.z = producer->z;
 		}
 	}
 	stats.goal = live.name;

@@ -8,6 +8,7 @@
 #include "ksim/core/clock.hpp"
 #include "ksim/law/crime.hpp"
 #include "ksim/world/factions.hpp"
+#include "ksim/ai/goap.hpp"
 #include "ksim/ai/perception.hpp"
 #include "ksim/core/simulation.hpp"
 
@@ -612,6 +613,45 @@ void carryInspection(const Data& w)
 	}
 }
 
+// rwh.162 (k16.6.325): law enforcement is not kidnapping. Guards (a bar's own staff, not law class) lift a KO'd thief (the 240 arrest lift of the
+// 223 -> 240 -> 224 chain) and carry him out: the lift sets no kidnap flag (the exe writes CharStatus+0xe9 only in Task_Kidnapping, order 246), so a friend
+// of the thief who watches the carry-out writes no crime on the guard, the put-down writes none, and the thief is not tagged Kidnapped.
+void lawEnforcementCarry(const Data& w)
+{
+	for (const std::uint16_t lift : {goap::kLiftPersonSnatchingInTown, goap::kKidnapOrder})
+	{
+		const bool kidnap = lift == goap::kKidnapOrder;
+		Rig rig(w);
+		const std::uint64_t guard = rig.add(w.cities, 2, 0, 0.0, 0.0, 0.0, false);
+		const std::uint64_t thief = rig.add(w.nameless, 9, 0, 0.0, 6.0, 0.0, true);
+		const std::uint64_t friendOfThief = rig.add(w.nameless, 4, 0, 0.0, 40.0, 3.14159265, false);
+		const auto knockOut = [&] { rig.f(thief).unconscious = true; rig.f(thief).koTimer = 600.0; };
+		if (!kidnap)
+			knockOut();
+		rig.tick(20 * 3);
+		check(rig.sim->orderArrest(guard, thief, lift), "the lift order is accepted");
+		if (kidnap)
+		{
+			rig.tick(20 * 2); // order 246's start fails for a target already down: the victim is downed after it started
+			knockOut();
+		}
+		bool carried = false;
+		bool flagged = false;
+		for (int i = 0; i < 20 * 20; ++i)
+		{
+			rig.tick();
+			carried = carried || rig.f(thief).carriedBy == guard;
+			flagged = flagged || rig.f(thief).captive;
+		}
+		check(carried, "the guard lifted the thief");
+		check(flagged == kidnap, kidnap ? "the kidnapping task's lift sets the kidnap flag" : "a guard's lift of a criminal sets no kidnap flag");
+		const state::CrimeRecord* record = rig.sim->crimeRecord(guard);
+		check(kidnap || record == nullptr || record->crime == cr::kNone, "the carrying guard has no crime (no Committing Crime!)");
+		check(kidnap || !rig.f(thief).captive, "the thief is not tagged Kidnapped (no captive flag while carried)");
+		check(rig.sim->crimeRecord(friendOfThief) == nullptr, "the thief's ally, standing by, carries no crime");
+	}
+}
+
 void expiry(const Data& w)
 {
 	Rig rig(w);
@@ -952,6 +992,7 @@ int main()
 		lockpick(w);
 		lootBody(w);
 		carryInspection(w);
+		lawEnforcementCarry(w);
 		expiry(w);
 		saveLoad(w);
 		twoPlayers(w);

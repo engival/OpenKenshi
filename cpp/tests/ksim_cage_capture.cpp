@@ -43,9 +43,6 @@ namespace {
 
 using namespace ksim;
 
-constexpr int kRunTicks = 20 * 60; // 60 game s
-constexpr int kDownRunTicks = 20 * 60 * 10; // 10 game minutes: the fight runs on until the first NPC is down (bodies_down)
-constexpr int kAfterDownTicks = 20 * 90; // 90 game s past the first down
 constexpr const char* kName = "cage_prisoner";
 
 } // namespace

@@ -46,6 +46,7 @@
 #include <numbers>
 #include <cstddef>
 #include <functional>
+#include <numbers>
 #include <iterator>
 #include <map>
 #include <set>
@@ -390,7 +391,6 @@ constexpr double kChopHitAt = 0.55;
 // Ours: that rate per second, no removal (UNSURE: the race path vs a player exemption). The victim carries the "being fed on" mark
 // (char+0x279, set to 7 by 1404356f0 and counted down by Character::update, dt24_237 section 2); its unit is unread, so ten seconds
 // from the last bite stands in.
-constexpr double kLiveBiteBloodPerSecond = 125.7 / 360.0;
 constexpr double kBeingEatenSeconds = 10.0;
 // 148's finder reach (1408cd2d0's sensor radius is unread, UNSURE): the sibling body finders' 100 u stands in.
 constexpr double kRescueSight = 100.0;

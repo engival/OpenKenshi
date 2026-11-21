@@ -192,6 +192,7 @@ std::uint64_t placeSquad(Game& game, const char* templateSid, double x, double z
 
 // Scenario 1 (the client's chase): the squad sees the player at the den and runs after it when it leaves for the Bar.
 constexpr double kCloseIn = 40.0;
+constexpr std::size_t kChaseSamples = 5; // seeds sampled: the 16865 squad's size is a dice roll (3..11), and a chase needs a built squad of 5+
 constexpr std::size_t kChaseSeedsNeeded = 4; // before the corner drop 5 of 5 close, with it 4 of 5 (seed 3 loses its chasers to a KO 207 u out); no chase: 0
 std::vector<std::uint64_t> chaseSeedList()
 {
@@ -206,7 +207,7 @@ std::vector<std::uint64_t> chaseSeedList()
 		}
 		return seeds;
 	}
-	return {1, 2, 3, 4, 5}; // seed 6 never engages (0 of 6 target the player), so it is no chase sample
+	return {1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12}; // the first kChaseSamples seeds that roll a 5+ member squad; seed 6 never engages (0 of 6 target the player), so it is no chase sample
 }
 
 double chase(Game& game, std::uint64_t squadId, std::vector<std::string>& failures)
@@ -390,19 +391,30 @@ int main(int argc, char** argv)
 		// on the way ends one seed's chase early, kenshi-k16.7.110), so enough of the seeds must close within kCloseIn.
 		const std::vector<std::uint64_t> chaseSeeds = chaseSeedList();
 		std::size_t closed = 0;
+		std::size_t sampled = 0;
 		for (const std::uint64_t seed : chaseSeeds)
 		{
+			if (sampled == kChaseSamples)
+				break;
 			Game game(argv[1]);
 			game.newGame(seed);
 			const std::uint64_t squadId = placeSquad(game, "16865-gamedata.base", kDenX, kDenZ, kNearX, kNearZ);
+			const std::size_t size = membersOf(*game.sim, squadId).size();
+			if (size < 5)
+			{
+				std::printf("seed %llu: skipped, the squad rolled %zu members (no chase sample)\n", static_cast<unsigned long long>(seed), size);
+				continue;
+			}
+			++sampled;
 			std::printf("seed %llu: ", static_cast<unsigned long long>(seed));
 			if (chase(game, squadId, failures) <= kCloseIn)
 				++closed;
 		}
-		std::printf("chase: a bandit closes within %.0f u in %zu of %zu seeds\n", kCloseIn, closed, chaseSeeds.size());
+		test::require(sampled == kChaseSamples || std::getenv("BW_SEEDS") != nullptr, "enough seeds roll a squad of 5+ to sample the chase (" + std::to_string(sampled) + ")");
+		std::printf("chase: a bandit closes within %.0f u in %zu of %zu seeds\n", kCloseIn, closed, sampled);
 		if (closed < kChaseSeedsNeeded)
 			failures.push_back("a bandit closes within " + std::to_string(kCloseIn) + " u of the player in only " + std::to_string(closed) + " of "
-				+ std::to_string(chaseSeeds.size()) + " seeds (need " + std::to_string(kChaseSeedsNeeded) + ")");
+				+ std::to_string(sampled) + " seeds (need " + std::to_string(kChaseSeedsNeeded) + ")");
 		// Seeds 1 and 3: the client's lure (3 is the strongest signal, 13 -> 1 KOs).
 		for (const std::uint64_t seed : {1u, 3u})
 		{

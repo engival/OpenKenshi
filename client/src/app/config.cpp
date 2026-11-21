@@ -418,7 +418,7 @@ namespace cfg
 			{ "render", "Graphics" }, { "gfx", "Graphics" }, { "world", "Graphics" },
 			{ "post", "Post-processing" },
 			{ "anim", "Animation" }, { "physics", "Animation" },
-			{ "camera", "Camera" },
+			{ "camera", "Camera" }, { "look", "Camera" },
 			{ "ui", "Interface" }, { "markers", "Interface" }, { "screenshot", "Interface" }, { "window", "Interface" }, { "key", "Keys" },
 			{ "combat", "Game" }, { "squad", "Game" }, { "xp", "Game" }, { "ai", "Game" }, { "sim", "Game" }, { "session", "Game" }, { "orders", "Game" },
 			{ "audio", "Audio" }, { "drive", "Game" },

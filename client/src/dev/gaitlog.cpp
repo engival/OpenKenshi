@@ -84,9 +84,9 @@ void gaitFrame(const SimView& sim, Characters& chars, const double cam[3], doubl
 		double at[3] = {};
 		float hull[3];
 		sim.placed(id, at, hull);	// k16.2.183: the drawn position, for the formation check
-		printf("gait %.4f %.4f id %llu tick %llu simyaw %.1f interp %.1f drawn %.1f vhead %.1f dy %.1f wv %.2f legs %.2f %.2f catch %.2f %.2f wire %.2f %.2f flags 0x%x at %.2f %.2f | %s\n",
+		printf("gait %.4f %.4f id %llu tick %llu simyaw %.1f interp %.1f drawn %.1f vhead %.1f dy %.1f wv %.2f legs %.2f %.2f catch %.2f %.2f wire %.2f %.2f flags 0x%x at %.2f %.2f phase %.4f rtick %.2f | %s\n",
 			clockT, dt, (unsigned long long)id, (unsigned long long)ch->second.cur.tick, ch->second.cur.yaw * deg, s.yaw * deg, drawn, head, dy, wv, s.move, s.strafe, cv[0], cv[1],
-			ch->second.cur.fwd, ch->second.cur.lat, ch->second.cur.flags, at[0], at[2], chars.animSummary((size_t)index).c_str());
+			ch->second.cur.fwd, ch->second.cur.lat, ch->second.cur.flags, at[0], at[2], (double)chars.phase((size_t)index), sim.tick(), chars.animSummary((size_t)index).c_str());
 	}
 }
 }

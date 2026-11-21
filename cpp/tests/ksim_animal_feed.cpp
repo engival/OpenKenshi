@@ -37,7 +37,6 @@ namespace {
 
 using namespace ksim;
 
-constexpr double kDt = kTickSeconds;
 // A point outside the Hub's buildings (the animal and the outdoor box stand here; the test checks the box's spot is outdoors).
 constexpr double kX = -50978.8;
 constexpr double kZ = 2932.48;

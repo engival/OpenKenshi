@@ -579,7 +579,8 @@ private:
 	// parts, not a box per instance (the first cast's 2-4 ms; kenshi-k16.2.382.2).
 	struct TopBox { uint32_t index; float lo[3], hi[3]; uint64_t stamp = ~0ull; };
 	mutable std::vector<TopBox> topBoxes_;			// parallel to topLevel_; an instance with no Ready part has lo > hi and culls out
-	mutable uint64_t topBoxData_ = ~0ull, topBoxHold_ = ~0ull;	// the dataGen_ / holdGen_ the boxes were last checked against
+	mutable uint64_t topBoxData_ = ~0ull, topBoxHold_ = ~0ull;	// the topBoxGen_ / holdGen_ the boxes were last checked against
+	uint64_t topBoxGen_ = 0;	// setData / addPart: the static instance set (topLevel_) or the part set changed. setProps (the sim's things, every wire change on a travel) leaves it: it only touches the instances past staticCount_, which topLevel_ never holds (kenshi-k16.2.477.1)
 	void topBoxRebuild(uint32_t pos) const;		// one instance's box from its Ready parts' boxes
 	uint64_t topBoxStamp(const BuildingInstance& b) const;	// its parts' meshes and their load states: what its box depends on besides the instance transform
 	size_t pickBytes_ = 0;	// the total of pickTris_ (logged as evlog pickmem)

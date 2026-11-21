@@ -81,7 +81,7 @@ bool Simulation::startMoveOrder(std::uint64_t id, state::Fighter& f, double goal
 	{
 		ensureRoads();
 		if (roads_ != nullptr)
-			order.markers = roads_->route(f.x, f.z, goalX, goalZ, kworld::RoadNetwork::kDefaultFactor);
+			order.markers = roads_->route(f.x, f.z, goalX, goalZ, roadFactor(id));
 	}
 	if (order.markers.empty() && !far)
 		return false; // a plain near move: the caller installs the route it made

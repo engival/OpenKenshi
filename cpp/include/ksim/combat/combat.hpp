@@ -316,6 +316,9 @@ public:
 		// read by the walk in the same step. Transient: rebuilt every step from saved positions.
 		double pushX = 0.0;
 		double pushZ = 0.0;
+		// The contact set (kenshi-rwh.188): the neighbours this body overlapped (distance < R) on the last steps, with how many steps in a row.
+		// A neighbour pushes only once it has been in for kContactTicks steps. Transient (rebuilt from positions, empty after a load).
+		std::vector<std::pair<std::uint64_t, int>> contacts;
 		// A landed hit on a player's move walk (k16.6.343, COMBAT_MOVE_LIVE.md 2): the seconds the walk still stands at zero velocity. Transient.
 		double walkHold = 0.0;
 		// The body's actual motion over the whole step, in the character's frame (fwd = along the facing, lat = to the right),
@@ -344,7 +347,7 @@ public:
 		// SELF_PRESERVATION (goal 32, kinspect f5784bb + c1a305f): the attackers whose landed hits this member has
 		// taken. A player character answers such an attacker at any range, past the kSelfDefenceRange gate (the
 		// original's ranged victim turned on its shooter at once). Transient, like hitList: never saved.
-		std::vector<std::uint64_t> hitBy;
+		std::vector<std::uint64_t> hitBy{};
 		// The last fighter whose blow landed on this one (task AN's death attribution: a death by bleeding or hunger counts as the
 		// last attacker's). Transient: a save mid-fight loses it and a later death reads 0.
 		std::uint64_t lastAttacker = 0;

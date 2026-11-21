@@ -44,6 +44,8 @@ hints::Context hints_context();
 void portrait_gesture(uint64_t id, hints::Gesture g);
 App::OpenCont* cont_scripted(bool trade);
 bool title_shown();
+enum class Mode { kTitle, kCreator, kGame };
+Mode app_mode();
 std::string title_status();
 bool title_hold_dev(int button);
 

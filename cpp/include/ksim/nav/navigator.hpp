@@ -51,15 +51,15 @@ struct Route
 	state::AiReason failure = state::AiReason::None;
 	// The check that refused it, for the server log (a literal; empty when found or when no check named itself): which of
 	// "no poly near the goal", "goal in another island", "search closed", "out of nodes" ... (kenshi-k16.6.260).
-	std::string_view check;
+	std::string_view check{};
 	// A search with a body radius failed and the radius-0 search fails too (the bare mesh does not reach the goal): no retry at 0 helps.
 	bool plainFailed = false;
 	// Walkable ground, start to end. The first point is the walkable point
 	// nearest the requested start, the last the one nearest the requested end.
-	std::vector<state::GroundPoint> points;
+	std::vector<state::GroundPoint> points{};
 	// The surface height of each point, parallel to `points`; empty when the navigator does not
 	// know heights (only MeshNavigator fills it).
-	std::vector<double> heights;
+	std::vector<double> heights{};
 	// MeshNavigator::routeFrom: the route ends at an approach point (the clicked spot was off the
 	// mesh, or only a partial path leads towards it), not at the clicked spot itself.
 	bool approach = false;
@@ -238,6 +238,9 @@ public:
 	Route route(double fromX, double fromZ, double toX, double toZ) const override;
 	Route farRouteFor(const Traveller& who, double fromX, double fromZ, double toX, double toZ) const override;
 	std::optional<state::GroundPoint> nearestWalkable(double x, double z, double reach, double radius = 0.0) const override;
+	// The free run beyond (x, z) at height y along the unit direction (dirX, dirZ): how far a body of `radius` can go on before it stops fitting (a wall within
+	// `radius` of the point, or no ground), probed every kRoomStep up to `limit`. The room a corner's arc has to overshoot into (walk.hpp speedLimit).
+	double roomAhead(double x, double y, double z, double dirX, double dirZ, double radius, double limit) const;
 #if KSIM_PROFILE
 	const NavStats* profileStats() const noexcept override { return &stats_; }
 #endif

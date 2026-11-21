@@ -119,6 +119,13 @@ void Simulation::ensureRoads()
 	}
 }
 
+double Simulation::roadFactor(std::uint64_t id) const
+{
+	const state::Allegiance* allegiance = fighterEntity(id).get<state::Allegiance>();
+	const kdata::Record* faction = allegiance != nullptr && gameData_ != nullptr ? gameData_->find(allegiance->factionSid) : nullptr;
+	return kworld::RoadNetwork::factorFor(faction != nullptr ? faction->floatOr("road preference", 0.4f) : 0.4);
+}
+
 Route Simulation::routeRetry(std::uint64_t id, const state::Fighter& f, double toX, double toZ, std::optional<double> toY, bool planned)
 {
 	// A door or gate changed state since the last ask: routability changed, every ladder starts over (the exe's invalidate, C57; ksim 2026-11-10).
@@ -138,7 +145,7 @@ Route Simulation::routeRetry(std::uint64_t id, const state::Fighter& f, double t
 	} else {
 		// A move over 1000 u takes the road shortcut first (the exe's 14065f940); when no road serves it, or a leg fails, the plain search.
 		if (std::hypot(ask.x - f.x, ask.z - f.z) > kworld::RoadNetwork::kLongMove)
-			route = roadNetworkRoute(f, ask.x, ask.z, ask.step == PathRetries::Step::Direct ? toY : std::nullopt, planned, kworld::RoadNetwork::kDefaultFactor);
+			route = roadNetworkRoute(f, ask.x, ask.z, ask.step == PathRetries::Step::Direct ? toY : std::nullopt, planned, roadFactor(id));
 		// A goal in a zone that is not loaded is clamped to the exit of the walker's zone (D9): the route is found, ends there, and the owner's next ask
 		// goes on from it. A sideways goal has no known height: the walker's own level is the fallback.
 		if (!route.found)

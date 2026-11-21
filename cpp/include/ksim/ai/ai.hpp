@@ -210,7 +210,7 @@ struct GroupContext
 	std::uint64_t depot = 0;
 	// The AiSystem::Config decision sink, when set (the debug view): the goal pick and the scored candidates it chose from.
 	const std::function<void(std::uint64_t, const GoalChoice&, const std::vector<GoalChoice>&)>* decisionSink = nullptr;
-	flecs::entity squadEntity;
+	flecs::entity squadEntity{};
 };
 
 struct GroupResult
@@ -441,6 +441,7 @@ public:
 		bool holdsPlayer = false; // GroupContext::holdsPlayer
 	};
 	std::map<std::uint64_t, Carry>& carried() noexcept { return carried_; }
+	const std::map<std::uint64_t, Carry>& carried() const noexcept { return carried_; }
 	// Every squad as (state::Id value, entity), in Id order: the cached list the squad step walks (k16.6.232: the per-slice passes use it).
 	// The list is re-read when the squad count changed, at the second's first tick (not every tick: the count is a query over every table);
 	// a squad that went in between is skipped by its callers (is_alive), one that came waits for the next second, as its first step did.
@@ -489,7 +490,6 @@ private:
 
 	Config config_;
 	mutable std::map<std::uint64_t, std::string> fallbackPackages_; // by faction entity id: its `AI fallback` package sid ("" = none)
-	std::uint64_t seed_;
 	std::unique_ptr<routines::PackageTable> packages_; // the compiled AI_PACKAGE lists (T3f; null without game data)
 	std::map<std::uint64_t, TownLife> townLife_; // by squad state::Id (T3f)
 	std::vector<TownSite> towns_;

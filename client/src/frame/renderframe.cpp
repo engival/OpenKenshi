@@ -474,7 +474,7 @@ void render_frame(const FramePacket& pk, RenderState& rs)
 	GPU_END(rs.gpu);
 	if (!pk.editor && pk.scene.foliageOn && pk.scene.bldSet && !pk.worldMap) { rs.foliage.renderFadeBand(pk.foliage, mvp, light); }
 	// The glass, the cursor id pass, the AO, the sun shafts and the dust (sitting 8, kenshi-k16.2.205.12.53), up to the fog volumes.
-	const bool peek = pk.scene.bldSet && !pk.worldMap;
+	const bool peek = pk.scene.bldSet && !pk.worldMap && !pk.editor;	// the cursor id pass picks the world: not in the creator (kenshi-k16.2.472.3)
 	// While peeked glass draws, the scene depth is kept first (Hdr::copyOpaqueDepth, after the foliage fade band, so the band reaches the particles / fog / AO / haze in every frame as
 	// before): the see-through glass writes its nearest surface into the depth and must not hide what is behind it from those passes. The cursor ID pass below still reads the glass depth.
 	if (peek && !pk.buildings.draws.glass.empty())

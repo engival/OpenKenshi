@@ -127,6 +127,23 @@ int main(int argc, char** argv)
 			sim.moveSquad(pick, -50979.0 + 250.0, 2932.0);
 			sim.run(200);
 		}
+		// The bandit side, the same way: the nearest homeless Dust Bandits squad, 250 u west of the Hub. Which bandit squad world creation puts
+		// inside the covered 3 x 3 depends on the placement draw (845212c3 gated the nests, which moved every draw), so none is assumed there.
+		{
+			flecs::entity pick;
+			double best = 1e18;
+			ecsOf(sim).each([&](flecs::entity squad, const state::SquadInstance& instance, const state::Position& at)
+			{
+				const double d = std::hypot(at.x - (-50979.0), at.z - 2932.0);
+				if (instance.source != state::SpawnSource::BiomeHomeless || d >= best || factionName(sim, instance) != "Dust Bandits")
+					return;
+				best = d;
+				pick = squad;
+			});
+			test::require(pick.is_valid(), "a homeless Dust Bandits squad to set down at the Hub");
+			sim.moveSquad(pick, -50979.0 - 250.0, 2932.0);
+			sim.run(200);
+		}
 		// A bandit (team 13) and that neutral squad (team 0), built at the Hub, are put 2 zones east of the covered 3 x 3 (x = -38000 is zone 23; the
 		// Hub's are 19..21) and aimed at each other: a fight no player is part of.
 		std::uint64_t banditSquad = 0;

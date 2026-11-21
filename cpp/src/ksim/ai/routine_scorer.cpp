@@ -1338,6 +1338,25 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 		}
 		return strangerKnown == 1;
 	};
+	// The shoo as a plan step for a goal blocked by a stranger: the chain of goal 158 (its own registry row), the stranger as the hand.
+	// UNSURE (dialogue_pacing, open): which building the original's shoo predicate resolves in a public shop; ours is the home building
+	// the stranger stands in.
+	const auto shooPlan = [&](Eval& e, std::uint16_t task, const state::Routine& routine) -> bool
+	{
+		const std::uint64_t strangerId = f.homeBuilding != 0
+			? worldres::shooStrangers283(f, sensorContext(), [&](std::uint64_t target) { return combat_->find(target); },
+				routine.goal == task ? routine.chainTarget : 0)
+			: 0;
+		if (strangerId == 0)
+			return false;
+		const goap::Plan chain = planShoo(id, routines::task::ShooStrangers);
+		if (!chain.found())
+			return false;
+		for (const goap::Step& step : chain.steps)
+			e.plan.push_back(step.task);
+		e.chainTarget = strangerId;
+		return true;
+	};
 	// Bed utility (5.3): 1 in the bed; 0 for 180 min after the last sleep (the wake cooldown); else 1. UNSURE: the 0.3 band of "under 20 min
 	// since the last sleep" lies inside the cooldown and is never reached.
 	const double gameHoursNow = trader::gameHours(now);
@@ -1411,9 +1430,18 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 			// A stranger in a private home keeps the resident from bed (a public home, a shop or bar, ignores them); 239 never goes to bed
 			// unlocked (the lock is planned as its first step, even outside the 155 window).
 			const bool secure = candidate.task == routines::task::GoHomeToBedSecure;
-			if (bedUtility <= 0.0 || (stranger() && (secure || !publicHome)))
+			if (bedUtility <= 0.0 || (stranger() && !secure && !publicHome))
 			{
 				skip = true;
+				break;
+			}
+			if (stranger() && secure)
+			{
+				// 239's precondition 'strangers in house = 0' is not met: the plan's step that works on it is the shoo (k16.6.503).
+				skip = !shooPlan(e, candidate.task, r);
+				bedScore = bedUtility;
+				e.x = homeSpot.x;
+				e.z = homeSpot.z;
 				break;
 			}
 			bedScore = bedUtility;
@@ -1453,6 +1481,15 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 		case routines::task::LockDoorsStayOutside:
 			// 155 / 197 (dt24_155): the door-list resolver, then the registry row's plan - no strangers in the house, else the plan
 			// grows the 283 shoo in front and the lock waits (ours: the candidate is skipped, the shoo goal being its own row).
+			// A stranger inside: the lock's precondition fails and the plan's working step is the shoo (k16.6.503, shop_closing: the lock
+			// goal never finishes while someone is inside).
+			if (stranger() && routineSquad.homeLocked == 0 && hd.canLock)
+			{
+				skip = !shooPlan(e, candidate.task, r);
+				e.x = homeSpot.x;
+				e.z = homeSpot.z;
+				break;
+			}
 			skip = !resolveDoorRow(id, candidate.task, hd, routineSquad.homeLocked != 0, stranger());
 			e.doorStep = true;
 			e.x = anchorX;
@@ -2428,7 +2465,8 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 			r.chainElapsed = -1.0;
 			r.plan.clear();
 			r.step = 0;
-		} else if (goal == routines::task::ShooStrangersPrivate && best->chainTarget != 0) {
+		} else if ((goal == routines::task::ShooStrangersPrivate || goal == routines::task::LockAllMyDoors || goal == routines::task::LockDoorsStayOutside
+			|| goal == routines::task::GoHomeToBedSecure) && best->chainTarget != 0) {
 			r.chainTarget = best->chainTarget; // the stranger (283's hand)
 			r.plan = best->plan;
 			r.step = 0;
@@ -2506,7 +2544,8 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 		f.asleep = false;
 		mirrorFighter(id);
 	}
-	if (goal == routines::task::ShooStrangers || goal == routines::task::ShooStrangersPrivate)
+	if (goal == routines::task::ShooStrangers || goal == routines::task::ShooStrangersPrivate || (best->chainTarget != 0 && !best->plan.empty() && best->doorStep == false
+		&& (goal == routines::task::LockAllMyDoors || goal == routines::task::LockDoorsStayOutside || goal == routines::task::GoHomeToBedSecure)))
 		townStats_.shoos += same ? 0 : 1;
 	// A door goal acts when the member is within reach of a door (a placed member acts at once); the next look is soon, to move on.
 	if (best->doorStep && (placement || (hd.any && hd.nearest <= kDoorReach)))
@@ -3652,7 +3691,7 @@ void Simulation::stepRoutines()
 		// The town schedules are a promoted resident squad's (promoteResidents sets its SquadRoutine). A world squad has none: its
 		// members' Routines are their own package tasks (task BO's capture 167 / loot 177, world_tasks.cpp), which the scorer must not
 		// score away.
-		if (!squad.is_valid() || squad.get<state::SquadInstance>() == nullptr || squad.get<state::SquadRoutine>() == nullptr)
+		if (!squad.is_valid() || squad.get<state::SquadInstance>() == nullptr || (squad.get<state::SquadRoutine>() == nullptr && !squad.has<state::GateCrew>()))
 			continue;
 		const state::Fighter& f = members[i].fighter;
 		// The scorer yields to fighting, being down or carried, a door or interaction in progress, the player (5.1), an individual
@@ -3664,7 +3703,7 @@ void Simulation::stepRoutines()
 			|| (f.walking() && f.routeSeq != 0)
 			|| f.goal.kind != state::IndividualKind::None
 			|| entity.has<state::InteractTask>() || entity.has<state::DoorStep>() || (entity.has<state::CarryStep>() && !chainedCarry)
-			|| entity.has<state::TakeOut>() || arrestOrders_.count(members[i].id) != 0
+			|| entity.has<state::TakeOut>() || routine->goal == routines::task::GatePost || arrestOrders_.count(members[i].id) != 0
 			|| talkHold != nullptr) // the player is talking to it: it stands still (state::TalkHold)
 		{
 			state::Routine r = *routine;

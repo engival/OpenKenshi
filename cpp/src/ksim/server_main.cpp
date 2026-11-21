@@ -742,7 +742,7 @@ int runServer(const ServerConfig& options, std::atomic<bool>& stop)
 				<< stale.interiorsNotComputable << " unverifiable; check " << stale.checkMs << " ms, bake " << stale.bakeMs << " ms\n";
 		}
 		// --import-save: the streaming mesh is up (the import snaps its Full members to the ground), the world has its combat data. No fallback.
-		std::optional<saveimport::Report> imported; // kept for CAMERA_START (kenshi-cym.39: send it from here once that lands)
+		std::optional<saveimport::Report> imported; // kept for CAMERA_START (CAMERA_START: context.cameraStart below)
 		if (!options.importSave.empty())
 		{
 			const double importStart = seconds();
@@ -750,6 +750,8 @@ int runServer(const ServerConfig& options, std::atomic<bool>& stop)
 			err << "ksim_server: import " << options.importSave << ": clock day " << imported->world.day << " " << imported->world.hour << ":" << imported->world.minute << ", "
 				<< imported->platoons.size() << " platoons, " << imported->members << " members (player " << imported->membersPlayer << ", full " << imported->membersFull << ", token "
 				<< imported->membersToken << ", unplaced " << imported->unplaced << "), skipped " << imported->membersSkipped << ", " << seconds() - importStart << " s\n";
+			context.cameraStart = simlink::ServerContext::CameraStart{imported->hasCamera, imported->cameraPos, imported->cameraRot, imported->cameraZoom,
+				imported->hasCameraFloor, imported->cameraFloor};
 			if (!options.importReport.empty())
 			{
 				writeImportReport(options.importReport, options.importSave, *imported);

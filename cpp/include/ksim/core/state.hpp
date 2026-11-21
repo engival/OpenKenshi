@@ -34,6 +34,8 @@ namespace ksim::state {
 struct EntityRef
 {
 	flecs::entity_t id = 0;
+
+	bool operator==(const EntityRef&) const = default;
 };
 
 // Stable instance key, unique per world, never reused. Assigned by the
@@ -44,9 +46,13 @@ struct Id
 };
 
 // Singleton: next Id to hand out.
+// Mesh-furnished entities (containers, item nodes, doors: they exist only where the navmesh answers) draw from their own range, so a
+// bake change never moves a squad's id (slice, stay length, seeded picks hang on it). Not saved: readSave re-derives it from the Ids.
+constexpr std::uint64_t kFurnitureIdBase = 1ull << 40;
 struct Ids
 {
 	std::uint64_t next = 1;
+	std::uint64_t furniture = kFurnitureIdBase;
 };
 
 // Singleton: absolute tick count since game day 0, 00:00 (clock.hpp derives
@@ -105,7 +111,7 @@ struct FactionState
 	};
 	std::int32_t rank = 0;
 	double globalTrust = 0.0;
-	std::vector<Trust> trust;
+	std::vector<Trust> trust{};
 
 	template <typename Archive, typename Self>
 	static void fields(Archive& ar, Self& self)
@@ -177,7 +183,7 @@ struct TownState
 	double x = 0.0;
 	double z = 0.0;
 	// The original's flags and counters (save v105): see TownInfo.
-	TownInfo info;
+	TownInfo info{};
 
 	template <typename Archive, typename Self>
 	static void fields(Archive& ar, Self& self)
@@ -206,7 +212,7 @@ struct ExtraTown
 	bool placed = false;
 	double x = 0.0;
 	double z = 0.0;
-	TownInfo info;
+	TownInfo info{};
 
 	template <typename Archive, typename Self>
 	static void fields(Archive& ar, Self& self)
@@ -227,8 +233,8 @@ struct SquadInstance
 {
 	static constexpr std::string_view kName = "SquadInstance";
 	std::string templateSid; // SQUAD_TEMPLATE
-	EntityRef faction; // FactionState; none for factionless templates
-	EntityRef homeTown; // TownState; none for wilderness spawns
+	EntityRef faction{}; // FactionState; none for factionless templates
+	EntityRef homeTown{}; // TownState; none for wilderness spawns
 	SpawnSource source = SpawnSource::TownResident;
 	// Wilderness squads: where placement put them (placement.hpp), the centre
 	// of their patrol or territory. PROVISIONAL (see placement.hpp).
@@ -431,9 +437,10 @@ enum class GoalKind : std::uint8_t
 	Roam = 5, // walk to a point of the territory round the anchor (goalX, goalZ)
 	Raid = 6, // a faction's order (GroupAI::order): outbound, stay at the target town, return
 	ManGate = 7, // a gate crew: walk to the gate's outside point (state::GateCrew) and hold it for ever (MAN_THE_GATE 180)
+	Fight = 8, // a member of a carried squad fights: replaces the Patrol / Roam walk, the squad picks a goal again when the fight ends
 };
 
-inline constexpr int kGoalKindCount = 8;
+inline constexpr int kGoalKindCount = 9;
 
 // Why a squad runs the generic fallback instead of a mapped behaviour
 // (ai.hpp), or why a goal failed. One enum: both are "the reason logged".
@@ -782,7 +789,7 @@ struct FactionEvent
 	EntityRef faction; // whose event
 	EntityRef town; // TownLost / TownGained / RaidOutcome (the target)
 	std::uint64_t tick = 0;
-	EntityRef other; // RelationCrossed: the faction the opinion is about
+	EntityRef other{}; // RelationCrossed: the faction the opinion is about
 	std::int32_t code = 0; // RaidOutcome / RelationCrossed detail
 
 	bool operator==(const FactionEvent&) const = default;
@@ -1431,20 +1438,20 @@ struct InventoryEntry
 	std::string itemSid;
 	std::uint32_t count = 0;
 	std::uint8_t slot = 0; // Inventory::kCarried, kWeapon, kArmourBase + n
-	ItemQuality quality; // a weapon's or armour piece's generated quality; unset for plain items
+	ItemQuality quality{}; // a weapon's or armour piece's generated quality; unset for plain items
 	std::uint8_t section = kUnplaced;
 	std::uint8_t x = 0;
 	std::uint8_t y = 0;
-	std::string material;
-	std::string colour;
-	std::vector<InventoryEntry> contents;
+	std::string material{};
+	std::string colour{};
+	std::vector<InventoryEntry> contents{};
 	// The exe's `Item+0x12a` flag (TOWN_LIFE_SLICE 3.1): a trader's special item. A merchant's wipe keeps it and a clone copies it. It is part of
 	// the merge key (a unique stack never merges with a plain one, so the wipe cannot eat a unique unit).
 	bool unique = false;
 	// Provenance (save v89). planted: a short list of {units, planter, time}; not in the merge key, a merge concatenates and a split
 	// takes units first in, first out. stolen: the victim FACTION ("" = clean); IS in the merge key (a stolen stack never joins a clean one).
-	std::vector<Planting> planted;
-	std::string stolen;
+	std::vector<Planting> planted{};
+	std::string stolen{};
 
 	// Moves `units` of `from`'s planted list (first in, first out) onto this entry's list. Call beside every count transfer between stacks.
 	void takePlantedFrom(InventoryEntry& from, std::uint32_t units)
@@ -1530,8 +1537,8 @@ struct GroundItem
 	std::uint32_t count = 1;
 	ItemQuality quality; // the stack's quality (a dropped weapon keeps its generated one)
 	std::string material; // the instance's MATERIAL_SPECS_CLOTHING ("" = none yet: picked when it is picked up)
-	std::string colour;
-	std::vector<InventoryEntry> contents; // a dropped container keeps its backpack_content
+	std::string colour{};
+	std::vector<InventoryEntry> contents{}; // a dropped container keeps its backpack_content
 	double x = 0.0;
 	double y = 0.0;
 	double z = 0.0;
@@ -3090,8 +3097,8 @@ struct WeatherRegion
 	std::string group; // BIOME_GROUP stringID
 	std::uint32_t season = 0; // index into the group's seasons, sorted by their v0
 	std::uint64_t seasonEndDay = 0;
-	std::string weather; // WEATHER stringID of the current instance
-	std::string previous; // the weather before it, empty after a fresh start
+	std::string weather{}; // WEATHER stringID of the current instance
+	std::string previous{}; // the weather before it, empty after a fresh start
 	std::uint64_t startMinute = 0;
 	std::uint64_t endMinute = 0;
 	double strength = 0.0; // 0..1, rolled once per instance
@@ -3288,7 +3295,7 @@ using SavedSingletons = TypeList<Scheduler, StandInGroups, PlayerAreas, Wilderne
 // Registers the state components and relationship traits. Idempotent.
 void registerComponents(flecs::world& ecs);
 
-// Creates an entity with the next Id.
-flecs::entity createInstance(flecs::world& ecs);
+// Creates an entity with the next Id; `furniture` takes the next one of the kFurnitureIdBase range instead.
+flecs::entity createInstance(flecs::world& ecs, bool furniture = false);
 
 } // namespace ksim::state

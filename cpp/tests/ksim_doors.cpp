@@ -215,7 +215,7 @@ int main(int argc, char** argv)
 			const ksim::DoorSystem& doors = *simulation.ai()->doorSystem();
 			test::require(doors.stats().gates >= 90 && doors.stats().gateTowns >= 60,
 				"gates were not bound to towns: " + std::to_string(doors.stats().gates));
-			test::require(fake->applies() == 1, "the first book was not applied exactly once");
+			test::require(fake->applies() == 1, "the first book was not applied exactly once: " + std::to_string(fake->applies()));
 			// The original has no class or faction door test: a private town's gates start as open as any other.
 			test::require(fake->book().settings().empty(), "a gate starts restricted");
 			std::cout << "data: " << data->sites.size() << " doors, " << gates << " on gate buildings ("

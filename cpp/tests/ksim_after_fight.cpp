@@ -388,7 +388,15 @@ int main(int argc, char** argv)
 		std::size_t crewTargetingAfter = 0;
 		double crewMoved = 0.0;
 		bool crewWalking = false;
+		// A KO'd body keeps losing flesh to its wounds' bleeding, whichever bandit it is (the bleed rate follows the wounds, so it varies with the
+		// squad world creation hands the test): the rule is about the crew's blows, so the Hit events on it are counted, and the bleed reported apart.
 		double dealtAfterKO = 0.0;
+		double bledAfterKO = 0.0;
+		const_cast<CombatArena*>(sim.combat())->setObserver([&](const CombatEvent& e)
+		{
+			if (e.kind == CombatEvent::Kind::Hit && e.who == victim)
+				dealtAfterKO += 1.0;
+		});
 		flesh0 = flesh(v);
 		for (int i = 0; i < 20 * 40; ++i)
 		{
@@ -404,7 +412,7 @@ int main(int argc, char** argv)
 			}
 			const double fleshNow = flesh(v);
 			if (fleshNow < flesh0 - 0.5)
-				dealtAfterKO += flesh0 - fleshNow;
+				bledAfterKO += flesh0 - fleshNow; // every flesh loss, hit or not; the rule below counts the hits
 			flesh0 = fleshNow;
 			crewTargetingAfter = 0;
 			double walked = 0.0;
@@ -423,7 +431,7 @@ int main(int argc, char** argv)
 				clearTick = sim.clockTick();
 		}
 		const double clearSeconds = clearTick != 0 ? static_cast<double>(clearTick - windowStart) / 20.0 : -1.0;
-		std::cout << "after the KO: flesh dealt on the KO'd body " << dealtAfterKO << "\n";
+		std::cout << "after the KO: hits on the KO'd body " << dealtAfterKO << " (bled " << bledAfterKO << ")\n";
 		std::cout << "after the fight: crew targets on the bandits " << crewTargetingAfter << ", all dropped after "
 			<< (clearTick != 0 ? std::to_string(clearSeconds) + " s" : std::string("never"))
 			<< ", moved " << crewMoved << " u, walking " << (crewWalking ? "yes" : "no") << ", player target " << game.me().target << "\n";

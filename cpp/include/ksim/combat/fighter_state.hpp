@@ -892,9 +892,6 @@ struct Fighter
 	// Under the roof of an `is shelter` building while exposed (the exe's second acid-rain gate: a down ray finds a shelter
 	// building's roof more than 10 u overhead, weather_acid_rain.md section 5). Derived with `indoors`, not saved.
 	bool sheltered = false;
-	// The tick up to which the portrait counts it as engaged (a living target or a body in the arms, held 15 s after: the stand-in for
-	// the exe's AI+0xb0 float, kenshi-k16.6.159). Set by Simulation::stepCombat; derived, never saved (a load forgets a hold in progress).
-	std::uint64_t engagedUntil = 0;
 	// Carrying (carry.hpp): the character this one carries (state::CarryStep has the phase) and the one carrying this one. A
 	// carried character moves with its carrier, is not a target and is in no building.
 	std::uint64_t carrying = 0;

@@ -3,7 +3,7 @@
 //   B - the same NPC with no kit stays down and conscious.
 //   C - an ordinary squadmate carrying a kit, 3 u from a kitless down one, does nothing for it.
 //   D - a medic-role character (the slaver caravan's package carries 58) treats a kitless down squadmate 6 u away, and does not at 49 u.
-//   E - a kit handed to an already-down NPC starts its self-aid within one tick.
+//   E - a kit handed to an already-down NPC starts its self-aid after the ~6 game s goal onset (dt45 section 1, rwh.204).
 // Needs the world bake (argv[1], like ksim_medic; exit 77 without it).
 #include "ksim/ai/ai.hpp"
 #include "ksim/ai/behaviours.hpp"
@@ -289,14 +289,6 @@ int untilAwakeDown(Simulation& sim, std::uint64_t id, int limit)
 	return -1;
 }
 
-double poolOf(const state::Fighter& f)
-{
-	double sum = 0.0;
-	for (const state::FighterPart& part : f.parts)
-		sum += part.pool;
-	return sum;
-}
-
 // Whether `who` treats `patient` now: a first aid interact on it.
 bool treating(Simulation& sim, std::uint64_t who, std::uint64_t patient)
 {
@@ -394,17 +386,16 @@ int main(int argc, char** argv)
 		}
 		std::printf("C: the squadmate with a kit did nothing for 60 s\n");
 
-		// E - a kit handed to the down victim: self-aid starts within one tick.
-		const double poolBefore = poolOf(*fighterOf(sim, victim));
+		// E - a kit handed to the down victim: self-aid starts after the goal onset.
 		packOf(sim, victim).add(kit->stringID, 1);
 		int started = -1;
-		for (int tick = 0; tick < 3 && started < 0; ++tick)
+		for (int tick = 0; tick < 20 * 12 && started < 0; ++tick)
 		{
 			sim.run(1);
-			if (treating(sim, victim, victim) || poolOf(*fighterOf(sim, victim)) > poolBefore)
+			if (treating(sim, victim, victim))
 				started = tick + 1;
 		}
-		test::require(started > 0 && started <= 1, "E: a kit handed to a down NPC starts self-aid within one tick");
+		test::require(started > 20 * 5 && started <= 20 * 8, "E: a kit handed to a down NPC starts self-aid ~6 game s later");
 		std::printf("E: self-aid started %d tick(s) after the kit\n", started);
 
 		// A - ... and it stands.

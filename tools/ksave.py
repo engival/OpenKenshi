@@ -177,7 +177,7 @@ def dump(d, game, out=sys.stdout):
 	mine = sorted(i for i, v in wt.items() if v.get('s') in game.seasons.get(grp, ()))
 	w('   player biome slot(s) by season match (guess): %s -> %s' % (mine, [game.name(wt[i]['w']) for i in mine]))
 	camp = S.camera
-	w('CAMERA pos=%s rot=%s zoom=%.1f' % (fmt_pos(camp['pos']), tuple(round(x, 3) for x in camp['rot']), camp['zoom']))
+	w('CAMERA pos=%s rot=%s zoom=%.1f floor num=%s' % (fmt_pos(camp['pos']), tuple(round(x, 3) for x in camp['rot']), camp['zoom'], camp.get('floor num', 'absent')))
 	w('RESEARCH finished: %s' % ([game.name(r.d[k]) for r in q.of('RESEARCH') for k in r.d if k.startswith('finished')]))
 	# factions
 	F = S.factions

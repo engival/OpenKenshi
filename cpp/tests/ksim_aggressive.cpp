@@ -2,7 +2,7 @@
 // whose squad goal 3944 is it; kinspect findings/item59/item60_mq14_hostility.md). A fighter with Fighter::attacksNeutrals takes every aware
 // fighter that is not of its own faction or allied to it (relation >= 50) as a target, on top of its enemies. Combat's enemy() is symmetric
 // for an engaged aggressor: the attacked, and whoever sees it at work, answer. A neutral chase that never closes in ends after
-// kChaseClearOrders (66 game minutes, kinspect s73_static.md section 3) and the target is skipped for kBlockedTarget (20 s). The state is Fighter::{faction, attacksNeutrals,
+// kChaseClearOrders (66 game minutes, kinspect s73_static.md section 3) and no blocked-target timer is added (rwh.203). The state is Fighter::{faction, attacksNeutrals,
 // aggroBlockId, aggroBlock} (save v52); a save and load mid-chase equals the straight run.
 
 #include "ksim/core/clock.hpp"
@@ -34,7 +34,6 @@ constexpr double kGameMinuteSeconds = kGameDaySeconds / 1440.0;
 // Faction ids no real FACTION entity has (the arena's bonded set is built from real factions only): every pair is neutral.
 constexpr std::uint64_t kAggressors = 9000001;
 constexpr std::uint64_t kVictims = 9000002;
-constexpr std::uint64_t kOthers = 9000003;
 
 void check(bool condition, const std::string& what)
 {
@@ -277,8 +276,8 @@ int main()
 			check(co.me(coHunter).target == 0 && co.me(coQuarry).target == 0, "K2: goal 21 skips a coexistence faction");
 		}
 
-		// ---- a neutral that stays in sight yet is never reached: the monitor clears the chase after 60 U (66 game minutes), the target is
-		// skipped for 20 s (addBlockedTarget), then taken up again; s73_static.md section 3 ----
+		// ---- a neutral that stays in sight yet is never reached: the monitor clears the chase after 60 U (66 game minutes), adds no
+		// blocked-target timer, and the target is picked again at the next selector burst; s73_static.md section 3, rwh.203 ----
 		{
 			Rig rig(gd, data, servant);
 			const std::uint64_t hunter = rig.spawn(0.0, kAggressors, true, false);
@@ -308,8 +307,8 @@ int main()
 			check(droppedAt > 0.0 && droppedAt / kGameMinuteSeconds > 66.0 && droppedAt / kGameMinuteSeconds < 68.0,
 				"an unreachable neutral in sight: the chase is cleared after 66 game minutes (60 U), no stall");
 			check(rig.giveUps == 0, "... without a GiveUpChase (the target was sensed all along)");
-			check(retargetedAt - droppedAt >= 19.0 && retargetedAt - droppedAt < 24.0,
-				"... skipped for the 20 s blocked-target timer, then taken up again (no terminal state)");
+			check(retargetedAt >= droppedAt && retargetedAt - droppedAt < 5.0,
+				"... no blocked-target timer on the give-up path: taken up again at the next selector burst (rwh.203)");
 		}
 
 

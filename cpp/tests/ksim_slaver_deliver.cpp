@@ -322,6 +322,13 @@ void deliver(const std::string& bake)
 	for (int i = 0; i < 20 * 600 && doneTick == 0; ++i)
 	{
 		state::Fighter& me = game.me();
+		if (cuffTick == 0 && me.slaveState != 1)
+		{
+			// The captive stays down until the cuff: whether it comes round of itself in the wait is the fight's outcome (it moved with the entity Ids), and
+			// the test is about carrying a downed captive.
+			me.unconscious = true;
+			me.koTimer = 600.0;
+		}
 		if (doneTick == 0 && me.slaveState == 1 && me.captorSid.size() && me.captorSid != keeperSide && (me.unconscious || me.carriedBy != 0))
 		{
 			me.unconscious = true; // the KO is held through the walk (the capture is live-checked with a KO'd captive)

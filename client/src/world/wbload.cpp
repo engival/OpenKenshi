@@ -282,6 +282,7 @@ void WorldBuildings::shutdown()
 void WorldBuildings::setData(BuildingSet&& data)
 {
 	dataGen_++;
+	topBoxGen_++;
 	data_ = std::move(data);
 	for (PartRt& rt : partRt_) { if (rt.openHas) { rq::push("buildings.open-free", [h = rt.openIbuf] { sg_destroy_buffer(h.get()); }, rq::Lane::kFrame); } }
 	partRt_.assign(data_.parts.size(), PartRt());

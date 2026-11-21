@@ -53,9 +53,10 @@ enum class GoalKind : std::uint8_t
 	Roam = 5,
 	Raid = 6,
 	ManGate = 7,
+	Fight = 8,
 };
 inline constexpr const char* kGoalKindNames[] = {
-	"none", "idle", "go home", "travel to", "patrol", "roam", "raid", "man gate",
+	"none", "idle", "go home", "travel to", "patrol", "roam", "raid", "man gate", "fight",
 };
 inline constexpr std::size_t kGoalKindCount = sizeof(kGoalKindNames) / sizeof(kGoalKindNames[0]);
 

@@ -77,7 +77,7 @@ int main(int argc, char** argv)
 			std::cout << " task " << task << " x" << count;
 		std::cout << "\n";
 		if (report.hasCamera)
-			std::cout << "camera: (" << report.cameraPos[0] << ", " << report.cameraPos[1] << ", " << report.cameraPos[2] << ") zoom " << report.cameraZoom << "; selected "
+			std::cout << "camera: (" << report.cameraPos[0] << ", " << report.cameraPos[1] << ", " << report.cameraPos[2] << ") zoom " << report.cameraZoom << ", floor " << (report.hasCameraFloor ? std::to_string(report.cameraFloor) : std::string("absent")) << "; selected "
 				<< report.selected << ", selection " << report.selection.size() << "\n";
 		const saveimport::WorldReport& w = report.world;
 		std::cout << "world: clock day " << w.day << " " << w.hour << ":" << w.minute << "; relations " << w.relations << " (" << w.relationsNonZero << " non-zero) over "

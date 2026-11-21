@@ -79,6 +79,12 @@ void synthetic()
 	const RoadNetwork bent = RoadNetwork::fromRoads({ road(1, 2, { {0, 0, 0}, {1000, 0, 1500}, {2000, 0, 0} }) });
 	test::require(bent.route(0.0, 20.0, 2000.0, 20.0, 0.6).empty(), "a road 1.8x the straight line fails the use test at factor 0.6");
 	test::require(!bent.route(0.0, 20.0, 2000.0, 20.0, 0.2).empty(), "and passes it at the stuck fallback's 0.2");
+	// The factor comes from the faction's road preference: max(0, 1 - preference). A faction with preference 0.8 (factor 0.2) takes the
+	// 1.8x detour that the vanilla 0.4 (factor 0.6) refuses; preference 1.0 or more disables roads.
+	test::require(std::fabs(RoadNetwork::factorFor(0.4) - RoadNetwork::kDefaultFactor) < 1e-9, "vanilla preference 0.4 is factor 0.6");
+	test::require(bent.route(0.0, 20.0, 2000.0, 20.0, RoadNetwork::factorFor(0.4)).empty(), "preference 0.4: the detour fails the use test");
+	test::require(!bent.route(0.0, 20.0, 2000.0, 20.0, RoadNetwork::factorFor(0.8)).empty(), "preference 0.8: the same detour passes");
+	test::require(RoadNetwork::factorFor(1.5) == 0.0, "a preference above 1 clamps the factor to 0");
 }
 
 void install()

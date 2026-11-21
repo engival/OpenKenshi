@@ -56,7 +56,7 @@ int main(int argc, char** argv)
 		{
 			for (const CombatArena::Member& m : sim.combat()->members())
 			{
-				if (m.id == prisoner || m.fighter.dead || m.fighter.unconscious) // an unconscious body is put down by a take-out's drop point, not stepped (see INTERIORS.md, k16.6.330)
+				if (m.id == prisoner || m.fighter.dead || m.fighter.cageBuilding != 0) // k16.6.400: an unconscious body is checked too (a take-out's drop point must be open ground); a caged one lies in its cage's own box by design (imprison puts it on the cage's occupant slot, ksim_cage_inside)
 					continue;
 				const auto [at, first] = spawnAt.try_emplace(m.id, std::array<double, 2>{ m.fighter.x, m.fighter.z });
 				const bool moved = margin && std::hypot(m.fighter.x - at->second[0], m.fighter.z - at->second[1]) > 1.0;

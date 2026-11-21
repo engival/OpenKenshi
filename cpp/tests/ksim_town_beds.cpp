@@ -3,11 +3,13 @@
 //   - homeless squads on one point share its yard's beds, one sleeper per bed;
 //   - a shop locks after hours and reopens: the keeper's plan locks the door, then sleeps; the morning goal opens it again;
 //   - the keeper's routine follows the doors (awake at day, in bed at night, trade refused while it sleeps);
-//   - a stranger in the home blocks the lock, the resident shoos and, after its patience, gets on with its day (never stranded);
+//   - a stranger in the home blocks the lock: a shop's staff shoo on the lock / secure-bed goal (EV 9) for as long as they stay, a private home's
+//     residents shoo and, after the patience (ours), get on with their day (never stranded);
 //   - a locked door with a resident inside never strands it, and a resident that is outside when the door is locked still has a goal;
 //   - determinism and save / load mid-night (hash, doors, flags, the book).
 
 #include "ksim/ai/ai.hpp"
+#include "ksim/ai/perception.hpp"
 #include "ksim/ai/behaviours.hpp"
 #include "ksim/core/clock.hpp"
 #include "ksim/combat/combat_data.hpp"
@@ -15,6 +17,8 @@
 #include "ksim/ai/routines.hpp"
 #include "ksim/core/simulation.hpp"
 #include "ksim/economy/trader.hpp"
+#include "ksim/dialogue/dialogue_events.hpp"
+#include "ksim/dialogue/dialogue_book.hpp"
 
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"
@@ -595,13 +599,15 @@ void staleDoors(const kworld::LoadOrder& order, const std::shared_ptr<const Comb
 }
 
 // A stranger in the home: a shop (public) ignores them for the bed, but a 239 never goes to bed unlocked, so the shop stays up and open; when
-// the stranger leaves the keeper locks up and sleeps. A private home shoos, then gets on with its day after its patience.
+// the stranger leaves the keeper locks up and sleeps. A private home that is not locked shoos, then gets on with its day after its patience (OURS, UNSURE: the original has no finding for it;
+// a locked-up private home takes the Intruder! event instead, crime.cpp's trespass sensor).
 void strangers(const kworld::LoadOrder& order, const std::shared_ptr<const CombatData>& combat)
 {
 	{
 		Simulation sim = newGame(order);
 		enable(sim, combat);
-		sim.setClockTick(tickAt(1, 22, 30));
+		sim.enableDialogue(DialogueBook::build(sim.gameData()));
+		sim.setClockTick(tickAt(1, 23, 50));
 		const routines::PackageTable packages(*sim.gameData());
 		const std::vector<Pick> picks = residentSquads(sim, packages, *combat);
 		const Pick* pick = findPick(picks, "shop_keeper", {20, 86}, {239});
@@ -617,12 +623,35 @@ void strangers(const kworld::LoadOrder& order, const std::shared_ptr<const Comba
 		visitor.z = rig.cz;
 		visitor.building = rig.building;
 		const std::uint64_t visitorId = idOf(sim.spawnFighter(std::move(visitor)));
-		sim.run(2 * kTicksPerGameHour);
+		for (const flecs::entity m : rig.members)
+			sim.dialogue()->setInputs(idOf(m), DialogueInputs{ 13, false, false });
+		// The staff close up at 24:00 with the stranger still inside: goals 155 / 239 stay candidates and their plan's working step is the
+		// shoo (the dialogue's EV 9 chain, on its own timers), for the hour and a half the stranger stays (the test's perception does not
+		// scan a stranger two units away, so the keepers are told of them).
+		bool closing = false;
+		for (int i = 0; i < 144; ++i)
+		{
+			for (const flecs::entity m : rig.members)
+				perception::notice(fighterOf(sim, idOf(m)), visitorId);
+			sim.run(kTicksPerGameHour / 96);
+			for (const flecs::entity m : rig.members)
+			{
+				const std::uint16_t g = m.get<state::Routine>()->goal;
+				closing = closing || g == routines::task::LockAllMyDoors || g == routines::task::GoHomeToBedSecure;
+			}
+		}
+		std::size_t shooLines = 0;
+		for (const DialoguePick& pick2 : sim.dialogue()->log())
+			shooLines += pick2.event.event == ev::ShooFromMyBuilding && pick2.result == DialoguePick::Result::Picked ? 1 : 0;
+		test::require(closing && sim.townScorerStats().shoos > 0, "the staff are on the lock / secure-bed goal, the stranger blocking it");
+		test::require(shooLines > 0, "and shoo the stranger in a public shop (EV 9 chain: shop_closing, dialogue_pacing)");
+		// Whether the chain then ends in DA_CRIME_ALARM and an attack is the dialogue root's data ("shopkeep holy shoo" has it, the generic
+		// "shoo shop" 3111 does not and nags all night, as shop_closing saw in Squin): not asserted here (UNSURE: the 143 answer to the alarm).
 		test::require(doorState(rig) == 0 && lockedFlag(sim, rig) == 0, "a stranger inside keeps the shop from locking up");
 		test::require(!anyAsleep(sim, rig), "and the keepers from going to bed");
 		everyoneHasAGoal(rig, sim);
 		fighterOf(sim, visitorId).building = 0; // the stranger leaves
-		sim.run(kTicksPerGameHour / 2);
+		sim.run(kTicksPerGameHour);
 		test::require(doorState(rig) == 2 && lockedFlag(sim, rig) == 1, "the stranger gone: the keeper locks up");
 		test::require(anyAsleep(sim, rig), "and goes to bed");
 	}

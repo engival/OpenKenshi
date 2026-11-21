@@ -262,8 +262,8 @@ bool Simulation::treatBodies(state::Fighter& medic, state::Fighter& patient, boo
 // 269 HEAL_MY_LEGS (k16.6.4; dt45_down_treatment.md live, MEDICAL_HUNGER_LIVE.md (f)): a down, conscious NPC that carries a kit runs
 // Task_FirstAid on itself, and again while the kit has charges (the interact ends when nothing is left to bandage or the kit is spent,
 // and the next tick starts it again). The pool clears the KO point, the collapse flag recomputes, the body stands (65 GET_UP is
-// that recompute) and the town scorer takes its job back. A kit handed to a down NPC starts it on the next tick: the inventory is read
-// live. The members' `down` flag is the guard: a tick with nobody down costs one loop over the arena's members, no query.
+// that recompute) and the town scorer takes its job back. The goal starts kSelfAidOnsetSeconds after it first applies (a kit handed to
+// a down NPC counts from the hand-over: the inventory is read live). The members' `down` flag is the guard: a tick with nobody down costs one loop over the arena's members, no query.
 void Simulation::stepSelfAid()
 {
 	if (combat_ == nullptr)
@@ -273,9 +273,28 @@ void Simulation::stepSelfAid()
 	for (std::size_t i = 0; i < members.size(); ++i)
 	{
 		if (!members[i].fighter.down)
+		{
+			if (!selfAidSince_.empty())
+				selfAidSince_.erase(members[i].id);
 			continue;
+		}
 		const flecs::entity actor = ecs.entity(combatEntities_[i]);
-		if (actor.has<state::InteractTask>() || !planSelfAid(members[i].id).found())
+		if (const state::InteractTask* task = actor.get<state::InteractTask>())
+		{
+			// Its own first aid keeps the onset behind it; any other task means the goal was not waiting.
+			if (task->action != static_cast<std::uint8_t>(InteractAction::FirstAid) || task->target != members[i].id)
+				selfAidSince_.erase(members[i].id);
+			continue;
+		}
+		if (!planSelfAid(members[i].id).found())
+		{
+			selfAidSince_.erase(members[i].id);
+			continue;
+		}
+		// The goal pick runs on the AI throttle: the exe's onset is ~6 game s after the goal first applies (dt45 section 1, rwh.204).
+		const double now = simSeconds();
+		const double since = selfAidSince_.try_emplace(members[i].id, now).first->second;
+		if (now - since < kSelfAidOnsetSeconds)
 			continue;
 		beginInteract(members[i].id, members[i].id, static_cast<std::uint8_t>(InteractAction::FirstAid), 0, {}, false);
 	}

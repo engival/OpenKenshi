@@ -19,7 +19,7 @@ inline constexpr std::uint64_t kGateCrewIntervalTicks = 20;
 // The members (task 51 STAND_AT_NODE, GATE_CREWS_LIVE.md section 2): outside + 33 u at v = -34, -19, +19, +34 along the door axis,
 // u = n (the outside direction), v = (-nz, nx). Filled in that order. UNSURE: the order, and the sign of v (the exe's door axis
 // orientation was not read; the slots are symmetric, so only which member takes which side is affected). A fifth member and
-// beyond are off duty: they get no post and stay as the squad layer leaves them (idle with the squad at the post).
+// beyond are off duty (rwh.207): a Routine, so the town scorer gives them the package's 38 / 157 (stepGateCrewPosts).
 // Derived from the gate geometry and the member index, never saved.
 inline constexpr int kGateMemberSlots = 4;
 inline constexpr double kGateSlotOut = 33.0;

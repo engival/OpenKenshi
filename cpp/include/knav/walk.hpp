@@ -200,10 +200,14 @@ public:
 	// end of the route within braking reach, sqrt(vCorner^2 + 2 accel distance) (the end's vCorner is 0), so it brakes at exactly
 	// `accel` on a straight approach and slows for a sharp corner. Pure function of the route; does not move anything.
 	// `firstLeg` (0..1) scales the first leg to a corner (see the loop): the share of the slew's per-tick budget left for braking while the velocity
-	// is still turning towards it; `speed` is the walker's speed.
+	// is still turning towards it; `speed` is the walker's speed. `room` (arc only, may be empty): the free distance beyond a vertex along the leg in, the
+	// room the arc has to overshoot into, measured at that corner (x, z, unit direction of the leg in and of the leg out); it replaces `clearance` for that corner (D5).
+	// The measured room only counts at a corner of at least this turn (~57 degrees): a gentler bend is no brake worth relaxing, and a faster 34 / 52 degree pair arrived at the end of ksim_move_detour's route too fast (a 46 degree one-tick turn at the stop).
+	static constexpr double kRoomMinTurn = 1.0;
+	using Room = std::function<double(double x, double z, double inX, double inZ, double outX, double outZ)>;
 	template <typename Route>
 	static double speedLimit(const Position& from, const Route& route, std::size_t next, double vmax, double accel, double clearance,
-		bool arc = false, double lookahead = 0.0, double firstLeg = 1.0, double speed = 0.0)
+		bool arc = false, double lookahead = 0.0, double firstLeg = 1.0, double speed = 0.0, const Room& room = {})
 	{
 		double limit = vmax;
 		double px = from.x;
@@ -238,7 +242,10 @@ public:
 					const double lx = i > 0 ? route[i].x - route[i - 1].x : dx;
 					const double lz = i > 0 ? route[i].z - route[i - 1].z : dz;
 					const double legTurn = std::hypot(lx, lz) > 1.0e-6 ? std::fabs(std::atan2(lx * oz - lz * ox, lx * ox + lz * oz)) : turn;
-					corner = arcCornerSpeed(legTurn, accel, clearance);
+					double space = clearance;
+					if (room && i > 0 && legTurn >= kRoomMinTurn && std::hypot(lx, lz) >= 2.0 * clearance) // a sharp corner between two legs long enough to hold the arc
+						space = room(route[i].x, route[i].z, lx / std::hypot(lx, lz), lz / std::hypot(lx, lz), ox / outLen, oz / outLen);
+					corner = arcCornerSpeed(legTurn, accel, space);
 				}
 			}
 			// `lookahead`: a tick's travel, taken off the distance to a corner or to the end: the brake is applied a tick late, so a corner

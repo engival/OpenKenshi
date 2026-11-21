@@ -135,6 +135,7 @@ but not in `gamedata.base`/mods: `GAMESTATE_TOWN`, `GAMESTATE_TOWN_INSTANCE_LIST
 | player faction | `CAMERA.string "pfaction name"` | `Nameless` | [GT] |
 | area name / biome group | `CAMERA.string area`, `biome_text_groud` | `The Great Desert`, `55621-rebirth.mod` | |
 | camera | `CAMERA.vec3 pos`, `vec4 rot`, `float zoom` | pos (53926,1177,-93603)→(53883,1149,-93640); zoom -546.5 | [diff] |
+| floor num | `CAMERA.int "floor num"` | the PlayerInterface visible floor (`pi+0x1e4`), the floor-slice level (HUD floor diamond / PgUp-PgDn): one global int per save, clamped 0..3 by the exe's setter; 0 in all nine known saves incl. SkinHouse; a missing key = absent, not 0. The normal load applies it after the camera block, before the selection; the original's Import game does not restore it (kenshi-rwh.150, kenshi-inspect `findings/rwh150_save_floor_static.md`). Read by `saveimport` (`Report::cameraFloor`) | [exe] |
 | tracked / selected | `CAMERA.selected_character*`, `tracking*` | Player handle; `tracking*` was the Player in save 1 and null afterwards | [diff] |
 | used uniques | `CAMERA.usedUniques<k>` (+handle, state) | 5 unique characters already spawned | [guess] |
 

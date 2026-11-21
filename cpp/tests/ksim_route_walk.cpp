@@ -35,13 +35,11 @@ constexpr double kBody = 4.0; // the soak's radius
 constexpr double kStepLen = 2.0; // u per step (a walker at 70 u/s on a 20 Hz tick steps 3.5 u: a bit finer here)
 constexpr double kStillMove = 0.1; // a step that moves less is "no progress"
 constexpr int kStillSteps = 8; // N: no-progress steps in a row that make a stall
-constexpr double kArrive = 1.5;
+constexpr double kArrive = 1.0; // the sim's own reach of a route point (combat.cpp kArriveReach); a looser one ends a leg on the wrong side of a narrow portal (R103 leg 28, k16.8.37)
 constexpr double kFloorTol = 12.0;
 constexpr double kDoorNear = 14.0;
 constexpr double kHeightCause = 2.0;
-// k16.7.89 (furniture ring, recipe 21): 10 bad legs on 5 routes, none within 64 u of any furniture, so none crosses a ring. The 7 beyond the original 3
-// are routes 66 (legs 12/13), 70 (2/3), 71 (9/10), 114 (19/20), 163 (8/9) minus the 3 already pinned: kenshi-k16.8.37 owns them.
-constexpr int kPinnedStalls = 10;
+constexpr int kPinnedStalls = 0; // 3 before k16.8.37 (2 stalls + 1 off-floor leg of 6,885): a portal corner on a T-junction edge was 16 u off the floor; the test's own reach was looser than the sim's
 
 struct Spot
 {

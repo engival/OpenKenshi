@@ -1248,6 +1248,16 @@ kdata_warnings(ksim_group_settle)
 add_test(NAME ksim_group_settle COMMAND ksim_group_settle ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
 set_tests_properties(ksim_group_settle PROPERTIES FIXTURES_REQUIRED knav_cache)
 
+# A passing runner pushes the bodies it overlaps (kenshi-k16.6.425, oracle kenshi-rwh.188).
+add_executable(ksim_overlap_push tests/ksim_overlap_push.cpp)
+target_link_libraries(ksim_overlap_push PRIVATE ksim)
+target_compile_definitions(ksim_overlap_push PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+)
+kdata_warnings(ksim_overlap_push)
+add_test(NAME ksim_overlap_push COMMAND ksim_overlap_push ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
+set_tests_properties(ksim_overlap_push PROPERTIES FIXTURES_REQUIRED knav_cache)
+
 add_executable(ksim_speed_modes tests/ksim_speed_modes.cpp)
 target_link_libraries(ksim_speed_modes PRIVATE ksim)
 target_compile_definitions(ksim_speed_modes PRIVATE
@@ -2588,6 +2598,16 @@ kdata_warnings(ksim_residents_arrive)
 add_test(NAME ksim_residents_arrive COMMAND ksim_residents_arrive ${KSIM_NAVWORLD})
 set_tests_properties(ksim_residents_arrive PROPERTIES SKIP_RETURN_CODE 77)
 
+add_executable(ksim_fresh_carry tests/ksim_fresh_carry.cpp)
+target_link_libraries(ksim_fresh_carry PRIVATE ksim)
+target_compile_definitions(ksim_fresh_carry PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+	KSIM_AI_TABLE="${KSIM_AI_TABLE}"
+)
+kdata_warnings(ksim_fresh_carry)
+add_test(NAME ksim_fresh_carry COMMAND ksim_fresh_carry ${KSIM_NAVWORLD})
+set_tests_properties(ksim_fresh_carry PROPERTIES SKIP_RETURN_CODE 77)
+
 # A New Game settles before the first frame (kenshi-k16.17.9, TOWN_LIFE_SLICE 5.40).
 add_executable(ksim_newgame_settled tests/ksim_newgame_settled.cpp)
 target_link_libraries(ksim_newgame_settled PRIVATE ksim)
@@ -3285,6 +3305,16 @@ kdata_warnings(ksim_caravan_idle)
 add_test(NAME ksim_caravan_idle COMMAND ksim_caravan_idle ${KSIM_NAVWORLD})
 set_tests_properties(ksim_caravan_idle PROPERTIES SKIP_RETURN_CODE 77)
 
+# kenshi-k16.6.463: Heft's Defensive Gate IV crew at full detail stands on item31's layout, one member per spot.
+add_executable(ksim_gate_crew tests/ksim_gate_crew.cpp)
+target_link_libraries(ksim_gate_crew PRIVATE ksim)
+target_compile_definitions(ksim_gate_crew PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+)
+kdata_warnings(ksim_gate_crew)
+add_test(NAME ksim_gate_crew COMMAND ksim_gate_crew ${KSIM_NAVWORLD})
+set_tests_properties(ksim_gate_crew PROPERTIES SKIP_RETURN_CODE 77)
+
 # kenshi-k16.6.132: CHAR_DYNAMIC kFlagDrawn follows the weapon in the hand (tasks 6 / 7), cage_prisoner's guards after the fight.
 add_executable(ksim_drawn_flag tests/ksim_drawn_flag.cpp ../client/src/net/simlink.cpp)
 target_include_directories(ksim_drawn_flag PRIVATE ../client/src)
@@ -3594,6 +3624,7 @@ set_tests_properties(ksim_counter_path PROPERTIES FIXTURES_REQUIRED knav_cache)
 # long tests"). Workers run `ctest -LE slow` plus the slow tests their change touches; the sim lead runs the full suite on each ksim head
 # (docs/RUNBOOK.md "Dev box"). A new test that runs 20 s or more is added here. if(TEST): a name missing from this tree is skipped.
 set(KSIM_SLOW_TESTS
+	ksim_gate_crew
 	ksim_far_move
 	ksim_server_import
 	ksim_venge_population
@@ -3858,6 +3889,12 @@ target_compile_definitions(ksim_move_under_attack PRIVATE KENSHI_DATA="${KENSHI_
 kdata_warnings(ksim_move_under_attack)
 add_test(NAME ksim_move_under_attack COMMAND ksim_move_under_attack ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
 set_tests_properties(ksim_move_under_attack PROPERTIES FIXTURES_REQUIRED knav_cache)
+add_executable(ksim_order_attack_far tests/ksim_order_attack_far.cpp)
+target_link_libraries(ksim_order_attack_far PRIVATE ksim RecastNavigation::Detour)
+target_compile_definitions(ksim_order_attack_far PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_order_attack_far)
+add_test(NAME ksim_order_attack_far COMMAND ksim_order_attack_far ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
+set_tests_properties(ksim_order_attack_far PROPERTIES FIXTURES_REQUIRED knav_cache)
 
 # After every test that reads the install (kenshi-379.14.8: tests declared below this block got no data guard, no skip code and no disable).
 # Without the Kenshi install the tests that read it skip (exit 77) instead of failing (kenshi-379.15): every test binary compiled with

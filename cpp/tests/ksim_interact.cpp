@@ -654,6 +654,18 @@ int main(int argc, char** argv)
 
 		Rig rig(gd, data, nav, order);
 
+		// 7.118: mesh-furnished entities draw from their own id range, so a bake that adds or drops sites never moves a squad's id.
+		{
+			flecs::world ecs;
+			state::registerComponents(ecs);
+			const std::uint64_t first = state::createInstance(ecs).get<state::Id>()->value;
+			const std::uint64_t furnA = state::createInstance(ecs, true).get<state::Id>()->value;
+			const std::uint64_t furnB = state::createInstance(ecs, true).get<state::Id>()->value;
+			const std::uint64_t second = state::createInstance(ecs).get<state::Id>()->value;
+			test::require(second == first + 1 && furnA >= state::kFurnitureIdBase && furnB == furnA + 1,
+				"furniture ids must not take a number of the main counter");
+		}
+
 		// ---- the scenario's interactables reach the client ----
 		std::uint64_t katana = 0;
 		std::uint64_t bread = 0;

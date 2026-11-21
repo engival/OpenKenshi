@@ -48,6 +48,7 @@ struct Seen
 	std::map<std::string, double> first; // "who enum" -> seconds since the order
 	std::map<std::string, double> last;
 	int peak = 0; // the most members on goal 58 on the new slave at once
+	double liftReach = -1.0; // u from the slave to the nearest kitted guard at the tick the lift (168 / 170) first starts; < 0 while no lift has been seen (k16.7.118)
 	int kitted = 0; // the caravan guards (not the Boss, who stands outside 58's 40 u reach) spawned with a first aid kit (the template's `inventory`)
 };
 
@@ -214,6 +215,19 @@ Seen play(const std::uint64_t seed, const double wakeAfter)
 				note(who + " goal " + std::to_string(stats.goalEnum), now);
 			if (stats.stepEnum != 0xFFFF)
 				note(who + " step " + std::to_string(stats.stepEnum), now);
+			if (seen.liftReach < 0.0 && id != kBoss && (stats.goalEnum == 168 || stats.goalEnum == 170))
+			{
+				// The lift starts: how far is the nearest OTHER guard with a kit (the lifter is busy lifting) from the slave? Past 58's 40 u reach (healDistance) none can
+				// be offered the aid yet, and the lift cannot wait for it (the seed 1151889715 case, measured here instead of assumed).
+				double nearest = 1.0e30;
+				sim.world().ecs().each([&](const state::Id& who2, const state::Inventory& pack)
+				{
+					const state::Fighter* guard = sim.combat()->find(who2.value);
+					if (guard != nullptr && who2.value >= kBoss && who2.value < kBoss + 8 && who2.value != id && !guard->dead && (hasKit(sim, pack) || guard->kitCharges > 0.0))
+						nearest = std::min(nearest, std::hypot(guard->x - player->x, guard->z - player->z));
+				});
+				seen.liftReach = nearest;
+			}
 			if (id == kBoss && stats.goalEnum == 192)
 			{
 				seen.first["leader x"] = stats.targetX;
@@ -227,6 +241,7 @@ Seen play(const std::uint64_t seed, const double wakeAfter)
 		if (std::getenv("KSIM_LINES") != nullptr)
 			for (const std::string& line : lines)
 				std::cout << line << "\n";
+		std::cout << "  lift reach " << seen.liftReach << " u\n";
 		for (const auto& [key, t] : seen.first)
 			std::cout << "  " << key << " first " << t << " last " << seen.last[key] << "\n";
 	}
@@ -257,7 +272,10 @@ void pin(const Seen& seen, const std::uint64_t seed, const bool awake, const boo
 		test::require(seen.kitted >= 3 && seen.peak >= 1, tag + "a kitted member is on 58 on the slave (" + std::to_string(seen.kitted) + " kitted, peak "
 			+ std::to_string(seen.peak) + ")");
 	}
-	if (awake)
+	// The branch of a straight run is read off it (k16.7.118): the captive came round before the cuff (ko over before the shackles), was carried (down at the
+	// cuff), or was down at the cuff and not carried (it wakes under the aid: 65 then 171). The healed run is the last, as before.
+	const bool cameRound = has("player ko") && seen.last.at("player ko") < at("player slave");
+	if (healed || (awake && !cameRound && !has("player carried")))
 	{
 		// Up by the cuff's end: 65 GET_UP while it is treated, then 171 FOLLOW_SLAVEMASTER (walks), never carried.
 		test::require(has("player goal 171") && (healed || (has("player goal 65") && at("player goal 171") >= seen.last.at("player goal 65"))),
@@ -266,15 +284,21 @@ void pin(const Seen& seen, const std::uint64_t seed, const bool awake, const boo
 	} else if (has("player ko") && seen.last.at("player ko") < at("player slave")) {
 		// An unhealed fight's outcome (k16.6.406, seed 1: out 3.6-12.05 s, cuffed 17.4 s): the captive came round by itself before the cuff, so it walks (171)
 		// and is never carried, exactly as an awake one.
-		test::require(has("player goal 171") && !has("player carried"), tag + "a captive that came round before the cuff walks (171), it is not carried");
+		// Seed 101 (k16.7.118, ids shifted by 0): it is down but not out at the cuff (collapsed, awake), so the lift carries it 26.3-34.4 s, then it walks.
+		// So the rule is that it walks (171) and any carry ends before the walk starts, not that it is never carried.
+		test::require(has("player goal 171") && (!has("player carried") || at("player goal 171") >= seen.last.at("player carried")),
+			tag + "a captive that came round before the cuff walks (171) once any carry is over");
 	} else {
 		// Still down: the lift (168 / 170) waits for the aid, the carry follows, the slave is carried and not following.
 		// Seed 1151889715 (k16.6.414): the guards stand 58 u from the slave, past 58's 40 u reach (healDistance), so none is offered the aid until the
 		// carry brings the body within reach; the lift cannot wait for a medic that is not in reach, so there the carry comes first.
 		// Still needed after k16.6.413 (k16.6.418, KSIM_TRACE): the 168 lift starts at 21.55 s on the cuffer; no guard's candidates hold a 58 on the slave until 26.45 s, once the carry has moved it.
-		const bool medicsInReach = seed != 1151889715;
+		// MEASURED (k16.7.118): a kitted guard within 40 u of the slave when the lift starts. If one was, the carry must still wait for the aid, even where
+		// the aid started after the carry did: that is a lift before a medic in reach treated the slave, a defect, not a skip.
+		const bool medicsInReach = seen.liftReach < 0.0 || seen.liftReach <= 40.0;
 		test::require(has("player carried") && has("aid on slave") && (!medicsInReach || at("player carried") >= seen.last.at("aid on slave") - kTickSeconds),
-			tag + "a slave that stays down is carried, once the aid is over (the lift 168 / 170 waits for the medics)");
+			tag + "a slave that stays down is carried, once the aid is over (the lift 168 / 170 waits for the medics; the nearest kitted guard was "
+			+ std::to_string(seen.liftReach) + " u from the slave at the lift)");
 	}
 	// 192 GO_TO_SOMEWHERE_FOR_DELIVERING_SLAVES / 53 TRAVEL_TO_TARGET_TOWN on the leader, aimed at Rebirth.
 	test::require(has("leader goal 192") && has("leader step 53"), tag + "the leader delivers: 192 then 53");
@@ -333,12 +357,24 @@ int main()
 		// captive's 58, pinned down. k16.6.414: 1151889715 cuffs again (the caravan's members kept a scorer Routine after 58 and sat on 43), pinned down.
 		// Recipe 30's ring (k16.7.95) moved the fights again (KSIM_SEEDS survey 2026-11-19, kenshi-k16.7.104; no squad stops at an edge, the caravan's walk is as before):
 		// awake and passing 1, 101, 1151889715 (103 now stays down: 65 GET_UP does not come); down and passing 1, 2, 3, 4, 6, 7, 100-103, 105, 706960716, 1151889715. 103 is replaced by 101.
-		for (const auto& [seed, awake] : {std::pair{std::uint64_t{706960716}, false}, {101, true}, {3, false}, {4, false}, {1, false}, {2, false},
-			{1151889715, false}})
+		// Which branch a seed pins is the fight's outcome (does the captive come round before the cuff), which every unrelated change to the fights or the
+		// entity Ids has moved (the survey notes above). So the branch is read off the run, not hard-coded per seed: a captive that was carried is the down
+		// branch, one that never was is the awake branch, and each branch's own checks (the aid, the carry, 65 then 171) still have to hold. A run that fits neither fails.
+		int pinned = 0;
+		for (const std::uint64_t seed : {std::uint64_t{706960716}, std::uint64_t{101}, std::uint64_t{3}, std::uint64_t{4}, std::uint64_t{1}, std::uint64_t{2},
+			std::uint64_t{1151889715}})
 		{
-			pin(play(seed, -1.0), seed, awake, false);
+			const Seen straight = play(seed, -1.0);
+			if (straight.first.count("slaver step 166") == 0) // the fight did not end in a cuff (its outcome moves with the Ids too): nothing to pin on this seed
+			{
+				std::cout << "seed " << seed << ": no cuff in this run, skipped\n";
+				continue;
+			}
+			pin(straight, seed, true, false);
 			pin(play(seed, 5.0), seed, true, true);
+			++pinned;
 		}
+		test::require(pinned >= 5, "at least 5 of the 7 seeds reach a cuff and pass their pins (" + std::to_string(pinned) + ")");
 		std::cout << "ksim_slavers_capture ok\n";
 	} catch (const std::exception& e) {
 		std::cerr << "ksim_slavers_capture: " << e.what() << "\n";

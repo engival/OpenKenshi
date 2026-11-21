@@ -426,14 +426,19 @@ void testSleep(Game& game)
 
 	// It gets up when the time runs out (bounded by the rolled hold, at most the bed hold's 8 h).
 	const std::uint64_t wake = sleeping->holdUntil;
-	for (int i = 0; i < 200000; ++i)
-	{
-		if (sim.clockTick() >= wake + 2)
-			break;
+	for (int i = 0; i < 200000 && sim.clockTick() < wake; ++i)
 		game.tick();
+	// The wake: the animal is up at some tick of the first second after the hold ends. Its window is still open, so the selector may lay it down
+	// again within a tick or two (the roll of that moment, which world creation's draws move); a sleeper that never gets up fails this.
+	bool wokeUp = false;
+	for (int i = 0; i < 20 && !wokeUp; ++i)
+	{
+		const state::Fighter* up = sim.combat()->find(who);
+		wokeUp = up != nullptr && !up->asleep;
+		if (!wokeUp)
+			game.tick();
 	}
-	const state::Fighter* up = sim.combat()->find(who);
-	test::require(up != nullptr && !up->asleep, "the animal wakes when the hold ends");
+	test::require(wokeUp, "the animal wakes when the hold ends");
 	// Out of the task loop the selector re-scores; the row offers again (its window is open) - the member is either asleep
 	// again or between sleeps, never stuck in the old Routine.
 	std::cout << "175: member " << who << " slept (" << hours << " h) and got up\n";

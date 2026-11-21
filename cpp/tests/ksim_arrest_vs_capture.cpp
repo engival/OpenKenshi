@@ -69,11 +69,9 @@ constexpr int kHeftCellZ = 16;
 constexpr double kHeftX = 68772.98;
 constexpr double kHeftZ = -71496.61;
 // The kidnapper template (Squad role carries both 254 and 112), placed as the town's slavers in the 254 case.
-constexpr const char* kKidnappers = "96357-rebirth.mod";
 // The slave-carrying guard template (its Slave list carries 172): the UC storehouses' 'Storage Guard' package.
 constexpr const char* kSlaverGuards = "56041-rebirth.mod";
 // The wandering-trader caravan (the 39 case).
-constexpr const char* kCaravan = "1161-gamedata.base";
 
 flecs::entity entityOf(Simulation& sim, std::uint64_t id)
 {

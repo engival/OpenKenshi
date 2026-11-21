@@ -135,6 +135,8 @@ public:
 	// Before the squad step: lets the crews reopen the gates they man, then applies the book if it is not the navigator's yet
 	// (first step, a load, an override command, a reopen).
 	void sync(flecs::world& ecs, std::uint64_t tick, const std::vector<TownSite>& towns, const Navigator* navigator);
+	// The command overrides alone, between the second's syncs: a lock set mid-second reaches the book before the next sliced scorer reads it (k16.6.401).
+	void syncOverrides(flecs::world& ecs, const Navigator* navigator, bool first = false);
 
 	GateBash bashing(flecs::entity_t faction, double toX, double toZ) const override;
 	// The bash on ONE gate (goal 270's resolved gate, task raid-goals): the same test as bashing's, for the door key the caller holds;

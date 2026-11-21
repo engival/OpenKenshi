@@ -299,6 +299,26 @@ items). Order of entries: equipment in spawn order, then pack entries by first a
 - `level` is the lock level (20, OURS, UNSURE: the record carries none); `chance` the wearer's own pick chance per roll, `pickChance(level, lockpicking)`, 0..0.9, for the menu's "Pick Lock {1}%" (the client shows `int(chance x 1000) x 0.1`); `maxHardness` 30 (OURS, UNSURE) and `hardness` what is left of it: the cut drains it.
 - When: with each INVENTORY, so on connect and whenever the inventory `version` changes. The sim bumps the version when a pick or a break opens the shackles and when they come off; **a cut in progress does not bump it** (`hardness` is as of the last resend: the bar is TASK_PROGRESS kind 7). A skill, strength or tool change shows at the next resend too.
 
+### CAMERA_START (type 65), once per session after an import (kenshi-cym.39; client-approved on kenshi-cym.38 2026-11-19; additive, no protocol bump; test `ksim_simlink`)
+
+Carries **no `u64 tick`** (the one exception to the rule above): the camera of an imported save is not part of any tick. Body, 46 bytes:
+
+| field | type | meaning |
+|---|---|---|
+| flags | u8 | bit 0: pos, rot, zoom valid (the save had a CAMERA `pos`); bit 1: `floor` valid (the save had `floor num`; a missing key is absent, not 0) |
+| pos | f64 x3 | x, y, z; 0 when bit 0 is clear |
+| rot | f32 x4 | w, x, y, z; 0 when bit 0 is clear |
+| zoom | f32 | as saved (negative); 0 when bit 0 is clear |
+| floor | u8 | 0..3 (the floor-slice level, clamped as the exe's setter does); 0 when bit 1 is clear |
+
+Sent once per session, after the HELLO string table and before the first SNAPSHOT_BEGIN, only when the server's world came from an import (`ksim_server --import-save`). Nothing for a new game or a scenario. A later full resend (another session's load) does not repeat it.
+
+Definitions (original camera: `kenshi-inspect/findings/camera_rts.md`, SAVE_FORMAT.md CAMERA):
+
+1. **pos** is the camera's **focus point, the pivot node's position, not the eye**, in the same world frame as the characters' positions on the wire (the save's world coordinates; y up, f64 as saved). The eye hangs `|zoom|` behind it along the view direction.
+2. **rot** is the **pivot node's orientation** (Ogre quaternion order w, x, y, z): yaw about world Y, pitch about the pivot's local X, no roll. The pivot sits directly under the scene root, so it is the world-frame orientation (the camera node is the pivot's child at local (0, 0, zoom)). It is the pivot's own orientation as saved, **not inverted** (writer `1406b0740` copies `Node::getOrientation`, loader `1407ade60` sets it back; `kenshi-inspect/findings/rwh245_save_camera_rot.md`, static, kenshi-rwh.245). The original's Ogre Camera looks along **+Z** inside the camera node (`lookAt(UNIT_Z)`), so the view is **eye = pos + R·(0, 0, zoom)** and **forward = R·(+Z)**; for an Ogre camera that looks down -Z, use R·rotY(180°). Do not conjugate: treating `rot` as a -Z camera's orientation flips the view 180° (pitch looks up), which is what the conjugate in SCENARIO_IMPORT.md "Client camera sidecar" only happened to undo for the pitch. Not yet compared live against the original's view.
+3. **zoom** is the camera node's local z, i.e. the **negative of the eye's distance from the focus in world units** (u): saved -546.5 means 546.5 u behind the pivot. The original clamps the distance to **10 .. 2000** u (so zoom is in -2000 .. -10); the value after a normal load/new game is -150.
+
 ### CAGES (type 64), per session, on connect and on change (kenshi-k16.5.7, client-approved 2026-11-13 on kenshi-k16.5.6; additive, no protocol bump; test `ksim_cage_wire`)
 
 For the caged-character hover and the two-menu right-click (client k16.2.105): which cage a character is in, and that cage's lock. `u64 tick, u16 n, n x {u64 id, u64 cage, strid record, u8 flags, u16 level, f32 hardness, f32 maxHardness}` (31 bytes each). The list is always **complete**: every caged character in the session's view (a character the client knows, enemies included), sorted by `id`; a client that does not know 64 skips it by its length.
@@ -732,6 +752,55 @@ UNSURE: set_view is sent only when the focus zone changes (with hysteresis), so 
   - Repeating the same rename is harmless: it sets the same value and PLAYER_SQUADS is not resent.
 - Existing squad names (`<name>_N`) are not renamed (matches the exe, live). `squad_add` reads the current name, so the next squad is `<new name>_N`. UNSURE: kinspect 49 found no code that builds squad names from the faction name (new squads come from the "blank squad" template), while our `<factionName>_<N>` came from `docs/reference/FACTION_SQUADS_LIVE.md`; left as is.
 - Test: `ksim_factionrel`. Cross references: FEATURES.md "Faction relations window", docs/UI.md `faction.*`, RUNTIME_SAVE.md v43.
+
+### TOWN_STATE (type 66), to the player faction's sessions, visited towns only, on connect and on change, coalesced (**proposed (kenshi-k16.6.538), not implemented**; survey kenshi-k16.6.540; awaits the client lead's approval, ROLES.md)
+
+Asked by the client for the world-map town tooltip (kenshi-k16.2.439). Source: kinspect `findings/map_town_tooltip_static.md` (kenshi-rwh.225) section 2: no debug gating, every value is live town state. A **new frame**, not a DISCOVERED tail (DISCOVERED is a small, often-resent list; this one is bulky and slow). Type 66 is the next free number (51, 52, 67-69 stay free).
+
+**Layout:** `u64 tick, u16 n`, then n x entry. One entry per town on the DISCOVERED list with `visited = 1` (unvisited places get no entry: the client shows no tooltip for them), in TOWN record order:
+
+| field | type | meaning |
+|---|---|---|
+| town | strid | kind-1 strid of the TOWN record's stringID (as DISCOVERED) |
+| owner | strid | kind-1 strid of the live owner FACTION (`Town vf+0x58`), 0 = none. Not the record's initial faction |
+| flags | u8 | bit 0 `known` (stats byte +9; clear = the client shows `???` for the whole stats block), bit 1 `dead` (stats byte +8; set = the client shows its Dead text in place of the three rows it replaces), bit 2 `isTownClass` (class 0xd: shows the Residents list) |
+| live | u16 | bit n set = field n of the next block is live; clear = a placeholder the client shows as `???`. Bits: 0 residentsMax, 1 residentsActual, 2 roamingMax, 3 roamingPop, 4 roamingSquads, 5 residentFactions, 6 hostileOccupiers |
+| residentsMaxCur, residentsMaxDes | i32, i32 | `Residents max {1}/{2}`: stats row 1 `+0xc` and `+8` |
+| residentsActual | i32 | Actual Num Residents: live members of the current resident squads |
+| roamingMaxCur, roamingMaxDes | i32, i32 | `Roaming currentMax/desiredMax`: stats row 2 `+0xc`, `+8` (the exe's float truncated) |
+| roamingPop | i32 | Roaming Population: live members of the roaming squads |
+| roamingSquads | i32 | Num Roaming Squads (stats row 2 `+0x58`) |
+| nRes, nRes x strid | u8, strid[] | the resident factions (`Town+0xf0`), in the set's order (the exe's Faction* key order; ours: ascending FACTION record order, UNSURE), one kind-1 strid each |
+| nHostile, nHostile x strid | u8, strid[] | Hostile Occupiers (`Town+0x120`), only when `Town+0x128` is set; n = 0 = the row is not shown |
+
+A value whose `live` bit is clear is still written (0) so the entry has a fixed shape up to the two lists; the client must not show it. `Relations:` is not carried: the client has it from FACTION_RELATIONS (38) (the town faction's own entry toward the player; the owner strid keys it).
+
+**Rate:** on connect (every visited town), then, checked once per sim-second (`tick % 20 == 0`, like FACTION_RELATIONS), only when the visited set changed or any entry differs from what this session last sent; **at most one frame per 5 sim-seconds** per session (the tooltip is read on hover, a population count that drifts by one need not be instant); a first visit goes out at the next check. Each frame is the whole list. Entries are only written for visited towns, so the size is small (about 60 bytes x visited towns).
+
+**Survey: what the sim holds today** (kenshi-k16.6.540; paths under `cpp/`):
+
+| value | status | where / from what |
+|---|---|---|
+| visited set, which towns | present | `Simulation::discoveredPlaces` (`src/ksim/world/discovery.cpp:144`) |
+| live owner faction | present | `state::TownState::owner` (`include/ksim/core/state.hpp:176`), written by `CommandType::SetTownOwner` (`src/ksim/core/simulation.cpp:2174`; conquest, scenarios). The record's initial one is `rootSid`/`activeSid`. Note: the comment at `include/ksim/core/simulation.hpp:198` says "the owner never changes"; stale, SetTownOwner exists |
+| Actual Num Residents | derivable | alive members of the squads (`state::SquadInstance`, `state.hpp:228`) whose `homeTown` is the town and `source` is `TownResident` / `TownDefaultResident` (`spawn.cpp:31-34`); members through the squad layer. No per-town counter exists; one pass per emit |
+| Roaming Population, Num Roaming Squads | derivable | the same with `source == TownRoaming` (`spawn.cpp:34`, `spawn.cpp:729`); squads count when at least one member is alive |
+| Residents max x/y | **missing** | no town capacity is kept. The exe's stats row 1 (`+0xc` current max, `+8` desired) has no model; the spawn populate (`spawn.cpp:578-670`) fills once and sets no target. `TownInfo::pop/popd/pop2/popd2` (`state.hpp:145-148`) are imported save counters, meaning UNSURE, no system reads them |
+| Roaming currentMax/desiredMax | **missing** | same: no roaming quota is kept for towns (the wilderness spawner's `population` is a global density, `wilderness.cpp:220`, not this) |
+| known flag (byte +9) | **missing** (partly) | `TownInfo::known` (`state.hpp:136`) means "read from an original save", not the exe's byte; nothing writes the exe's. UNSURE: the writer is untraced (finding section 2); proposal: `known` = true for every visited town whose population we model, else false (the stats block reads `???`) |
+| dead flag (byte +8) | **missing** (partly) | `TownInfo::ded` (`state.hpp:144`) is imported only, never written live; the town swap to ruins (FEATURES 410) is not built. UNSURE: the writer is untraced. Proposal: send `ded` as is |
+| resident faction set (`Town+0xf0`) | derivable | the distinct `SquadInstance::faction` of the town's resident squads plus the owner; imported `TownInfo::factionsHere` (`state.hpp:149`) is the saved copy. UNSURE: who inserts into `Town+0xf0` in the exe is untraced, so the membership rule (current squads vs. history) is ours |
+| hostile occupiers | derivable | `Simulation::occupiers_` (`include/ksim/core/simulation.hpp:200`; per TownState entity, the factions of the squads holding it, saved v117 `Occupancy`). UNSURE: the exe's `Town+0x118` (rwh.53) vs the tooltip's `+0x120/+0x128` set: assumed the same, "hostile" = relation toward the owner < 0 (ours) |
+
+**Sim gaps (ksim files them; no code here):**
+1. Town resident capacity model (Residents max cur/des). UNSURE source: the exe's stats row 1 writer, untraced; the TOWN record's `residents` list counts (v0 per entry) are a candidate for "desired".
+2. Town roaming quota model (Roaming currentMax/desiredMax). UNSURE source: the `roaming squads` entries' v0/v1 on the TOWN record; the periodic town refresh (`spawn.cpp:712-715`) is the exe's refill and is not built.
+3. The exe's `known` (+9) and `dead` (+8) bytes and the `Town+0xf0` set: writers untraced; needs an oracle question to kinspect.
+4. Live `TownInfo::ded` (town swaps to ruins).
+
+**Placeholders until the gaps close:** `live` bits 0 and 2 clear (the client shows `???`; `flags.known` = 0 if the client prefers the whole block as `???`, otherwise only those two rows), bits 1, 3, 4 set from the derivation, 5 and 6 set. **Flagged special case:** none.
+
+**Client's share:** the title (visited name vs the unexplored name), `Faction:` from the owner strid via PLAYER_SQUADS / FACTION_RELATIONS names, `Relations:`, the labels, colours and the Dead / `???` text.
 
 ### NEW_GAME (client -> server frame 111) and NEW_GAME_RESULT (type 62), order 84 new_world (kenshi-b0 + kenshi-0f, 2026-11-01)
 
@@ -1748,7 +1817,7 @@ CHAR_APPEARANCE (its faction strid).
 | 13 | light | f32 | 0..1, only meaningful while sneaking (the tag's light icon frame). Sim: daylight > 0.5 -> 1, else 2 x daylight (no lamps: perception.hpp OPEN) |
 | 14 | n, bounties | u8, n x {strid factionSid, i32 amount} | `CrimeRecord::bounties` with amount > 0, a claimed one included (row 32 says which); n = 0 hides the bounty panel |
 | 15 | sentenceHours | f32 | remaining sentence, 0 = none |
-| 16 | goalEnum | u16 | the AI_TASK enum behind row 4's goal, 0xFFFF = none (a KO'd / dead character, an NPC on its template's behaviour only). Names: `docs/formats/AI_TASK_ENUMS.md` (all 291, generated). **Implemented 2026-11-07** (spectator mode): the same walk fills rows 4 and 16 (`LiveGoal`, char_stats.cpp), so they never disagree |
+| 16 | goalEnum | u16 | the AI_TASK enum behind row 4's goal, 0xFFFF = none (a KO'd / dead character, an NPC on its template's behaviour only). Names: `docs/formats/AI_TASK_ENUMS.md` (all 291, generated). **Operating a producer (2026-11-20, k16.6.471):** 87 OPERATE_MACHINERY ('Operating machine'), source 1 (2 while a job row runs), targetId = the producer, target point = its origin; 0xFFFF when the order ends. No other producer goal is named in AI_TASK_ENUMS (research and mines both use 87). **Implemented 2026-11-07** (spectator mode): the same walk fills rows 4 and 16 (`LiveGoal`, char_stats.cpp), so they never disagree |
 | 17 | source | u8 | where the goal came from: 0 none, 1 a player order, 2 a package / job row (`state::Jobs::running`), 3 the routine slot (the town scorer, a world task; a dialogue's individual goal too), 4 the group AI (`state::GroupAI::goal`), 5 the fight (`Fighter::combatGoal`), 6 a carry chain, 7 fleeing. **Implemented 2026-11-07**; UNSURE: 1 and 2 are never sent yet (row 4 does not read orders or the job queue: a player's job shows through its own routine / interact) |
 | 18 | stepEnum, stepIndex, stepCount | u16, u8, u8 | the G4 plan step being executed (`state::Routine::plan` / `::step`, save v82), leaf first; 0xFFFF / 0 / 0 when there is no plan (a fight plans per tick and stores none) |
 | 19 | targetId | u64 | a character id, else a building / site object id (a routine site's `object`), else 0 |

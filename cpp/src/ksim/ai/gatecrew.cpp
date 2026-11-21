@@ -15,6 +15,103 @@
 
 namespace ksim {
 
+// A crew squad at full detail stands as the exe's crew does (item31, GRADES_GATESQUADS_KO_LIVE.md b, rwh.207): its first living member
+// (Id order, the sergeant) is the squad's leader: the squad layer's goal 180 (package row) holds the squad at its post, and this walks the
+// sergeant itself onto the outside point (the squad stood clumped about 9 u off it). The next four are
+// STAND_AT_NODE guards on the slots (gateStandPoint), one member per spot, each a Routine on task 51 (routines::task::GatePost: busy for the follower,
+// never scored). Members beyond the fifth are off duty (rwh.207): a Routine with no goal, so the town scorer runs the package's 38 / 157 for them
+// (stepRoutines scores a GateCrew squad without a SquadRoutine) and they rotate. A member that dies shifts the rest up.
+void Simulation::stepGateCrewPosts()
+{
+	if (combat_ == nullptr || combat_->empty() || navigation_ == nullptr || clockTick() % kGateCrewIntervalTicks != 0)
+		return;
+	flecs::world& ecs = ecsMutable();
+	if (ecs.count<state::GateCrew>() == 0)
+		return;
+	std::vector<std::pair<flecs::entity, std::uint64_t>> crews;
+	ecs.each([&](flecs::entity squad, const state::GateCrew& crew) { crews.emplace_back(squad, crew.gate); });
+	for (const auto& [squad, gate] : crews)
+	{
+		const GateSite* site = nullptr;
+		for (const GateSite& candidate : world().gateSites())
+			if (candidate.key == gate)
+				site = &candidate;
+		if (site == nullptr)
+			continue;
+		std::vector<std::pair<std::uint64_t, flecs::entity>> members;
+		ecs.query_builder<const state::Id>().with<state::MemberOf>(squad).build().each([&](flecs::entity member, const state::Id& id)
+		{
+			const state::Fighter* f = combat_->find(id.value);
+			if (f != nullptr && !f->dead && !f->playerControlled)
+				members.emplace_back(id.value, member);
+		});
+		std::sort(members.begin(), members.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+		for (std::size_t index = 0; index < members.size(); ++index)
+		{
+			const auto& [id, member] = members[index];
+			const state::Routine* routine = member.get<state::Routine>();
+			if (index == 0)
+			{
+				// The sergeant leads (residents.cpp leaderOf: the first member with no Routine): a former guard gives its post up.
+				if (routine != nullptr && routine->goal == routines::task::GatePost)
+				{
+					routineBook_.release(id);
+					member.remove<state::Routine>();
+				}
+			}
+			const std::optional<GateStand> stand = gateStandPoint(*site, static_cast<int>(index));
+			if (!stand)
+			{
+				if (index == 0) // not reached: index 0 always has a stand point
+					continue;
+				if (routine == nullptr)
+				{
+					state::Routine off;
+					off.since = clockTick();
+					off.nextScore = clockTick();
+					member.set<state::Routine>(std::move(off));
+				} else if (routine->goal == routines::task::GatePost) {
+					state::Routine off = *routine; // a guard shifted down the list: the scorer takes it from here
+					off.goal = 0;
+					off.nextScore = clockTick();
+					member.set<state::Routine>(std::move(off));
+				}
+				continue;
+			}
+			if (index != 0 && (routine == nullptr || routine->goal != routines::task::GatePost))
+			{
+				routineBook_.release(id);
+				state::Routine post;
+				post.since = clockTick();
+				post.goal = routines::task::GatePost;
+				post.nextScore = ~std::uint64_t(0);
+				member.set<state::Routine>(std::move(post));
+			}
+			state::Fighter& f = *combat_->find(id);
+			if (f.unconscious || f.down || f.target != 0 || f.carriedBy != 0 || f.carrying != 0 || f.walking()
+				|| member.has<state::InteractTask>() || member.has<state::DoorStep>() || member.has<state::CarryStep>())
+				continue;
+			const auto spot = navigation_->walker().snap({stand->x, f.y, stand->z}, 40.0);
+			if (!spot || std::hypot(f.x - spot->x, f.z - spot->z) <= kGatePostReach)
+				continue;
+			const Route route = routeRetry(id, f, spot->x, spot->z, spot->y, true);
+			if (!route.found || route.points.empty())
+				continue;
+			f.clearRoute();
+			f.followTarget = 0; // the squad's follow keeps a guard by the leader: the post is its task now
+			for (std::size_t p = 0; p < route.points.size(); ++p)
+				f.route.push_back({route.points[p].x, route.heights[p], route.points[p].z});
+			f.routeNext = 0;
+			++f.routeVersion;
+			f.routeSeq = 0;
+			f.routeChase = false;
+			f.routeApproach = route.approach;
+			f.routeTries = 0;
+			mirrorFighter(id);
+		}
+	}
+}
+
 void Simulation::removeGate(std::uint64_t doorKey)
 {
 	flecs::world& ecs = ecsMutable();

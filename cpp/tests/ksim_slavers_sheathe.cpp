@@ -42,6 +42,8 @@ using namespace ksim;
 namespace
 {
 
+constexpr double kChainBound = 300.0; // s after the cuff: the original's sequence (strip, aid, lift) is well inside it
+constexpr double kStandDown = 10.0; // s after the chain ended (ours: the original's sheathe delay is not in the docs)
 constexpr double kSettle = 30.0; // s after the cuff; the original's N is not in docs (ours)
 
 struct Row { std::uint64_t id; bool weapon; bool fight; int goal; bool routine; int technique; };
@@ -78,7 +80,9 @@ std::vector<Row> play(const std::uint64_t seed, const double settle, const bool 
 	attack.tick = sim.clockTick() + 100;
 	sim.enqueue(attack);
 	std::int64_t shackled = -1;
-	for (int i = 0; i < 6000; ++i)
+	bool ended = false;
+	double endedAt = -1.0;
+	for (int i = 0; i < 20 * 330 + 2000; ++i)
 	{
 		sim.tick();
 		if (shackled < 0 && sim.combat()->find(kPlayer)->slaveState == 1)
@@ -91,10 +95,27 @@ std::vector<Row> play(const std::uint64_t seed, const double settle, const bool 
 				sim.reload(blob);
 			}
 		}
-		if (shackled >= 0 && static_cast<double>(static_cast<std::int64_t>(sim.clockTick()) - shackled) * kTickSeconds >= settle)
+		if (shackled < 0)
+			continue;
+		// The rule is "after the capture chain ends": kSettle s after the cuff AND the leader has reached the delivery (192, then 53; it holds 192 while it
+		// walks, so 192 is the chain's end, not a step in it) AND no member is on 58 (a medic on the slave). Bounded: a chain that never ends is a failure, not a pass.
+		const double since = static_cast<double>(static_cast<std::int64_t>(sim.clockTick()) - shackled) * kTickSeconds;
+		const int leaderGoal = sim.charStats(kBoss).goalEnum;
+		bool chainOver = since >= settle && (leaderGoal == 192 || leaderGoal == 53);
+		for (std::uint64_t id = kBoss; chainOver && id < kBoss + 8; ++id)
+			chainOver = sim.charStats(id).goalEnum != 58;
+		if (chainOver && endedAt < 0.0)
+			endedAt = since;
+		if (endedAt >= 0.0 && since - endedAt >= kStandDown) // the stand-down follows the last medic's 58 by a moment: check kStandDown s after the chain ended
+		{
+			ended = true;
+			break;
+		}
+		if (since >= kChainBound)
 			break;
 	}
 	test::require(shackled >= 0, "the player is captured");
+	test::require(ended, "the capture chain ended (the leader on the delivery, no medic on 58) within " + std::to_string(kChainBound) + " s of the cuff");
 	if (std::getenv("KSIM_DUMP") != nullptr)
 		for (std::uint64_t id = kPlayer; id < kBoss + 8; ++id)
 		{

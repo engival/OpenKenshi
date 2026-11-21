@@ -337,7 +337,12 @@ void Simulation::stepDialogue(std::uint64_t now, TalkProbe* probe)
 				// SHOO: a stranger the owner is aware of inside its building (task 161, TRESPASS_STATIC 1.3): not hostile, not friendly,
 				// the house not locked, and the building not open to public (the exe's vf+0x290: a public bar never shoos; kinspect
 				// findings/dialogue_pacing, live: 2.93 game h at a public bar's counter, zero dialogue).
-				if (ownBuilding && !observer.houseLocked && !openToPublic(observer.building)
+				// A public building's staff shoo too once their lock / secure-bed goal is blocked by the stranger (k16.6.503: the original's closing
+				// chain at a shop, findings shop_closing and dialogue_pacing).
+				const state::Routine* routine = fighterEntity(observerId).get<state::Routine>();
+				const bool closing = routine != nullptr && (routine->goal == routines::task::LockAllMyDoors
+					|| routine->goal == routines::task::LockDoorsStayOutside || routine->goal == routines::task::GoHomeToBedSecure);
+				if (ownBuilding && !observer.houseLocked && (!openToPublic(observer.building) || closing)
 					&& other->building == observer.building && rel > crime::kHostileRelation
 					&& rel < crime::kFriendlyRelation && dialogue_->due(DialogueSystem::fireKey(kKindShoo, observerId, sighting.target), now, kShooTicks))
 				{

@@ -8,6 +8,7 @@
 // entry point is the nearest road segment to the mover biased toward the goal, the exit the same from the goal, the A* cost is
 // road length with a straight-line heuristic, and the road is taken only when (legs + roadLength x factor)^2 <= straight^2.
 
+#include <algorithm>
 #include <cstdint>
 #include <string_view>
 #include <vector>
@@ -38,6 +39,9 @@ public:
 	// The "road preference" factor of every vanilla faction is 1 - 0.4; the stuck fallback's call uses 0.2.
 	static constexpr double kDefaultFactor = 0.6;
 	static constexpr double kStuckFactor = 0.2;
+	// The use-test factor of a faction: max(0, 1 - its "road preference") (14065f940 +0x100; ROADS_EXE.md C27/C28). A preference of 1 or more gives factor 0:
+	// the road length then costs nothing in the use test, so any road reached passes it.
+	static double factorFor(double roadPreference) { return std::max(0.0, 1.0 - roadPreference); }
 
 	RoadNetwork() = default;
 	// Throws kworld::Error when dataDir has no newland/leveldata. A later layer's road replaces an earlier one with the same string id.

@@ -121,6 +121,9 @@ void SimView::fail(const std::string& why)
 bool SimView::pump()
 {
 	if (!error_.empty()) { return false; }
+#ifdef KCLIENT_DEV_TOOLS
+	if (devStall_ && mode_ == Live) { return true; }	// `set stall 1`: the snapshots are held (a network gap), the socket is left unread (kenshi-k16.2.479.1)
+#endif
 	if (mode_ == File)
 	{
 		// whole frames, until the snapshot after the render tick is complete
@@ -226,13 +229,22 @@ void SimView::update(double dt, Characters& chars, const std::function<double(do
 {
 	if (mode_ == None) { return; }
 	const bool paused = dec_.clock.valid && dec_.clock.paused;
+	// kenshi-k16.2.479.1: the animation clock is the sim time the render clock really advanced this frame (set at the end of update), not the
+	// wall dt x game speed: a stall (no snapshot, the clock clamped at the newest sample, a slow sim) holds the pose instead of cycling the legs on the spot
+	const double tickFrom = tick_;
+	dtAnim_ = 0;
 	if (tick_ >= 0)
 	{
 		// A paused sim holds the render clock (kenshi-h2v.23.1). It used to advance at 1x, so the Live hold below pulled it back a fraction
 		// of a tick a frame, less than it gained at 60 fps: the clock ran past the newest snapshot (the drawn clamped, looking still), the
 		// error grew to the snap size and the hold jumped it back, replaying the last ~0.5 s of motion — the paused "shimmer" of the
 		// bar_lure v2 bandits. Frozen, the hold settles it once at the newest snapshot less the delay and it stays; unpausing resumes.
-		tick_ += paused ? 0.0 : dt * kTickRate * (dec_.clock.valid ? dec_.clock.speed : 1.0);
+		// kenshi-k16.2.477.1: at a speed the sim cannot reach the clock advances at the rate the snapshots really arrive (a nominal 100 ticks/s
+		// against 50 delivered ran the clock ahead of the newest snapshot, and the hold below eased it back -10 ticks every few seconds: the screen
+		// jumps); a sim that keeps up (achieved >= 95% of nominal) leaves the nominal rate, so 1x and a healthy 5x are unchanged.
+		double rate = kTickRate * (dec_.clock.valid ? dec_.clock.speed : 1.0);
+		if (mode_ == Live && rateValid_ && achievedRate_ < rate * 0.95) { rate = std::max(achievedRate_, rate * 0.1); }
+		tick_ += paused ? 0.0 : dt * rate;
 		dtSim_ = dt * (paused ? 0.0 : dec_.clock.valid ? dec_.clock.speed : 1.0);
 	}
 	// The 100 ms of wall time the client renders behind the newest snapshot, in ticks of this game speed (kenshi-k16.2.181.1; delayTicks)
@@ -240,6 +252,21 @@ void SimView::update(double dt, Characters& chars, const std::function<double(do
 	bool pumped;
 	{ CPUSTAGE_ACC("sim.pump"); pumped = pump(); }	// the socket read and the wire decode (kenshi-k16.2.205.12.76)
 	if (!pumped && dec_.lastCompleteTick == 0) { return; }
+	if (mode_ == Live && !paused && dec_.clock.valid)	// the achieved tick rate: newest snapshot's advance over >= 0.5 s of wall time, smoothed
+	{
+		const double newest = (double)dec_.lastCompleteTick;
+		if (!rateSeeded_ || newest < rateFrom_) { rateSeeded_ = true; rateFrom_ = newest; rateWall_ = 0; }
+		rateWall_ += dt;
+		if (rateWall_ >= 0.5)
+		{
+			const double r = (newest - rateFrom_) / rateWall_;
+			achievedRate_ = rateValid_ ? 0.5 * achievedRate_ + 0.5 * r : r;
+			rateValid_ = true;
+			rateFrom_ = newest;
+			rateWall_ = 0;
+		}
+	}
+	else if (paused) { rateSeeded_ = false; }
 	// The focused producer's row (k16.19.8.2): it arrived only because of order 87, so hold it apart from dec_.buildings, where the player's own buildings
 	// live, for the focus panel; one the player owns is a player's building and stays in that map (focusBuilding reads it there).
 	for (const uint64_t id : focusProducers_)
@@ -267,13 +294,20 @@ void SimView::update(double dt, Characters& chars, const std::function<double(do
 		// The tick-domain caps stay unscaled with the game speed (kenshi-k16.2.181.1): they bound how fast the clock is corrected, and at
 		// 5x the sim sometimes runs slower than its nominal speed (a tick over the 10 ms interval), so a tighter band tracks it better.
 		// MINE: kClockTau and kClockStep; the original's correction rate is not traced.
-		constexpr double kClockTau = 0.10, kClockStep = 0.25, kClockBand = 0.25, kClockEase = 0.5, kClockEaseMax = 24.0;
+		// kenshi-k16.2.477.1: the correction caps (kClockStep, kClockEase, kClockEaseMax) are ticks, and a game speed s runs s times the ticks a frame: at x5 a sim that
+		// bursts after a 250 ms hiccup leaves the clock 25-33 ticks behind, past the 24-tick ease limit, and the ease at 0.5 ticks a frame lost to the burst: every one
+		// became a +25 tick snap (88 u of a running body). The caps scale with the speed (>= 1x), so the ease finishes in the frames the 1x one does.
+		const double kSpeedScale = std::max(1.0, (double)(dec_.clock.valid ? dec_.clock.speed : 1.0));
+		const double kClockTau = 0.10, kClockStep = 0.25 * kSpeedScale, kClockBand = 0.25, kClockEase = 0.5 * kSpeedScale, kClockEaseMax = 24.0 * kSpeedScale;
 		// kenshi-k16.2.74: the first snapshots arrive in a burst, so the first big clock error is a backlog, not a discontinuity. Ease it in (the
 		// sample history reaches back further than kClockEaseMax, so the interpolation never clamps) instead of jumping the whole world forward; a
 		// reset (load_game) and a jump past kClockEaseMax ticks still snap. The display offset holds each drawn character still while it eases.
 		clockSnapped_ = false;
 		const bool resetLoad = synced_ && dec_.resetSerial != resetSeen_;
 		if (resetLoad) { resetSnap_ = true; clockEasing_ = false; }	// a load: snap the clock and every display offset
+		// The clock never runs past the newest snapshot (it could only draw the last sample still): a stall bounds the overrun to the delay instead
+		// of building a -10..-24 tick error that the ease then swept back as a visible jump (kenshi-k16.2.477.1). A load still snaps below.
+		if (!paused && !resetLoad && dec_.lastCompleteTick > 0 && tick_ > (double)dec_.lastCompleteTick - 1.0) { tick_ = (double)dec_.lastCompleteTick - 1.0; }
 		const double want = (double)dec_.lastCompleteTick - delay, err = want - tick_;
 		// A paused sim holds the render clock whole (h2v.23.1, kenshi-k16.2.317): no ease and no snap either, not just no settle. The deadband
 		// settle was frozen first; the ease was not, and a run slow enough to leave the clock over 10 ticks behind when the pause lands (the
@@ -306,6 +340,11 @@ void SimView::update(double dt, Characters& chars, const std::function<double(do
 	}
 	// a file at its end holds the last tick
 	if (mode_ == File) { tick_ = std::min(tick_, (double)dec_.lastCompleteTick); }
+	// kenshi-k16.2.479.1: the render clock never runs backwards (a snap, a load excepted). The clamp to the newest snapshot and the settle above pulled it back
+	// a fraction of a tick a frame through a stall: the drawn bodies slid backwards (rtick 83160.6 -> 83158.3 in the stall check) while the legs held.
+	if (tickFrom >= 0 && !clockSnapped_ && tick_ < tickFrom) { tick_ = tickFrom; }
+	// The sim time drawn this frame, for the animation. A snap (a load, a far jump) is a teleport, not time passing: it takes the nominal frame.
+	dtAnim_ = clockSnapped_ && tickFrom >= 0 ? dtSim_ : tickFrom >= 0 ? std::max(0.0, (tick_ - tickFrom) / kTickRate) : 0.0;
 	if (!held_) { CPUSTAGE_ACC("sim.sync"); sync(chars, ground); }
 }
 
@@ -1310,7 +1349,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		const double still = (double)b.tick - (double)sl.wireMoveTick;
 		// 1. The walk animation plays while the wire's position stands still: the legs' own input (spec.move = the drawn speed, above the locomotion's
 		//    0.5 u/s rest cutoff) says walking while the sim has not moved the character for kWireStillTicks. A sim-side stall ("sim delayed?") reads so.
-		if (sl.drawn && sl.down == Up && !posed && dtSim_ > 0 && std::fabs(s.move) >= 0.5f && still >= kWireStillTicks.get() && tick_ - (double)sl.stallLogTick >= kCaseGap)
+		if (sl.drawn && sl.down == Up && !posed && dtAnim_ > 0 && std::fabs(s.move) >= 0.5f && still >= kWireStillTicks.get() && tick_ - (double)sl.stallLogTick >= kCaseGap)
 		{
 			sl.stallLogTick = (uint64_t)tick_;
 			evlog::add("walkstall", tick_, id, "walking at %.1f u/s while the wire's position has not moved for %.1f s (%.0f ticks; newest sample %llu at %.1f,%.1f,%.1f, drawn at %.1f,%.1f)",

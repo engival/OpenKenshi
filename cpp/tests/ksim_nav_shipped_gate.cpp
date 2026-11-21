@@ -442,7 +442,7 @@ int main(int argc, char** argv)
 			std::cout << "  stale reason: " << n << " zones: " << reason << "\n";
 
 		// ---- per zone ----
-			std::deque<std::pair<std::size_t, std::future<Counts>>> running;
+		std::deque<std::pair<std::size_t, std::future<Counts>>> running;
 		std::vector<SeamRow> seams;
 		std::set<std::array<int, 3>> seamSeen;
 		Counts world;

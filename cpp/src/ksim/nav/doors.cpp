@@ -380,6 +380,13 @@ void DoorSystem::sync(flecs::world& ecs, std::uint64_t tick, const std::vector<T
 	if (!tuning_.enabled)
 		return;
 	crewsReopen(ecs, tick);
+	syncOverrides(ecs, navigator, true);
+}
+
+void DoorSystem::syncOverrides(flecs::world& ecs, const Navigator* navigator, bool first)
+{
+	if (!tuning_.enabled || (!applied_ && !first)) // the first book is the second's sync's
+		return;
 	static const std::vector<state::DoorOverride> none;
 	const state::DoorOverrides* overrides = ecs.get<state::DoorOverrides>();
 	const std::vector<state::DoorOverride>& wanted = overrides != nullptr ? overrides->entries : none;

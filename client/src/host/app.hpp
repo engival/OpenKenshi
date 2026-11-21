@@ -157,6 +157,7 @@ struct Options
 	double simlinkTick = -1;	// --simlink-tick N: a replay starts at tick N
 	// (--scene-test / --scenes / --scene-file / --scene-hud / --scene-frames are dev flags: dev/scenetest.cpp, dev/devhooks.hpp)
 	bool debug = false;		// --debug: the development features (the F8 panel, the debug keys, the scenes, the debug script ops); release builds leave them out
+	bool fly = false;		// --fly: the offline fly-around (no title, no server; kenshi-k16.2.475.1)
 	std::vector<std::string> characters;	// --character SPEC (repeatable): test characters in a row in front of the start camera, add_characters()
 	std::string creator;	// --creator RACE[/female]: the character creator's preview in front of the start camera (open_creator)
 	std::vector<std::string> blood;	// --blood SPEC (repeatable): ground blood decals placed from the start camera, place_blood()
@@ -237,10 +238,10 @@ struct CameraState
 	uint64_t followId = 0;		// the followed character
 	double followDist = 60, followBase = 0, followOffset = 0;
 	int floorLevel = -1;		// the visible floor level 0..3 (WorldBuildings::level); -1 = an older sidecar without it: the start snaps
-	// The world map's view the save was made at (k16.2.435, a deliberate deviation): zoom in pixels a map texel (0 = fitted), the world point
-	// at the view's centre. An older sidecar has none: its load starts at the default overview.
+	// The world map zoom the save was made at (k16.2.435, a deliberate deviation): pixels a map texel (0 = fitted); the centre is not kept (k16.2.435.5).
+	// An older sidecar may have none: its load starts at the default overview.
 	bool hasMapView = false;
-	double mapZoom = 0, mapCx = 0, mapCz = 0;
+	double mapZoom = 0;
 };
 
 // A load's camera restore in flight: armed when the load's reset is seen (update_ui), applied on the load's first snapshot after it.

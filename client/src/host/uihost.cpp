@@ -356,10 +356,10 @@ static void init_menus()
 	app.debugTree = std::make_unique<ui::DebugTree>(std::move(dta));
 #endif
 	// --simlink is an instant join (user 2026-11-07): straight into the game, no title, no menu music; the title is for a client that starts its own server
-	// An interactive --debug run with no --simlink and no --script skips the title too (kenshi-k16.2.87, user 2026-11-10: "If I run
-	// kclient --debug, I get stuck at a main menu that can't do anything"): offline, the title's buttons can start nothing, and the
-	// debug run is a fly-around. A title that does show starts its own local server behind it (start_local_server).
-	const bool offlineDebug = app.opt.debug && !app.scripted() && app.opt.simlink.empty() && !app.opt.localServer;
+	// An interactive --fly run with no --simlink and no --script skips the title (kenshi-k16.2.87; the flag was --debug until
+	// kenshi-k16.2.475.1, user 2026-11-21: --debug only adds the development tools): offline, the title's buttons can start nothing, and the
+	// run is a fly-around. A title that does show starts its own local server behind it (start_local_server).
+	const bool offlineDebug = app.opt.fly && !app.scripted() && app.opt.simlink.empty() && !app.opt.localServer;
 	if (((kTitleAtStart.get() && !app.scripted() && app.opt.simlink.empty() && !offlineDebug) || app.opt.localServer) && !app.creator.active())
 	{
 		app.mainMenu->show(true);
@@ -368,7 +368,7 @@ static void init_menus()
 	}
 	else if (offlineDebug)
 	{
-		fprintf(stderr, "kclient: no title screen (--debug with no --simlink and no --script, k16.2.87): the free camera starts over %.0f,%.0f\n", app.pos[0], app.pos[2]);
+		fprintf(stderr, "kclient: no title screen (--fly with no --simlink and no --script, k16.2.87): the free camera starts over %.0f,%.0f\n", app.pos[0], app.pos[2]);
 	}
 	app.session = !app.opt.simlink.empty();
 }
@@ -1268,6 +1268,13 @@ void update_ui(double dt)
 	ms.cameraZ = app.pos[2];
 	ms.cameraYaw = (float)app.yaw;
 	app.overview->updateMap(ms);
+	{
+		// k16.2.435.5: the world map always opens centred on the camera (the zoom is kept; the centre never is): on the frame the MAP page turns up shown
+		static bool mapWasShown = false;
+		const bool mapShown = app.overview->shown(ui::OverviewPage::kMap);
+		if (mapShown && !mapWasShown) { app.overview->centreMap(); }
+		mapWasShown = mapShown;
+	}
 	app.minimap->show(kMinimap.get() && app.sim.active() && !title_shown() && !app.creatorUi->shown() && !app.wmap.full);	// hidden with the full map, the title, loading (no sim), the creator
 	if (app.minimap->shown())
 	{

@@ -382,6 +382,16 @@ over this.
 
 - **Fixed tick.** Seeded random numbers, one stream per subsystem.
   The goal is reproducible debugging and replays, not exact sync over the network.
+- **Each system runs at the rate it needs, not every tick by default** (user 2026-11-20, kenshi-k16.6.606, after x5 was
+  unplayable on a long travel): "Perception checks don't need to be run every single tick... a few missed won't hurt.
+  ... A run in a straight line with no other entities to collide with could very likely be done on the cheap. Combat
+  could be high resolution when required. Hunger needs can skip ticks if needed... Replay perfection shouldn't be our
+  blocking goal that messes up performance." So perception is staggered with a bounded delay (event senses such as a
+  hit or onTargetedBy stay immediate); unobstructed movement takes a cheap path, with full steering near bodies,
+  corners, doors and arrival; combat is full resolution only in or entering a fight; needs / medical / production run
+  on a slow cadence scaled by elapsed time. **Bit-exact replay never blocks a performance change.** Determinism is kept
+  where it is free (a stagger by id keeps a seeded run reproducible). The rates and the cheap paths are designed on
+  kenshi-k16.6.606 and recorded here when decided.
 - **Levels of detail instead of loaded/unloaded chunks.** An entity's data looks
   the same at every level; only its update rate and resolution change.
 

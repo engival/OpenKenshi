@@ -166,6 +166,8 @@ void replayFirstPoint(const std::shared_ptr<ksim::MeshNavigator>& nav)
 				last = 0.0;
 				continue;
 			}
+			if (me.route.empty())
+				break; // arrived: the stop's last step is not the route start (k16.8.23: the corner's measured room leaves a few u/s at it)
 			const double heading = std::atan2(me.velX, me.velZ) * 180.0 / kPi;
 			double turn = std::fabs(heading - last);
 			turn = turn > 180.0 ? 360.0 - turn : turn;

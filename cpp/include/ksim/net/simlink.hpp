@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <optional>
 #include <cstring>
 #include <deque>
@@ -108,6 +109,7 @@ enum FrameType : std::uint16_t
 	kDetectedBy = 60, // DETECTED_BY: a sneaking player character's detection records (observer, red/yellow, friendly) for the stealth arrows (SIMLINK.md)
 	kBeams = 58, // BEAMS: Venge's sky beams, planned ahead, to the sessions in range (SIMLINK.md section 6; 57 is ITEM_LOCK)
 	kScenarioMetrics = 56, // SCENARIO_METRICS: the answer to SCENARIO_END 104
+	kCameraStart = 65, // CAMERA_START: the imported save's camera (pos, rot, zoom) and floor, once per session before the first SNAPSHOT_BEGIN (SIMLINK.md CAMERA_START; kenshi-cym.39)
 	kCages = 64, // CAGES: the caged characters in the session's view: cage key, record, lock state, level, hardness (SIMLINK.md CAGES; kenshi-k16.5.7)
 	kResearchState = 63, // RESEARCH_STATE: the player faction's tech level, every RESEARCH record's state and the unlocked refs per kind (SIMLINK.md RESEARCH_STATE)
 	kNewGameResult = 62, // NEW_GAME's answer: result, then the faction and its members, or the reason (SIMLINK.md NEW_GAME, MULTIPLAYER.md 4a)
@@ -415,6 +417,17 @@ struct ServerContext
 	// CLOCK `paused`: bit 0 the idle or admin pause, bit 1 the dialogue pause.
 	std::uint8_t pauseBits() const noexcept { return static_cast<std::uint8_t>((paused || idle ? 1 : 0) | (menuHolds.empty() ? 0 : 2)); }
 	float speed = 1.0f;
+	// CAMERA_START (type 65): set when the world came from an import (saveimport::Report CAMERA); each session sends it once, first.
+	struct CameraStart
+	{
+		bool hasCamera = false; // flags bit 0: pos, rot, zoom
+		std::array<double, 3> pos{};
+		std::array<double, 4> rot{}; // w x y z
+		double zoom = 0.0;
+		bool hasFloor = false; // flags bit 1: floor
+		int floor = 0;
+	};
+	std::optional<CameraStart> cameraStart;
 	// Debug overlay: also send CHAR_ROUTE for characters that are not player-controlled.
 	bool sendAiRoutes = false;
 	// The debug view (docs/formats/SIMLINK.md "DEBUG VIEW"): the server was started with --debug-view. Only a loopback peer
@@ -431,7 +444,7 @@ struct ServerContext
 	// The playtest scenarios (task CE): the directory of `scenarios/<name>.kscen` files (ksim_server --scenarios made it); empty = the
 	// scenario orders answer `unsupported`. Order 99 loads one into this simulation.
 	std::string scenariosDir;
-	// ksim_server --combat-retarget-hold S: overrides a scenario header's retarget_hold (COMBAT_OPTIONS.md 6); unset = the header, else 0.
+	// ksim_server --combat-retarget-hold S: overrides a scenario header's retarget_hold (COMBAT_OPTIONS.md 6); unset = the header, else 1.0 s (the original).
 	std::optional<double> retargetHold;
 	// ksim_server --turret-manning on|off: overrides a scenario header's turret_manning; unset = the header, else off.
 	std::optional<bool> turretManning;
@@ -502,7 +515,7 @@ private:
 		bool unconscious = false;
 		std::uint32_t routeSent = 0; // the routeVersion the client last heard of
 		std::uint32_t routeSeqSent = 0; // the seq of the route the client last heard of (the clear carries it)
-		RouteDiag diagSent; // the diag the client last heard: a change re-sends the CHAR_ROUTE
+		RouteDiag diagSent{}; // the diag the client last heard: a change re-sends the CHAR_ROUTE
 	};
 	struct Look
 	{
@@ -656,9 +669,7 @@ private:
 	void writeRoute(RecordWriter& out, std::uint64_t tick, const CombatArena::Member& m, std::uint32_t seq);
 	RouteDiag routeDiag(const CombatArena::Member& m) const;
 	void writeMedical(RecordWriter& out, std::uint64_t tick, const CombatArena::Member& m);
-	struct DetectRecord;
 	void writeDetect(RecordWriter& out, std::uint64_t tick, const DetectRecord& d);
-	struct SeenByRecord;
 	void writeSeenBy(RecordWriter& out, std::uint64_t tick, const SeenByRecord& s);
 	void writeDetectedBy(RecordWriter& out, std::uint64_t tick, const DetectedByRecord& d);
 	void writeCharStats(RecordWriter& out, std::uint64_t tick, std::uint64_t id, const Simulation::CharStats& stats);
@@ -692,7 +703,7 @@ private:
 		std::uint32_t stockVersion = 0;
 		std::uint32_t actorVersion = 0;
 		std::int64_t money = 0;
-		std::vector<std::pair<std::uint64_t, std::uint32_t>> chests; // the chest-price tail last sent: container id, its INVENTORY version
+		std::vector<std::pair<std::uint64_t, std::uint32_t>> chests{}; // the chest-price tail last sent: container id, its INVENTORY version
 	};
 	struct TradeOut
 	{
@@ -799,6 +810,7 @@ private:
 	bool beamsForget_ = true; // the next frame resets every group (connect, load, new world)
 	std::uint64_t weatherPicksSent_ = ~0ull; // WeatherSystem::picks() the last WEATHER frame carried (resent when it changes)
 	bool boundsSent_ = false;
+	bool cameraStartSent_ = false; // CAMERA_START goes once per session: a resend after a load does not repeat it
 	PlayerSquadsView squadsSent_; // PLAYER_SQUADS as the client last heard it (faction 0 = nothing sent)
 	bool squadsKnown_ = false;
 	std::vector<std::string> unlocksSent_; // UNLOCKS: the completed research the client last heard

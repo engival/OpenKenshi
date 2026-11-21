@@ -529,7 +529,7 @@ std::size_t Simulation::worldRuntimeEntries() const
 	return worldTaskBlocks_.size() + carryIdleSince_.size() + eatenBites_.size() + eatenQueue_.size() + eatenUntil_.size() + tortureStrip_.size()
 		+ lockOrders_.size() + buildOrders_.size() + arrestOrders_.size() + smashOrders_.size() + cropOrders_.size() + standingRun_.size()
 		+ limbCooldown_.size() + limbPlay_.size() + alarmDwell_.size() + announced_.size() + fightPairs_.size() + memberScores_.size()
-		+ occupiers_.size() + raidLeaders_.size() + producerOffMesh_.size() + talkSeqs_.size() + buyback_.size() + (dialogue_ != nullptr ? dialogue_->worldEntries() : 0);
+		+ occupiers_.size() + raidLeaders_.size() + producerOffMesh_.size() + talkSeqs_.size() + buyback_.size() + selfAidSince_.size() + (dialogue_ != nullptr ? dialogue_->worldEntries() : 0);
 }
 
 bool Simulation::holdsOrder(std::uint64_t id) const
@@ -1219,9 +1219,6 @@ void Simulation::setClockTick(std::uint64_t tick)
 	ecsMutable().set<state::Clock>(state::Clock{tick});
 }
 
-// The portrait's engaged hold after the last living target / carried body (OURS, k16.6.159: the AI+0xb0 float decays ~1 per 15 s).
-constexpr double kPortraitEngagedSeconds = 15.0;
-
 void Simulation::tick()
 {
 	KSIM_PROFILE_BEGIN();
@@ -1259,6 +1256,7 @@ void Simulation::tick()
 	}
 	KSIM_PROFILE_MARK(Wild);
 	stepGateBinding();
+	stepGateCrewPosts();
 	if (ai_ != nullptr)
 	{
 		if (now % kStrategicIntervalTicks == 0 && ai_->strategicStep(ecs, now))
@@ -1771,10 +1769,6 @@ void Simulation::stepCombat(std::uint64_t now)
 			}
 			state::Fighter* mutableFighter = combat_->find(members[i].id);
 			mutableFighter->strolling = strolls;
-			// The portrait's "engaged" (OURS, UNSURE, k16.6.159): a living target or a body in the arms, held 15 s past the last tick of either.
-			const state::Fighter* foe = members[i].fighter.target != 0 ? combat_->find(members[i].fighter.target) : nullptr;
-			if ((foe != nullptr && !foe->dead) || members[i].fighter.carrying != 0)
-				mutableFighter->engagedUntil = now + static_cast<std::uint64_t>(kPortraitEngagedSeconds / kTickSeconds);
 			// A goal-43 floor-sitter stays pushable (as when it stood); only a chair holds its place.
 			const bool floorSit = routine != nullptr && routine->goal == routines::task::StayInHome && routine->target.kind != static_cast<std::uint8_t>(routines::SiteKind::Seat);
 			// A town resident standing about (at its node, a post, anywhere with nothing to do) is outside the push, as pusher and as neighbour: the

@@ -151,7 +151,6 @@ void enable(Simulation& simulation, std::shared_ptr<const Navigator> navigator)
 	simulation.enableAi(std::move(config));
 }
 
-constexpr std::uint64_t kSecond = 20; // ticks
 
 void runSeconds(Simulation& simulation, double seconds)
 {

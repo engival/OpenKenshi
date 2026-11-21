@@ -131,6 +131,9 @@ struct Report
 	std::array<double, 3> cameraPos{};
 	std::array<double, 4> cameraRot{}; // w x y z
 	double cameraZoom = 0.0;
+	// CAMERA `floor num` (the floor-slice level, clamped 0..3 as the exe's setter does); hasCameraFloor false = the key is absent (not 0).
+	bool hasCameraFloor = false;
+	int cameraFloor = 0;
 	std::uint64_t selected = 0;
 	std::vector<std::uint64_t> selection;
 	std::size_t unresolvedHandles = 0; // slaver / selection handles that name no imported member

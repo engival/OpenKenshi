@@ -413,6 +413,9 @@ static void logic_paths(FramePacket& pk)
 	if (title_shown()) { frame_title(pk, dt); return; }
 	// A live session with no camera target yet streams and draws nothing (k16.2.112.1): black or the session loading screen, never the world.
 	if (!app.worldTarget) { frame_await_target(pk, dt); return; }
+	// The creator is its own mode (kenshi-k16.2.472.3): its scene is the editor platform and the preview character alone. The world is kept loaded and its
+	// link read, but nothing of it is picked, streamed (foliage, grass, props, particles) or drawn (the id pass, the world's characters) while it shows.
+	const bool editor = app_mode() == Mode::kCreator;
 	if (!app.firstWorldFrame) { app.firstWorldFrame = true; printf("first_world_frame: x=%.0f z=%.0f reason=%s\n", app.pos[0], app.pos[2], app.targetReason); screenshot_world_frame(); }
 	// An offline flight (play.sh fly: no sim, no session) gets the same ready-set gate as a session: the load screen stands over the first world frames until
 	// the load ring is created (session.loading_screen: 1 live runs only, 2 scripted too; kenshi-k16.2.258.3)
@@ -438,8 +441,7 @@ static void logic_paths(FramePacket& pk)
 		CPUSTAGE("sim.update");
 		app.nav.update(app.sim.decoder(), app.sim.takeNavPatches());
 		app.sim.setWalker(app.nav.walker());
-		live_squads();
-		live_profile();
+		if (!app.creatorUi->shown()) { live_squads(); live_profile(); }
 		CPUSTAGE("sim.nav+squads");
 		for (const SimView::Splash& s : app.sim.takeSplashes())
 		{
@@ -479,23 +481,27 @@ static void logic_paths(FramePacket& pk)
 			if (!camera_subject()) { app.centerId = app.sim.selected()[0]; app.buildings.engage(); }
 			app.centerOnStart = false;
 		}
-		app.collide.update(app.pos[0], app.pos[2]);
-		CPUSTAGE("pk.pre");	// sub-stages of sim.peek+hover (kenshi-k16.2.205.12.109): the splashes .. collide update, the peek, the hover pick
-		update_peek(dt);
-		CPUSTAGE("pk.peek");
-		hover_cursor();
-		CPUSTAGE("pk.hover");
+		if (!editor)	// game mode only: the creator owns the pointer and picks nothing of the world (kenshi-k16.2.472.3)
+		{
+			app.collide.update(app.pos[0], app.pos[2]);
+			CPUSTAGE("pk.pre");	// sub-stages of sim.peek+hover (kenshi-k16.2.205.12.109): the splashes .. collide update, the peek, the hover pick
+			update_peek(dt);
+			CPUSTAGE("pk.peek");
+			hover_cursor();
+			CPUSTAGE("pk.hover");
 #ifdef KCLIENT_DEV_TOOLS
-		pick_mask_update();
+			pick_mask_update();
 #endif
-		route_preview_frame();
+			route_preview_frame();
+		}
+		else { app.hoverThing = 0; app.hoverHitOk = false; app.cursors.set("arrow"); }
 		place_session_camera();
 		CPUSTAGE("sim.peek+hover");
 	}
 	update_ui(dt);
 	CPUSTAGE("update_ui");
-	const double charDt = app.scripted() && !app.scriptAnim ? 0.0 : app.sim.active() ? app.sim.dtSim() : dt;	// on the sim's clock: still while paused (user 2026-11-05), faster at 2x / 3x
-	if (app.sim.active()) { app.ragdolls.update(app.sim, app.chars, app.hm ? &*app.hm : nullptr, app.pos); }
+	const double charDt = app.scripted() && !app.scriptAnim ? 0.0 : app.sim.active() ? app.sim.dtAnim() : dt;	// on the sim time drawn (kenshi-k16.2.479.1; was dtSim: wall dt x speed, which ran the legs through a stall): still while paused (user 2026-11-05), faster at 2x / 3x
+	if (app.sim.active() && !editor) { app.ragdolls.update(app.sim, app.chars, app.hm ? &*app.hm : nullptr, app.pos); }
 	app.chars.update(charDt, dt);	// dt: the loading stand-in's clocks run on the frame's own time, even where the poses are held (kenshi-k16.2.258.1)
 	CPUSTAGE("chars.update");
 	// the animation notifies' sounds (kenshi-h2v.29.6): each fired notify posts on its character's world object (the sim id), with the switches the game sets
@@ -562,7 +568,6 @@ static void logic_paths(FramePacket& pk)
 	// The creator's scene is clear and dry while it is shown (k16.17.6.1): the original's editor builds its own scene far below the world; ours showed the
 	// region's weather over it (the user's rain and glistening skin). Client-side display only: the world's weather is not touched, and it is logged again
 	// on the first world frame after the creator closes (CONFIRM / cancel), next to the value that was held under the creator.
-	const bool editor = app.creatorUi->shown();
 	if (!editor && app.creatorWeatherHeld)
 	{
 		if (!app.sky.regionalFog) { app.sky.weather = app.creatorWeatherSave; }	// a pinned weather is not recomputed per frame: put it back (the regional blend above already has)
@@ -703,8 +708,11 @@ static void logic_paths(FramePacket& pk)
 			app.propsLive = live;
 			app.buildings.setProps(props);
 		}
-		update_doors(dt);
+		// the editor platform is one of the props (WorldBuildings::setProps adds it while setEditor is on): the list is rebuilt for it, the doors and the floor model wait for the game mode (kenshi-k16.2.472.3)
+		if (!editor) { update_doors(dt); }
 		CPUSTAGE("props");
+		if (!editor)
+		{
 		// roof / floor slicing (kinspect camera_rts.md 6): every player character indoors, selected or not, slices the building it stands in; the auto
 		// floor follows the followed character only, as the original's does; the first selected one only names the sliced building
 		// (the wire's indoors bit + building + floor: in a building's interior AND under a ceiling, so a roof deck or a porch slices nothing; never a
@@ -809,6 +817,7 @@ static void logic_paths(FramePacket& pk)
 		app.buildings.wind[1] = (float)std::cos(windYaw);
 		app.buildings.wind[2] = app.windForce >= 0 || app.sky.weather.windValid ? 1.0f : 0.0f;
 		app.buildings.windSpeed = app.windSpeedForce >= 0 ? (float)app.windSpeedForce : app.windForce < 0 && app.sky.weather.windValid ? app.sky.weather.windSpeed : -1.0f;	// a scene's wind=DEG has no speed
+		}	// !editor
 		// its mesh and texture creates and evicts are render queue jobs, its instances a packet upload (kenshi-k16.2.205.12.35)
 		app.buildings.update(app.pos, mvp, app.opt.fog, app.scripted() && !kStreamScripted.get(), sim_time(), app.shadow.active() ? Shadow::kRadius[Shadow::kCascades - 1] : 0.0, pk.buildings);
 		CPUSTAGE("buildings.update");
@@ -829,7 +838,7 @@ static void logic_paths(FramePacket& pk)
 			else if (strength > 0.0f || shafts) { app.buildings.lightVolumes(cam.pos, 500.0, lightvol::kMax, pk.buildings.volumes); }
 		}
 		CPUSTAGE("buildings.lightVolumes");
-		if (app.foliageOn)
+		if (app.foliageOn && !editor)	// the creator draws no foliage or grass (kenshi-k16.2.472.3)
 		{
 			if (app.scripted()) { wait_ready([] { return app.foliage.ready() || app.foliage.failed(); }); }
 			{

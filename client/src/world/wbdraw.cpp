@@ -838,6 +838,7 @@ float WorldBuildings::swayTop(uint32_t pid) const
 uint32_t WorldBuildings::addPart(const BuildingPartDef& def)
 {
 	dataGen_++;
+	topBoxGen_++;
 	data_.parts.push_back(def);
 	partRt_.emplace_back();
 	partStamp_.push_back(0);

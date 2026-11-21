@@ -609,10 +609,14 @@ SaveLoadResult readSave(std::istream& in, flecs::world& ecs,
 		entities.push_back(ecs.entity().id());
 	save.setEntities(&entities);
 
+	std::uint64_t furnitureNext = state::kFurnitureIdBase;
 	for (const flecs::entity_t raw : entities)
 	{
 		flecs::entity entity(ecs.c_ptr(), raw);
-		entity.set<state::Id>(state::Id{save.u64()});
+		const std::uint64_t id = save.u64();
+		if (id >= state::kFurnitureIdBase)
+			furnitureNext = std::max(furnitureNext, id + 1);
+		entity.set<state::Id>(state::Id{id});
 		const std::uint64_t mask = save.u64();
 		forEachType(state::SavedComponents{}, [&]<typename T>(std::size_t bit)
 		{
@@ -669,7 +673,7 @@ SaveLoadResult readSave(std::istream& in, flecs::world& ecs,
 		throw SaveError("trailing bytes after the pending commands");
 
 	ecs.set<state::Clock>(state::Clock{tick});
-	ecs.set<state::Ids>(state::Ids{nextId});
+	ecs.set<state::Ids>(state::Ids{nextId, furnitureNext});
 	return result;
 }
 

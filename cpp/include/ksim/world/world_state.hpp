@@ -23,7 +23,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace flecs { class world; }
+namespace flecs { struct world; }
 
 namespace ksim::state { struct WorldEventState; }
 

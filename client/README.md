@@ -83,8 +83,8 @@ their `libraryfolders.vdf` libraries; macOS: Steam's `common/Kenshi` and a `Kens
 there, the game has no macOS build). A hit is saved; nothing found opens a native folder picker ("Where is Kenshi installed?", `src/app/datapicker.cpp`, tinyfiledialogs: zenity/kdialog/qarma on Linux, the shell dialog on Windows, osascript on macOS) before the window exists; the install folder or its `data/` folder is accepted and saved as `data=PATH` (a folder without `gamedata.base` reopens it with the reason in its title). Cancel, no dialog tool, no display (Linux: no `DISPLAY`/`WAYLAND_DISPLAY`), `KCLIENT_NO_DIALOG=1` or `KCLIENT_CONFIG=none` (headless.sh sets both) print every place it looked and the three ways to set one, then exit 1. A
 dev build searches the configure-time `KENSHI_DATA` first among the installs; a release build (dev tools OFF) carries no path, in the client or the
 in-process server (`KSIM_BAKE_DATA_PATH` follows `KCLIENT_DEV_TOOLS`, and the client passes the resolved `--data` to its server). `kenshi` with
-no options behaves as `play.sh title` — the title and its own server, also for a scripted/headless run; `--debug` keeps the offline fly-around
-and `--simlink` keeps joining a given server.
+no options behaves as `play.sh title` — the title and its own server, also for a scripted/headless run; `--debug` only adds the development tools (the title and the server are the same), `--fly` is the offline
+fly-around and `--simlink` keeps joining a given server.
 
 **Windows log (kenshi-379.31.9.1).** `OpenKenshi.exe` is a GUI-subsystem program: no console window opens. Its stdout and stderr (client, embedded server, crash report) go to `%LOCALAPPDATA%\OpenKenshi\data\logs\openkenshi.log`; the previous run is kept as `openkenshi.log.1`. `--console` (or `KCLIENT_CONSOLE=1`) opts in to a console instead: the one it was started from (cmd, a terminal), else a new window (`src/platform/console.hpp`). Linux and macOS print to their terminal as before; here the client line-buffers its own stdout at startup (`src/platform/posix/console.cpp`, kenshi-k16.2.461), so a run whose stdout is redirected to a file or a pipe (a playtest / capture run log) writes each line as it prints it: every line up to the exit is in the file, whatever ends the run (a normal quit, a window close, SIGTERM from the wrapper, a crash).
 
@@ -114,8 +114,8 @@ ignored (`Hub`, `squin`, `The Hub`), or an x,z pair. A name frames the place: th
 `alt / tan(|pitch|)`, so the sight line at the given yaw and pitch meets the town's centre; an x,z pair (or a `--pos`
 with a name) puts the eye exactly there. An unknown name lists the closest names and exits 2.
 
-Without the launcher: `client/build/kclient --debug` by itself is an offline fly-around over the world at `--at`/`--pos`, with
-no title screen and no game server (a `--debug` run does not show the title). A plain `client/build/kclient` shows the title,
+Without the launcher: `client/build/kclient --fly` by itself is an offline fly-around over the world at `--at`/`--pos`, with
+no title screen and no game server (`--debug` alone does not do this: it adds the development tools to the normal title and server; `--debug --fly` is what `play.sh fly` runs). A plain `client/build/kclient` shows the title,
 which starts its own local server behind it. A joined session needs `--simlink HOST:PORT` (`--debug` for the development keys
 and windows).
 

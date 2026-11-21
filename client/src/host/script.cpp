@@ -728,6 +728,9 @@ void exec_cmd(const Cmd& c)
 		else if (a[0] == "particles") { app.particleScriptDt = std::fmax(0.0, atof(a[1].c_str())); }
 		else if (a[0] == "beams") { app.beamsOn = a[1] != "off"; }
 		else if (a[0] == "partdepth") { app.particles.setDepthTest(a[1] != "off"); }	// dev A/B: the particle FS's scene depth test (kenshi-h2v.14.2.1)
+#ifdef KCLIENT_DEV_TOOLS
+		else if (a[0] == "stall") { app.sim.devStall(atoi(a[1].c_str()) != 0); printf("stall %s: render tick %.2f newest snapshot %llu\n", a[1].c_str(), app.sim.tick(), (unsigned long long)app.sim.decoder().lastCompleteTick); }	// hold the snapshots (kenshi-k16.2.479.1)
+#endif
 		else if (a[0] == "simspeed") { app.sim.setSpeed((float)atof(a[1].c_str())); }	// the sim's game speed (order SET_SPEED)
 		else if (a[0] == "day") { app.sky.clock.day = atoi(a[1].c_str()) - 1; }
 		else if (a[0] == "weather") { set_weather(a[1]); }

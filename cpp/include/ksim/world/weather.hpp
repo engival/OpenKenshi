@@ -90,7 +90,7 @@ struct WeatherDef
 
 struct SeasonWeather
 {
-	std::string weather; // WEATHER stringID
+	std::string weather{}; // WEATHER stringID
 	double chance = 0.0; // v0
 	std::int64_t minMinutes = 0; // v1
 	std::int64_t maxMinutes = 0; // v2

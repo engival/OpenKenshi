@@ -1407,9 +1407,17 @@ bool NavQuery::slide(const Point& from, const Point& to, const Point& halfExtent
 	// Floats near the world edge are 0.004 apart, so a hair is a few units in the last place.
 	constexpr float kHair = 0.01f;
 	constexpr float kVertexHair = 0.03f;
+	constexpr float kOvershoot = 1.5f; // the start snaps to the mesh by up to kStand before the slide (Walker's kHopOvershoot)
 	auto remaining = [&](const Point& at) { return std::hypot(at[0] - to[0], at[2] - to[2]); };
 	bool moved = !dtStatusFailed(query_->moveAlongSurface(startRef, start.data(), to.data(), &filter, out.data(),
 		visited.data(), &visitedCount, kVisited)) && visitedCount > 0;
+	// A walk never ends farther from where it started than the aim: moveAlongSurface from a polygon corner has returned a point 9 u off a
+	// 2 u hop (R73 leg 28 of ksim_route_walk, k16.8.37). That result is no move; the neighbours below get their turn.
+	const float aim = std::hypot(to[0] - from[0], to[2] - from[2]);
+	auto overshoots = [&](const Point& at) { return std::hypot(at[0] - start[0], at[2] - start[2]) > aim + kOvershoot; };
+	const bool wild = moved && overshoots(out);
+	if (wild)
+		moved = false;
 	if (!moved)
 		out = start;
 	// A walker standing on a polygon corner (a route corner is one) can be snapped to a polygon the segment
@@ -1440,6 +1448,8 @@ bool NavQuery::slide(const Point& from, const Point& to, const Point& halfExtent
 					|| dtStatusFailed(query_->moveAlongSurface(around[static_cast<std::size_t>(i)], from2.data(), to.data(),
 						&filter, tryOut.data(), tryVisited.data(), &tryCount, kVisited)) || tryCount == 0)
 					continue;
+				if (overshoots(tryOut))
+					continue;
 				if (!moved || remaining(tryOut) < remaining(out))
 				{
 					out = tryOut;
@@ -1449,6 +1459,35 @@ bool NavQuery::slide(const Point& from, const Point& to, const Point& halfExtent
 				}
 			}
 		}
+	}
+	// A hop that ENDS exactly on a polygon vertex or tile-border corner can fail outright (no polygon visited), not only stop short: a route
+	// corner is such a point (R221 leg 39, R234 leg 42 of ksim_route_walk, k16.8.37). The same hop a hair short of it is tried before the
+	// walker is called off the mesh.
+	if (!moved)
+	{
+		const float full = std::hypot(to[0] - start[0], to[2] - start[2]);
+		if (full > kVertexHair * 4.0f)
+		{
+			const Point shorter{to[0] + (start[0] - to[0]) / full * kVertexHair, to[1], to[2] + (start[2] - to[2]) / full * kVertexHair};
+			Point tryOut;
+			std::array<dtPolyRef, kVisited> tryVisited;
+			int tryCount = 0;
+			if (!dtStatusFailed(query_->moveAlongSurface(startRef, start.data(), shorter.data(), &filter, tryOut.data(), tryVisited.data(),
+					&tryCount, kVisited)) && tryCount > 0)
+			{
+				out = tryOut;
+				visited = tryVisited;
+				visitedCount = tryCount;
+				moved = true;
+			}
+		}
+	}
+	if (!moved && wild)
+	{
+		out = start; // a wild result and no neighbour that walks: blocked where it stands, still on the mesh
+		visited[0] = startRef;
+		visitedCount = 1;
+		moved = true;
 	}
 	if (!moved)
 		return false;
@@ -1912,6 +1951,27 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 				result.points.erase(result.points.begin() + static_cast<std::ptrdiff_t>(i));
 			else
 				++i;
+	}
+	// A corner lies on a portal, and the portal's ends are interpolated along the polygon's edge: a long edge whose neighbour across the
+	// tile border has more vertices on it (a T-junction on steep terrain: a 256 u edge facing 3 shorter ones) is straight where the surface
+	// is not, so the corner can be 16 u off the floor (R15 leg 2, kenshi-k16.8.37). The corner stands on the corridor's own surface.
+	constexpr float kCornerSnapMax = 24.0f;
+	for (std::size_t i = 1; i + 1 < result.points.size(); ++i)
+	{
+		float best = 0.0f;
+		bool found = false;
+		for (int k = 0; k < polyCount; ++k)
+		{
+			float h = 0.0f;
+			if (dtStatusFailed(query_->getPolyHeight(polys[static_cast<std::size_t>(k)], result.points[i].data(), &h)))
+				continue;
+			if (!found || std::fabs(h - result.points[i][1]) < std::fabs(best - result.points[i][1]))
+				best = h;
+			found = true;
+		}
+		// Only a small fix: a corner's own portal is off by an edge's interpolation, never by a floor (stacked floors share xz).
+		if (found && std::fabs(best - result.points[i][1]) <= kCornerSnapMax)
+			result.points[i][1] = best;
 	}
 	for (std::size_t i = 1; i < result.points.size(); ++i)
 		result.length += distance(result.points[i - 1], result.points[i]);

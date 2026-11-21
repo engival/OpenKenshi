@@ -60,11 +60,9 @@ constexpr int kHeftCellZ = 16;
 constexpr double kHeftX = 68772.98;
 constexpr double kHeftZ = -71496.61;
 // The kidnapper template (Squad role carries both 254 and 112), placed as the town's slavers in the 254 case.
-constexpr const char* kKidnappers = "96357-rebirth.mod";
 // The slave-carrying guard template (its Slave list carries 172): the UC storehouses' 'Storage Guard' package.
 constexpr const char* kSlaverGuards = "56041-rebirth.mod";
 // The wandering-trader caravan (the 39 case).
-constexpr const char* kCaravan = "1161-gamedata.base";
 
 flecs::entity entityOf(Simulation& sim, std::uint64_t id)
 {
@@ -468,6 +466,12 @@ void testCrimeGoals(Game& game)
 	test::require(sim.alarmCount() == 1, "expiry: the alarm ended before its 8 s");
 	game.tick(15); // 8.25 s: the refresh did not extend it
 	test::require(sim.alarmCount() == 0, "expiry: a repeat raise reset the lifetime (it must not)");
+	// 1409335e0 keys the registry per town AND kind AND owner (rwh.203): another kind in the same town is its own alarm.
+	sim.raiseAlarm(crime::kTrespassing, fighterOf(sim, guard)->x + 50.0, fighterOf(sim, guard)->z, guard);
+	sim.raiseAlarm(crime::kBurglary, fighterOf(sim, guard)->x + 50.0, fighterOf(sim, guard)->z, guard);
+	test::require(sim.alarmCount() == 2, "raise: two kinds in one town did not make two alarms");
+	game.tick(180);
+	test::require(sim.alarmCount() == 0, "expiry: the two kinds outlived their 8 s");
 	std::cout << "alarm raise / refresh / expiry ok\n";
 
 	// 2. 209: the investigator within 100 u of the alarm waits (this+0x7c) and the goal ends when the alarm is gone (here by the 8 s
@@ -500,6 +504,9 @@ void testCrimeGoals(Game& game)
 	sim.raiseAlarm(crime::kAssault, fighterOf(sim, guard)->x + 25.0, fighterOf(sim, guard)->z, stranger);
 	test::require(sim.pickAlarm(guard, false) != nullptr && sim.pickAlarm(guard, true) == nullptr, "210: an alarm of a stranger passed the allies-only filter");
 	sim.raiseAlarm(crime::kBurglary, fighterOf(sim, guard)->x + 30.0, fighterOf(sim, guard)->z, guard);
+	const std::size_t held = sim.alarmCount();
+	sim.raiseAlarm(crime::kBurglary, fighterOf(sim, guard)->x + 30.0, fighterOf(sim, guard)->z, stranger);
+	test::require(sim.alarmCount() == held + 1, "raise: the same kind by another owner (faction) did not make its own alarm");
 	test::require(sim.pickAlarm(guard, true) != nullptr && sim.pickAlarm(guard, true)->raiser == guard, "210: an ally's alarm was refused");
 	game.tick(200);
 	// The 210 tick's ally notify (1405cb0a0): standing at the alarm the responder force-notices an ally within 100 u (a squadmate of its

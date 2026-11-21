@@ -62,6 +62,7 @@ const char* typeName(std::uint16_t type)
 	case kItemLock: return "ITEM_LOCK";
 	case kItemStats: return "ITEM_STATS";
 	case kMenuEntries: return "MENU_ENTRIES";
+	case kCameraStart: return "CAMERA_START";
 	case kCages: return "CAGES";
 	case kProfile: return "PROFILE";
 	case kCharStats: return "CHAR_STATS";
@@ -4903,6 +4904,20 @@ void Session::sendTick(RecordWriter& out, bool initial)
 	NullWriter discard;
 	emit(discard);
 	flushStrings(out);
+	if (ctx_.cameraStart && !cameraStartSent_)
+	{
+		cameraStartSent_ = true;
+		const ServerContext::CameraStart& c = *ctx_.cameraStart;
+		out.begin(kCameraStart);
+		out.u8("flags", static_cast<std::uint8_t>((c.hasCamera ? 1 : 0) | (c.hasFloor ? 2 : 0)));
+		for (const double v : c.pos)
+			out.f64("pos", c.hasCamera ? v : 0.0);
+		for (const double v : c.rot)
+			out.f32("rot", c.hasCamera ? static_cast<float>(v) : 0.0f);
+		out.f32("zoom", c.hasCamera ? static_cast<float>(c.zoom) : 0.0f);
+		out.u8("floor", static_cast<std::uint8_t>(c.hasFloor ? std::clamp(c.floor, 0, 3) : 0));
+		out.end();
+	}
 	emit(out);
 	debug_.consumed();
 	for (const auto& [seq, reason] : late)

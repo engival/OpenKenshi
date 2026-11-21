@@ -148,6 +148,7 @@ struct WorldRuntime
 		bool restored = false; // loaded from a save: the walker's routeSource / clearWhy are transient, so the first step adopts it by routeSeq alone; runtime only
 	};
 	std::unordered_map<std::uint64_t, FarOrder> farOrders_;
+	std::unordered_map<std::uint64_t, double> selfAidSince_; // sim time at which 269 first applied to each down character; derived, never saved
 	bool locationsChecked_ = false; // stepBuildings has re-derived every fighter's floor once since this Simulation was built or loaded; runtime only
 	PathRetries pathRetries_; // the failed-route ladder per walker (path_retry.hpp); runtime only
 	std::uint64_t retriesDoorPaints_ = 0; // MeshNavigator::doorPaints() the ladders were last valid for
@@ -404,9 +405,11 @@ public:
 	void forgetPathRetries() { pathRetries_.resetAll(); }
 	// The road layer outside the navmesh search (PATHFINDING_STATIC.md 1.13, 2.8; roads_static.md). roadNetworkRoute is the ladder's road
 	// rung (14065f940, factor 0.2): navmesh legs through the road's markers to the goal, not found when no road serves the move. A move over
-	// kLongMove takes the same shortcut first (factor = 1 - road preference, 0.6) when the use test passes.
+	// kLongMove takes the same shortcut first (factor = roadFactor) when the use test passes.
 	Route roadNetworkRoute(const state::Fighter& f, double toX, double toZ, std::optional<double> toY = std::nullopt, bool planned = true,
 		double factor = kworld::RoadNetwork::kStuckFactor) const;
+	// The traveller's road use-test factor: 1 - the road preference of its faction's record (0.6 when it has none).
+	double roadFactor(std::uint64_t id) const;
 	// Tests: use this network instead of loading the install's.
 	void setRoadNetwork(std::shared_ptr<const kworld::RoadNetwork> roads) { roads_ = std::move(roads); roadsTried_ = true; }
 	// The same navigator as its shared owner (server_ai.hpp): the squad AI's navigator when the server has no world bake of its own.
@@ -1508,6 +1511,7 @@ private:
 	void stepInteractions();
 	// medical.cpp, before stepInteractions: a down NPC that carries a kit starts the first aid interact on itself (goal 269).
 	void stepSelfAid();
+	static constexpr double kSelfAidOnsetSeconds = 6.0; // game s from 269 applying to its first aid (dt45 section 1, ~1.2 s wall at speed 5)
 	// After the interactions: starts the next queued order (state::OrderQueue) of every character that has finished its last
 	// (interact.cpp). A character that is down loses its queue.
 	void stepOrderQueues();
@@ -1825,6 +1829,8 @@ private:
 	// Before the squad AI (gatecrew.cpp), once a second: every gate crew's binding is checked; one whose gate is gone rebinds
 	// (own gate, the home building's gate, the town's nearest free gateway, else it stands down: GateCrew removed).
 	void stepGateBinding();
+	// Once a second after it (gatecrew.cpp): a crew at full detail: guards on the gate's slots, the rest off duty on the town scorer (rwh.207).
+	void stepGateCrewPosts();
 	// Applies an inventory order (commit) or only judges it; the reason as checkInventoryOrder.
 	std::string runInventoryOrder(const InventoryOrder& order, bool commit);
 	// Applies a squad order (commit) or only judges it; the reason as checkSquadOrder (player_squads.cpp).

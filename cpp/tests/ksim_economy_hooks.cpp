@@ -409,7 +409,6 @@ void originalMode()
 	f.sim.setEconomyHooks(script("return { api = 0, demand = function(q) ksim.log('called') return {} end, price = function(q) return 9 end }\n", log));
 	f.sim.run(3 * static_cast<int>(kTicksPerGameHour));
 	test::require(log.empty(), "original mode called a hook");
-	trade::Terms terms;
 	test::require(f.sim.economyHooks() != nullptr, "the hooks did not load");
 	test::require(ecsOf(f.sim).get<state::EconomySettings>() == nullptr, "original mode created the economy singleton");
 	std::printf("original: no hook is called\n");

@@ -91,6 +91,17 @@ void pureFunctions()
 	test::require(cornerLimit < 69.0 && cornerLimit > 30.0, "a 90 degree corner 2 away limits the speed to " + std::to_string(cornerLimit));
 	const std::vector<Pt> gentle{ { 0.0, 100.0 }, { 0.0, 150.0 }, { 0.0, 1000.0 } };
 	test::require(knav::Walker::speedLimit({ 0.0, 0.0, 90.0 }, gentle, 0, 70.0, 200.0, clearance) > 69.9, "collinear route points limited the speed");
+	// D5, the corner's measured room (k16.8.23): a slow turner (a pack animal, accel 30) at a 90 degree corner a leg's length off. Open ground (40 u beyond
+	// the vertex) keeps more speed than the footprint (4) gave; a doorway (no more room than the footprint: the caller floors it there) still brakes well under the run speed.
+	const std::vector<Pt> bend{ { 0.0, 60.0 }, { 0.0, 100.0 }, { 100.0, 100.0 }, { 100.0, 1000.0 } }; // the corner is the second point (the first has the walker's own line as its leg in)
+	const auto speedWith = [&](double space)
+	{
+		const knav::Walker::Room room = [space](double, double, double, double, double, double) { return space; };
+		return knav::Walker::speedLimit({ 0.0, 0.0, 50.0 }, bend, 0, 200.0, 30.0, 4.0, true, 0.0, 1.0, 0.0, room);
+	};
+	const double footprintSpeed = knav::Walker::speedLimit({ 0.0, 0.0, 50.0 }, bend, 0, 200.0, 30.0, 4.0, true);
+	test::require(speedWith(40.0) > footprintSpeed + 5.0, "open ground did not keep more speed than the footprint: " + std::to_string(speedWith(40.0)));
+	test::require(std::fabs(speedWith(4.0) - footprintSpeed) < 1.0e-9 && speedWith(4.0) < speedWith(40.0), "a doorway did not brake: " + std::to_string(speedWith(4.0)));
 	test::require(knav::cornerSpeed(kPi, 200.0, clearance) < 1.0e-6, "a reversal is not a full stop");
 	test::require(knav::cornerSpeed(0.5, 200.0, clearance) > knav::cornerSpeed(1.5, 200.0, clearance), "a sharper corner is not slower");
 }

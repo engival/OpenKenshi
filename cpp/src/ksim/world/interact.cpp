@@ -981,7 +981,7 @@ flecs::entity spawnContainerAt(Simulation& sim, const MeshNavigator& navigation,
 
 flecs::entity Simulation::spawnDoor(state::Door door)
 {
-	flecs::entity entity = state::createInstance(ecsMutable());
+	flecs::entity entity = state::createInstance(ecsMutable(), true);
 	entity.set<state::Door>(std::move(door));
 	enterableValid_ = false;
 	return entity;
@@ -989,7 +989,7 @@ flecs::entity Simulation::spawnDoor(state::Door door)
 
 flecs::entity Simulation::spawnContainer(state::Container container, state::Inventory contents)
 {
-	flecs::entity entity = state::createInstance(ecsMutable());
+	flecs::entity entity = state::createInstance(ecsMutable(), true);
 	if (gameData_ != nullptr)
 	{
 		// Its own grid: the BUILDING's `storage size width / height` (INVENTORY_GRID_STATIC (a)); a record with none keeps 8 x 10 (UNSURE).
@@ -1018,7 +1018,7 @@ flecs::entity Simulation::spawnGroundItem(state::GroundItem item)
 
 flecs::entity Simulation::spawnItemNode(state::ItemNode node)
 {
-	flecs::entity entity = state::createInstance(ecsMutable());
+	flecs::entity entity = state::createInstance(ecsMutable(), true);
 	entity.set<state::ItemNode>(std::move(node));
 	return entity;
 }

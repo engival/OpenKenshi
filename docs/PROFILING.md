@@ -378,3 +378,24 @@ Dev counters (`dev::WalkStats`, `KSIM_DEV`): with `KSIM_WALK_STATS=1` a `WALKSTA
 - Window re-plans are 86 % of the Heft total (31 of 36); the rest are 5 blocked (edge block aimed at the waypoint). No stuck re-plans, none failed, none abandoned.
 - **Goal slack:** 1260 arrivals at Heft ended on average 0.13 u from the route's last point, max 1.00 (never over 1.0), so arrival fires. 3 walks ended by the stuck rule instead (held within 2 footprints, a crowd at the end): gap mean 2.75 u, max 4.75 u. The counters see the route's last point, not the order's goal, so the planner's up-to-1.5 u goal-to-last-point slack is not measured here.
 - Caveat: Heft is one scenario and 200 s; the tests are tiny. Rerun with `KSIM_WALK_STATS=1` on a longer Heft or soak for more walker-minutes.
+
+## Melee straight-walk gate (kenshi-k16.6.444)
+
+Measured 2026-11-19/20 (dev VM, temporary timer around the walk, not kept): `ksim_fight` on the bar_crowd fixture, `--runs 2 --seed 4`, wall about 32 s on the merged ksim base (the first, pre-merge run: 23 s wall).
+- Before (uncached): 147,499 `MeshNavigator::straightWalk` calls, 2.05 s = **6.4%** of the run (pre-merge run: 1.94 s of 23 s, 8%). Above the 2% line.
+- After (`Ctx::walkMemo`, one walk per exact endpoint-coordinate pair per step): 103,553 calls (-30%), 1.69 s = **5.3%**. Behaviour unchanged by construction (a fighter that moved is a new key).
+- Why only -30%: positions change every step, so only the repeats inside one step (inEngageRange, notDirect, approach) hit. Going lower needs a re-walk-only-when-moved-a-cell rule, which changes behaviour (the gate's rule is out of scope); left to ksim.
+
+## Long travel at x5 (kenshi-k16.6.604, 2026-11-21)
+
+From the user's report (kenshi-k16.2.477): x5 is unplayable on a long map move. Run: `tools/travel_run.sh` (KSIM_PROFILE build, `--scenario newgame --start 47924-rebirth.mod`, one move_to 26 ku east, set_speed 5, set_view / set_interest following the leader every 0.5 s, 300 s wall, under the worker lock, load 12.6-13.9). Raw data in the dev worker's scratch dir for k16.6.604 (`travel5x` = Guy with a Dog, which spawns at Bast, not the Hub; `hub5x` = Wanderer at the Hub).
+
+- **Guy with a Dog, 27.4k ticks:** mean 5.6 ms, p50 3.3, p99 26.7, max 235; 15% of ticks over 10 ms.
+  - The first 4.5k ticks (336 arena characters) average 14.1 ms, 72% over budget: 66 ticks/s delivered. That is the user's 30-65.
+  - At 203 characters: 6.4 ms (98 t/s). At 88: 2.6-3.4 ms (100 t/s).
+  - Phase A by section (µs/tick): combat 11156 (cs_update 8464, mirror 1056, separate 688, sense 476, env 384), ai_squad 901, tasks 610, interact 503, crime 376.
+  - Whole run: combat 64.7%, ai_squad 14.1%, tasks 5.9%, interact 5.4%. Combat cost scales with arena count, about 33 µs per character per tick.
+- **Region-crossing spikes** (about every 6 s of walking, always at tick % 20 == 0, ~16 ticks of catch-up each): stepPlayerAreas 28-123 ms, nav coverage 12-65 ms, residents 40-150 ms. 20 events on the Guy run, 12 on the Hub run.
+- **Far-route stalls (Hub run):** single ticks of 320 ms (4 queries) and 739 ms (30 queries) in the goals section. ROUTEMEASURE: the clearance fit inside routeFrom is almost all of the router's 2.4 s over 16k routes. This matches the client's 250 ms stall plus catch-up (kenshi-k16.2.477.1).
+- **Against Heft:** the same family (combat step, cs_update, the 1 Hz pass), but travel adds streaming-style spikes (areas / nav / residents) and far-route stalls. No zone bake ran in the tick (the navworld is prebaked).
+- Fixes dispatched from this: the region promotion spread (kenshi-k16.6.614), the far-route budget and re-ask cap (kenshi-k16.6.307, once kenshi-k16.6.305's routeFrom node counts are in). The per-system rates for the arena cost go through the Fable review kenshi-k16.6.607 and design kenshi-k16.6.606. The Wanderer stopped after ~16 ku with 30 blocked routes: kenshi-k16.6.615.

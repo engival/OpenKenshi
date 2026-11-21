@@ -503,7 +503,10 @@ constexpr double kDoorMatch = 150;
 
 // A held action key (ui::keys); not while an edit box has the keyboard
 bool title_shown() { return app.mainMenu && app.mainMenu->shown(); }
-bool menu_shown() { return title_shown() || (app.gameMenu && app.gameMenu->shown()) || (app.tutorials && app.tutorials->browserShown()) || (app.newGame && app.newGame->shown()) || (app.saves && app.saves->shown()) || (app.creatorUi && app.creatorUi->shown()); }	// the game's keys are off
+// The mode the client is in (kenshi-k16.2.472.3): the title and the creator own the screen, the pointer and the keyboard; only kGame draws the world and takes
+// the game's keys and world picks. The world stays loaded under the other two (paused or held), unseen and unheard-to.
+Mode app_mode() { return title_shown() ? Mode::kTitle : app.creatorUi && app.creatorUi->shown() ? Mode::kCreator : Mode::kGame; }
+bool menu_shown() { return app_mode() != Mode::kGame || (app.gameMenu && app.gameMenu->shown()) || (app.tutorials && app.tutorials->browserShown()) || (app.newGame && app.newGame->shown()) || (app.saves && app.saves->shown()); }	// the game's keys are off
 bool held(const char* action) { return !menu_shown() && !dynamic_cast<ui::EditBox*>(ui::focusedWidget()) && ui::keys::held(action); }
 bool labels_shown() { return held("highlight"); }
 
@@ -1196,14 +1199,14 @@ void camera_sidecar_save(const std::string& name)
 			<< "floor_level=" << s.floorLevel << "\n";
 		if (hasMap)	// k16.2.435: the world map's view (an older sidecar has no lines: its load starts at the default)
 		{
-			out << "map_zoom=" << mapView.zoom << "\nmap_cx=" << mapView.cx << "\nmap_cz=" << mapView.cz << "\n";
+			out << "map_zoom=" << mapView.zoom << "\n";
 		}
 		if (!out) { fprintf(stderr, "kclient: camera sidecar: cannot write %s\n", tmp.string().c_str()); return; }
 	}
 	std::filesystem::rename(tmp, path, ec);
 	if (ec) { fprintf(stderr, "kclient: camera sidecar: cannot rename %s\n", path.string().c_str()); return; }
 	printf("camera sidecar: saved \"%s\": %s (%s)\n", name.c_str(), camera_state_line(s).c_str(), path.string().c_str());
-	if (hasMap) { printf("map view: saved \"%s\": zoom %.6f cx %.3f cz %.3f\n", name.c_str(), mapView.zoom, mapView.cx, mapView.cz); }
+	if (hasMap) { printf("map view: saved \"%s\": zoom %.6f\n", name.c_str(), mapView.zoom); }
 	else { printf("map view: not saved with \"%s\": the default overview is not applied yet\n", name.c_str()); }
 }
 
@@ -1242,10 +1245,11 @@ bool camera_sidecar_read(const std::string& name, CameraState& s)
 	s.floorLevel = (int)num("floor_level", -1);
 	// k16.2.435: the world map's view, when the sidecar has it (an older one has not: the load starts at the default overview)
 	s.hasMapView = false;
-	if (kv.count("map_zoom") && kv.count("map_cx") && kv.count("map_cz"))
+	// (map_cx / map_cz of an older sidecar are ignored: the map always opens on the camera, k16.2.435.5)
+	if (kv.count("map_zoom"))
 	{
-		const double z = num("map_zoom", -1), x = num("map_cx", 0), y = num("map_cz", 0);
-		if (z >= 0 && std::isfinite(z) && std::isfinite(x) && std::isfinite(y)) { s.hasMapView = true; s.mapZoom = z; s.mapCx = x; s.mapCz = y; }
+		const double z = num("map_zoom", -1);
+		if (z >= 0 && std::isfinite(z)) { s.hasMapView = true; s.mapZoom = z; }
 	}
 	s.valid = true;
 	return true;
@@ -1292,9 +1296,11 @@ void camera_restore_apply(const std::string& name, const CameraState& s)
 	// k16.2.435: the save's world map view with the camera; an older sidecar's load keeps the default armed (it applies on the MAP page's first layout)
 	if (s.hasMapView && app.uiOn && app.overview)
 	{
-		app.overview->setMapView({ s.mapZoom, s.mapCx, s.mapCz });
+		ui::MapView v = app.overview->mapView();
+		v.zoom = s.mapZoom;
+		app.overview->setMapView(v);	// the zoom only; the centre is the camera's at each open
 		app.mapViewPending = false;
-		printf("map view: restored \"%s\": zoom %.6f cx %.3f cz %.3f\n", name.c_str(), s.mapZoom, s.mapCx, s.mapCz);
+		printf("map view: restored \"%s\": zoom %.6f\n", name.c_str(), s.mapZoom);
 	}
 	printf("camera sidecar: restored \"%s\": %s\n", name.c_str(), camera_state_line(camera_state_now()).c_str());
 }
@@ -1350,6 +1356,7 @@ void map_view_frame()
 	ui::MapView v;
 	if (!map_view_default(frame, v)) { v = {}; }	// the entire world, as the page started before this change
 	app.overview->setMapView(v);
+	app.overview->centreMap();	// the default's centre is only a placeholder: the map is on the camera (k16.2.435.5; the open that waited for this frame included)
 	app.mapViewPending = false;
 }
 
@@ -3746,7 +3753,8 @@ void usage()
 		"               [--console]  (Windows: open a console for the log; otherwise it goes to <user data>\\logs\\openkenshi.log. KCLIENT_CONSOLE=1 does the same)\n"
 		"               [--list-mods] [--mod KEY=on|off]... [--save-mods] [--set KEY=VALUE]... [--print-defaults] [--check-options]\n");
 	dev::usage();
-	fprintf(stderr, "               [--debug]  (the development features: the F8 debug panel, the debug keys, the scenes, the debug script ops)\n"
+	fprintf(stderr, "               [--debug]  (adds the development features: the F8 debug panel, the debug keys, the scenes, the debug script ops; the title and the server start as without it)\n"
+		"               [--fly]  (the offline fly-around: no title screen, no server; with --debug for the development views)\n"
 		"               kclient %s (the build's git hash; a run records it)\n", kclient_git_hash());
 }
 
@@ -3843,6 +3851,7 @@ sapp_desc sokol_main(int argc, char* argv[])
 		else if (a == "--screenshot" && more) { o.screenshot = argv[++i]; windowOff.push_back("--screenshot " + o.screenshot); }
 		else if (a == "--loading-shot" && more) { const std::string v = argv[++i]; o.loadShotStep = atoi(v.c_str()); o.loadShot = v.substr(v.find(',') + 1); windowOff.push_back("--loading-shot " + v); }
 		else if (a == "--debug") { o.debug = true; }
+		else if (a == "--fly") { o.fly = true; }	// the offline fly-around: no title, no server (kenshi-k16.2.475.1; was --debug without --simlink)
 		else if (dev::parseArg(argc, argv, i, windowOff)) {}	// --playtest --play --bead --findings --playtests --scene-* --view-mesh --tex --dist
 		else if (a == "--vanilla") { fprintf(stderr, "kclient: --vanilla is gone (k16.2.82): the original's display is the default now; drop the flag\n"); exit(2); }
 		else if (a == "--script" && more) { o.script = argv[++i]; windowOff.push_back("--script " + o.script); }
@@ -3904,9 +3913,9 @@ sapp_desc sokol_main(int argc, char* argv[])
 	if (!listMods) { dev::launchGuard("kclient"); }
 #ifdef KENSHI_EMBED_SERVER
 	// The combined binary is what the preview ships (kenshi-379.13): with no options it behaves as `play.sh title`, --local-server included,
-	// so a scripted or headless run shows the title screen and starts its own server too. --debug keeps the offline fly-around, --simlink
-	// keeps joining a given server.
-	if (!o.debug && o.simlink.empty()) { o.localServer = true; }
+	// so a scripted or headless run shows the title screen and starts its own server too. --fly keeps the offline fly-around, --simlink
+	// keeps joining a given server, and a scripted --debug run starts no server of its own (as before k16.2.475.1; --local-server asks for one).
+	if (o.simlink.empty() && !o.fly && !(o.debug && (!o.script.empty() || !o.screenshot.empty() || dev::sceneTesting()))) { o.localServer = true; }
 #endif
 	// Game data without a flag (kenshi-379.13): --data, $KENSHI_DATA, the saved setting, then the Steam/GOG installs (datadir.cpp).
 	{

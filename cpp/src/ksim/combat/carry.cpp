@@ -609,10 +609,11 @@ void Simulation::stepCarry()
 				carried->forwardSpeed = 0.0;
 				carried->lateralSpeed = 0.0;
 				combat_->dropTarget(step.target);
-				// CARRY_KIDNAP_LIVE.md: the exe's Task_Kidnapping alone sets the captive flag the carry inspection reads, so a plain carry
-				// is never a kidnapping there. Ours sets it on the lift of any non-slave (the user's fix, ARCHITECTURE "Guards notice what
-				// you carry"); a slave is judged by its slave state instead.
-				carried->captive = carried->slaveState != 1 && carried->slaveState != 2;
+				// rwh.162: law enforcement is not kidnapping. The exe writes the captive flag (CharStatus+0xe9) only in Task_Kidnapping (order 246); ours
+				// keeps it on a plain lift (the user's rule, ARCHITECTURE "Guards notice what you carry") but never on an owner's or guard's carry-out of
+				// a criminal (the 223 -> 240 -> 224 take-out) or an arrest lift. A slave is judged by its slave state instead.
+				const bool lawCarry = actor.has<state::TakeOut>() || (arrestOrder != arrestOrders_.end() && arrestOrder->second.lift != goap::kKidnapOrder);
+				carried->captive = !lawCarry && carried->slaveState != 1 && carried->slaveState != 2;
 				f.carrying = step.target;
 			}
 			if (step.elapsed >= kLiftSeconds - kStepEpsilon)
@@ -794,7 +795,16 @@ void Simulation::stepIntruders()
 		const double length = std::hypot(dx, dz);
 		if (length <= 1.0e-9)
 			return std::nullopt;
-		return navigation_->walker().snap({gate.x + dx / length * kTownDropOut, f.y, gate.z + dz / length * kTownDropOut}, 40.0);
+		// The snap may land inside a building (a TwoStorey house on the ray, kenshi-k16.6.400): a body is never put down in a solid
+		// building, so go further out in steps until the snapped point is in none (the home variant's search below).
+		std::optional<knav::Position> spot;
+		for (double along = kTownDropOut; along <= kTownDropOut + kDropSearchExtra + 1.0e-9; along += kDropSearchStep)
+		{
+			spot = navigation_->walker().snap({gate.x + dx / length * along, f.y, gate.z + dz / length * along}, 40.0);
+			if (!spot || buildingAt(spot->x, spot->y, spot->z) == 0)
+				break;
+		}
+		return spot;
 	};
 	for (std::size_t i = 0; i < members.size(); ++i)
 	{

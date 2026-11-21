@@ -23,7 +23,7 @@ class GameData;
 struct Record;
 }
 namespace flecs {
-class world;
+struct world;
 }
 
 namespace ksim {

@@ -231,12 +231,14 @@ followed / auto-centered character. It is written when the client issues a save 
 first snapshot after the reset (at once when the sim is paused: no snapshots come); a save without one loads as before. Deleting a save deletes
 its sidecar. The client's tests/camerasave/ drives all four paths headless. Keys still to add (client/src/ui/keys.cpp, the UI
 session's): `mouse_rotate` (LCtrl, Mouse3), a debug free-camera toggle, a gameplay key for the hover mode.
-**The world map's view (kenshi-k16.2.435; a deliberate deviation from the original, below):** the same sidecar carries the MAP page's view as
-`map_zoom` (pixels a map texel, 0 = fitted) / `map_cx` / `map_cz` (the world point at the view's centre), from `Overview::mapView()` at the save
-and back through `Overview::setMapView()` with the camera at the load. A new game, or a load of a sidecar without them (an older client's), starts
-at the default overview: `map_view_default` (main.cpp) computes the zoom so the Hub is at the view's centre and Stack just inside its top edge
-from the two towns' TOWN records (not the discovered list) and `mapFrame().h`, applied by `map_view_frame` on the first frame the MAP page has a
-rect; a missing town (a mod) falls back to the fitted whole world with one stderr line, and a save taken before the default applied writes no map
+**The world map's view (kenshi-k16.2.435, .5; a deliberate deviation from the original, below):** the same sidecar carries the MAP page's zoom as
+`map_zoom` (pixels a map texel, 0 = fitted), from `Overview::mapView()` at the save and back through `Overview::setMapView()` with the camera at the
+load. The centre is never kept: every time the MAP page opens, `update_ui` (uihost.cpp) calls `Overview::centreMap()` on the frame it turns up shown,
+so the map is centred on the camera (the followed or selected squad) with the zoom kept; `map_cx` / `map_cz` of an older sidecar are ignored. A new
+game, or a load of a sidecar without `map_zoom`, starts at the default zoom: `map_view_default` (main.cpp) computes the overview scale so the Hub-to-Stack
+distance fits the view's height from the two towns' TOWN records (not the discovered list) and `mapFrame().h`, applied by `map_view_frame` on the first
+frame the MAP page has a rect (its centre is replaced by the camera at the first open); a missing town (a mod) falls back to the fitted whole world with
+one stderr line, and a save taken before the default applied writes no map
 keys. `client/tests/mapsave/` drives it headless; `dump map` prints the view.
 
 ## Goals
@@ -583,7 +585,7 @@ Fidelity, found against the live references in `scenes.txt` (`ref=`):
 - [ ] Grass: our noise paint vs the baked overlay R byte differ (`--grass-map disk`); which one the game ends with is unknown.
 - [ ] Water reflection near the bridge; `kReflection` 0.2 is a guess.
 - [ ] Deliberate deviation, keep: a minimap (the original has none; user 2026-11-20, kenshi-k16.2.436): a frameless draggable square window at the top right, no text, five wheel zoom levels (default ~0.9 km across), on by default (`ui.minimap`); place and level kept as `minimap.x/.y/.level` in kclient.cfg. `ui::Minimap` (ui/minimap.*), wired in host/uihost.cpp; the old overlay minimap (`WorldMap::drawMinimap`, `Ctrl+=` / `Ctrl+-`) is deleted, not retired (nothing used it).
-- [ ] Deliberate deviation, keep: the world map (M) opens at an area overview and remembers its view (user 2026-11-20, kenshi-k16.2.435). The original's map opens fitted to the whole world and keeps no view in a save; ours starts centred on the Hub with Stack just inside the top edge, keeps the zoom and centre across close / reopen, and writes them into the save's camera sidecar (`map_zoom` / `map_cx` / `map_cz`). The minimap's level (`ui::Minimap`) is separate.
+- [ ] Deliberate deviation, keep: the world map (M) opens at an area overview and remembers its view (user 2026-11-20, kenshi-k16.2.435). The original's map opens fitted to the whole world and keeps no view in a save; ours opens centred on the camera at an overview zoom (the Hub-to-Stack distance fills the view), keeps the zoom (not the centre) across close / reopen, and writes it into the save's camera sidecar (`map_zoom`). The minimap's level (`ui::Minimap`) is separate.
 - [ ] Deliberate deviation, keep: foliage drawn 6x the game range (no pop-in), so e.g. the RefineryHeads show in deadlands_border where the game culls them at 1000.
 Features:
 - [ ] Live sim link (`docs/formats/SIMLINK.md`, client half `src/simlink.*` + `src/simview.*`). Done (2026-10-31):

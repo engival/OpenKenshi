@@ -157,7 +157,7 @@ void registerComponents(flecs::world& ecs)
 		ecs.set<Clock>(Clock{});
 }
 
-flecs::entity createInstance(flecs::world& ecs)
+flecs::entity createInstance(flecs::world& ecs, bool furniture)
 {
 	Ids* ids = ecs.get_mut<Ids>();
 	if (ids == nullptr)
@@ -166,7 +166,7 @@ flecs::entity createInstance(flecs::world& ecs)
 		ids = ecs.get_mut<Ids>();
 	}
 	flecs::entity entity = ecs.entity();
-	entity.set<Id>(Id{ids->next++});
+	entity.set<Id>(Id{furniture ? ids->furniture++ : ids->next++});
 	return entity;
 }
 

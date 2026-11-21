@@ -801,6 +801,7 @@ struct Client
 	simlink::SimLinkDecoder dec;
 	std::vector<simlink::Event> events; // every event so far
 	std::vector<std::uint16_t> types; // every frame type so far
+	std::vector<std::vector<std::uint8_t>> cameraStarts; // the body of every CAMERA_START (65) so far
 	std::uint64_t lastSnapshotEnd = 0;
 	std::uint64_t snapshots = 0;
 	std::vector<std::uint64_t> snapTicks; // the tick of every snapshot so far
@@ -856,6 +857,8 @@ struct Client
 	void onFrame(std::uint16_t type, const std::uint8_t* p, std::size_t n)
 	{
 		types.push_back(type);
+		if (type == ks::kCameraStart)
+			cameraStarts.emplace_back(p, p + n);
 		const auto tickOf = [&]() { std::uint64_t t = 0; test::require(n >= 8, "short frame"); std::memcpy(&t, p, 8); return t; };
 		switch (type)
 		{
@@ -1146,6 +1149,61 @@ int main()
 			test::require(client->dec.clock.paused && lookAt(policyServer, w).paused && settled(500) == pausedAt, "policy: a joining session unpaused an admin pause");
 			std::cout << "pause policy: held before HELLO, runs with a session, stops without one, keeps speed, admin pause survives\n";
 		}
+		// ---- CAMERA_START (65): the import's camera and floor, once per session before the first SNAPSHOT_BEGIN; none for a world that was not imported ----
+		for (const bool imported : {true, false})
+		{
+			World w = makeWorld(order, data, gd, nav);
+			if (imported)
+			{
+				ks::ServerContext::CameraStart camera;
+				camera.hasCamera = true;
+				camera.pos = {53926.0, 1177.5, -93603.25};
+				camera.rot = {0.9, 0.25, -0.5, 0.125};
+				camera.zoom = -546.5;
+				camera.hasFloor = true;
+				camera.floor = 2;
+				w.context.cameraStart = camera;
+			}
+			std::promise<int> portPromise;
+			ks::ServerOptions cameraOptions;
+			cameraOptions.onListening = [&portPromise](int listening) { portPromise.set_value(listening); };
+			ks::SimLinkServer cameraServer(*w.sim, w.context, cameraOptions);
+			cameraServer.listen();
+			const int cameraPort = portPromise.get_future().get();
+			std::atomic<bool> cameraStop{false};
+			std::thread cameraThread([&]() { cameraServer.run(cameraStop); });
+			const struct CameraJoiner
+			{
+				std::atomic<bool>& stop;
+				std::thread& thread;
+				~CameraJoiner()
+				{
+					stop.store(true);
+					if (thread.joinable())
+						thread.join();
+				}
+			} cameraJoiner{cameraStop, cameraThread};
+			Client c(cameraPort);
+			c.send(helloFrame(w.context.dataHash));
+			test::require(c.pump([&]() { return c.snapshots >= 3; }, 5000), "camera: no snapshots");
+			if (!imported)
+			{
+				test::require(c.cameraStarts.empty(), "camera: CAMERA_START sent for a world that was not imported");
+				continue;
+			}
+			test::require(c.cameraStarts.size() == 1, "camera: CAMERA_START not sent exactly once");
+			const auto at65 = std::find(c.types.begin(), c.types.end(), ks::kCameraStart);
+			const auto atBegin = std::find(c.types.begin(), c.types.end(), simlink::kSnapBegin);
+			test::require(at65 < atBegin && std::count(c.types.begin(), c.types.end(), static_cast<std::uint16_t>(simlink::kHello)) == 1,
+				"camera: CAMERA_START is not before the first SNAPSHOT_BEGIN");
+			const std::vector<std::uint8_t>& b = c.cameraStarts.front();
+			test::require(b.size() == 46, "camera: CAMERA_START body is not 46 bytes");
+			test::require(b[0] == 3 && b[45] == 2, "camera: flags / floor");
+			test::require(readAt<double>(b.data(), 1) == 53926.0 && readAt<double>(b.data(), 9) == 1177.5 && readAt<double>(b.data(), 17) == -93603.25, "camera: pos");
+			test::require(readAt<float>(b.data(), 25) == 0.9f && readAt<float>(b.data(), 29) == 0.25f && readAt<float>(b.data(), 33) == -0.5f && readAt<float>(b.data(), 37) == 0.125f, "camera: rot (w x y z)");
+			test::require(readAt<float>(b.data(), 41) == -546.5f, "camera: zoom");
+			std::cout << "CAMERA_START: 46 bytes before the first snapshot, once; absent for a world that was not imported\n";
+		}
 		// ---- one snapshot per catch-up batch at speed > 1 (SIM_SCHEDULING 5O): floor(speed) ticks per snapshot, events keep their own tick ----
 		if (std::getenv("KSIM_SNAPSHOT_PER_TICK") == nullptr)
 		{
@@ -1213,7 +1271,7 @@ int main()
 			freeOptions.runWithoutClients = true;
 			ks::SimLinkServer freeServer(*w.sim, w.context, freeOptions);
 			freeServer.listen();
-			portPromise.get_future().get();
+			(void)portPromise.get_future().get();
 			std::atomic<bool> freeStop{false};
 			std::thread freeThread([&]() { freeServer.run(freeStop); });
 			const std::uint64_t tick0 = lookAt(freeServer, w).tick;
@@ -1490,21 +1548,23 @@ int main()
 			test::require(entity.is_valid(), "the servant has no entity");
 			const auto hurt = [&]() { return psim.portraitHurt(id, *arena->find(id)); };
 			const auto putIn = [&]() { return psim.lyingInBed(id, *arena->find(id)); };
-			// hurt: a fighter in a fight sets it, it holds 15 s (300 ticks) after the fight ends, then clears.
+			// hurt: recomputed from the attackers each update (rwh.202 section 9): set while a living attacker targets me, clear the moment it stops.
 			test::require(!hurt(), "hurt before any fight");
+			ksim::state::Fighter& attacker = *arena->find(pw.duel.player);
+			attacker.target = id;
+			test::require(hurt(), "a fighter with a living attacker on it is not hurt");
+			attacker.unconscious = true;
+			test::require(!hurt(), "a KO'd attacker still hurts");
+			attacker.unconscious = false;
+			attacker.target = 0;
 			body.target = pw.duel.player;
+			test::require(!hurt(), "a fighter that only targets is hurt (the bit is its attackers' aggression)");
 			psim.tick();
-			const std::uint64_t seen = psim.clockTick();
-			test::require(hurt(), "a fighter with a living target is not hurt");
+			psim.setClockTick(psim.clockTick() + 301);
+			test::require(!hurt(), "hurt held after the attacker stopped");
 			body.target = 0;
-			body.engaged.clear();
-			psim.setClockTick(seen + 299);
-			test::require(hurt(), "hurt dropped before the 15 s hold ended");
-			psim.setClockTick(seen + 301);
-			test::require(!hurt(), "hurt held past 15 s");
-			// A carried body keeps it up too; a KO / a cage clears it.
-			psim.setClockTick(seen);
-			test::require(hurt(), "hurt lost on the clock rewind inside the hold");
+			attacker.target = id;
+			test::require(hurt(), "hurt not set again");
 			body.unconscious = true;
 			test::require(!hurt(), "a KO'd fighter is hurt");
 			body.unconscious = false;
@@ -1558,7 +1618,7 @@ int main()
 			c.send(helloFrame(pw.context.dataHash));
 			test::require(c.pump([&]() { return c.extras.medical.count(id) != 0; }, 5000), "no CHAR_MEDICAL for the portrait bits");
 			test::require(c.extras.medical[id].flags == 4u, "the CHAR_MEDICAL flags are not hurt alone");
-			std::cout << "CHAR_MEDICAL hurt / putIn bits: hold 15 s, KO and cage clear, bed vs floor sleeper\n";
+			std::cout << "CHAR_MEDICAL hurt / putIn bits: attackers' aggression, no hold, KO and cage clear, bed vs floor sleeper\n";
 		}
 
 		// ---- CHAR_ROUTE diag tail (kenshi-k16.6.348; SIMLINK.md section 6) ----

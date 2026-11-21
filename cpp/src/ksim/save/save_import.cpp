@@ -223,6 +223,11 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 		if (const auto rot = camera.vec4("rot"))
 			report.cameraRot = *rot;
 	}
+	if (camera.has("floor num"))
+	{
+		report.hasCameraFloor = true;
+		report.cameraFloor = std::clamp(static_cast<int>(camera.num("floor num")), 0, 3);
+	}
 
 	// CAMERA's `usedUniques#`: the unique NPCs already spawned (3b). The handle is resolved after the squads are built.
 	struct UniqueRow

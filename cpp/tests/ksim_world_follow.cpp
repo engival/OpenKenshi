@@ -4,7 +4,7 @@
 //   - the token is the leader's position, not advanced by the strategic mover;
 //   - the members stay within a follow distance of the leader;
 //   - demote and re-promote puts the members at the token;
-//   - a fight holds the squad (the route progress waits);
+//   - a fight replaces the squad's walk goal (the route progress waits, the goal is Fight; rwh.202 s12);
 //   - no member stays at its build point for a game day while the goal moves the squad.
 
 #include "ksim/ai/ai.hpp"
@@ -437,7 +437,7 @@ void scenario(const kworld::LoadOrder& order, const std::shared_ptr<const Combat
 	const double alongNow = chosen.squad.get<state::GroupAI>()->along;
 	std::cout << "fight: " << fightTicks << " of 100 ticks fighting, route progress " << along << " -> " << alongNow << "\n";
 	test::require(fightTicks > 50, "the fight went on");
-	test::require(alongNow - along < 1.0 && chosen.squad.get<state::GroupAI>()->goal == state::GoalKind::Roam, "a fight holds the squad (the route progress waits, the goal stays)");
+	test::require(alongNow - along < 1.0 && chosen.squad.get<state::GroupAI>()->goal == state::GoalKind::Fight, "a fight replaces the patrol goal (the route progress waits, the goal is the fight)");
 	std::cout << "ksim_world_follow: scenario ok\n";
 }
 

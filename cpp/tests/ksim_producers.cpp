@@ -1122,6 +1122,15 @@ int main(int argc, char** argv)
 				r.tick(1);
 			test::require(operating(), "and walks back and works again");
 			test::require(std::hypot(r.fighter(p1).x - ox, r.fighter(p1).z - oz) < range + 1.0, "within the use range");
+			// CHAR_STATS goal (k16.6.471): operating reads 87 OPERATE_MACHINERY / 'Operating machine' / source 1 / the producer, and 0xFFFF once the order ends
+			const Simulation::CharStats working = r.sim.charStats(p1);
+			test::require(working.goalEnum == 87 && working.goal == "Operating machine" && working.source == 1 && working.targetId == id,
+				"operating: goal 87 Operating machine, source 1, target the producer");
+			test::require(working.hasTargetPoint && std::hypot(working.targetX - ox, working.targetZ - oz) < 1.0, "operating: the target point is the producer's");
+			const_cast<flecs::world&>(r.sim.world().ecs()).each([&](flecs::entity e, const state::Id& who) { if (who.value == p1) e.remove<state::InteractTask>(); });
+			r.tick(2);
+			const Simulation::CharStats idle = r.sim.charStats(p1);
+			test::require(idle.goalEnum == 0xFFFF && idle.goal.empty() && idle.source == 0, "the order ended: no goal again");
 		}
 		std::cout << "ksim_producers ok\n";
 		return 0;

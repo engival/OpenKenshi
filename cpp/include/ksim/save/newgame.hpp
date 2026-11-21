@@ -77,13 +77,13 @@ struct StartMember
 	std::string squadTemplate;
 	// Filled by Simulation::startSquad (the seeded expansion STARTS shows and NEW_GAME builds):
 	std::uint64_t rng = 0; // the makeFighter rng state of this member (its race pick, weapon and armour rolls)
-	std::string race; // RACE sid it will be ("" if its record cannot be built)
+	std::string race{}; // RACE sid it will be ("" if its record cannot be built)
 	std::uint8_t female = 0; // from the CHARACTER's `female chance`, then made a sex the race has in the creator
-	std::string name; // the CHARACTER's name
+	std::string name{}; // the CHARACTER's name
 	bool editable = false; // a creator race and not an animal (STARTS flags bit 0)
 	// What the same makeFighter roll equips (STARTS outfit, kenshi-k16.5.4): the ARMOUR sids in the fighter's equip order, the WEAPON sid ("" = fists).
-	std::vector<std::string> armour;
-	std::string weapon;
+	std::vector<std::string> armour{};
+	std::string weapon{};
 };
 class RngStream;
 std::vector<StartMember> startMembers(const kdata::GameData& gameData, const StartOff& start, RngStream* rng);

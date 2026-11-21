@@ -161,11 +161,11 @@ struct Who
 	bool bounty = false; // a bounty row of 8000 on kBandits (claimed, crimes 0b10100100, stamp 3266 h)
 	std::int32_t slaverPool = 0;
 	std::int32_t slaverSerial = 0;
-	std::vector<Limb> limbs;
-	std::vector<Item> items;
+	std::vector<Limb> limbs{};
+	std::vector<Item> items{};
 	// GAMESTATE_AI: persistent jobs `pjob<i>` (null hand) and one-shot orders `tjob<i>` (null hand, `tjobP<i>` the point).
-	std::vector<int> pjobs;
-	std::vector<std::pair<int, std::array<float, 3>>> tjobs;
+	std::vector<int> pjobs{};
+	std::vector<std::pair<int, std::array<float, 3>>> tjobs{};
 	double y = 0.0; // last: the members above are brace-initialised by position
 };
 
@@ -480,7 +480,7 @@ int main(int argc, char** argv)
 		writePlatoon(dir / "platoon" / "fixb.platoon", "fb", kPoolNear, {captor, body});
 		writeFile(dir / "platoon" / "stale.platoon", {});
 		Rec cam("CAMERA", "cam", "camera");
-		cam.s("pfaction name", "Nameless").vec3("pos", 1000.0f, 20.0f, 1000.0f).vec4("rot", 1.0f, 0.0f, 0.0f, 0.0f).f("zoom", -300.0).handle("selected_character", kPoolPlayer, 7, 1);
+		cam.s("pfaction name", "Nameless").vec3("pos", 1000.0f, 20.0f, 1000.0f).vec4("rot", 1.0f, 0.0f, 0.0f, 0.0f).f("zoom", -300.0).i("floor num", 5).handle("selected_character", kPoolPlayer, 7, 1);
 		cam.i("num usedUniques", 2);
 		cam.i("time day", 140).i("time hour", 17).i("time minute", 32).i("player money", 228952);
 		// The world-wide records: finished research (a level suffix and a TECH suffix fold to the sid), two factions, two towns, a weather slot.
@@ -616,6 +616,7 @@ int main(int argc, char** argv)
 		const state::Fighter* heroFighter = sim.combat()->find(heroId);
 		test::require(heroFighter != nullptr && heroFighter->playerControlled && heroFighter->name == "Hero", "the player's member is a controlled Fighter");
 		test::require(report.selected == heroId && report.hasCamera && report.cameraPos[0] == 1000.0 && report.cameraZoom == -300.0, "CAMERA: the selected handle resolves to the member, the camera is read");
+		test::require(report.hasCameraFloor && report.cameraFloor == 3, "CAMERA: floor num 5 is read and clamped to 3");
 
 		// Saved orders: the persistent rows as the jobs list holds them, the move queued, the unissuable ones counted.
 		{
@@ -748,6 +749,8 @@ int main(int argc, char** argv)
 				test::require(squads == 1162, "SkinHouse: 1,162 squads (1,165 platoons, 3 of them the player's)");
 				test::require(real.wilderness() == nullptr, "SkinHouse: no wilderness spawner after an import");
 			}
+			// tools/ksave.py dump prints "floor num=0" for this save (rwh.150: 0 in all nine captures).
+			test::require(skinReport.hasCameraFloor && skinReport.cameraFloor == 0, "SkinHouse: CAMERA floor num is present and 0");
 			test::require(w.day == 140 && w.hour == 17 && w.minute == 32, "SkinHouse: the clock is day 140 17:32");
 			test::require(w.money == 228952 && w.playerFaction, "SkinHouse: money 228952");
 			test::require(w.research == 71 && w.researchDropped == 7, "SkinHouse: 86 finished entries fold to 78 sids, 71 live RESEARCH records and 7 dropped");

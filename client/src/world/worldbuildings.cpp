@@ -65,12 +65,12 @@ void WorldBuildings::refreshTopBoxes() const
 {
 	// The boxes are keyed on the instance set and on holdGen_ (every mesh load / state move / eviction); a box is recomputed only when the stamp of its parts
 	// moved, so a frame of streaming pays a walk over the parts, not a box per instance (kenshi-k16.2.382.2).
-	if (topBoxData_ != dataGen_ || topBoxHold_ != holdGen_)
+	if (topBoxData_ != topBoxGen_ || topBoxHold_ != holdGen_)
 	{
 #ifdef KCLIENT_DEV_TOOLS
 		const auto tb0 = std::chrono::steady_clock::now();
 #endif
-		if (topBoxData_ != dataGen_)
+		if (topBoxData_ != topBoxGen_)
 		{
 			topBoxes_.assign(topLevel_.size(), TopBox{});
 			for (size_t p = 0; p < topLevel_.size(); p++) { topBoxes_[p].index = topLevel_[p]; }
@@ -84,7 +84,7 @@ void WorldBuildings::refreshTopBoxes() const
 			topBoxRebuild(pos);
 			rebuilt++;
 		}
-		topBoxData_ = dataGen_;
+		topBoxData_ = topBoxGen_;
 		topBoxHold_ = holdGen_;
 #ifdef KCLIENT_DEV_TOOLS
 		const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tb0).count();

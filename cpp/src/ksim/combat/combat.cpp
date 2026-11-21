@@ -94,6 +94,11 @@ constexpr double kDepenetrateCap = 10.0;
 // A pusher with posture != 0 (sneaking, crouched: char+0xe0) pushes at x0.02 (s80_static.md Q1.2). R is the footprints' sum unscaled (human 4 + 4 = 8);
 // the old 7.07 / 8 scale (kDepenetrateScale) is retired (retired/combat_depenetrate_scale.txt).
 constexpr double kDepenetratePosture = 0.02;
+// The contact lag (rwh.188 live, sections 3 / 8): the push runs against the body's own contact set, which lags a passer, so a fast pass misses most bodies
+// (124 u/s: 1-6 of 9-10 overlapped bodies pushed, mean 2.8; 20 u/s: all). The arena step is 0.025 s (two per 0.05 s tick, substeps 2): a runner steps
+// 3.1 u and spends 3-5 steps inside R = 8 (chord 10.6-16 u), a walker 10+ per 0.05 s. A neighbour pushes only once it has been inside R for kContactTicks
+// consecutive earlier steps (0.1 s): a run pass then catches the long chords only, about the live share; a walk catches every body.
+constexpr int kContactTicks = 4;
 constexpr int kSettlePasses = 8; // settleSelf: the halving overlap is under 0.4 % of itself after 8 (live rest spacing 7.98-7.99 of R = 8)
 constexpr double kDepenetrateMin = 0.02; // the push is dropped below this overlap (raw 0.001 physics units)
 // The body layer (task AW, OURS: the original resolves bodies with ragdoll physics). A lying body gives way a fraction of its own
@@ -335,6 +340,17 @@ struct CombatArena::Ctx
 		bool backOff = false; // moves out when inside `inner`: the state-1 steer (Item 34 (e)) and the state-6 hold (Item 46); the ring of 3 stays at rest inside (d)
 		bool straight = false; // no path chase beyond the ring: steers straight at the target (WaitingStateAI)
 	} steer;
+	struct WalkKeyHash
+	{
+		std::size_t operator()(const std::array<double, 6>& k) const
+		{
+			std::size_t h = 0;
+			for (const double v : k)
+				h = h * 1000003u ^ std::hash<double>()(v);
+			return h;
+		}
+	};
+	mutable std::unordered_map<std::array<double, 6>, bool, WalkKeyHash> walkMemo; // straightWalkClear, per Ctx (one step)
 	std::uint64_t ringRouted = 0; // the fighter whose circle() walked a route round an obstacle this tick: its integrate()'s direct steer must not undo it
 	double clipT0 = 0.0;
 	double clipT1 = 0.0;
@@ -709,7 +725,17 @@ struct CombatArena::Ctx
 	bool straightWalkClear(const Fighter& a, const Fighter& b) const
 	{
 		const MeshNavigator* n = nav();
-		return n == nullptr || n->straightWalk(a.x, a.y, a.z, b.x, b.y, b.z);
+		if (n == nullptr)
+			return true;
+		// One walk per exact endpoint pair per step (inEngageRange, notDirect and approach all ask, several times per fighter): a fighter
+		// that moved is a new key, so the answer is the one the uncached walk gives (kenshi-k16.6.444).
+		const std::array<double, 6> key{a.x, a.y, a.z, b.x, b.y, b.z};
+		const auto hit = walkMemo.find(key);
+		if (hit != walkMemo.end())
+			return hit->second;
+		const bool clear = n->straightWalk(a.x, a.y, a.z, b.x, b.y, b.z);
+		walkMemo.emplace(key, clear);
+		return clear;
 	}
 
 	// tryEngageTarget (MEASURED.md item 18): the walk - target radius 4 <= cached reach (stats+0x150) + cc+0x27c,
@@ -3053,10 +3079,9 @@ struct CombatArena::Ctx
 		{
 			// The monitor's `clearOrders` after 60 U (66 game minutes; s73_static.md section 3, H): the goal is force-cleared and replanned,
 			// whether or not the target is sensed, so a target that stays in sight yet is never reached (across water, behind a wall) does not
-			// hold the chaser for ever. Ours: the target is dropped and skipped for kBlockedTarget (the original's 20 s `addBlockedTarget`,
-			// there only for a path failure, UNSURE here), no GiveUpChase event (the original emits it only on a give-up). The chase age restarts.
-			f.aggroBlockId = target.id;
-			f.aggroBlock = kBlockedTarget;
+			// hold the chaser for ever. The give-up path adds NO blocked-target timer (rwh.203: the 20 s block comes only from a move failure, the
+			// reachability poll and CombatClassAI), so the target is picked again at the next selector burst. No GiveUpChase event (the original
+			// emits it only on a give-up). The chase age restarts.
 			setTarget(m, 0);
 			f.chaseId = 0;
 			return true;
@@ -3262,6 +3287,25 @@ struct CombatArena::Ctx
 	// at the gait speed, accelerating at the race's pathfind acceleration and braking for sharp corners and the end
 	// (knav::Walker::speedLimit), the body turning towards the next waypoint at 20 rad/s (s70 sections 2-3). Re-paths
 	// after 5 s of barely moving. No walk/run choice, no avoidance (UNSURE, not original behaviour).
+	// D5: the room an arc may overshoot into at a corner is measured (MeshNavigator::roomAhead), at most kMaxCornerRoomFactor x the footprint and at least the footprint (the route's own
+	// clearance: a vertex the probe reads as pinned is no worse than before).
+	static constexpr double kMaxCornerRoomFactor = 1.5; // x the footprint: the probe is not the arc's true swing, a wider room moved storm_door / group_settle / move_detour
+	// The arc overshoots along the leg in and swings out to the outside of the turn (the direction in - out): the room is the shorter of the two runs.
+	static double cornerRoom(const MeshNavigator& n, double footprint, const std::vector<state::RoutePoint>& route, double x, double z, double inX, double inZ, double outX, double outZ)
+	{
+		// At the corner's own height, not the walker's (on a slope the walker is 20+ u above a corner ahead, off the probe's window: the room read 0 until it came down, a jump in the limit).
+		double y = 0.0;
+		for (const state::RoutePoint& p : route)
+			if (p.x == x && p.z == z)
+				y = p.y;
+		double room = n.roomAhead(x, y, z, inX, inZ, footprint, footprint * kMaxCornerRoomFactor);
+		const double sideX = inX - outX;
+		const double sideZ = inZ - outZ;
+		const double side = std::hypot(sideX, sideZ);
+		if (side > 1.0e-6)
+			room = std::fmin(room, n.roomAhead(x, y, z, sideX / side, sideZ / side, footprint, footprint * kMaxCornerRoomFactor));
+		return std::fmax(footprint, room); // never less than the footprint the route was planned with
+	}
 	void walkOrder(Member& m, bool crawl = false)
 	{
 #if defined(KSIM_PROFILE) && KSIM_PROFILE
@@ -3313,7 +3357,8 @@ struct CombatArena::Ctx
 			brakeShare = std::sqrt(1.0 - lateral * lateral);
 		}
 		const double limit = knav::Walker::speedLimit({f.x, f.y, f.z}, f.route, f.routeNext, top,
-			gait.acceleration, gait.footprint, true, std::fabs(f.forwardSpeed) * dt, brakeShare, std::fabs(f.forwardSpeed));
+			gait.acceleration, gait.footprint, true, std::fabs(f.forwardSpeed) * dt, brakeShare, std::fabs(f.forwardSpeed),
+			[&](double x, double z, double inX, double inZ, double outX, double outZ) { return cornerRoom(*n, gait.footprint, f.route, x, z, inX, inZ, outX, outZ); });
 		// The step never overshoots the route's end, measured along the route: the crow to the end reads 0 when the
 		// end is on the floor above (its x,z is the walker's), and braked the walk to a stop under the goal (task AQ).
 		double remaining = toGo;
@@ -4727,6 +4772,7 @@ struct CombatArena::Ctx
 			if (moveWalking(self))
 				continue;
 			const double ra = footprintOf(a);
+			std::vector<std::pair<std::uint64_t, int>> contacts;
 			double bestMag = 0.0;
 			double bestX = 0.0;
 			double bestZ = 0.0;
@@ -4734,7 +4780,8 @@ struct CombatArena::Ctx
 			auto from = std::lower_bound(bodies.begin(), bodies.end(), a.x - window, [](const Body& b, double v) { return b.x < v; });
 			for (; from != bodies.end() && from->x <= a.x + window; ++from)
 			{
-				if (from->m == &self || moveWalking(*from->m))
+				// A player character on its move walk pushes the bodies it passes (rwh.188) but not a squadmate of its own (the group walks through itself).
+				if (from->m == &self || (a.playerControlled && moveWalking(*from->m)))
 					continue;
 				const Fighter& b = from->m->fighter;
 				const double rb = footprintOf(b);
@@ -4744,6 +4791,19 @@ struct CombatArena::Ctx
 				const double d = std::hypot(dx, dz);
 				if (d >= R || std::fabs(a.y - b.y) >= kAvoidVertical)
 					continue;
+				// The lag is the passing runner's (rwh.188): only a move-walking neighbour is held back by the contact set; every other pair pushes at once.
+				if (moveWalking(*from->m))
+				{
+					int streak = 0;
+					for (const auto& c : self.contacts)
+					{
+						if (c.first == from->m->id)
+							streak = c.second;
+					}
+					contacts.push_back({from->m->id, streak + 1});
+					if (streak < kContactTicks)
+						continue;
+				}
 				const double mag = std::clamp((R - d) * (0.5 + (rb - ra) / R), 0.0, kDepenetrateCap);
 				if (mag > bestMag)
 				{
@@ -4754,6 +4814,7 @@ struct CombatArena::Ctx
 					bestZ = d > 1.0e-6 ? dz / d : 0.0;
 				}
 			}
+			self.contacts = std::move(contacts);
 			if (bestMag < kDepenetrateMin)
 				continue;
 			// A fighter under a technique's strafe lock gives way to nobody but its own target's push: the clip's root motion is the only

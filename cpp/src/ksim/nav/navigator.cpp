@@ -1649,6 +1649,23 @@ std::optional<state::GroundPoint> MeshNavigator::nearestWalkable(double x, doubl
 	return state::GroundPoint{out[0], out[2]};
 }
 
+double MeshNavigator::roomAhead(double x, double y, double z, double dirX, double dirZ, double radius, double limit) const
+{
+	constexpr double kStep = 2.0;
+	constexpr double kTolerance = 0.5; // a vertex pushed to the route's radius reads a hair under it
+	const float need = static_cast<float>(radius - kTolerance);
+	double room = 0.0;
+	for (double along = 0.0; along <= limit; along += kStep)
+	{
+		const knav::Point at{static_cast<float>(x + dirX * along), static_cast<float>(y), static_cast<float>(z + dirZ * along)};
+		knav::PolyLoc loc;
+		if (!query_.locate(at, {1.0f, 20.0f, 1.0f}, loc) || query_.wallDistance(loc, need) < need)
+			break;
+		room = along;
+	}
+	return room;
+}
+
 Route MeshNavigator::routeFrom(const knav::Position& from, double toX, double toZ, std::optional<double> toY, bool planned,
 	Body body, bool straighten, bool clickGoal) const
 {

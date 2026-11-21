@@ -18,7 +18,6 @@ constexpr double kAllyRelation = 50.0;
 constexpr double kEnemyRelation = -30.0;
 constexpr double kStrongerRatio = 1.5;
 constexpr double kOutnumberedRatio = 1.3;
-constexpr double kStarvingBelow = 1.7;
 constexpr std::uint32_t kLoveTags = 0xc; // LT_MY_LIFESAVER | LT_FREED_ME
 constexpr std::uint32_t kHateTags = kLongTermHateTags;
 constexpr int kMaxDepth = 12;

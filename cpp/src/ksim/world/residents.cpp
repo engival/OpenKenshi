@@ -1028,10 +1028,15 @@ void Simulation::prepareWorldCarry()
 	std::vector<std::tuple<std::uint64_t, double, double>> moves;
 	const std::uint64_t now = clockTick();
 	// Only the squads whose second-slice is this tick (id % kSquadIntervalTicks, k16.6.232): each squad is still prepared, stepped and
-	// carried once a second, but not all on one tick.
+	// carried once a second, but not all on one tick. The second's first tick also visits the squads AiSystem::squadStep steps at once
+	// whatever their slice (no GroupAI yet, or no goal): their step needs the carry entry too, or the token walks the route and the leash
+	// and holding are ignored (k16.6.402).
 	forSquadsInSlice(now, [&](flecs::entity squad, const state::Id& id, const state::SquadInstance&)
 	{
-		if (residentData_->world.count(id.value) == 0 || squad.has<state::GateCrew>() || squad.get<state::GroupAI>() == nullptr)
+		const state::GroupAI* group = squad.get<state::GroupAI>();
+		if (!inSlice(now, id.value) && group != nullptr && group->goal != state::GoalKind::None)
+			return;
+		if (residentData_->world.count(id.value) == 0 || squad.has<state::GateCrew>())
 			return;
 		const state::Position* position = squad.get<state::Position>();
 		const auto members = membersOf(squad);
@@ -1056,7 +1061,7 @@ void Simulation::prepareWorldCarry()
 		residentData_->carried.push_back({id.value, squad, leaderId, holding});
 		if (position->x != leader->x || position->z != leader->z)
 			moves.emplace_back(id.value, leader->x, leader->z);
-	});
+	}, now % kSquadIntervalTicks == 0);
 	// The token's Position is written outside the query.
 	for (const auto& [id, x, z] : moves)
 		regions_->place(ecs, id, x, z);

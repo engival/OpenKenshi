@@ -158,7 +158,7 @@ struct SquadOrder
 	std::uint64_t squad = 0; // 71, 72, 74; for 73 the target squad
 	std::uint16_t index = 0; // 73: the slot (kAppend = last, 0 = leader); 74: the new list index
 	std::uint8_t swap = 0; // 73
-	std::string name; // 72, 85
+	std::string name{}; // 72, 85
 };
 
 // A jobs-list order (SIMLINK orders 76 job_add, 77 job_remove, 78 job_move, and kind 10 for toggle which 4, JOBS on / off) for one character.

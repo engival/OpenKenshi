@@ -1,0 +1,29 @@
+# mapsave centre (kenshi-k16.2.435.5): the world map opens centred on the camera, every time. Camera at A, M opens (centred on A); a drag pans the map,
+# M closes; the camera moves to B, M opens (centred on B, not on the panned view); close, M again with the camera unmoved: B. The zoom stays the same
+# throughout. Dumps: 0 at A, 1 panned, 2 at B, 3 reopened at B.
+100 set pos -40000,1000
+150 key M down
+152 key M up
+240 dump map
+260 screenshot OUTDIR/centre_a.png
+300 mouse pos 640 300
+302 mouse down left
+310 mouse pos 600 270
+320 mouse pos 540 230
+322 mouse up left
+360 dump map
+380 screenshot OUTDIR/centre_panned.png
+400 key M down
+402 key M up
+420 set pos 20000,-30000
+440 key M down
+442 key M up
+520 dump map
+540 screenshot OUTDIR/centre_b.png
+560 key M down
+562 key M up
+580 key M down
+582 key M up
+640 dump map
+660 screenshot OUTDIR/centre_reopened.png
+700 quit

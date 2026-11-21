@@ -35,7 +35,7 @@ namespace {
 
 // The wire's enums mirror the sim's (enums.hpp is the client's copy; this is where the sim checks the mirror).
 static_assert(static_cast<int>(GoalKind::None) == static_cast<int>(state::GoalKind::None)
-	&& static_cast<int>(GoalKind::ManGate) == static_cast<int>(state::GoalKind::ManGate), "GoalKind mirror");
+	&& static_cast<int>(GoalKind::Fight) == static_cast<int>(state::GoalKind::Fight), "GoalKind mirror");
 static_assert(static_cast<int>(AiReason::None) == static_cast<int>(state::AiReason::None)
 	&& static_cast<int>(AiReason::DoorRefused) == static_cast<int>(state::AiReason::DoorRefused), "AiReason mirror");
 static_assert(static_cast<int>(OrderStatus::None) == static_cast<int>(state::OrderStatus::None)

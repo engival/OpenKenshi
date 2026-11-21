@@ -543,15 +543,20 @@ bool Simulation::lyingInBed(std::uint64_t id, const state::Fighter& f) const
 }
 
 // The portrait's hurt (the exe's 1404123a0 minus its camera gates, which are the client's; rwh.117): not incapacitated (KO, dead, down,
-// carried), engaged (OURS stand-in for the AI+0xb0 float, UNSURE k16.6.159: Fighter::engagedUntil, set while a living target or a carried
-// body, held 15 s) and not caged; or a live eat application on it.
+// carried), not caged, and SensoryData+0x88 > 0 - the exe recomputes that sum every AI update (140859220 zeroes it, 140854370 adds) from
+// the task aggression of the characters whose hand is me, so there is no hold (rwh.202 section 9). Our stand-in for "task aggression > 0
+// with me as the hand": a conscious, living attacker whose target is me. Or a live eat application on it.
 bool Simulation::portraitHurt(std::uint64_t id, const state::Fighter& f) const
 {
 	const auto eaten = eatenUntil_.find(id);
 	if (eaten != eatenUntil_.end() && eaten->second > clockTick())
 		return true;
-	const bool incapacitated = f.unconscious || f.dead || f.down || f.carriedBy != 0;
-	return !incapacitated && f.cageBuilding == 0 && clockTick() < f.engagedUntil;
+	if (f.unconscious || f.dead || f.down || f.carriedBy != 0 || f.cageBuilding != 0)
+		return false;
+	for (const CombatArena::Member& other : combat_->members())
+		if (other.id != id && other.fighter.target == id && !other.fighter.dead && !other.fighter.unconscious && !other.fighter.down)
+			return true;
+	return false;
 }
 
 // G4, the homebase rows (dt24_243 / dt24_275 / dt24_175): a plan against (x, z) with the homebase symbols live. 275 SIT_AROUND
@@ -652,7 +657,7 @@ goap::Plan Simulation::planSelfAid(std::uint64_t actor) const
 		return {};
 	const worldres::Kits kits = worldres::kitsOf(actor, *self,
 		[this](std::uint64_t id, std::int32_t function) { return carriesKit(id, function); });
-	if (!worldres::needsAid(*self, kits, worldres::bothCategories(*self)))
+	if (!kits.any() || !worldres::needsAid(*self, kits, worldres::bothCategories(*self))) // haveFirstAidKit is its precondition
 		return {};
 	FnWorld world;
 	world.eval = [](goap::Sym sym, std::uint64_t, double, double) -> bool { return sym == goap::Sym::NeedsFirstAid; };

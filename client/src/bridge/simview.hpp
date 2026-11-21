@@ -39,6 +39,10 @@ public:
 	double startTick = -1;	// replay: start at this tick (> 0) instead of the first snapshot
 	// dt: real seconds. ground(x, z): terrain height, used while yValid is clear (the sim has no heights yet).
 	void update(double dt, Characters& chars, const std::function<double(double, double)>& ground);
+	double dtAnim() const { return dtAnim_; }	// the sim seconds the render clock advanced this frame (0 on a stall or pause): the animation's clock (kenshi-k16.2.479.1)
+#ifdef KCLIENT_DEV_TOOLS
+	void devStall(bool on) { devStall_ = on; }	// script `set stall 0|1`: hold the snapshots (the socket unread), a network gap
+#endif
 	double dtSim() const { return dtSim_; }	// this frame's sim seconds (0 paused, x the game speed), set by update
 	// The render delay for the current game speed, in ticks: the ~100 ms of wall time the client draws behind the newest snapshot
 	// (kDelayTicks at 1x, x5 at 5x; SIMLINK 4). A speed below 1 (slow motion) keeps at least a quarter tick of history.
@@ -380,6 +384,10 @@ private:
 	RayStats rayStats_;
 	double predictYOff_ = 0;	// predict's wire-navmesh y offset: the drawn y when the standing ray has no hit
 	double rayLogTick_ = 0;
+	double dtAnim_ = 0;
+#ifdef KCLIENT_DEV_TOOLS
+	bool devStall_ = false;
+#endif
 	double dtSim_ = 0;	// this frame's sim seconds
 	uint64_t drivenId_ = 0;	// the character under direct drive (the follow camera on a player), 0 none (setDriven; kenshi-k16.2.237.10: the travel facing)
 	void predict(const simlink::Character& c, double p[3], float& yaw);
@@ -390,6 +398,10 @@ private:
 	// kenshi-k16.2.74: the startup clock backlog eases in instead of snapping (clockEasing_ while it does; clockSnapped_ set on a snap so a drawjump
 	// can say the clock caused it). resetSnap_: a load this frame, snap every display offset. synced_: a sync has completed (a resetSerial bump before
 	// that is the connection's own, not a load, and must not force a snap).
+	// kenshi-k16.2.477.1: the sim's achieved tick rate (ticks per wall second, over >= 0.5 s windows, smoothed) the render clock follows when the sim cannot reach the
+	// game speed (x5 on a long travel: 30-65 of 100 ticks/s), so the clock does not run ahead of the snapshots and get eased back ~10 ticks at a time
+	double achievedRate_ = 0, rateWall_ = 0, rateFrom_ = 0;
+	bool rateValid_ = false, rateSeeded_ = false;
 	bool resetSnap_ = false, clockEasing_ = false, clockSnapped_ = false, synced_ = false;
 	std::unordered_map<uint64_t, Slot> slots_;
 	std::vector<uint64_t> order_;	// sim ids in Characters index order

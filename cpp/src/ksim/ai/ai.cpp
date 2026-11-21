@@ -1423,8 +1423,23 @@ GroupResult UtilityGroupLayer::update(GroupContext& context)
 		return result;
 	}
 
+	// A fight replaces a local walk (the original's fight goals displace the patrol/move plan, rwh.202 s12): the route is dropped and the
+	// walk is picked again, as any goal, once nobody fights.
+	if (context.carried && context.holding && isLocal(ai.goal))
+	{
+		ai.goal = GoalKind::Fight;
+		ai.route.clear();
+	}
+
 	switch (ai.goal)
 	{
+	case GoalKind::Fight:
+		if (!context.holding)
+		{
+			ai.goal = GoalKind::None;
+			select(context, result);
+		}
+		break;
 	case GoalKind::None:
 		// First step: stand on the navmesh (a wilderness den is only a point
 		// of the biome map, a town centre may be inside a building).
@@ -1575,7 +1590,6 @@ FactionScriptSetup factionScript(const BehaviourScripts& scripts,
 
 AiSystem::AiSystem(Config config, std::uint64_t seed)
 	: config_(std::move(config))
-	, seed_(seed)
 	, group_(std::make_unique<UtilityGroupLayer>(config_.navigator.get(), towns_, seed, config_.tokenSpeeds))
 {
 	struct NoFaction final : FactionLayer
@@ -1697,8 +1711,13 @@ void AiSystem::squadStep(flecs::world& ecs, RegionEngine& engine, std::uint64_t 
 {
 	if (tick % 20 == 0 || squads_.empty() || knownSquads_ == static_cast<std::size_t>(-1)) // the count query is the second's, not every tick's (k16.6.232); callers below skip a squad that went
 		refresh(ecs);
-	if (doors_ != nullptr && tick % 20 == 0)
-		doors_->sync(ecs, tick, towns_, config_.navigator.get());
+	if (doors_ != nullptr)
+	{
+		if (tick % 20 == 0)
+			doors_->sync(ecs, tick, towns_, config_.navigator.get());
+		else
+			doors_->syncOverrides(ecs, config_.navigator.get()); // a vector compare; the book is rebuilt only when a command changed it
+	}
 	// A squad never stepped (no GroupAI yet, or one with no goal) takes its first step at once, as it did when every squad was stepped at the
 	// second's tick (k16.6.232): the resident pass reads the state that step makes (inRoutineMode) before the squad's own slice comes up, and no
 	// squad stays goalless (ksim_faction's audit) until it does.

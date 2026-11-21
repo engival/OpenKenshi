@@ -21,8 +21,8 @@ Developer detail (flags, scripts, scenes, rendering) is in [`client/README.md`](
 | `play.sh spectate [NAME]` | A player-less spectator fixture (the `spectate_*` files); no NAME lists them. |
 
 Arguments after `--` go to the client (`play.sh fly --at Hub -- --alt 200`). Builds are not run by the launcher: if a
-program is missing it prints the command that builds it. `title` runs the plain client (no `--debug`, no direct server
-join); `fly`, `game`, `scenario` and `spectate` pass `--debug`, so the development windows and keys in section 6 work
+program is missing it prints the command that builds it. To get the debug tools with the normal game (title and its own server), start the client with `--debug` (`OpenKenshi --debug`); `--debug` adds the tools and changes nothing else, and there is no in-game switch yet, so a restart is needed. `--fly` is the offline fly-around (no title, no server). `title` runs the plain client (no `--debug`, no direct server
+join); `fly` (with `--fly`), `game`, `scenario` and `spectate` pass `--debug`, so the development windows and keys in section 6 work
 there.
 
 **The Kenshi folder.** The client finds your Kenshi install by itself (Steam and GOG default places). The first time it cannot, it asks:
@@ -176,6 +176,7 @@ Mods) and a group inside it, so related settings sit together. The same grouping
 | Animation | KO and ragdolls | `anim.fall_blend`, `anim.rise_blend`, `physics.ragdolls`, `physics.ragdoll_cap` |
 | Animation | Locomotion | `anim.vel_blend`, `anim.speed_filter`, `anim.stride_warp`, `anim.stop_contact`, `anim.idle_draw`, `anim.inertialize`, `anim.action_root`, `anim.slop_tau` |
 | Camera | Building see-through | `camera.occluder_fade`, `camera.peek`, `camera.occluder_ghost` |
+| Camera | Look | `look.follow_pivot_tau`, `look.settle_tau` |
 | Interface | Colours | `ui.colour.*` |
 | Interface | HUD and labels | `ui.floaters`, `ui.progress_bars`, `ui.show_names`, `ui.labels.characters`, `ui.speed_icons`, `ui.speed_unit`, `ui.map_icons_stepped` |
 | Interface | Inventory windows | `ui.gear_top`, `ui.cursor_badges`, `ui.place_one`, `ui.auto_split` |
@@ -183,7 +184,7 @@ Mods) and a group inside it, so related settings sit together. The same grouping
 | Interface | Look | `ui.scale`, `ui.hud_tips`, `ui.style` |
 | Interface | Markers | `markers.selection_ring`, `markers.route` |
 | Interface | Screens | `ui.title_at_start` |
-| Interface | Screenshots | `screenshot.dir` |
+| Interface | Screenshots | `screenshot.dir`, `screenshot.format` |
 | Interface | Sounds | `ui.sounds`, `ui.hover_sounds` |
 | Interface | Windows | `ui.windows_movable`, `window.remember` |
 | Game | Character loading | `sim.char_defer`, `sim.char_add_budget_ms`, `sim.char_warm`, `render.loading_standin` |
@@ -636,9 +637,7 @@ page (the conversation screen in 4.9 is separate).
 use `O` (centre), `-` and `+` (zoom); a touchpad or a fine-stepped wheel zooms by how far you scroll. The town icons grow
 steadily as you zoom in, from half size at the whole-map view to full size near the closest zoom. Options `ui.map_icons_stepped`
 brings back the original's way: icons keep their size on screen and grow in two steps (at about 5x and 9x the whole-map view).
-A right click on the map sends the selection there as a move order. A new game opens the map on an area overview: the Hub in the middle and Stack
-just inside the top edge (a deviation from the original, which starts on the whole world); the zoom and the place you were looking at are
-remembered, across closing and reopening the map and through saving and loading a game.
+A right click on the map sends the selection there as a move order. The map always opens centred on your camera (the squad you follow or have selected), at an area overview zoom on a new game (a deviation from the original, which starts on the whole world); the zoom is remembered, across closing and reopening the map and through saving and loading a game, the place you were looking at is not.
 
 ### 4.2 Squads page
 
@@ -992,6 +991,8 @@ second. It flickers as it falls, harms nobody, and comes with no thunder and no 
 `F12` (or `PrintScreen`) saves a screenshot of the next drawn frame; `Alt+F12` waits three seconds first (so a held key
 can show). A toast says where it went. The folder is the `screenshot.dir` setting, else `~/.local/share/kclient/screenshots`
 (`%LOCALAPPDATA%\OpenKenshi\data\kclient\screenshots` on Windows).
+A Linux dev build (with libwebp) writes a lossless `.webp` by default, about half the size of a PNG; other builds, or
+`screenshot.format=png`, write `.png`. A path given with an explicit `.png` or `.webp` keeps its extension.
 Beside the picture the client writes a text sidecar recreating the view. A `clicks:` block in it lists your last 6 clicks (newest first) with the exact camera, screen point and what the pick hit or passed, so a click that went somewhere odd can be explained from the shot even a second later. Its `options:` line lists every setting changed
 from its default (sorted `key=value`, window geometry left out, `(defaults)` when none), and the same settings follow
 the `recreate:` line as `--set KEY=VALUE`, so a look reproduces even after the settings file has changed; while the whole-fight trails record, a trails

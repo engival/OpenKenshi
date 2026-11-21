@@ -155,7 +155,7 @@ void checkParse()
 		std::numeric_limits<float>::infinity(), 3.0e38f })
 		for (const std::size_t axis : { std::size_t(0), std::size_t(4), std::size_t(8) })
 		{
-			requireThrows([&bytes, firstX, axis, badValue] {
+			requireThrows([&bytes, axis, badValue] {
 				auto bad = bytes;
 				putU32(bad, firstX + axis, std::bit_cast<std::uint32_t>(badValue));
 				kworld::parseFeatureFile(bad, "x");

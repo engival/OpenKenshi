@@ -33,6 +33,9 @@ int main(int argc, char** argv)
 		Simulation& sim = rig.sim;
 		sim.newWorld();
 		sim.run(1);
+		// Re-pinned for kenshi-k16.7.118: the 856 containers / item nodes / doors the mesh furnishes no longer take ids from the main counter, so the
+		// squads' ids dropped by that many. The bar-package roll hangs on the squad id, so the id the pin was made at (the old one) is kept by hand.
+		ecsOf(sim).get_mut<state::Ids>()->next += 856;
 		const scenario::Placed placed = scenario::apply(sim, *rig.gameData, *rig.combatData, rig.context, file, 3);
 		const std::uint64_t bossId = placed.idOf.at(3);
 		const state::Fighter* boss = sim.combat()->find(bossId);

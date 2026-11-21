@@ -323,6 +323,7 @@ inline constexpr std::uint16_t AssaultFortifications = 270; // ASSAULT_FORTIFICA
 inline constexpr std::uint16_t LiberatePrisoners = 276; // LIBERATE_ALL_THE_PRISONERS (task raid-goals, dt24_276)
 inline constexpr std::uint16_t PickupIntruders = 223;
 inline constexpr std::uint16_t TakeIntruderOutside = 224;
+inline constexpr std::uint16_t GatePost = 51; // STAND_AT_NODE: a gate crew guard on its slot (stepGateCrewPosts); busy for the follower, never scored
 inline constexpr std::uint16_t ManTheGate = 180; // MAN_THE_GATE (dt24_180): the gate crew's post goal; no effect, held by its preconditions
 inline constexpr std::uint16_t GoHomeToBedSecure = 239;
 inline constexpr std::uint16_t FinalKidnapperCageJob = 254; // FINAL_KIDNAPPER_CAGE_JOB (dt26): the kidnapper package goal; lift a victim, then 112/108 cage it

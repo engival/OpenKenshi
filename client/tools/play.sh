@@ -3,7 +3,7 @@
 # "these cli options are getting nuts. I either need a launcher, or some more launch scripts").
 # usage: client/tools/play.sh [MODE [ARGS]] [-- KCLIENT_ARGS...]
 #   play.sh                      list the modes
-#   play.sh fly [--at PLACE|x,z] the debug free camera over a place, no title screen (default: the Hub); e.g. play.sh fly --at Squin
+#   play.sh fly [--at PLACE|x,z] the debug free camera (kclient --debug --fly) over a place, no title screen (default: the Hub); e.g. play.sh fly --at Squin
 #   play.sh title [--playtest] [--bead ID]  the title screen, which starts its own OpenKenshi-server; the journey start (kenshi-k16.2.94);
 #                                --playtest shows SCENARIOS on the title and pause menus without --debug, to tag a journey playtest run
 #                                (kenshi-k16.2.110); --bead ID also posts the run's notes, verdict and F12 shots to that beads item
@@ -139,7 +139,7 @@ case "$MODE" in
 		CLIENT_CMD=(${KCLIENT:-$CLIENT})
 		[ -x "${CLIENT_CMD[0]}" ] || missing_client
 		# 400 up, looking down 35 degrees: the place fills the frame (the fly-around defaults; --alt / --pitch after -- override)
-		exec "${CLIENT_CMD[@]}" --debug --at "$PLACE" --alt 400 --pitch -35 ${EXTRA[@]+"${EXTRA[@]}"}
+		exec "${CLIENT_CMD[@]}" --debug --fly --at "$PLACE" --alt 400 --pitch -35 ${EXTRA[@]+"${EXTRA[@]}"}
 		;;
 	title)
 		EXTRA=()
