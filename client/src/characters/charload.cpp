@@ -1,4 +1,5 @@
 #include <atomic>
+#include <set>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -586,7 +587,7 @@ void Characters::init(const ResourceIndex* res, const kdata::GameData& gd, bool 
 	for (const kdata::Record* r : gd.byType(kworld::itemTypeByName("ITEM")))
 	{
 		// the props a producer's functionality `special tool` names (Pickaxe, Hoe): the ITEM's mesh with its material spec's maps, as a ground item draws
-		ToolInfo t = { r->fileOr("mesh"), {}, {} };
+		ToolInfo t = { r->fileOr("mesh"), {}, {}, r->floatOr("equip offset", 0.0f) };
 		if (t.mesh.empty()) { continue; }
 		const kdata::RefCategory* m = r->findRefs("material");
 		const kdata::Record* spec = m && !m->entries.empty() ? gd.find(m->entries.front().targetID) : nullptr;
@@ -2234,8 +2235,9 @@ void Characters::addWeapon(Char& c, const std::string& spec, const std::string& 
 }
 
 // A producer's special tool (BUILDING_FUNCTIONALITY `special tool`, an ITEM: "stuff like pickaxes, just used for appearance sake") in the right hand:
-// its mesh on `hands` = Bip01 Prop2 like a drawn weapon's bare mesh, at the ITEM's own scale (1). NOT TRACED: the exe's offset from the bone (Task_OperateMachine::vf1
-// 1400b64b0 attaches it); none is applied here, the same as a held weapon.
+// its mesh on `hands` = Bip01 Prop2 like a drawn weapon's bare mesh, at the ITEM's own scale (1), identity rotation (kenshi-rwh.272: the `hands` default record,
+// 1405373e0; no grip rotation, no scale). The only addition is FUN_140535d50's (0, 0, ITEM `equip offset`) in the bone frame; whether the pickaxe's item class
+// takes it (item vf+0x2d8, the weapon-class override) is UNSURE in the exe, so it is applied whenever the ITEM data has a value (0 = a no-op).
 void Characters::addTool(Char& c, const std::string& item)
 {
 	const auto ti = tools_.find(folded(item));
@@ -2246,9 +2248,13 @@ void Characters::addTool(Char& c, const std::string& item)
 	kworld::toMatrix(kworld::sampleModel(sk, nullptr, mt.bone, 0.0f), mt.local);
 	for (const AttachPoint& p : c.body->attach) { if (p.name == "hands") { mt.bone = p.bone; memcpy(mt.local, p.model, sizeof mt.local); } }
 	if (mt.slot < (int)sk.bones.size()) { fprintf(stderr, "kclient: characters: %s: no palette slot left for %s\n", label(c.spec).c_str(), item.c_str()); return; }
+	const float eo = ti->second.equipOffset;
+	for (int i = 0; i < 3; i++) { mt.local[12 + i] += mt.local[8 + i] * eo; }
 	std::string err;
 	const GpuMesh* m = mesh(ti->second.mesh, nullptr, err, mt.slot);
 	if (!m) { fprintf(stderr, "kclient: characters: %s: %s\n", item.c_str(), err.c_str()); return; }
+	static std::set<std::string> said;
+	if (said.insert(item).second) { fprintf(stderr, "kclient: characters: tool %s equip offset %g\n", item.c_str(), eo); }
 	c.mounts.push_back(mt);
 	c.mountNames.push_back("in the hand @ hands (" + sk.bones[(size_t)mt.bone].name + ") tool " + item);
 	Part p = { kArmour, m, texture(ti->second.tex, nothing_), texture(ti->second.nrm, flat_), {}, { 0, 0, 0, 1 }, 0.6f, {}, 1.0f };

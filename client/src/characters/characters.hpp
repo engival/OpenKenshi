@@ -826,7 +826,7 @@ private:
 	std::unordered_map<std::string, std::string> factionColours_;	// FACTION -> its COLOR_DATA name
 	std::unordered_map<std::string, WeaponInfo> weapons_;
 	std::unordered_map<std::string, WeaponModel> weaponModels_;
-	struct ToolInfo { std::string mesh, tex, nrm; };	// an ITEM's mesh and its material spec's maps (the special tool props)
+	struct ToolInfo { std::string mesh, tex, nrm; float equipOffset = 0.0f; };	// an ITEM's mesh and its material spec's maps (the special tool props)
 	std::unordered_map<std::string, ToolInfo> tools_;
 	std::unordered_map<std::string, std::unique_ptr<Body>> bodies_;	// race name + gender
 	std::unordered_set<std::string> warmed_;	// race keys (bodies_) whose race-only build warm() did, or whose body failed (kenshi-k16.2.205.12.77)
