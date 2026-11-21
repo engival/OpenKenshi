@@ -563,7 +563,7 @@ const cfg::Bool kRouteLine{ cfg::Group{ "Markers" }, "markers.route", false, "De
 const cfg::Bool kOccluderFade{ cfg::Group{ "Building see-through" }, "camera.occluder_fade", true, "Buildings between the camera and the followed character turn see-through (auto-center and hover camera)" };
 const cfg::Bool kHudText{ cfg::Group{ "Developer text" }, "debug.hud_text", false, "Debug: the top-left developer text block (camera, ground, zone, nearest town, counts, time, weather, timings, sim); needs --debug. Off: the F12 shot's .txt still carries every line (hud.* keys)" };
 const cfg::Text kShotDir{ cfg::Group{ "Screenshots" }, "screenshot.dir", "", "Where the screenshot key saves (and its .txt scene notes); empty: the user data dir's kclient/screenshots ($XDG_DATA_HOME or ~/.local/share; Windows %LOCALAPPDATA%\\OpenKenshi\\data)" };
-const cfg::Text kShotFormat{ cfg::Group{ "Screenshots" }, "screenshot.format", "webp", { "webp", "png" }, "The format of a shot nobody named (F12, scene_test, lockstep shots): webp = lossless WebP (Linux builds with libwebp; half the PNG size; the other platforms always write png), png. A path with an explicit .png / .webp keeps its extension" };
+const cfg::Text kShotFormat{ cfg::Group{ "Screenshots" }, "screenshot.format", "webp", { "webp", "png" }, "The format of a shot nobody named (F12, scene_test, lockstep shots): webp = lossless WebP at a fast effort (cwebp -z 1, under 0.6 s at 1440p; Linux builds with libwebp; half the PNG size; the other platforms always write png), png. A path with an explicit .png / .webp keeps its extension" };
 const cfg::Bool kPeek{ cfg::Group{ "Building see-through" }, "camera.peek", true, "Pointing at a building's inside from outside shows its walls as a ghost (ours; the original has none; playtest)" };
 const cfg::Text kSpeedUnit{ cfg::Group{ "HUD and labels" }, "ui.speed_unit", "kph", { "kph", "mph" }, "The unit of speeds in the panels (run speed, wind); the original shows mph" };
 // u/s -> the ui.speed_unit (1 u = 10 cm; mph: kinspect run_speed_mph.md, the exe's float)
@@ -1749,7 +1749,7 @@ void run_script(bool post)
 				printf("  foliage: %s; %zu of %zu resident instances are children\n", app.foliage.cellReport(app.pos).c_str(), fs.children, fs.instancesLoaded);
 				printf("  foliage CPU this frame: cull+list %.2f ms, cell upload %.2f ms, draw submit %.2f ms; whole frame CPU %.2f ms (smoothed %.2f)\n", fs.cullMs, fs.uploadMs, framestats::stats().foliage.renderMs, framestats::stats().cpu.lastMs, framestats::stats().cpu.ms);
 			}
-			});
+			}, [shot](bool, const std::string&) { dev::shotWritten(shot); });	// a --bead run's copy and comment follow the file (no flushWrites on the logic thread)
 		}
 		else if (post) { const Cmd q = c; readback::after([q](bool) { exec_cmd(q); }); }	// quit: behind this frame's reads
 		else { exec_cmd(c); }
@@ -3842,6 +3842,7 @@ void shot_pending_frame()
 			shot_toast("Screenshot failed: could not write " + base + ext);	// the pixels were not read: no file to wait for
 		}
 		}, [base, ext, name = std::string(name)](bool ok, const std::string& why) {	// the writer's result (kenshi-k16.2.312): the toast follows the file
+			dev::shotWritten(base + ext);	// a --bead run's copy and comment follow the file (no flushWrites on the logic thread)
 			shot_toast(ok ? "Screenshot saved: " + name + ext : "Screenshot failed: could not write " + base + ext + ": " + why);	// the folder is screenshot.dir (the path alone wraps the toast)
 		});
 		}

@@ -40,15 +40,16 @@ std::string stripExt(const std::string& path)
 }
 
 #if defined(KCLIENT_WEBP)
+// cwebp -z level of a lossless shot. 1 = ~0.5 s at 2560x1440, ~4% larger than -z 9 (12 s there: the F12 freeze, kenshi-k1c6).
+static constexpr int kWebpLevel = 1;
+
 static bool writeWebp(const std::string& path, int w, int h, const unsigned char* rgba)
 {
 	std::vector<unsigned char> top((size_t)w * h * 4);	// top row first
 	for (int y = 0; y < h; y++) { std::memcpy(&top[(size_t)y * w * 4], rgba + (size_t)(h - 1 - y) * w * 4, (size_t)w * 4); }
 	WebPConfig cfg;
 	if (!WebPConfigInit(&cfg)) { return false; }
-	cfg.lossless = 1;
-	cfg.quality = 100;	// lossless effort (cwebp -z 6)
-	cfg.method = 6;
+	if (!WebPConfigLosslessPreset(&cfg, kWebpLevel)) { return false; }	// lossless, effort kWebpLevel (cwebp -z N): a shot never stalls a frame
 	cfg.exact = 1;		// the RGB of alpha 0 pixels stays
 	WebPPicture pic;
 	if (!WebPPictureInit(&pic)) { return false; }

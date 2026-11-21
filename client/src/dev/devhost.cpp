@@ -39,6 +39,7 @@ struct ShotBead
 	double deadline = 0;	// steady seconds
 	std::string tag;		// "[<scenario> <vN> run <stem>]", the run's at the shot
 	std::string caption;	// "<scenario> <vN>, <game time>, <place>, <selected>"
+	bool written = false;	// the screenshot writer's done ran (shotWritten): the file is on disk (or the write failed)
 	std::string comment;	// "game: ..., place: ..., selected: ..., note N (just added)" (the item comment's second line)
 };
 
@@ -99,14 +100,13 @@ void shot_bead_begin(const std::string& shotPath)
 	sb.comment = "game: " + info.time + ", place: " + info.place + ", selected: " + info.selected + (note.empty() ? "" : ", note " + note);
 }
 
-// Copies the shot's files, appends its CAPTIONS.txt line and posts the item comment. A file that is not there (an .events.txt the log
+// Copies the shot's files (shotFrame calls it once the writer is done with the picture: no wait on the logic thread), appends its CAPTIONS.txt line and posts the item comment. A file that is not there (an .events.txt the log
 // could not write, an .trees.txt of a run with no debug view) is skipped; a png that will not copy is a failure: no caption, no comment,
 // a warning.
 void shot_bead_finish(const ShotBead& sb)
 {
 	State& s = st();
 	if (sb.base.empty()) { return; }
-	readback::flushWrites();	// the PNG is the screenshot writer's until then
 	const std::filesystem::path dir = std::filesystem::path(s.findings) / "asks" / s.bead;
 	std::error_code ec;
 	std::filesystem::create_directories(dir, ec);
@@ -300,6 +300,13 @@ std::string buildLine() { return st().playtest.buildLine(); }
 
 void shotBegin(const std::string& shotPath) { shot_bead_begin(shotPath); }
 
+// The screenshot writer finished shotPath (runWrites, logic thread): its --bead copy may go. A failed write counts too: the finish then finds no picture and warns.
+void shotWritten(const std::string& shotPath)
+{
+	const std::string base = imagewrite::stripExt(shotPath);
+	for (ShotBead& sb : st().shotBeads) { if (sb.base == base) { sb.written = true; } }
+}
+
 // Every frame after a shot: a pending --bead copy goes when its .trees.txt is written (the capture's answers are in, or its 5 s are up;
 // a newer shot's capture means the older one's is done). Copies go in the order the shots were taken.
 void shotFrame()
@@ -308,6 +315,7 @@ void shotFrame()
 	while (!s.shotBeads.empty())
 	{
 		const ShotBead& sb = s.shotBeads.front();
+		if (!sb.written) { return; }	// the encode is still on the writer thread: the copy follows its done callback, never a wait
 		const bool waiting = bead_seconds() < sb.deadline && s.env.treesPending(sb.base);	// the trees' capture is 5 s at most: the deadline is its backstop
 		if (waiting) { return; }
 		shot_bead_finish(sb);
