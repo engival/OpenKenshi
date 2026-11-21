@@ -1,0 +1,563 @@
+# HUD clicks (kenshi-cym.40.2.10): pause, speed 2, portrait 0, minimap; one set every 120 frames, locked until `follow lock` at 6000, then the same clicks act.
+# Each click: move onto the control, mouse down/up left.
+1500 mouse hud pause
+1501 mouse down left
+1502 mouse up left
+1510 mouse hud speed 2
+1511 mouse down left
+1512 mouse up left
+1520 mouse hud portrait 0
+1521 mouse down left
+1522 mouse up left
+1530 mouse hud minimap
+1531 mouse down left
+1532 mouse up left
+1620 mouse hud pause
+1621 mouse down left
+1622 mouse up left
+1630 mouse hud speed 2
+1631 mouse down left
+1632 mouse up left
+1640 mouse hud portrait 0
+1641 mouse down left
+1642 mouse up left
+1650 mouse hud minimap
+1651 mouse down left
+1652 mouse up left
+1740 mouse hud pause
+1741 mouse down left
+1742 mouse up left
+1750 mouse hud speed 2
+1751 mouse down left
+1752 mouse up left
+1760 mouse hud portrait 0
+1761 mouse down left
+1762 mouse up left
+1770 mouse hud minimap
+1771 mouse down left
+1772 mouse up left
+1860 mouse hud pause
+1861 mouse down left
+1862 mouse up left
+1870 mouse hud speed 2
+1871 mouse down left
+1872 mouse up left
+1880 mouse hud portrait 0
+1881 mouse down left
+1882 mouse up left
+1890 mouse hud minimap
+1891 mouse down left
+1892 mouse up left
+1980 mouse hud pause
+1981 mouse down left
+1982 mouse up left
+1990 mouse hud speed 2
+1991 mouse down left
+1992 mouse up left
+2000 mouse hud portrait 0
+2001 mouse down left
+2002 mouse up left
+2010 mouse hud minimap
+2011 mouse down left
+2012 mouse up left
+2100 mouse hud pause
+2101 mouse down left
+2102 mouse up left
+2110 mouse hud speed 2
+2111 mouse down left
+2112 mouse up left
+2120 mouse hud portrait 0
+2121 mouse down left
+2122 mouse up left
+2130 mouse hud minimap
+2131 mouse down left
+2132 mouse up left
+2220 mouse hud pause
+2221 mouse down left
+2222 mouse up left
+2230 mouse hud speed 2
+2231 mouse down left
+2232 mouse up left
+2240 mouse hud portrait 0
+2241 mouse down left
+2242 mouse up left
+2250 mouse hud minimap
+2251 mouse down left
+2252 mouse up left
+2340 mouse hud pause
+2341 mouse down left
+2342 mouse up left
+2350 mouse hud speed 2
+2351 mouse down left
+2352 mouse up left
+2360 mouse hud portrait 0
+2361 mouse down left
+2362 mouse up left
+2370 mouse hud minimap
+2371 mouse down left
+2372 mouse up left
+2460 mouse hud pause
+2461 mouse down left
+2462 mouse up left
+2470 mouse hud speed 2
+2471 mouse down left
+2472 mouse up left
+2480 mouse hud portrait 0
+2481 mouse down left
+2482 mouse up left
+2490 mouse hud minimap
+2491 mouse down left
+2492 mouse up left
+2580 mouse hud pause
+2581 mouse down left
+2582 mouse up left
+2590 mouse hud speed 2
+2591 mouse down left
+2592 mouse up left
+2600 mouse hud portrait 0
+2601 mouse down left
+2602 mouse up left
+2610 mouse hud minimap
+2611 mouse down left
+2612 mouse up left
+2700 mouse hud pause
+2701 mouse down left
+2702 mouse up left
+2710 mouse hud speed 2
+2711 mouse down left
+2712 mouse up left
+2720 mouse hud portrait 0
+2721 mouse down left
+2722 mouse up left
+2730 mouse hud minimap
+2731 mouse down left
+2732 mouse up left
+2820 mouse hud pause
+2821 mouse down left
+2822 mouse up left
+2830 mouse hud speed 2
+2831 mouse down left
+2832 mouse up left
+2840 mouse hud portrait 0
+2841 mouse down left
+2842 mouse up left
+2850 mouse hud minimap
+2851 mouse down left
+2852 mouse up left
+2940 mouse hud pause
+2941 mouse down left
+2942 mouse up left
+2950 mouse hud speed 2
+2951 mouse down left
+2952 mouse up left
+2960 mouse hud portrait 0
+2961 mouse down left
+2962 mouse up left
+2970 mouse hud minimap
+2971 mouse down left
+2972 mouse up left
+3060 mouse hud pause
+3061 mouse down left
+3062 mouse up left
+3070 mouse hud speed 2
+3071 mouse down left
+3072 mouse up left
+3080 mouse hud portrait 0
+3081 mouse down left
+3082 mouse up left
+3090 mouse hud minimap
+3091 mouse down left
+3092 mouse up left
+3180 mouse hud pause
+3181 mouse down left
+3182 mouse up left
+3190 mouse hud speed 2
+3191 mouse down left
+3192 mouse up left
+3200 mouse hud portrait 0
+3201 mouse down left
+3202 mouse up left
+3210 mouse hud minimap
+3211 mouse down left
+3212 mouse up left
+3300 mouse hud pause
+3301 mouse down left
+3302 mouse up left
+3310 mouse hud speed 2
+3311 mouse down left
+3312 mouse up left
+3320 mouse hud portrait 0
+3321 mouse down left
+3322 mouse up left
+3330 mouse hud minimap
+3331 mouse down left
+3332 mouse up left
+3420 mouse hud pause
+3421 mouse down left
+3422 mouse up left
+3430 mouse hud speed 2
+3431 mouse down left
+3432 mouse up left
+3440 mouse hud portrait 0
+3441 mouse down left
+3442 mouse up left
+3450 mouse hud minimap
+3451 mouse down left
+3452 mouse up left
+3540 mouse hud pause
+3541 mouse down left
+3542 mouse up left
+3550 mouse hud speed 2
+3551 mouse down left
+3552 mouse up left
+3560 mouse hud portrait 0
+3561 mouse down left
+3562 mouse up left
+3570 mouse hud minimap
+3571 mouse down left
+3572 mouse up left
+3660 mouse hud pause
+3661 mouse down left
+3662 mouse up left
+3670 mouse hud speed 2
+3671 mouse down left
+3672 mouse up left
+3680 mouse hud portrait 0
+3681 mouse down left
+3682 mouse up left
+3690 mouse hud minimap
+3691 mouse down left
+3692 mouse up left
+3780 mouse hud pause
+3781 mouse down left
+3782 mouse up left
+3790 mouse hud speed 2
+3791 mouse down left
+3792 mouse up left
+3800 mouse hud portrait 0
+3801 mouse down left
+3802 mouse up left
+3810 mouse hud minimap
+3811 mouse down left
+3812 mouse up left
+3900 mouse hud pause
+3901 mouse down left
+3902 mouse up left
+3910 mouse hud speed 2
+3911 mouse down left
+3912 mouse up left
+3920 mouse hud portrait 0
+3921 mouse down left
+3922 mouse up left
+3930 mouse hud minimap
+3931 mouse down left
+3932 mouse up left
+4020 mouse hud pause
+4021 mouse down left
+4022 mouse up left
+4030 mouse hud speed 2
+4031 mouse down left
+4032 mouse up left
+4040 mouse hud portrait 0
+4041 mouse down left
+4042 mouse up left
+4050 mouse hud minimap
+4051 mouse down left
+4052 mouse up left
+4140 mouse hud pause
+4141 mouse down left
+4142 mouse up left
+4150 mouse hud speed 2
+4151 mouse down left
+4152 mouse up left
+4160 mouse hud portrait 0
+4161 mouse down left
+4162 mouse up left
+4170 mouse hud minimap
+4171 mouse down left
+4172 mouse up left
+4260 mouse hud pause
+4261 mouse down left
+4262 mouse up left
+4270 mouse hud speed 2
+4271 mouse down left
+4272 mouse up left
+4280 mouse hud portrait 0
+4281 mouse down left
+4282 mouse up left
+4290 mouse hud minimap
+4291 mouse down left
+4292 mouse up left
+4380 mouse hud pause
+4381 mouse down left
+4382 mouse up left
+4390 mouse hud speed 2
+4391 mouse down left
+4392 mouse up left
+4400 mouse hud portrait 0
+4401 mouse down left
+4402 mouse up left
+4410 mouse hud minimap
+4411 mouse down left
+4412 mouse up left
+4500 mouse hud pause
+4501 mouse down left
+4502 mouse up left
+4510 mouse hud speed 2
+4511 mouse down left
+4512 mouse up left
+4520 mouse hud portrait 0
+4521 mouse down left
+4522 mouse up left
+4530 mouse hud minimap
+4531 mouse down left
+4532 mouse up left
+4620 mouse hud pause
+4621 mouse down left
+4622 mouse up left
+4630 mouse hud speed 2
+4631 mouse down left
+4632 mouse up left
+4640 mouse hud portrait 0
+4641 mouse down left
+4642 mouse up left
+4650 mouse hud minimap
+4651 mouse down left
+4652 mouse up left
+4740 mouse hud pause
+4741 mouse down left
+4742 mouse up left
+4750 mouse hud speed 2
+4751 mouse down left
+4752 mouse up left
+4760 mouse hud portrait 0
+4761 mouse down left
+4762 mouse up left
+4770 mouse hud minimap
+4771 mouse down left
+4772 mouse up left
+4860 mouse hud pause
+4861 mouse down left
+4862 mouse up left
+4870 mouse hud speed 2
+4871 mouse down left
+4872 mouse up left
+4880 mouse hud portrait 0
+4881 mouse down left
+4882 mouse up left
+4890 mouse hud minimap
+4891 mouse down left
+4892 mouse up left
+4980 mouse hud pause
+4981 mouse down left
+4982 mouse up left
+4990 mouse hud speed 2
+4991 mouse down left
+4992 mouse up left
+5000 mouse hud portrait 0
+5001 mouse down left
+5002 mouse up left
+5010 mouse hud minimap
+5011 mouse down left
+5012 mouse up left
+5100 mouse hud pause
+5101 mouse down left
+5102 mouse up left
+5110 mouse hud speed 2
+5111 mouse down left
+5112 mouse up left
+5120 mouse hud portrait 0
+5121 mouse down left
+5122 mouse up left
+5130 mouse hud minimap
+5131 mouse down left
+5132 mouse up left
+5220 mouse hud pause
+5221 mouse down left
+5222 mouse up left
+5230 mouse hud speed 2
+5231 mouse down left
+5232 mouse up left
+5240 mouse hud portrait 0
+5241 mouse down left
+5242 mouse up left
+5250 mouse hud minimap
+5251 mouse down left
+5252 mouse up left
+5340 mouse hud pause
+5341 mouse down left
+5342 mouse up left
+5350 mouse hud speed 2
+5351 mouse down left
+5352 mouse up left
+5360 mouse hud portrait 0
+5361 mouse down left
+5362 mouse up left
+5370 mouse hud minimap
+5371 mouse down left
+5372 mouse up left
+5460 mouse hud pause
+5461 mouse down left
+5462 mouse up left
+5470 mouse hud speed 2
+5471 mouse down left
+5472 mouse up left
+5480 mouse hud portrait 0
+5481 mouse down left
+5482 mouse up left
+5490 mouse hud minimap
+5491 mouse down left
+5492 mouse up left
+5580 mouse hud pause
+5581 mouse down left
+5582 mouse up left
+5590 mouse hud speed 2
+5591 mouse down left
+5592 mouse up left
+5600 mouse hud portrait 0
+5601 mouse down left
+5602 mouse up left
+5610 mouse hud minimap
+5611 mouse down left
+5612 mouse up left
+5700 mouse hud pause
+5701 mouse down left
+5702 mouse up left
+5710 mouse hud speed 2
+5711 mouse down left
+5712 mouse up left
+5720 mouse hud portrait 0
+5721 mouse down left
+5722 mouse up left
+5730 mouse hud minimap
+5731 mouse down left
+5732 mouse up left
+5820 mouse hud pause
+5821 mouse down left
+5822 mouse up left
+5830 mouse hud speed 2
+5831 mouse down left
+5832 mouse up left
+5840 mouse hud portrait 0
+5841 mouse down left
+5842 mouse up left
+5850 mouse hud minimap
+5851 mouse down left
+5852 mouse up left
+5940 mouse hud pause
+5941 mouse down left
+5942 mouse up left
+5950 mouse hud speed 2
+5951 mouse down left
+5952 mouse up left
+5960 mouse hud portrait 0
+5961 mouse down left
+5962 mouse up left
+5970 mouse hud minimap
+5971 mouse down left
+5972 mouse up left
+5900 mouse hud shortcut 0
+5901 mouse down left
+5902 mouse up left
+5920 dump inventory
+5950 mouse hud shortcut 0
+5951 mouse down left
+5952 mouse up left
+6000 follow lock
+6060 mouse hud pause
+6061 mouse down left
+6062 mouse up left
+6070 mouse hud speed 2
+6071 mouse down left
+6072 mouse up left
+6080 mouse hud portrait 0
+6081 mouse down left
+6082 mouse up left
+6090 mouse hud minimap
+6091 mouse down left
+6092 mouse up left
+6180 mouse hud pause
+6181 mouse down left
+6182 mouse up left
+6190 mouse hud speed 2
+6191 mouse down left
+6192 mouse up left
+6200 mouse hud portrait 0
+6201 mouse down left
+6202 mouse up left
+6210 mouse hud minimap
+6211 mouse down left
+6212 mouse up left
+6300 mouse hud pause
+6301 mouse down left
+6302 mouse up left
+6310 mouse hud speed 2
+6311 mouse down left
+6312 mouse up left
+6320 mouse hud portrait 0
+6321 mouse down left
+6322 mouse up left
+6330 mouse hud minimap
+6331 mouse down left
+6332 mouse up left
+6420 mouse hud pause
+6421 mouse down left
+6422 mouse up left
+6430 mouse hud speed 2
+6431 mouse down left
+6432 mouse up left
+6440 mouse hud portrait 0
+6441 mouse down left
+6442 mouse up left
+6450 mouse hud minimap
+6451 mouse down left
+6452 mouse up left
+6540 mouse hud pause
+6541 mouse down left
+6542 mouse up left
+6550 mouse hud speed 2
+6551 mouse down left
+6552 mouse up left
+6560 mouse hud portrait 0
+6561 mouse down left
+6562 mouse up left
+6570 mouse hud minimap
+6571 mouse down left
+6572 mouse up left
+6660 mouse hud pause
+6661 mouse down left
+6662 mouse up left
+6670 mouse hud speed 2
+6671 mouse down left
+6672 mouse up left
+6680 mouse hud portrait 0
+6681 mouse down left
+6682 mouse up left
+6690 mouse hud minimap
+6691 mouse down left
+6692 mouse up left
+6780 mouse hud pause
+6781 mouse down left
+6782 mouse up left
+6790 mouse hud speed 2
+6791 mouse down left
+6792 mouse up left
+6800 mouse hud portrait 0
+6801 mouse down left
+6802 mouse up left
+6810 mouse hud minimap
+6811 mouse down left
+6812 mouse up left
+6900 mouse hud pause
+6901 mouse down left
+6902 mouse up left
+6910 mouse hud speed 2
+6911 mouse down left
+6912 mouse up left
+6920 mouse hud portrait 0
+6921 mouse down left
+6922 mouse up left
+6930 mouse hud minimap
+6931 mouse down left
+6932 mouse up left
+7500 quit

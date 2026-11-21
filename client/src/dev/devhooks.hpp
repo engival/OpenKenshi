@@ -197,6 +197,7 @@ namespace dev
 	inline bool followEnabled() { return false; }
 	inline void followServerArgs(std::vector<std::string>&) {}
 	inline bool mirrorLocked() { return false; }
+	inline void followLockToggle() {}
 	inline bool followCamera() { return false; }
 	inline bool scenariosButton(bool) { return false; }
 	inline void openScenarios() {}

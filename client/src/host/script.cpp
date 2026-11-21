@@ -333,6 +333,22 @@ void exec_cmd(const Cmd& c)
 		e.mouse_y = r.y + r.h * 0.5f;
 		event(&e);
 	}
+	else if (c.op == "mouse" && a.size() >= 2 && a[0] == "hud")	// mouse hud pause | speed N (1..3) | portrait N | minimap: onto the centre of that HUD control (then `mouse down|up left` clicks it; kenshi-cym.40.2.10)
+	{
+		const ui::Widget* w = nullptr;
+		const int n = a.size() == 3 ? atoi(a[2].c_str()) : 0;
+		if (a[1] == "pause" && app.hud) { w = app.hud->speedButton(0); }
+		else if (a[1] == "speed" && app.hud) { w = app.hud->speedButton(n); }
+		else if (a[1] == "portrait" && app.hud) { w = app.hud->portrait((size_t)n); }
+		else if (a[1] == "shortcut" && app.hud) { w = app.hud->shortcutButton(n); }	// 0 INV .. 5 (Hud::kShortcuts order)
+		else if (a[1] == "minimap" && app.minimap) { w = app.minimap->window(); }
+		if (!w) { fprintf(stderr, "kclient: script: no hud target\n"); script_error(c); }
+		const ui::Rect r = w->screen();
+		e.type = SAPP_EVENTTYPE_MOUSE_MOVE;
+		e.mouse_x = r.x + r.w * 0.5f;
+		e.mouse_y = r.y + r.h * 0.5f;
+		event(&e);
+	}
 	else if (c.op == "camera" && a.size() >= 2 && a[0] == "thing")	// camera thing NAME... | id=N: 45 u south of and 35 u above the named interactable (or that id), looking down at it (it lands mid-screen)
 	{
 		std::string text;
@@ -841,6 +857,10 @@ void exec_cmd(const Cmd& c)
 		for (const simlink::PlayerSquads::Squad& q : app.sim.decoder().playerSquads.squads) { if (std::find(q.members.begin(), q.members.end(), id) != q.members.end()) { squad = q.id; } }
 		if (!id || !squad || !app.sim.squadMove(id, squad, 0, false)) { script_error(c); }
 	}
+	else if (c.op == "follow" && a.size() == 1 && a[0] == "lock")	// follow lock: the F8 panel's mirror-lock row (a follow-stream run only; kenshi-cym.40.2.10)
+	{
+		dev::followLockToggle();
+	}
 	else if (c.op == "follow" && a.size() == 1 && a[0] == "state")	// follow state: the camera mode, the follow target (centre / drive) and the selection (stdout)
 	{
 		std::string sel;
@@ -928,6 +948,7 @@ void exec_cmd(const Cmd& c)
 			printf("map view: zoom %.6f cx %.3f cz %.3f (view %.0f x %.0f, %s)\n", v.zoom, v.cx, v.cz, f.w, f.h, app.overview->shown(ui::OverviewPage::kMap) ? "shown" : "hidden");
 		}
 	}
+	else if (c.op == "dump" && a.size() == 1 && a[0] == "inventory") { printf("inventory: shown %d\n", app.itemsShown ? 1 : 0); }	// dump inventory: whether the inventory window is open (kenshi-cym.40.2.10)
 	else if (c.op == "dump" && a.size() == 1 && a[0] == "title")	// dump title: the title screen's state: its held click, the offline line and the new game panel (kenshi-k16.2.210.4; stdout)
 	{
 		printf("title: shown %d, pending %d, status \"%s\", new game %d\n", title_shown() ? 1 : 0, app.menuPending, title_status().c_str(),

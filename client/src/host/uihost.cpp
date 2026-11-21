@@ -435,6 +435,20 @@ void init_ui()
 	act.setSpeed = [](float speed) { if (app.sim.setSpeed(speed)) { audiohook_event(speed_event(speed)); } };	// the HUD's speed button; its resume posts Resume_Game through the clock
 	act.setActive = [](uint64_t squad) { app.activeSquad = squad; };
 	act.shortcut = [](const std::string& action) { shortcut(action); };
+	// Follow mode (kenshi-cym.40.2.10): the stream owns pause, speed, selection and orders, so every HUD action that sends an order, changes the
+	// selection or the speed, or moves the floor is refused under the mirror lock, logged once per press (as the keys, events.cpp key_actions).
+	// The windows' own buttons (inventory, map, options, F8) are not wrapped.
+	const auto locked = [](const char* name) { if (!dev::mirrorLocked()) { return false; } printf("follow: hud %s locked (mirror lock)\n", name); return true; };
+	const auto guard = [&](auto& fn, const char* name)
+	{
+		if (!fn) { return; }
+		fn = [f = std::move(fn), name, locked](auto&&... a) { if (!locked(name)) { f(std::forward<decltype(a)>(a)...); } };
+	};
+	guard(act.select, "select"); guard(act.focus, "focus"); guard(act.toggle, "toggle"); guard(act.stop, "stop");
+	guard(act.prospect, "prospect"); guard(act.medic, "medic"); guard(act.rescue, "rescue"); guard(act.pause, "pause");
+	guard(act.setSpeed, "speed"); guard(act.setActive, "squad"); guard(act.floor, "floor"); guard(act.moveSpeed, "move speed");
+	guard(act.removeJob, "job remove"); guard(act.moveJob, "job move");
+	guard(act.buildingButton, "building button"); guard(act.buildingTick, "building tick");
 	app.hud = std::make_unique<ui::Hud>(std::move(act));
 	app.hud->show(false);	// shown once the sim is live
 	app.options = std::make_unique<ui::Options>();
@@ -444,7 +458,7 @@ void init_ui()
 	app.machineWin = std::make_unique<ui::BuildingWindow>(machine_actions());
 	ui::MapActions map;
 	map.draw = [](const ui::MapFrame& f) { app.wmap.drawArea(f.x, f.y, f.w, f.h, f.cx, f.cz, f.pxPerUnit); };
-	map.moveTo = [](double x, double z, bool queue) { const double at[3] = { x, app.hm->height(x, z), z }; const SimView::Click click{ "map" }; app.sim.moveTo(at, queue, false, &click); };	// the selection; no height (the map sees only the heightmap): the sim snaps by xz
+	map.moveTo = [](double x, double z, bool queue) { if (dev::mirrorLocked()) { printf("follow: hud map move locked (mirror lock)\n"); return; } const double at[3] = { x, app.hm->height(x, z), z }; const SimView::Click click{ "map" }; app.sim.moveTo(at, queue, false, &click); };	// the selection; no height (the map sees only the heightmap): the sim snaps by xz
 	{
 		// The minimap window (kenshi-k16.2.436; the original has none): its map image is the overview's, its zoom level and place are kept as raw settings
 		// (not options rows) and restored here; the actions write them at once (a wheel step, a drag's end).

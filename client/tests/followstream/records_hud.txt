@@ -1,0 +1,6 @@
+# kenshi-cym.40.2.10: a running sim with ours selected; the HUD clicks under the lock must change nothing
+0.5 align t=8.000000
+0.2 cam pos={cx+0},{cy+0},{cz+0} rot=0.965926,0.258819,0.000000,0.000000 zoom=250.000 floor=0
+0.2 speed v=1
+0.2 select ids={m0}
+150.0 speed v=1
