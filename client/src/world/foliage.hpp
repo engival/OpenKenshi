@@ -60,7 +60,7 @@ public:
 		float base[3], ctr[3];	// cell origin and group centre, relative to the camera
 		float reach;		// group bounding radius + mesh reach
 		float size;		// mesh reach alone (radius x scale), for the per-cascade size test
-		float fadeEnd;
+		float fadep[3];	// the per-instance fade end's parameters (fadeParams)
 	};
 	struct ShadowList
 	{
@@ -157,10 +157,11 @@ private:
 	struct DrawPart { uint64_t stamp = 0; std::vector<WorldBuildings::ResolvedDraw> subs[2]; };
 	std::vector<DrawPart> drawPart_;
 	// The last draw made for a part in prepare()'s draw list, to extend it with the next node that continues its instance range (see prepare).
-	struct OpenRun { uint64_t stamp = 0; int cell = -1, draw = 0, next = 0; float end = 0; bool band = false; };
+	struct OpenRun { uint64_t stamp = 0; int cell = -1, draw = 0, next = 0; float fadeKey = 0; bool band = false; };
 	std::vector<OpenRun> openPart_;	// by part id
 	uint64_t shadowKey() const;
-	double fadeEnd(const Group& g, double meshRadius) const;	// draw distance of a group: class distance x range, size limit, load radius, drawLimit
+	void fadeParams(const Group& g, double meshRadius, float out[3]) const;	// class distance, radius x landmark factor, cap: an instance's end = min(max(x, y x scale), z) (kenshi-k16.2.205.12.124)
+	double fadeEnd(const Group& g, double meshRadius, double scale) const;	// the end of an instance of that scale	// draw distance of a group: class distance x range, size limit, load radius, drawLimit
 	void worker();
 	const std::vector<uint32_t>& partsOf(int record);
 	bool take(bool wait);

@@ -83,8 +83,9 @@ public:
 		// The two fields a group sets and a part does not (kenshi-k16.2.205.12.119, as ResolvedShadow::base/fade): the replay writes them into vs.base and
 		// fs.fade, so a part's resolved draw can be kept as a template (Foliage's draw list) and each group only fills these in with its instances.
 		float base[3] = {};	// the group's origin, relative to the camera (instVsParams' base; 0 for the buildings' own world-space instances)
-		float fade[2] = {};	// fadeStart, fadeEnd (inst_fs_params' fade)
-		alignas(16) float vs[56];	// inst_vs_params_t, its mvp (the first 16 floats) set by the replay; base stays 0 in a template
+		float fade[2] = {};	// fadeStart, fadeEnd (inst_fs_params' fade); with fadep, fade[0] is the start FRACTION and fade[1] only a nonzero marker
+		float fadep[3] = {};	// a foliage draw's per-instance fade end (inst_vs_params' fadep; 0: none, kenshi-k16.2.205.12.124)
+		alignas(16) float vs[60];	// inst_vs_params_t, its mvp (the first 16 floats) set by the replay; base stays 0 in a template
 		alignas(16) float fs[76];	// inst_fs_params_t; fade stays 0 in a template ([2] is the fade mode, which a part does set)
 	};
 	struct ResolvedShadow	// one (part, submesh) depth draw into a shadow cascade (drawShadow)
@@ -97,8 +98,9 @@ public:
 		// The two fields a group sets and a part does not (kenshi-k16.2.205.12.119): the replay writes them into vs.base and fs.fade, so a part's resolved
 		// draw can be kept as a template (Foliage's shadow lists) and each group only fills these in.
 		float base[3] = {};	// the group's origin, relative to the camera (instVsParams' base)
-		float fade[2] = {};	// fadeStart, fadeEnd (shadow_fs_params' fade)
-		alignas(16) float vs[56];	// inst_vs_params_t, mvp set by the replay (the cascade matrix); base stays 0 in a template
+		float fade[2] = {};	// fadeStart, fadeEnd (shadow_fs_params' fade); with fadep as ResolvedDraw's
+		float fadep[3] = {};	// as ResolvedDraw::fadep
+		alignas(16) float vs[60];	// inst_vs_params_t, mvp set by the replay (the cascade matrix); base stays 0 in a template
 		alignas(16) float fs[12];	// shadow_fs_params_t: cut; the bias is the cascade's; fade stays 0 in a template
 	};
 	struct ResolvedMask	// one interior-mask (part, submesh) draw (renderMask: back faces then front faces)
@@ -115,7 +117,7 @@ public:
 		sg_buffer inst = {};
 		bool cull = false;
 		float owner = 0;	// the id the fragment writes (the owner + 1)
-		alignas(16) float vs[56];	// inst_vs_params_t, mvp set by the replay
+		alignas(16) float vs[60];	// inst_vs_params_t, mvp set by the replay
 	};
 	struct DrawList
 	{
@@ -750,11 +752,11 @@ private:
 	// ones, and the upload is a glUniform call per block member on the GL backend. The last uploaded block, per shader program: the building shader's
 	// (drawVs/drawFs, reset by beginDraws / beginFadeBand / applyPassUniforms), the shadow shader's (shadowVs/shadowFs, by beginShadowDraws) and the
 	// id shader's (idVs by renderIds). The GL uniform state lives in the program, so what another program applied in between does not invalidate it.
-	alignas(16) float drawVs_[56] = {}, drawFs_[76] = {};	// ResolvedDraw::vs / ::fs's layout
+	alignas(16) float drawVs_[60] = {}, drawFs_[76] = {};	// ResolvedDraw::vs / ::fs's layout
 	bool drawVsOk_ = false, drawFsOk_ = false;
-	alignas(16) float shadowVs_[56] = {}, shadowFs_[12] = {};	// ResolvedShadow::vs / ::fs's layout
+	alignas(16) float shadowVs_[60] = {}, shadowFs_[12] = {};	// ResolvedShadow::vs / ::fs's layout
 	bool shadowVsOk_ = false, shadowFsOk_ = false;
-	alignas(16) float idVs_[56] = {};	// ResolvedId::vs's layout
+	alignas(16) float idVs_[60] = {};	// ResolvedId::vs's layout
 	float idOwner_ = -1;
 	bool idVsOk_ = false;
 	DrawList scratch_;	// draw() / drawShadow()'s one-draw list

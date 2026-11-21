@@ -144,7 +144,7 @@ public:
 	bool foreign(uint64_t thing) const;
 	uint32_t ownFaction() const;	// our faction's FACTION strid: SQUADS `faction` of a squad PLAYER_SQUADS lists; 0 before both arrived
 	std::vector<uint16_t> takeCrimeLog() { return std::exchange(crimeLog_, {}); }	// event kinds 51 (caught_stealing) / 52 (alarm_raised) since the last take: HUD message-bar lines
-	uint32_t takeLockTooHard() { return std::exchange(lockTooHard_, 0); }	// event 13 result 8 lock picks (a player character's) since the last take: the HUD message-bar line
+	uint32_t takeLockTooHard() { return std::exchange(lockTooHard_, 0); }	// event 13 result 8 cage picks (a player character's, action 18) since the last take: the HUD message-bar line
 	std::vector<uint32_t> takeDiscovered() { return std::exchange(discovered_, {}); }	// TOWN strids of event 19 (discovered) since the last take: the log line
 	// Floating texts from events (the game's ScreenLabel, kinspect floating_text.md): event 1 hit (landed; other = the attacker, damage cut / blunt /
 	// pierce / stun, part its strid) and 20 lock_roll. pos: the character's feet when it came (the label follows the character while it is drawn); dropped 12 sim-s after
@@ -255,25 +255,28 @@ public:
 	// A character's interpolated feet, yaw and route (the waypoints still ahead); false when it is not on screen.
 	bool pose(uint64_t id, double pos[3], double& yaw, const simlink::Route*& route) const;
 	// The debug shot's route sidecar (kenshi-k16.2.231.1): the wire's current CHAR_ROUTE of id (nullptr: the character is not known), its display
-	// name ("" none), every player-controlled character seen (sorted by id), and the last move_to orders this client sent for id — oldest first, at
-	// most kMoveOrdersKept — each with the answer the wire gave it so far (a route with that clientSeq, event 9 / 10, or nothing).
-	struct MoveOrder
+	// name ("" none), every player-controlled character seen (sorted by id), and the last orders this client sent for id — oldest first, at most
+	// kOrdersKept — each with the answer the wire gave it so far (a route with that clientSeq, event 9 / 10, or nothing). Every order that sets a
+	// character's task is kept, not only move_to (kenshi-4bps.1): what names the order.
+	struct OrderRow
 	{
 		uint32_t seq = 0;
 		uint64_t id = 0;
 		uint64_t tick = 0;	// the sim tick of the newest snapshot when the order went out (0: before the first)
-		double goal[3] = {};	// the clicked surface point as sent
+		std::string what;	// the order: "attack" / "follow" / "stop" / "hold" / "job" / an interact's name ("loot", "pick up"); for a move_to, where its click came from ("click" / "use point" / "script" / "map")
+		uint64_t target = 0;	// attack / follow / interact / job: the sim id the order named (0: none)
+		double goal[3] = {};	// a move_to: the clicked surface point as sent; else the target's wire position at the send
 		bool yValid = false, queue = false, building = false;
-		std::string what;	// where the click came from: "click" / "use point" / "script" / "map"
+		bool move = false;	// the order is a move_to (what is its click origin: the route sidecar's route / the marker's tick)
 		std::string buildingName;	// the building the click was in ("" none)
 		int floor = -1;	// its floor (-1 none)
-		std::string outcome;	// filled by moveOrders() only: the wire's answer (route / applied / rejected / nothing)
+		std::string outcome;	// filled by orders() only: the wire's answer (route / applied / rejected / nothing)
 	};
-	static constexpr size_t kMoveOrdersKept = 8;
+	static constexpr size_t kOrdersKept = 8;
 	const simlink::Route* routeOf(uint64_t id) const;
 	std::string charName(uint64_t id) const;
 	std::vector<uint64_t> players() const;
-	std::vector<MoveOrder> moveOrders(uint64_t id) const;
+	std::vector<OrderRow> orders(uint64_t id) const;
 	uint64_t lastMoveTick(uint64_t id) const;	// the sim tick of the newest move_to sent for id (0: none): the trails' longer window
 	// The camera's ground point, every frame (live): set_interest (send filter, render.interest_radius round it) after kInterestMove units of travel, set_view
 	// (a logged sim command; the server quantizes it to 4608-unit zones with hysteresis) after kViewMove, so both stay rare (SIMLINK 5, 7).
@@ -404,10 +407,14 @@ private:
 	uint32_t resetSeen_ = 0;	// decoder resetSerial handled (a load: the selection and the theft marks start over)
 	std::unordered_map<uint32_t, std::string> sent_;	// clientSeq -> what, until event 9 / 10 answers it
 	std::unordered_map<uint32_t, std::string> orderResults_;	// clientSeq -> the wire's answer ("applied tick N" / "rejected REASON"), kept for the shot's route sidecar
-	std::unordered_map<uint64_t, std::deque<MoveOrder>> moveOrders_;	// the last kMoveOrdersKept move_to orders sent, per character (kenshi-k16.2.231.1)
+	std::unordered_map<uint64_t, std::deque<OrderRow>> orderRows_;	// the last kOrdersKept orders sent per character (kenshi-k16.2.231.1, kenshi-4bps.1)
 	std::unordered_map<uint64_t, uint32_t> tasked_;	// taskOrder
 	uint32_t taskSerial_ = 0;
 	void tasked(const std::vector<uint64_t>& ids, bool queue) { if (queue) { return; } taskSerial_++; for (uint64_t id : ids) { tasked_[id] = taskSerial_; } }
+	// kenshi-4bps.1: one row in the shot's route sidecar for one order this client just sent for id (goal: null = none)
+	void keepOrder(uint64_t id, uint32_t seq, const char* what, uint64_t target, const double* goal, bool yValid, bool queue);
+	// The wire position of a character or an interactable (the sidecar's goal for a targeted order); false when the wire does not know it
+	bool wirePos(uint64_t id, double pos[3]) const;
 	std::string reply_;	// the last answer, for the HUD
 	std::vector<std::string> replies_;
 	std::vector<OrderAnswer> orderAnswers_;	// event 9 / 10 for a sent order, awaiting takeOrderAnswers
@@ -422,7 +429,7 @@ private:
 	std::string profileStatus_;	// the refusal word (not_allowed / unsupported) once the server said no: set, no more queries are sent
 	std::vector<uint32_t> discovered_;
 	std::vector<uint16_t> crimeLog_;	// event kinds 51 / 52 since the last take
-	uint32_t lockTooHard_ = 0;	// event 13 result 8 lock picks since the last take (kenshi-k16.2.346)
+	uint32_t lockTooHard_ = 0;	// event 13 result 8 cage picks since the last take (kenshi-k16.2.346; the only case left after ksim 7fd41c98, kenshi-888g.1)
 	std::deque<Popup> popups_;
 	std::unordered_map<uint64_t, Speech> speech_;
 	std::unordered_set<uint64_t> foreign_;	// containers a theft event named

@@ -1108,7 +1108,7 @@ sg_view WorldBuildings::viewOf(const DrawList& L, int slot, sg_view fallback) co
 static_assert(sizeof(inst_vs_params_t) == sizeof(WorldBuildings::ResolvedDraw::vs) && sizeof(inst_fs_params_t) == sizeof(WorldBuildings::ResolvedDraw::fs)
 		&& sizeof(shadow_fs_params_t) == sizeof(WorldBuildings::ResolvedShadow::fs),
 	"ResolvedDraw's uniform blocks are the shader's layout");
-static_assert(sizeof(inst_vs_params_t) == 56 * sizeof(float) && sizeof(inst_fs_params_t) == 76 * sizeof(float) && sizeof(shadow_fs_params_t) == 12 * sizeof(float),
+static_assert(sizeof(inst_vs_params_t) == 60 * sizeof(float) && sizeof(inst_fs_params_t) == 76 * sizeof(float) && sizeof(shadow_fs_params_t) == 12 * sizeof(float),
 	"the per-draw uniform caches (WorldBuildings::drawVs_ / drawFs_ / shadowVs_ / shadowFs_) are the blocks' sizes (kenshi-k16.2.205.12.119)");
 static_assert(offsetof(inst_vs_params_t, mvp) == 0, "the replay writes the matrix at the block's start");
 
@@ -1251,6 +1251,7 @@ int WorldBuildings::replayDraw(const DrawList& L, const ResolvedDraw& r, sg_buff
 	memcpy(&vs, r.vs, sizeof vs);
 	memcpy(vs.mvp, mvp, sizeof vs.mvp);
 	memcpy(vs.base, r.base, sizeof r.base);	// the group's origin: a part's template leaves it 0 (kenshi-k16.2.205.12.119)
+	memcpy(vs.fadep, r.fadep, sizeof r.fadep);
 	inst_fs_params_t fs;
 	memcpy(&fs, r.fs, sizeof fs);
 	memcpy(fs.fade, r.fade, sizeof r.fade);
@@ -1380,6 +1381,7 @@ void WorldBuildings::replayShadow(const DrawList& L, const ResolvedShadow& r, sg
 	memcpy(&vs, r.vs, sizeof vs);
 	memcpy(vs.mvp, lvp, sizeof vs.mvp);
 	memcpy(vs.base, r.base, sizeof r.base);	// the group's origin: a part's template leaves it 0 (kenshi-k16.2.205.12.119)
+	memcpy(vs.fadep, r.fadep, sizeof r.fadep);
 	shadow_fs_params_t fs;
 	memcpy(&fs, r.fs, sizeof fs);
 	memcpy(fs.bias, bias, sizeof fs.bias);

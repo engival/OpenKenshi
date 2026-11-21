@@ -39,6 +39,8 @@ void start(Hooks hooks, bool scripted);
 // wait checks the stop flag every 100 ms and never gives up otherwise; the time waited goes to lt.gate (app/threadsplit.hpp). Free (returns at
 // once) in off and lockstep and on any other thread.
 void renderIdle();
+// Logic thread: the session load screen is up (the load gate, kenshi-k16.2.437.4.3): a stall that touches it is expected and prints nothing.
+void setLoadScreen(bool up);
 bool running();	// start() ran and stop() has not
 // Render thread, once per frame() after start(): waits up to boundMs for a filled slot. Found: flips it to drawing (the slot drawn before goes
 // free), runs hooks.render, and lets logic go on (true). Not found: false, nothing drawn (the caller keeps the window's last frame). A wait that

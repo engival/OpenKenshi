@@ -334,11 +334,20 @@ bool Foliage::take(bool wait)
 // / distance >= 1/400); then at least the landmark distance, so a big rock or tree that is still large on screen stays as long as the terrain behind it
 // (user 2026-11-10: "The rocks that are fading look like they're closer than the far mountains", kenshi-k16.2.63); at most the load radius (nothing
 // exists beyond it) and the drawLimit debug cap. The mesh fades out over the last 1 - kFadeStart.
-double Foliage::fadeEnd(const Group& g, double meshRadius) const
+void Foliage::fadeParams(const Group& g, double meshRadius, float out[3]) const
 {
 	const double byClass = std::min(foliageRange * ctx_->viewClass[g.record], meshRadius * g.minScale * kSizeDistance);
-	const double d = std::min(std::max(byClass, meshRadius * g.maxScale * kLandmarkDistance), radius * (double)WorldBuildings::kCellSize);
-	return wb_->drawLimit > 0 ? std::min(d, wb_->drawLimit) : d;
+	const double cap = radius * (double)WorldBuildings::kCellSize;
+	out[0] = (float)byClass;
+	out[1] = (float)(meshRadius * kLandmarkDistance);
+	out[2] = (float)(wb_->drawLimit > 0 ? std::min(cap, wb_->drawLimit) : cap);
+}
+
+double Foliage::fadeEnd(const Group& g, double meshRadius, double scale) const
+{
+	float p[3];
+	fadeParams(g, meshRadius, p);
+	return std::min(std::max((double)p[0], p[1] * scale), (double)p[2]);
 }
 
 void Foliage::prepare(const double cam[3], const float mvp[16], float, bool blocking, unsigned shadowLevels, FrameData& out)
@@ -495,34 +504,36 @@ void Foliage::prepare(const double cam[3], const float mvp[16], float, bool bloc
 		const Group& g = k.cp->groups[k.group];
 		const double centreLen = std::sqrt((double)m.center[0] * m.center[0] + (double)m.center[1] * m.center[1] + (double)m.center[2] * m.center[2]);
 		const double reach = (m.radius + centreLen) * g.maxScale;
-		const double end = fadeEnd(g, m.radius);
+		const double end = fadeEnd(g, m.radius, g.maxScale), endLo = fadeEnd(g, m.radius, g.minScale);	// the cull keeps the largest instance's end; the band starts at the smallest's
 		if (k.dist - k.half - reach > end || sphereOut(k.centre, k.half + reach)) { continue; }
 		if (k.cp->hasBuf)
 		{
 			auto slot = bufSlot_.find(k.cell);
 			if (slot == bufSlot_.end()) { slot = bufSlot_.emplace(k.cell, (int)out.bufs.size()).first; out.bufs.push_back(k.cp->buf); }
-			const bool band = k.dist + k.half + reach > end * kFadeStart;
+			const bool band = k.dist + k.half + reach > endLo * kFadeStart;
 			const int subs = (int)m.subs.size();
 			// A node that continues the previous draw of this part in this cell (its instances follow the last drawn node's in the cell buffer, same fade
 			// end, same band) extends that draw's instance range instead of making a draw: the kd nodes of one record lie in the buffer in tree order, so a
 			// run of visible neighbours is one range. The same instances, the same base and fade: pixel-identical (kenshi-k16.2.205.12.123).
 			if (openPart_.size() <= k.part) { openPart_.resize(k.part + 256); }
 			OpenRun& run = openPart_[k.part];
+			float fp[3];
+			fadeParams(g, m.radius, fp);
 			stats_.drawsFlat += (size_t)subs;
-			if (run.stamp == frame_ && run.cell == k.cell && run.next == g.first && run.end == (float)end && run.band == band)
+			if (run.stamp == frame_ && run.cell == k.cell && run.next == g.first && run.fadeKey == fp[0] && (run.band || !band))	// a band run takes a node that needs no band too: its instances only discard there
 			{
 				const Draw& od = out.draws[run.draw];
 				for (int s = 0; s < subs; s++)
 				{
 					out.list.opaque[od.first + s].count += g.count;
-					if (band) { out.list.opaque[od.first + subs + s].count += g.count; }
+					if (od.band) { out.list.opaque[od.first + subs + s].count += g.count; }
 				}
 				run.next = g.first + g.count;
 				stats_.instancesDrawn += (size_t)g.count;
 				stats_.groupsDrawn++;
 				continue;
 			}
-			run = { frame_, k.cell, (int)out.draws.size(), g.first + g.count, (float)end, band };
+			run = { frame_, k.cell, (int)out.draws.size(), g.first + g.count, fp[0], band };
 			Draw d = { slot->second, (int)out.list.opaque.size(), subs, band };
 			if (drawPart_.size() <= k.part) { drawPart_.resize(k.part + 256); }
 			DrawPart& dp = drawPart_[k.part];
@@ -546,8 +557,9 @@ void Foliage::prepare(const double cam[3], const float mvp[16], float, bool bloc
 					r.instOffset = g.first * (int)kInstanceBytes;
 					r.count = g.count;
 					for (int j = 0; j < 3; j++) { r.base[j] = k.base[j]; }
-					r.fade[0] = (float)end * kFadeStart;
-					r.fade[1] = (float)end;
+					r.fade[0] = kFadeStart;	// the fraction: the shader scales each instance's own end (mesh.glsl v_fend)
+					r.fade[1] = 1.0f;
+					for (int j = 0; j < 3; j++) { r.fadep[j] = fp[j]; }
 				}
 			}
 			out.draws.push_back(d);
@@ -625,8 +637,9 @@ void Foliage::prepare(const double cam[3], const float mvp[16], float, bool bloc
 					r.instOffset = k.first * (int)kInstanceBytes;
 					r.count = k.count;
 					for (int j = 0; j < 3; j++) { r.base[j] = base[j]; }
-					r.fade[0] = k.fadeEnd * kFadeStart;
-					r.fade[1] = k.fadeEnd;
+					r.fade[0] = kFadeStart;
+					r.fade[1] = 1.0f;
+					for (int j = 0; j < 3; j++) { r.fadep[j] = k.fadep[j]; }
 				}
 			}
 		}
@@ -725,17 +738,19 @@ void Foliage::buildShadowList(const double cam[3], int level, ShadowList& sl)
 			{
 				float radius, centreLen;
 				if ((!diffuseGateOff() && !wb_->partTexturesReady(pid)) || !wb_->partReady(pid, &radius, &centreLen)) { continue; }	// cut-out leaves shadow by their diffuse alpha: wait for it (kenshi-k16.2.298.2)
-				const double end = fadeEnd(g, radius), size = (radius + centreLen) * g.maxScale;
+				const double end = fadeEnd(g, radius, g.maxScale), size = (radius + centreLen) * g.maxScale;
 				if (dist - half - size > end + kShadowListDrift) { continue; }	// the list outlives the camera: kept for a drift of up to kShadowListDrift
 				// A node that continues the last candidate of this part in this cell (its instances follow in the buffer, same fade end) joins it: one candidate,
 				// so one draw per submesh, over the union of the two bounding spheres. The merged size is the larger (the per-cascade size test then keeps
 				// every member's shadow), kenshi-k16.2.205.12.123.
 				sl.flat++;
+				float fp[3];
+				fadeParams(g, radius, fp);
 				if (lastOf.size() <= pid) { lastOf.resize(pid + 256, -1); }
 				if (lastOf[pid] >= 0)
 				{
 					ShadowCand& p = list[lastOf[pid]];
-					if (p.cell == idx && p.first + p.count == g.first && p.fadeEnd == (float)end)
+					if (p.cell == idx && p.first + p.count == g.first && p.fadep[0] == fp[0])
 					{
 						const double ax = p.ctr[0], ay = p.ctr[1], az = p.ctr[2], bx = ctr[0], by = ctr[1], bz = ctr[2];
 						const double dx = bx - ax, dy = by - ay, dz = bz - az, d = std::sqrt(dx * dx + dy * dy + dz * dz);
@@ -757,7 +772,7 @@ void Foliage::buildShadowList(const double cam[3], int level, ShadowList& sl)
 				}
 				lastOf[pid] = (int)list.size();
 				list.push_back({ idx, g.first, g.count, pid, (int)wb_->meshes_[wb_->partRt_[pid].mesh].subs.size(),
-					{ (float)base[0], (float)base[1], (float)base[2] }, { (float)ctr[0], (float)ctr[1], (float)ctr[2] }, (float)(half + size), (float)size, (float)end });
+					{ (float)base[0], (float)base[1], (float)base[2] }, { (float)ctr[0], (float)ctr[1], (float)ctr[2] }, (float)(half + size), (float)size, { fp[0], fp[1], fp[2] } });
 			}
 		}
 	}

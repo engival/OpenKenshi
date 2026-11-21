@@ -60,6 +60,7 @@ layout(binding=0) uniform inst_vs_params
 	vec4 turn;      // x = game seconds since the turn began, y = the turn rate, rad/s (`rotation speed max`; 0: the turn takes one second)
 	vec4 limb;      // x = 1: a ground severed limb, so the cylindrical blood UVs of severed_limb_vs; 0 every other part; y = 1: a tree's leaves mesh (frond motion)
 	vec4 sway;      // render.leaf_sway (tile.z > 0): x = the live wind strength (0 still), yz = its unit direction x, z, w = the integrated sway clock
+	vec4 fadep;     // a foliage draw's per-instance fade end (kenshi-k16.2.205.12.124): x = class distance, y = mesh radius x landmark factor (0: none, the fragment uses fade as is), z = cap (w unused). The fragment then reads fade.x as the start FRACTION of v_oxz.z. end = min(max(x, y x scale), z)
 };
 
 in vec3 position;
@@ -86,7 +87,7 @@ out float v_row;    // biome table row, constant per instance
 out vec3 v_build;   // construction: x = progress 0..1 (< 0: complete), y = building-local height / building height H, z = H; complete (x < 0): y = the building-local height itself (before the scale, the part's offset in), the foundation test of xray_fnd
 out float v_glass;  // the opacity of a peeked part (renderGlass), else 1
 out vec4 v_blood;   // a severed limb: the blood map's cylindrical UVs (severed_limb_vs: x = mesh x * 0.3, zw = the wrapped angle, w = mesh normal z)
-flat out vec2 v_oxz;	// the instance origin's world xz (the dust coat's biome)
+flat out vec3 v_oxz;	// xz = the instance origin's world xz (the dust coat's biome); z (third) = its own fade end (0: the draw's fade.y)
 
 vec3 qrot(vec4 q, vec3 v)
 {
@@ -172,7 +173,7 @@ void main()
 	v_glass = gw >= 220000.0 ? 1.0 : gw >= 200000.0 ? clamp((gw - gbase) / 1000.0, 0.0, 1.0) : 1.0;
 	v_build = gw >= 200000.0 ? vec3(-1.0, local.y, gw >= 220000.0 ? 3.0 : gw >= 210000.0 ? 4.0 : 2.0) : inst_stretch.w < 0.0 ? vec3(-inst_stretch.w - h, local.y / h, h) : vec3(-1.0, local.y, 1.0);
 	v_vcol = colour.rgb;
-	v_oxz = (inst_pos.xyz + base.xyz + camw.xyz).xz;
+	v_oxz = vec3((inst_pos.xyz + base.xyz + camw.xyz).xz, fadep.y > 0.0 ? min(max(fadep.x, fadep.y * inst_pos.w), fadep.z) : 0.0);
 	// a severed limb: severed_limb_vs (character.hlsl) maps the blood like a cylinder round the mesh's x axis, in the mesh (bind) frame
 	v_blood = vec4(0.0);
 	if (limb.x > 0.5)
@@ -251,7 +252,7 @@ in float v_row;
 in vec3 v_build;
 in float v_glass;
 in vec4 v_blood;
-flat in vec2 v_oxz;
+flat in vec3 v_oxz;
 out vec4 frag_color;
 @include_block fade_ign
 
@@ -281,7 +282,7 @@ vec4 dust_coat(vec3 albedo, float gloss, vec3 n, vec2 xz)
 	float d = (clamp((n.y - 0.7 + surf.z) * 4.0, 0.0, 1.0) - gloss * 6.0 + 2.2 - noise * 6.0) * 2.0 + amount - 1.0;
 	float w = clamp(d * min(1.0, amount * 8.0), 0.0, 1.0);
 	ivec2 sz = textureSize(sampler2D(ground_map, lsmp), 0);
-	vec3 col = texelFetch(sampler2D(ground_map, lsmp), clamp(ivec2((v_oxz + 147456.0) / 294912.0 * vec2(sz)), ivec2(0), sz - 1), 0).rgb;
+	vec3 col = texelFetch(sampler2D(ground_map, lsmp), clamp(ivec2((v_oxz.xy + 147456.0) / 294912.0 * vec2(sz)), ivec2(0), sz - 1), 0).rgb;
 	return vec4(mix(albedo, col, w), w);
 }
 
@@ -289,7 +290,10 @@ void main()
 {
 	// the distance fade (kenshi-k16.2.63): a screen door (z = 0) shows its 1-px pattern on a still frame, so foliage draws the band apart instead: the opaque
 	// pass leaves it out (z = 1) and the band pass (z = 2, after everything opaque: nearest surface into depth, then blended at that depth) gives it alpha
-	float fadeT = fade.y > 0.0 ? clamp((v_dist - fade.x) / (fade.y - fade.x), 0.0, 1.0) : 0.0;
+	// a foliage draw: each instance's own end (v_oxz.z), fade.x then the start fraction
+	float fe = v_oxz.z > 0.0 ? v_oxz.z : fade.y;
+	float fs0 = v_oxz.z > 0.0 ? v_oxz.z * fade.x : fade.x;
+	float fadeT = fade.y > 0.0 ? clamp((v_dist - fs0) / (fe - fs0), 0.0, 1.0) : 0.0;
 	if (fade.z == 0.0 ? ign(gl_FragCoord.xy) < fadeT : fade.z == 1.0 ? fadeT > 0.0 : fadeT <= 0.0 || fadeT >= 1.0) { discard; }
 	// the occluder fade (docs/CLIENT.md "Camera modes"; ours): a dithered see-through cone from the focus character to the camera, narrow at the character so
 	// the floor around it stays (the slope stays under the camera's pitch), nothing behind it
@@ -517,14 +521,16 @@ in float v_row;
 in vec3 v_build;
 in float v_glass;
 in vec4 v_blood;	// declared, unused: sokol-shdc wants the vs outputs and the fs inputs to match one to one
-flat in vec2 v_oxz;
+flat in vec3 v_oxz;
 @include_block fade_ign
 @include_block caster_bias
 
 void main()
 {
 	caster_bias(bias);
-	if (fade.y > 0.0 && ign(gl_FragCoord.xy) < clamp((v_dist - fade.x) / (fade.y - fade.x), 0.0, 1.0)) { discard; }
+	float fe = v_oxz.z > 0.0 ? v_oxz.z : fade.y;	// as inst_fs
+	float fs0 = v_oxz.z > 0.0 ? v_oxz.z * fade.x : fade.x;
+	if (fade.y > 0.0 && ign(gl_FragCoord.xy) < clamp((v_dist - fs0) / (fe - fs0), 0.0, 1.0)) { discard; }
 	if (v_build.x >= 0.0 && v_build.y > v_build.x) { discard; }	// the construction ghost casts no shadow
 	if (cut.x > 0.0 && texture(sampler2D(inst_tex, inst_smp), v_uv).a < cut.x) { discard; }
 	if (cut.y > 0.5 && texture(sampler2D(inst_nrm, inst_smp), v_uv).a < 0.5) { discard; }
@@ -554,7 +560,7 @@ in float v_row;
 in vec3 v_build;
 in float v_glass;
 in vec4 v_blood;	// declared, unused: sokol-shdc wants the vs outputs and the fs inputs to match one to one
-flat in vec2 v_oxz;
+flat in vec3 v_oxz;
 out vec4 frag_color;
 
 void main()

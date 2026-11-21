@@ -454,7 +454,7 @@ static void logic_paths(FramePacket& pk)
 				const std::vector<uint64_t> sel = app.sim.selected();
 				for (const uint64_t id : sel)
 				{
-					for (const SimView::MoveOrder& o : app.sim.moveOrders(id)) { if (o.seq == app.orderSeq) { clickTick = o.tick; } }
+					for (const SimView::OrderRow& o : app.sim.orders(id)) { if (o.move && o.seq == app.orderSeq) { clickTick = o.tick; } }
 					if (const simlink::Route* rt = app.sim.routeOf(id); rt && rt->clientSeq == app.orderSeq) { arrived = rt->arrivedTick; flags = rt->flags; waypoints = rt->points.size(); }
 				}
 				printf("move marker: seq %u click %.1f %.1f %.1f -> route end %.1f %.1f %.1f (%zu waypoints%s), arrived %lld ticks after the order (tick %llu)\n",
@@ -1083,6 +1083,7 @@ void logic_frame(FramePacket& pk)
 	pk.serial = rq::beginPacket();	// first: every resource job queued below (the paths and the tail) belongs to this packet (docs/RENDER_THREAD.md §7.2)
 	{	// the ready-set gate (kenshi-k16.2.258.3): under the session load screen nothing of the world is on show, so the stream lane's play budgets are lifted
 		const bool gate = app.sessionLoad && kLoadGate.get();
+		logicthread::setLoadScreen(gate);
 		rq::setStreamTimeBudget(gate ? kLoadStreamMs.get() : kStreamMs.get());
 		rq::setStreamBudget(gate ? (size_t)256 << 20 : (size_t)8 << 20);
 		app.buildings.streamAll = gate;

@@ -1,0 +1,21 @@
+# Attack order on a hostile while other attackers engage (kenshi-4bps.1, the report on kenshi-karw): scenarios/bar_lure_hostile, the player at
+# the Bar and a Blood raider patrol of eleven on the open ground past it, always hostile. The client must send order 2 (attack) for a right
+# click on a standing raider even though the fight is on, and keep its row in the shot's route sidecar (order ... what attack target N ...
+# outcome applied tick N), not only the move_to rows like before. Run: client/tests/far_attack/run.sh far_attack OUT
+# Pixels are 720p; frames ~60 Hz. The sim world runs from the server's start, so by the client's first scripted frame the patrol is already
+# on the player (it spawns 150 u off and charges at once): these frames sit in the fight, not at a run-up.
+40 select id=@Wanderer@
+80 dump chars
+# the click: mouse char= puts the pointer on the raider's body centre (and refuses when the pick there is not that character); the press and
+# release are adjacent frames so the raider's own motion cannot walk it off the pixel (a press held 0.2 s opens the hold menu instead)
+120 mouse char=@Blood raider#11@
+122 mouse down right
+123 mouse up right
+160 dump chars
+260 dump chars
+400 dump chars
+560 dump chars
+700 dump chars
+850 screenshot OUTDIR/far_attack.png
+900 dump chars
+950 quit

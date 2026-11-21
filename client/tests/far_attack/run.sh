@@ -1,0 +1,36 @@
+#!/bin/bash
+# Run one far-attack script against a fresh OpenKenshi-server (scenarios/bar_lure_hostile) and a headless kclient.
+# Usage: run.sh SCRIPT OUT  (SCRIPT: a .txt name here without .txt, e.g. far_attack). Port: PORT (default: a free port). Scenario: KSCEN (a
+# scenarios/ name without .kscen, e.g. bar_lure, or a .kscen path; default bar_lure_hostile).
+# OUTDIR in the script is replaced by OUT, and @Name@ by that character's id (charids.sh: a probe run's `dump chars` of the fresh scenario;
+# @Name#N@ is its Nth of that name; a name it lacks exits 4). Exit: the client's status, non-zero also when a scripted shot is missing
+# (runcheck.sh). Binaries: client/build of this tree (BUILD overrides).
+set -u
+. "$(dirname "${BASH_SOURCE[0]}")/../need_data.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/../charids.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/../runcheck.sh"
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+tree=$(cd "$here/../../.." && pwd)
+. "$tree/client/tools/server_bin.sh"	# pick_server: KSIM_SERVER, else the shared master build, else this build dir's (kenshi-k16.2.306.1)
+script="$here/${1:?script name, e.g. far_attack}.txt"
+out=$(mkdir -p "${2:?out dir}" && cd "$2" && pwd)
+. "$(dirname "${BASH_SOURCE[0]}")/../../tools/ports.sh"
+port=$(pick_port "${PORT:-}") || exit 3
+build=${BUILD:-$tree/client/build}	# BUILD=<abs dir>: another build (the Debug build: client/build-debug)
+pick_server "$tree" "$build/cpp/OpenKenshi-server"	# 'server: shared PATH' / 'server: built (reason)'
+server=$SERVER
+[ -f "$script" ] || { echo "run.sh: no script $script" >&2; exit 2; }
+scen=${KSCEN:-bar_lure_hostile}	# a scenarios/ name, or a path that is used as it is
+case $scen in */*|*.kscen) ;; *) scen=$tree/scenarios/$scen.kscen ;; esac
+"$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:$port --scenario-file "$scen" --debug-view > "$out/server.log" 2>&1 &
+pid=$!
+for i in $(seq 240); do grep -q "^listening" "$out/server.log" && break; ps -p $pid > /dev/null || break; sleep 0.5; done
+grep -q "^listening" "$out/server.log" || { echo "run.sh: server did not listen" >&2; kill "$pid" 2>/dev/null; exit 3; }
+if ! probe_char_ids "$build" "$tree" "$port" "$out/ids.txt"; then echo "run.sh: id probe found no characters (see $out/idprobe.log)" >&2; kill "$pid" 2>/dev/null; exit 4; fi
+charids_fill "$script" "$out/ids.txt" "$out" "$out/script.txt" || { kill "$pid" 2>/dev/null; exit 4; }
+cd "$tree" && timeout 300 client/tools/headless.sh -- stdbuf -oL "$build/kclient" --simlink 127.0.0.1:$port --debug --script "$out/script.txt" > "$out/client.log" 2>&1
+rc=$?
+ps -o args= -p "$pid" 2>/dev/null | grep -q -- "--listen 127.0.0.1:$port" && kill "$pid"
+echo "client rc $rc; stale: $(grep -c stale "$out/client.log"); [sg][error]: $(grep -c '\[sg\]\[error' "$out/client.log")"
+run_status "$rc" "$out/script.txt" 1 || exit 1
+exit $rc

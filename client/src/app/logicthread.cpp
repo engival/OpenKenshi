@@ -54,6 +54,8 @@ bool gLastRedraw = false;	// render thread only: set by renderFrame
 
 // Render thread only: the waits that ran out since the last draw.
 int gMissed = 0;
+bool gMissLoad = false;
+std::atomic<bool> gLoadScreen{ false };
 std::chrono::steady_clock::time_point gMissStart;
 // Render thread only, since the last takeMisses() (kenshi-k16.2.437.1): the frames without a pass, the runs that ended, the longest run.
 long gRepeats = 0, gRuns = 0, gLongest = 0, gPrinted = 0;
@@ -176,6 +178,7 @@ void start(Hooks hooks, bool scripted)
 }
 
 bool running() { return gRunning; }
+void setLoadScreen(bool up) { gLoadScreen.store(up, std::memory_order_relaxed); }
 bool stopping() { return gStop.load(); }
 
 bool renderFrame(double boundMs)
@@ -185,7 +188,8 @@ bool renderFrame(double boundMs)
 	const auto bound = std::chrono::duration<double, std::milli>(boundMs);
 	if (!gCv.wait_for(lk, bound, [] { return gFilled >= 0 || gExited; }) || gFilled < 0)
 	{
-		if (gMissed++ == 0) { gMissStart = std::chrono::steady_clock::now(); }
+		if (gMissed++ == 0) { gMissStart = std::chrono::steady_clock::now(); gMissLoad = false; }
+		if (gLoadScreen.load(std::memory_order_relaxed)) { gMissLoad = true; }
 		gLastBound = boundMs;
 		gRepeats++;
 		// Overlap (rules 4 and 5, full overlap; kenshi-k16.2.205.12.118): no new packet in the bound: draw the drawing packet again. It is
@@ -219,7 +223,10 @@ bool renderFrame(double boundMs)
 		if (gMissed > gLongest) { gLongest = gMissed; gLongestMs = ms; }	// the run with the most frames; ms is its wall time (today's number)
 		// Only a real stall prints (kenshi-k16.2.437.1): a run of misses over kMissLogMs, once, when it ends. A one-frame repeat is the normal
 		// jitter of a logic frame that just misses the bound; the count of those goes to the pace log (dev/pacelog.hpp).
-		if (ms > kMissLogMs)
+		// Not under the session load screen (kenshi-k16.2.437.4.3): the load gate gives the stream lane 40 ms a frame there (session.load_stream_ms),
+		// nothing of the world is on show, and 36 of 37 stalls in the 437.4.2 runs were those frames. They stay in the pace counts, not the log.
+		if (gLoadScreen.load(std::memory_order_relaxed)) { gMissLoad = true; }
+		if (ms > kMissLogMs && !gMissLoad)
 		{
 			if (gMode == Mode::kOverlap) { fprintf(stderr, "kclient: lockstep: no packet for %.0f ms: %d frames redrew the last packet (overlap)\n", ms, gMissed); }
 			else { fprintf(stderr, "kclient: lockstep: no packet for %.0f ms: %d frames without a pass showed the last frame\n", ms, gMissed); }

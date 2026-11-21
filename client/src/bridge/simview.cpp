@@ -602,7 +602,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		viewOnce_ = false;	// resend the interest and the view focus: the new world's session may not hold them
 		foreign_.clear();
 		splashes_.clear();
-		moveOrders_.clear();	// the shot's route sidecar: the old world's orders are not the new one's
+		orderRows_.clear();	// the shot's route sidecar: the old world's orders are not the new one's
 		orderResults_.clear();
 		doorState_.clear();
 		doorFirst_.clear();
@@ -1443,9 +1443,11 @@ void SimView::answers()
 		{
 			static const char* const kResult[] = { "done", "refused on arrival", "unreachable", "target gone", "actor down", "cancelled", "partial", "full", "too hard" };
 			if (e.result == 8)	// too hard (SIMLINK event 13 result 8; approved kenshi-k16.6.376, implemented k16.6.377): a lock pick reached the lock and its
-			{					// skill is below the floor, so no pick ran. A door or container pick is action 3, a shackle pick 15 and a cage pick 18.
+			{					// skill is below the floor, so no pick ran. Only the cage pick still ends that way (action 18): since ksim 7fd41c98 (k16.6.501) a
+								// door or container pick (3) below the floor is unplannable, so the sim drops the order and sends no event 13 at all (rwh.178);
+								// a shackle pick (15) is always above the floor (its lock level is fixed at 20, ksim lock_tasks.cpp kShackleLockLevel).
 				// The player's line is OURS: the original has no text for it (LOCKS_EQUIP_STOCK_STATIC D-lockpick-zero); the host's message box shows it.
-				if (isPlayer(e.a) && (e.dir == 3 || e.dir == 15 || e.dir == 18)) { lockTooHard_++; }
+				if (isPlayer(e.a) && e.dir == 18) { lockTooHard_++; }
 				if (e.dir < 15 || e.dir > 17) { printf("interact done: %llu on %llu: action %u result 8 too hard\n", (unsigned long long)e.a, (unsigned long long)e.b, (unsigned)e.dir); }	// the shackle orders print their own line below
 			}
 			if (e.dir >= 15 && e.dir <= 17)	// the shackle orders (SIMLINK order 60 "Shackle orders"): the result as the player reads it; texts OURS
@@ -1889,6 +1891,41 @@ void SimView::select(uint64_t id, bool add)
 	if (std::find(selected_.begin(), selected_.end(), id) == selected_.end()) { selected_.push_back(id); }
 }
 
+// kenshi-4bps.1: one row in the shot's route sidecar for one order this client just sent for id. Every order that sets a character's task goes
+// in, not only move_to, so a capture can say whether an attack / interact / follow went out and what the wire answered (the move rows kept their
+// shape: what is the click origin there, and the order's own word elsewhere).
+void SimView::keepOrder(uint64_t id, uint32_t seq, const char* what, uint64_t target, const double* goal, bool yValid, bool queue)
+{
+	OrderRow o;
+	o.seq = seq;
+	o.id = id;
+	o.tick = dec_.lastCompleteTick;
+	o.what = what;
+	o.target = target;
+	if (goal) { o.goal[0] = goal[0]; o.goal[1] = goal[1]; o.goal[2] = goal[2]; }
+	o.yValid = yValid && goal;
+	o.queue = queue;
+	std::deque<OrderRow>& kept = orderRows_[id];
+	kept.push_back(std::move(o));
+	if (kept.size() > kOrdersKept) { kept.pop_front(); }
+}
+
+// The wire position of a character's feet or an interactable's own point, for a targeted order's sidecar goal (false: the wire does not know it).
+bool SimView::wirePos(uint64_t id, double pos[3]) const
+{
+	if (const auto c = dec_.chars.find(id); c != dec_.chars.end())
+	{
+		for (int k = 0; k < 3; k++) { pos[k] = c->second.cur.pos[k]; }
+		return true;
+	}
+	if (const simlink::Interactable* t = thing(id))
+	{
+		for (int k = 0; k < 3; k++) { pos[k] = t->pos[k]; }
+		return true;
+	}
+	return false;
+}
+
 bool SimView::moveTo(const double at[3], bool queue, bool yValid, const Click* click)
 {
 	std::erase_if(selected_, [&](uint64_t id) { return !dec_.chars.count(id); });
@@ -1903,18 +1940,10 @@ bool SimView::moveTo(const double at[3], bool queue, bool yValid, const Click* c
 	// kenshi-k16.2.231.1: keep the order for the shot's route sidecar (the last 8 a character got), with where the click came from
 	for (const uint64_t id : selected_)
 	{
-		MoveOrder o;
-		o.seq = seq;
-		o.id = id;
-		o.tick = dec_.lastCompleteTick;
-		o.goal[0] = at[0]; o.goal[1] = at[1]; o.goal[2] = at[2];
-		o.yValid = yValid;
-		o.queue = queue;
-		if (click) { o.what = click->what; o.building = click->building; o.buildingName = click->buildingName; o.floor = click->floor; }
-		else { o.what = "use point"; }	// the walk to a container / counter / script op: no ground click behind it
-		std::deque<MoveOrder>& kept = moveOrders_[id];
-		kept.push_back(std::move(o));
-		if (kept.size() > kMoveOrdersKept) { kept.pop_front(); }
+		keepOrder(id, seq, click ? click->what : "use point", 0, at, yValid, queue);	// no click: the walk to a container / counter / script op
+		OrderRow& o = orderRows_[id].back();
+		o.move = true;
+		if (click) { o.building = click->building; o.buildingName = click->buildingName; o.floor = click->floor; }
 	}
 	return true;
 }
@@ -1940,16 +1969,16 @@ std::vector<uint64_t> SimView::players() const
 }
 
 // The outcome as the wire gave it: the route that carried the order's clientSeq (a clear too), else event 9 / 10's answer, else nothing yet.
-std::vector<SimView::MoveOrder> SimView::moveOrders(uint64_t id) const
+std::vector<SimView::OrderRow> SimView::orders(uint64_t id) const
 {
-	std::vector<MoveOrder> out;
-	const auto it = moveOrders_.find(id);
-	if (it == moveOrders_.end()) { return out; }
+	std::vector<OrderRow> out;
+	const auto it = orderRows_.find(id);
+	if (it == orderRows_.end()) { return out; }
 	const simlink::Route* route = routeOf(id);
-	for (const MoveOrder& o : it->second)
+	for (const OrderRow& o : it->second)
 	{
 		out.push_back(o);
-		MoveOrder& v = out.back();
+		OrderRow& v = out.back();
 		if (route && o.seq && route->clientSeq == o.seq)
 		{
 			char text[128];
@@ -1966,8 +1995,10 @@ std::vector<SimView::MoveOrder> SimView::moveOrders(uint64_t id) const
 
 uint64_t SimView::lastMoveTick(uint64_t id) const
 {
-	const auto it = moveOrders_.find(id);
-	return it == moveOrders_.end() || it->second.empty() ? 0 : it->second.back().tick;
+	const auto it = orderRows_.find(id);
+	if (it == orderRows_.end()) { return 0; }
+	for (auto r = it->second.rbegin(); r != it->second.rend(); ++r) { if (r->move) { return r->tick; } }
+	return 0;
 }
 
 bool SimView::attack(uint64_t target)
@@ -1975,9 +2006,16 @@ bool SimView::attack(uint64_t target)
 	std::erase_if(selected_, [&](uint64_t id) { return !dec_.chars.count(id); });
 	if (mode_ != Live || selected_.empty() || !target) { return false; }
 	std::vector<uint8_t> out;
-	sent_[lastSentSeq_ = orders_.attack(out, selected_, target)] = "attack " + std::to_string(target);
+	const uint32_t seq = orders_.attack(out, selected_, target);
+	sent_[lastSentSeq_ = seq] = "attack " + std::to_string(target);
 	tasked(selected_, false);
-	return send(out, "attack");
+	if (!send(out, "attack")) { return false; }
+	// kenshi-4bps.1: the row the route sidecar was missing (an attack silently absent from a capture reads as "never sent"); goal: where the
+	// target stood at the send
+	double at[3];
+	const bool seen = wirePos(target, at);
+	for (const uint64_t id : selected_) { keepOrder(id, seq, "attack", target, seen ? at : nullptr, seen, false); }
+	return true;
 }
 
 bool SimView::interact(uint64_t target, uint8_t action, bool queue, uint8_t flags)
@@ -1986,9 +2024,15 @@ bool SimView::interact(uint64_t target, uint8_t action, bool queue, uint8_t flag
 	if (mode_ != Live || selected_.empty() || !target) { return false; }
 	static const char* const kNames[] = { "?", "open", "close", "lockpick", "use", "loot", "talk", "pick up", "carry", "sleep", "first aid", "unlock", "bash", "put down", "stealth KO", "pick shackles", "cut shackles", "break shackles", "pick cage", "cut cage", "break cage" };
 	std::vector<uint8_t> out;
-	sent_[lastSentSeq_ = orders_.interact(out, selected_, target, action, queue, flags)] = std::string(kNames[action <= 20 ? action : 0]) + (flags & 1 ? " open " : " ") + std::to_string(target);
+	const uint32_t seq = orders_.interact(out, selected_, target, action, queue, flags);
+	sent_[lastSentSeq_ = seq] = std::string(kNames[action <= 20 ? action : 0]) + (flags & 1 ? " open " : " ") + std::to_string(target);
 	tasked(selected_, queue);
-	return send(out, "interact");
+	if (!send(out, "interact")) { return false; }
+	// kenshi-4bps.1: the sidecar row (what: the action's name, e.g. "stealth KO" / "pick up")
+	double at[3];
+	const bool seen = wirePos(target, at);
+	for (const uint64_t id : selected_) { keepOrder(id, seq, kNames[action <= 20 ? action : 0], target, seen ? at : nullptr, seen, queue); }
+	return true;
 }
 
 bool SimView::shackle(uint64_t actor, uint64_t wearer, uint8_t action)
@@ -2364,8 +2408,13 @@ bool SimView::jobAdd(uint16_t type, uint64_t target)
 	std::copy_if(selected_.begin(), selected_.end(), std::back_inserter(ids), [&](uint64_t id) { return id != target; });
 	if (mode_ != Live || ids.empty()) { return false; }
 	std::vector<uint8_t> out;
-	sent_[lastSentSeq_ = orders_.jobAdd(out, ids, type, target)] = "job " + std::to_string(type) + (target ? " " + std::to_string(target) : "");
-	return send(out, "job add");
+	const uint32_t seq = orders_.jobAdd(out, ids, type, target);
+	sent_[lastSentSeq_ = seq] = "job " + std::to_string(type) + (target ? " " + std::to_string(target) : "");
+	if (!send(out, "job add")) { return false; }
+	double at[3];
+	const bool seen = target && wirePos(target, at);
+	for (const uint64_t id : ids) { keepOrder(id, seq, "job", target, seen ? at : nullptr, seen, false); }	// kenshi-4bps.1
+	return true;
 }
 
 bool SimView::prospect(uint64_t id)
@@ -2397,9 +2446,12 @@ bool SimView::stop(bool hold)
 	std::erase_if(selected_, [&](uint64_t id) { return !dec_.chars.count(id); });
 	if (mode_ != Live || selected_.empty()) { return false; }
 	std::vector<uint8_t> out;
-	sent_[lastSentSeq_ = orders_.stop(out, selected_, hold)] = hold ? "hold" : "stop";
+	const uint32_t seq = orders_.stop(out, selected_, hold);
+	sent_[lastSentSeq_ = seq] = hold ? "hold" : "stop";
 	tasked(selected_, false);
-	return send(out, "stop");
+	if (!send(out, "stop")) { return false; }
+	for (const uint64_t id : selected_) { keepOrder(id, seq, hold ? "hold" : "stop", 0, nullptr, false, false); }	// kenshi-4bps.1
+	return true;
 }
 
 bool SimView::pause(bool paused)
@@ -2520,9 +2572,14 @@ bool SimView::follow(uint64_t leader)
 	std::copy_if(selected_.begin(), selected_.end(), std::back_inserter(ids), [&](uint64_t id) { return id != leader; });
 	if (mode_ != Live || ids.empty() || !leader) { return false; }
 	std::vector<uint8_t> out;
-	sent_[lastSentSeq_ = orders_.follow(out, ids, leader)] = "follow " + std::to_string(leader);
+	const uint32_t seq = orders_.follow(out, ids, leader);
+	sent_[lastSentSeq_ = seq] = "follow " + std::to_string(leader);
 	tasked(ids, false);
-	return send(out, "follow");
+	if (!send(out, "follow")) { return false; }
+	double at[3];
+	const bool seen = wirePos(leader, at);
+	for (const uint64_t id : ids) { keepOrder(id, seq, "follow", leader, seen ? at : nullptr, seen, false); }	// kenshi-4bps.1
+	return true;
 }
 
 bool SimView::focus(double out[3]) const

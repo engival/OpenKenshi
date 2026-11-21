@@ -1598,7 +1598,10 @@ static void shot_route(const std::string& shotPath, int frame)	// frame: app.fra
 	FILE* f = fopen(path.c_str(), "w");
 	if (!f) { fprintf(stderr, "kclient: route: cannot write %s\n", path.c_str()); return; }
 	fprintf(f, "# kclient route sidecar (kenshi-k16.2.231.1): the selected characters' CHAR_ROUTE as the wire has it at the shot's frame, the last 8\n");
-	fprintf(f, "# move_to orders this client sent each and the answer the wire gave, and the characters' wire position and building. One row a fact.\n");
+	fprintf(f, "# orders this client sent each and the answer the wire gave, and the characters' wire position and building. One row a fact.\n");
+	fprintf(f, "# order rows: what is the order (attack, follow, stop, hold, job, an interact's name) or a move_to's click origin (click, use point,\n");
+	fprintf(f, "# script, map); target is the sim id the order named (only orders that name one); goal is the clicked surface point, or the target's\n");
+	fprintf(f, "# wire position at the send (kenshi-4bps.1: not only move_to is logged any more).\n");
 	fprintf(f, "# shot\t%s\tframe\t%d\ttick\t%.2f\t%s\n", tsv_text(shotPath).c_str(), frame, app.sim.tick(), tsv_text(app.sim.status()).c_str());
 	{
 		// The floor view's stair latch (kenshi-k16.2.236.8.4.3): the feet's building-local y against the two switch lines, the origin floor and the level it shows, and
@@ -1643,11 +1646,14 @@ static void shot_route(const std::string& shotPath, int frame)	// frame: app.fra
 		else if (rt) { fprintf(f, "noroute\t%llu\tversion\t%u\tclientSeq\t%u\tflags\t%u\tarrivedTick\t%llu\n", (unsigned long long)id, rt->version, rt->clientSeq,
 			(unsigned)rt->flags, (unsigned long long)rt->arrivedTick); }
 		else { fprintf(f, "noroute\t%llu\n", (unsigned long long)id); }
-		for (const SimView::MoveOrder& o : app.sim.moveOrders(id))
+		for (const SimView::OrderRow& o : app.sim.orders(id))
 		{
-			fprintf(f, "order\t%llu\tseq\t%u\ttick\t%llu\tgoal\t%.2f\t%.2f\t%.2f\tyValid\t%d\tqueue\t%d\twhat\t%s\tbuilding\t%s\tfloor\t%d\toutcome\t%s\n",
+			// kenshi-4bps.1: an order that names a target gets its key after what; outcome stays last (it is free text)
+			char tgt[32] = "";
+			if (o.target) { snprintf(tgt, sizeof tgt, "target\t%llu\t", (unsigned long long)o.target); }
+			fprintf(f, "order\t%llu\tseq\t%u\ttick\t%llu\tgoal\t%.2f\t%.2f\t%.2f\tyValid\t%d\tqueue\t%d\twhat\t%s\t%sbuilding\t%s\tfloor\t%d\toutcome\t%s\n",
 				(unsigned long long)id, o.seq, (unsigned long long)o.tick, o.goal[0], o.goal[1], o.goal[2], o.yValid ? 1 : 0, o.queue ? 1 : 0,
-				tsv_text(o.what).c_str(), tsv_text(o.buildingName).c_str(), o.floor, tsv_text(o.outcome).c_str());
+				tsv_text(o.what).c_str(), tgt, tsv_text(o.buildingName).c_str(), o.floor, tsv_text(o.outcome).c_str());
 		}
 	}
 	fclose(f);
@@ -2145,6 +2151,17 @@ static void creator_about(App::CreatorOrbit& o, const kworld::SkelQuat& next, co
 void creator_drag(float dx, float dy)
 {
 	creator_turn((float)(dx * kCreatorDragRate), (float)(dy * kCreatorDragRate));
+	// the drag shows at once, no glide behind the pointer (k16.2.457): the turn left the target one step ahead of the shown view, so land it
+	App::CreatorOrbit& o = app.creatorOrbit;
+	if (o.gliding)
+	{
+		o.sYaw = o.yaw;
+		o.sTilt = o.tilt;
+		creator_copy(o.sEye, o.eye);
+		creator_copy(o.sShift, o.shift);
+		o.sZoom = o.zoom;
+		o.gliding = false;
+	}
 }
 
 // The target becomes the shown view: a drag acts on what is on screen and ends any glide (it must never fight the drag, k16.2.433.4)
@@ -2170,6 +2187,7 @@ void creator_turn(float yaw, float tilt)
 	o.yaw += yaw;
 	o.tilt = (float)std::clamp((double)o.tilt + tilt, -kCreatorTiltMax, kCreatorTiltMax);
 	creator_about(o, creator_assembly(o.yaw, o.tilt), o.pivot);
+	o.gliding = true;	// the shown view glides to the turned target like any change (k16.2.457); creator_frame settles it
 }
 
 // One wheel gesture in the preview area: `notches` of the wheel at the pointer (mx, my). The eye moves along the pointer's ray to the point of the
@@ -3466,8 +3484,8 @@ void crime_log()
 	for (uint16_t k : app.sim.takeCrimeLog()) { ui::message(k == 51 ? "Got caught stealing." : "Alarm raised"); }
 }
 
-// Event 13 result 8 on a lock pick (kenshi-k16.2.346): a lock too hard for the picker, a message-bar line. The text is OURS: the original has none
-// (LOCKS_EQUIP_STOCK_STATIC D-lockpick-zero).
+// Event 13 result 8 on a cage pick (kenshi-k16.2.346; the only case the sim still sends since 7fd41c98, kenshi-888g.1): a lock too hard for the
+// picker, a message-bar line. The text is OURS: the original has none (LOCKS_EQUIP_STOCK_STATIC D-lockpick-zero).
 void lock_too_hard_log()
 {
 	for (uint32_t n = app.sim.takeLockTooHard(); n > 0; --n) { ui::message("This lock is too hard to pick"); }
