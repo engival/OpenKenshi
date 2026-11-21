@@ -15,8 +15,7 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE=$(cd "$HERE/../.." && pwd)
 OUT=${1:?usage: container_pick_check.sh OUT_DIR [PORT]}
-. "$(dirname "${BASH_SOURCE[0]}")/ports.sh"
-PORT=$(pick_port "${2:-}") || exit 3
+PORTARG=(); [ -n "${2:-}" ] && PORTARG=(--port "$2")	# no PORT: demo.sh picks a free one and retries on a bind failure (kenshi-k16.2.417.3)
 mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
 OWNER=${OWNER:-Storm House}
 TOL=${TOL:-0.05}
@@ -33,7 +32,7 @@ run_case()	# NAME SCENARIO CAMERA_ARGS...
 600 dump pickboxes 1000
 620 quit
 EOS
-	HEADLESS_TIMEOUT=420 nice -n 10 "$HERE/headless.sh" -W 1280 -H 720 -- "$HERE/demo.sh" --port "$PORT" --scenario-file "$TREE/scenarios/$scen.kscen" \
+	HEADLESS_TIMEOUT=420 nice -n 10 "$HERE/headless.sh" -W 1280 -H 720 -- "$HERE/demo.sh" ${PORTARG[@]+"${PORTARG[@]}"} --scenario-file "$TREE/scenarios/$scen.kscen" \
 		-- --play "$scen" --script "$d/script.txt" "$@" > "$d/run.log" 2>&1 || true
 	grep -E '^(pickboxes|container|box) ' "$d/run.log" > "$d/boxes.txt" || true
 	echo "--- $name: $(grep -c '^box summary' "$d/boxes.txt" || true) drawn containers within the dump's radius"

@@ -27,7 +27,8 @@ do
 		*) OUT=$1; shift ;;
 	esac
 done
-PORT=$(pick_port "$PORT") || exit 3
+LISTEN=	# the local server keeps its own 127.0.0.1:0 (the kernel picks a free port, kenshi-k16.2.417.4); --port N pins one
+[ -z "$PORT" ] || { PORT=$(pick_port "$PORT") || exit 3; LISTEN=" --listen 127.0.0.1:$PORT"; }
 mkdir -p "$OUT" || exit 2
 OUT=$(cd "$OUT" && pwd)
 
@@ -55,9 +56,9 @@ if [ -z "$DATA" ] && [ -f "$BUILD/CMakeCache.txt" ]; then DATA=$(sed -n 's/^KENS
 run_case()
 {
 	local name=$1
-	# The client starts this server itself (start_local_server): the scenario and the port are the `session.server_args` option.
+	# The client starts this server itself (start_local_server): the scenario (and a pinned port) are the `session.server_args` option.
 	"$HERE/headless.sh" -- "$KCLIENT" --data "$DATA" --debug --local-server ${SETSRV[@]+"${SETSRV[@]}"} \
-		--set "session.server_args=--scenario newgame --listen 127.0.0.1:$PORT$SIMARG" --script "$OUT/$name.txt" > "$OUT/$name.log" 2>&1
+		--set "session.server_args=--scenario newgame$LISTEN$SIMARG" --script "$OUT/$name.txt" > "$OUT/$name.log" 2>&1
 	[ $? = 0 ] || { echo "title_pending_check: FAIL: the $name run exited nonzero" >&2; echo "  client log: $OUT/$name.log" >&2; exit 1; }
 	if grep -q '\[sg\]\[error\]' "$OUT/$name.log"; then echo "title_pending_check: FAIL: $name: sokol logged [sg][error]" >&2; exit 1; fi
 }

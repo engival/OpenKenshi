@@ -6,13 +6,12 @@
 # selected, the Drifter selected. Each: `dump cuts` lists BOTH buildings at floor 0 (shown 0, top 1) with 2 occupants, a shot from above shows both
 # open, and `dump pick` of a click at the centre of the NON-selected character's house, camera over its upper floor, says the pick skipped what is
 # above the floor cut of a building ours are in (the cut must not follow the selection; peek / glass rules are not touched).
-# Exit 0 PASS, 1 FAIL.  usage: multi_cut_check.sh OUT_DIR [PORT]   (PORT in this worker's 47830-47839 range; the runs take PORT, PORT+1, PORT+2)
+# Exit 0 PASS, 1 FAIL.  usage: multi_cut_check.sh OUT_DIR [PORT]   (PORT in this worker's 47830-47839 range; without PORT demo.sh picks a free port per run)
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE=$(cd "$HERE/../.." && pwd)
 OUT=${1:?usage: multi_cut_check.sh OUT_DIR [PORT]}
-. "$(dirname "${BASH_SOURCE[0]}")/ports.sh"
-PORT=$(pick_port "${2:-}") || exit 3
+PORTARG=(); [ -n "${2:-}" ] && PORTARG=(--port "$2")	# no PORT: demo.sh picks a free one and retries on a bind failure (kenshi-k16.2.417.3)
 mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
 fail() { echo "multi_cut_check: FAIL ($*)"; exit 1; }
 
@@ -44,7 +43,7 @@ $sel
 570 screenshot $OUT/$name-pick.png
 600 quit
 EOS
-	HEADLESS_TIMEOUT=600 nice -n 10 "$HERE/headless.sh" -W 1280 -H 720 -- "$HERE/demo.sh" --port "$port" \
+	HEADLESS_TIMEOUT=600 nice -n 10 "$HERE/headless.sh" -W 1280 -H 720 -- "$HERE/demo.sh" ${PORTARG[@]+"${PORTARG[@]}"} \
 		--scenario-file "$TREE/scenarios/multi_cut.kscen" -- --size 1280x720 --script "$OUT/script-$name.txt" > "$OUT/run-$name.log" 2>&1 || true
 	grep -q 'simlink: server: HELLO timeout' "$OUT/run-$name.log" && fail "$name: the server never said HELLO (kenshi-k16.2.268); rerun when the machine is quiet"
 	grep -E '^(cuts|cut |floor: .* shown|pick)' "$OUT/run-$name.log" > "$OUT/$name.txt" || true
@@ -54,9 +53,7 @@ run default "$PORT" "" "$B_POS"
 WAN=$(sed -n 's/^char \([0-9]*\) "Wanderer".*/\1/p' "$OUT/run-default.log" | head -1)
 DRI=$(sed -n 's/^char \([0-9]*\) "Drifter".*/\1/p' "$OUT/run-default.log" | head -1)
 [ -n "$WAN" ] && [ -n "$DRI" ] || fail "the Wanderer / Drifter are not on the wire (dump chars)"
-P2=$(pick_port "") || exit 3; while [ "$P2" = "$PORT" ]; do P2=$(pick_port "") || exit 3; done
 run wanderer "$P2" "450 select id=$WAN" "$B_POS"
-P3=$(pick_port "") || exit 3; while [ "$P3" = "$PORT" ] || [ "$P3" = "$P2" ]; do P3=$(pick_port "") || exit 3; done
 run drifter "$P3" "450 select id=$DRI" "$A_POS"
 
 for n in default wanderer drifter; do

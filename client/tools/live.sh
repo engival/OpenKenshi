@@ -15,22 +15,21 @@ if [ "$1" != "--" ]; then secs=$1; shift; fi
 shift
 pick_server "$tree" "$tree/cpp/build/OpenKenshi-server"	# 'server: shared PATH' / 'server: built (reason)'
 mkdir -p "$out"
-port=""
-for p in $(seq 47960 48060)
+. "$root/client/tools/ports.sh"	# launch_server / bind_retry: a port from 29100-29499, a retry on a bind failure (kenshi-k16.2.417.3)
+# The server is started by exec (env -C) so $! is the server itself ('cd X && (exec ...) &' backgrounds a wrapper shell).
+for try in 1 2 3
 do
-	ss -ltn | grep -q "127.0.0.1:$p " || { port=$p; break; }
-done
-[ -n "$port" ] || { echo "live.sh: no free port" >&2; exit 3; }
-# The server is started by exec from a subshell whose own & makes $! the server itself
-# ('cd X && (exec ...) &' backgrounds a wrapper shell and $! is the wrapper).
-(cd "$tree" && exec "$SERVER" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:$port --save-dir "$out/saves" "$@") > "$out/server.log" 2>&1 &
-pid=$!
-for i in $(seq 180)
-do
+	launch_server "$out/server.log" "" env -C "$tree" "$SERVER" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:@PORT@ --save-dir "$out/saves" "$@"
+	pid=$SERVER_PID port=$SERVER_PORT
+	for i in $(seq 180)
+	do
+		grep -q "^listening" "$out/server.log" && break
+		grep -q "bind\|error" "$out/server.log" && break
+		ps -p $pid > /dev/null || break
+		timeout 1 tail -f /dev/null
+	done
 	grep -q "^listening" "$out/server.log" && break
-	grep -q "bind\|error" "$out/server.log" && break
-	ps -p $pid > /dev/null || break
-	timeout 1 tail -f /dev/null
+	bind_retry "$out/server.log" "" "$try" >&2 || break
 done
 stop()
 {

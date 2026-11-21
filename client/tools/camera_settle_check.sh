@@ -12,8 +12,7 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE=$(cd "$HERE/../.." && pwd)
 OUT=${1:?usage: camera_settle_check.sh OUT_DIR [PORT]}
-. "$HERE/ports.sh"
-PORT=$(pick_port "${2:-}") || exit 3
+PORTARG=(); [ -n "${2:-}" ] && PORTARG=(--port "$2")	# no PORT: demo.sh picks a free one and retries on a bind failure (kenshi-k16.2.417.3)
 mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
 MAX=3.0
 LAGMAX=${LAGMAX:-3.0}
@@ -37,7 +36,7 @@ cat > "$OUT/script.txt" <<EOS
 2300 quit
 EOS
 SETTLE=${SETTLE_TAU:+--set look.settle_tau=$SETTLE_TAU}
-HEADLESS_TIMEOUT=300 KCLIENT_CAMTRACE=1 nice -n 10 "$HERE/headless.sh" -W 1280 -H 720 -- "$HERE/demo.sh" --port "$PORT" \
+HEADLESS_TIMEOUT=300 KCLIENT_CAMTRACE=1 nice -n 10 "$HERE/headless.sh" -W 1280 -H 720 -- "$HERE/demo.sh" ${PORTARG[@]+"${PORTARG[@]}"} \
 	--scenario-file "$TREE/scenarios/order_sounds.kscen" -- --size 1280x720 --script "$OUT/script.txt" ${SETTLE:-} > "$OUT/run.log" 2>&1 || true
 grep -q 'simlink: server: HELLO timeout' "$OUT/run.log" && { echo "camera_settle_check: FAIL (HELLO timeout: rerun when the machine is quiet)"; exit 1; }
 grep -E '^(camtrace|nudge|follow state)' "$OUT/run.log" > "$OUT/trace.txt" || true

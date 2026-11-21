@@ -9,12 +9,11 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE=$(cd "$HERE/../.." && pwd)
 OUT=${1:?usage: bed_pick_check.sh OUT_DIR [PORT]}
-. "$(dirname "${BASH_SOURCE[0]}")/ports.sh"
-PORT=$(pick_port "${2:-}") || exit 3
+PORTARG=(); [ -n "${2:-}" ] && PORTARG=(--port "$2")	# no PORT: demo.sh picks a free one and retries on a bind failure (kenshi-k16.2.417.3)
 mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
 BED=6285449610646571553	# a Storm House floor-1 bed in scenarios/bar_lure.kscen
+# no select: the lead is the selection at the start of bar_lure (a fixed character id went stale, kenshi-k16.2.417.4)
 cat > "$OUT/script.txt" <<EOS
-400 select id=41191
 401 move -50628.5 1081.9 -1185.4
 1500 camera thing id=$BED
 1502 set yaw 31.1
@@ -42,7 +41,7 @@ cat > "$OUT/script.txt" <<EOS
 1542 dump pick
 1560 quit
 EOS
-HEADLESS_TIMEOUT=300 nice -n 10 "$HERE/headless.sh" -W 1280 -H 720 -- "$HERE/demo.sh" --port "$PORT" --scenario-file "$TREE/scenarios/bar_lure.kscen" -- --play bar_lure --script "$OUT/script.txt" > "$OUT/run.log" 2>&1 || true
+HEADLESS_TIMEOUT=300 nice -n 10 "$HERE/headless.sh" -W 1280 -H 720 -- "$HERE/demo.sh" ${PORTARG[@]+"${PORTARG[@]}"} --scenario-file "$TREE/scenarios/bar_lure.kscen" -- --play bar_lure --script "$OUT/script.txt" > "$OUT/run.log" 2>&1 || true
 grep '^pick (' "$OUT/run.log" > "$OUT/picks.txt" || true
 cat "$OUT/picks.txt"
 n=$(wc -l < "$OUT/picks.txt")

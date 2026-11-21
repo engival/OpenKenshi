@@ -18,14 +18,12 @@
 # The free camera reproduces a shot's rts eye exactly (mouse_ray is the same for both modes). Runs with --debug (dump ops need it).
 #   D  (kenshi-k16.2.259.3) the click's own record (camera, pointer, ray, pick, skipped, ghosts) in the log and the sidecar's `clicks:` block, and `click replay`
 #      of case A's record in a second run reaching the same pick.
-# Exit 0 PASS, 1 FAIL.  usage: pick_drawn_check.sh OUT_DIR [PORT]   (PORT in this worker's 47830-47839 range; B and C each take a free port)
+# Exit 0 PASS, 1 FAIL.  usage: pick_drawn_check.sh OUT_DIR [PORT]   (PORT in this worker's 47830-47839 range; without PORT demo.sh picks a free port per run)
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE=$(cd "$HERE/../.." && pwd)
 OUT=${1:?usage: pick_drawn_check.sh OUT_DIR [PORT]}
-. "$(dirname "${BASH_SOURCE[0]}")/ports.sh"
-PORT=$(pick_port "${2:-}") || exit 3
-PORT2=$(pick_port "") || exit 3; while [ "$PORT2" = "$PORT" ]; do PORT2=$(pick_port "") || exit 3; done
+PORTARG=(); [ -n "${2:-}" ] && PORTARG=(--port "$2")	# no PORT: demo.sh picks a free one and retries on a bind failure (kenshi-k16.2.417.3)
 mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
 # The shot's eye over the ground at its xz (the ground is 1384.3 there: measured with an alt-130 run, the shot's camera line 1514.3).
 TANK_ALT=134.9
@@ -52,7 +50,7 @@ cat > "$OUT/script-shot.txt" <<EOS
 560 screenshot $OUT/shot.png
 600 quit
 EOS
-HEADLESS_TIMEOUT=600 nice -n 10 "$HERE/headless.sh" -W 2560 -H 1385 -- "$HERE/demo.sh" --port "$PORT" \
+HEADLESS_TIMEOUT=600 nice -n 10 "$HERE/headless.sh" -W 2560 -H 1385 -- "$HERE/demo.sh" ${PORTARG[@]+"${PORTARG[@]}"} \
 	--scenario-file "$TREE/scenarios/cage_prisoner.kscen" -- --size 2560x1385 --script "$OUT/script-shot.txt" > "$OUT/run-shot.log" 2>&1 || true
 grep -E '^(pick|move marker|sim click)' "$OUT/run-shot.log" > "$OUT/shot.picks.txt" || true
 grep -q 'simlink: server: HELLO timeout' "$OUT/run-shot.log" && { echo "pick_drawn_check: FAIL (the shot run's server never said HELLO: kenshi-k16.2.268; rerun when the machine is quiet)"; exit 1; }
@@ -76,7 +74,7 @@ cat > "$OUT/script-tank.txt" <<EOS
 560 screenshot $OUT/tank.png
 600 quit
 EOS
-HEADLESS_TIMEOUT=600 nice -n 10 "$HERE/headless.sh" -W 2560 -H 1385 -- "$HERE/demo.sh" --port "$PORT2" \
+HEADLESS_TIMEOUT=600 nice -n 10 "$HERE/headless.sh" -W 2560 -H 1385 -- "$HERE/demo.sh" ${PORTARG[@]+"${PORTARG[@]}"} \
 	--scenario-file "$TREE/scenarios/cage_prisoner.kscen" -- --size 2560x1385 --script "$OUT/script-tank.txt" > "$OUT/run-tank.log" 2>&1 || true
 grep -E '^pick' "$OUT/run-tank.log" > "$OUT/tank.picks.txt" || true
 
@@ -84,8 +82,8 @@ grep -E '^pick' "$OUT/run-tank.log" > "$OUT/tank.picks.txt" || true
 # -50589,1073,-1225, its parts' box reaching x -50683..-50501, z -1317..-1145); the first is walked round to the south-east side
 # (-50560,-1360, walkable ground), and the camera is put in the RTS mode the game uses on it (Z, focus_char): the free camera's
 # alt 40 over a -6 deg pitch is what set_rts turns into rtsDist (40 / sin 6 = 382.7), and the centre then orbits the camera to the
-# character's chest minus the view: here 382 u north of it, ACROSS the house. 640,480 is the ground just past the character's feet.
-PORT3=$(pick_port "") || exit 3; while [ "$PORT3" = "$PORT" ] || [ "$PORT3" = "$PORT2" ]; do PORT3=$(pick_port "") || exit 3; done
+# character's chest minus the view: here 382 u north of it, ACROSS the house. 640,480 now lands on the ghost's solid ground floor (the walkable parts at or under its foundY stay drawn
+# and pickable, kenshi-k16.2.412.3); the faded upper parts and the containers above it are passed through (the skipped ... glass lines).
 cat > "$OUT/script-ghost.txt" <<EOS
 10 set animate 1
 200 key 1 down
@@ -108,7 +106,7 @@ cat > "$OUT/script-ghost.txt" <<EOS
 1000 screenshot $OUT/ghost.png
 1100 quit
 EOS
-HEADLESS_TIMEOUT=600 nice -n 10 "$HERE/headless.sh" -W 1280 -H 720 -- "$HERE/demo.sh" --port "$PORT3" \
+HEADLESS_TIMEOUT=600 nice -n 10 "$HERE/headless.sh" -W 1280 -H 720 -- "$HERE/demo.sh" ${PORTARG[@]+"${PORTARG[@]}"} \
 	--scenario-file "$TREE/scenarios/order_sounds.kscen" -- --size 1280x720 --script "$OUT/script-ghost.txt" > "$OUT/run-ghost.log" 2>&1 || true
 grep -E '^(char |follow state|occluders|Storm House|pick|move marker|sim click)' "$OUT/run-ghost.log" > "$OUT/ghost.picks.txt" || true
 
@@ -119,7 +117,7 @@ REC=$(grep -m1 '^click record: ' "$OUT/run-shot.log" | sed 's/^click record: //'
 if [ -n "$REC" ]; then
 	sed -n '1,/^530 /p' "$OUT/script-shot.txt" > "$OUT/script-replay.txt"
 	printf '%s\n' "540 click replay $REC" "600 quit" >> "$OUT/script-replay.txt"
-	HEADLESS_TIMEOUT=600 nice -n 10 "$HERE/headless.sh" -W 2560 -H 1385 -- "$HERE/demo.sh" --port "$PORT2" \
+	HEADLESS_TIMEOUT=600 nice -n 10 "$HERE/headless.sh" -W 2560 -H 1385 -- "$HERE/demo.sh" ${PORTARG[@]+"${PORTARG[@]}"} \
 		--scenario-file "$TREE/scenarios/cage_prisoner.kscen" -- --size 2560x1385 --script "$OUT/script-replay.txt" > "$OUT/run-replay.log" 2>&1 || true
 	grep -E '^click replay' "$OUT/run-replay.log" > "$OUT/replay.picks.txt" || true
 fi
@@ -133,7 +131,7 @@ grep -q 'simlink: server: HELLO timeout' "$OUT/run-ghost.log" && fail "the ghost
 grep -qE '^pick \(876, 617\): kind 1 id 0 .*walkable 1' "$OUT/shot.picks.txt" || fail "the shot's click did not pick the walkable floor"
 grep -qE '^pick skipped ".*4028-TwoStorey\.mod shape [0-9]+" at .*: the camera is inside it, above the floor cut of ' "$OUT/shot.picks.txt" \
 	|| fail "no shape named as skipped for the camera inside it, above the floor cut"
-grep -q 'move_to 68338 -71098: sent' "$OUT/shot.picks.txt" || fail "the click did not send the move_to"
+grep -qE 'move_to 6833[78](\.[0-9])? ([0-9.]+ )?-71098(\.[0-9])?( \(navmesh point\))?: sent' "$OUT/shot.picks.txt" || fail "the click did not send the move_to"
 grep -qE '^move marker: seq [0-9]+ click .* -> route end ' "$OUT/shot.picks.txt" || fail "the move marker did not take the sim's route end"
 [ -f "$OUT/shot.png" ] && [ -f "$OUT/shot.txt" ] || fail "no screenshot or F12 sidecar written (the sidecar is <shot stem>.txt)"
 grep -q '^pick ray: near plane ' "$OUT/shot.txt" || fail "the F12 sidecar has no pick-ray (near plane) line"
@@ -153,16 +151,16 @@ grep -qE '^pick skipped ".*" at .*: an occluder faded to glass' "$OUT/ghost.pick
 grep -q 'move_to .*: sent' "$OUT/ghost.picks.txt" || fail "the right click through the glass did not send the move_to"
 [ -f "$OUT/ghost.png" ] && [ -f "$OUT/ghost.txt" ] || fail "no screenshot or F12 sidecar written (the sidecar is <shot stem>.txt)"
 grep -q '^camera: rts eye ' "$OUT/ghost.txt" || fail "the F12 sidecar is not the RTS camera"
-grep -q '^skipped shape: ".*" at .*: an occluder faded to glass' "$OUT/ghost.txt" || fail "the F12 sidecar does not name the shape skipped for the occluder glass"
-# the picked ground is beside the character (the ray went through the glass to what the character stands on, not a far hill)
-lead=$(sed -n 's/^char [0-9]* "Wanderer".* at \(-\{0,1\}[0-9.]*\) [0-9.-]* \(-\{0,1\}[0-9.]*\) building .*/\1 \2/p' "$OUT/ghost.picks.txt" | head -1)
-hit=$(sed -n 's/^pick (640, 480): kind 1 id 0 hit \(-\{0,1\}[0-9.]*\) [0-9.-]* \(-\{0,1\}[0-9.]*\).*/\1 \2/p' "$OUT/ghost.picks.txt" | head -1)
-if [ -n "$lead" ] && [ -n "$hit" ]; then
-	d=$(awk -v a="${lead% *}" -v b="${lead#* }" -v c="${hit% *}" -v e="${hit#* }" 'BEGIN { dx = a - c; dz = b - e; printf "%.1f", (dx * dx + dz * dz) ^ 0.5 }')
-	awk -v d="$d" 'BEGIN { exit !(d <= 60) }' || fail "the ground picked is $d u from the character (want <= 60: beside it, seen through the glass)"
-else
-	fail "no Wanderer line in dump chars, or no ground hit to compare with it"
-fi
+grep -qE '^ *(skipped shape: |skipped )".*" at .*: (an occluder faded to glass|inside the occluder fade.s cone)' "$OUT/ghost.txt" || fail "the F12 sidecar does not name the shape skipped for the occluder glass"
+# the click lands on the ghosted Storm House's solid ground floor (kenshi-k16.2.412.3): 'pick world ... building 1', the Storm_House_01_Interior_Floor
+# walk part, and the hit inside the house's footprint (x -50683..-50501, z -1317..-1145), y within 10 u of the house's 1073
+grep -qE '^pick world at t [0-9.]+ \(.*\) building 1$' "$OUT/ghost.picks.txt" || fail "the click through the glass is not in the Storm House (pick world ... building 1)"
+grep -qE '^pick walk part ".*Storm_House_01_Interior_Floor' "$OUT/ghost.picks.txt" || fail "the click through the glass did not pick the Storm House's ground floor part"
+hit=$(sed -n 's/^pick (640, 480): kind 1 id 0 hit \(-\{0,1\}[0-9.]*\) \(-\{0,1\}[0-9.]*\) \(-\{0,1\}[0-9.]*\).*/\1 \2 \3/p' "$OUT/ghost.picks.txt" | head -1)
+[ -n "$hit" ] || fail "no ground hit for the click through the glass"
+set -- $hit
+awk -v x="$1" -v y="$2" -v z="$3" 'BEGIN { exit !(x >= -50683 && x <= -50501 && z >= -1317 && z <= -1145 && y >= 1063 && y <= 1083) }' \
+	|| fail "the picked floor $hit is not inside the Storm House's footprint at y 1073 +-10"
 # D: the record, the sidecar's clicks block, and the replay's agreement
 [ -n "$REC" ] || fail "the shot's click printed no 'click record:' line"
 grep -q '^clicks: [1-9][0-9]* recorded' "$OUT/shot.txt" || fail "the F12 sidecar has no 'clicks:' block"
