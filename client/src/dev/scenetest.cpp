@@ -2,6 +2,7 @@
 // --scene-test run (a shot per scene with NAME.json: the load wait, the settle settle, the GPU and pass means, the counts) and the per-scene
 // entries the debug panel and the `set scene` script op use. Moved off main.cpp; everything it needs of the game arrives through dev::Context.
 // Built only with KCLIENT_DEV_TOOLS.
+#include "assets/imagewrite.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -310,7 +311,7 @@ void sceneTestPre(const Context& cx)
 	st.t0 = std::chrono::steady_clock::now();
 }
 
-// Once nothing is loading, writes NAME.png and NAME.json and moves to the next scene.
+// Once nothing is loading, writes NAME.webp (NAME.png with screenshot.format=png) and NAME.json and moves to the next scene.
 // After the frame is built (logic_tail; kenshi-k16.2.205.12.23): the decision is logic's (nothing loading: the pending counts are written by
 // the logic half's update and prepare calls only), and what the draw produced is read once the frame's last pass has ended, as readback
 // requests: the GPU and pass counters (readback::after), the floor step that must not show before the next frame, the shot and its JSON.
@@ -356,7 +357,7 @@ void sceneTestPost(const Context& cx)
 	const std::string base = sc().test + "/" + scene.name;
 	st.waiting = true;
 	cx.requestHdrRead();	// the JSON's hdr_scene_lum / hdr_adapted, read on the render side
-	readback::screenshot(base + ".png", [&cx, base, scene, loading](bool) {
+	readback::screenshot(base + imagewrite::defaultExt(), [&cx, base, scene, loading](bool) {
 	SceneTest& st = sc().st;
 	st.waiting = false;
 	const WorldBuildings::Stats bs = cx.buildings.stats();	// the draw's counts (drawn, draws): read after the frame's last pass

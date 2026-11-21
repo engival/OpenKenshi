@@ -25,6 +25,11 @@ static int dump(const simlink::SimLinkDecoder& d)
 			s.actionSpeed, c.samples);
 		for (const Item& it : c.look.items) { printf("    item %s spec %s section %u\n", d.str(it.item).c_str(), d.str(it.spec).c_str(), it.section); }
 	}
+	if (d.cameraStartSerial)
+	{
+		const SimLinkDecoder::CameraStart& c = d.cameraStart;
+		printf("camera start: flags %u pos %.3f %.3f %.3f rot %.5f %.5f %.5f %.5f zoom %.2f floor %u\n", c.flags, c.pos[0], c.pos[1], c.pos[2], c.rot[0], c.rot[1], c.rot[2], c.rot[3], c.zoom, c.floor);
+	}
 	for (const auto& [id, m] : d.medical)
 	{
 		printf("  medical %llu tick %llu blood %.1f:", (unsigned long long)id, (unsigned long long)m.tick, m.blood);

@@ -500,6 +500,7 @@ void event(const sapp_event* e)
 			else if (ui::keys::pressed(*e, "screenshot")) { app.shotPending = true; }	// the shot key works over the title and the menus too (k16.2.146)
 			break;
 		case SAPP_EVENTTYPE_MOUSE_DOWN:
+			if (menu_shown()) { break; }	// a click no window took, under the title, the creator or a full-screen menu: no look, pick, selection box or order (kenshi-k16.2.472.1)
 			if (e->mouse_button == SAPP_MOUSEBUTTON_RIGHT)
 			{
 				app.look = true;

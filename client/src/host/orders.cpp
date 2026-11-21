@@ -576,6 +576,33 @@ Boom boom_step(const double pivot[3], double yaw, double pitch, double wanted, d
 	return b;
 }
 
+const cfg::Float kSettleTau{ cfg::Group{ "Look" }, "look.settle_tau", 0.3, 0.0, 2.0, "The follow / auto-centred camera's horizontal settle (s): a step of the followed body's drawn position beyond what it can walk in a frame (a sim shove at a group's stop, a catch-up; kenshi-k16.2.474.1) is eased out of the view with this time constant instead of jumping the screen. 0 = off (the view sits on the drawn body)" };
+
+// The view's anchor over a body at raw x, z (kenshi-k16.2.474.1): the raw position minus the slack of a step bigger than the body walks (kWalk u per SIM second x the frame's dtSim, so x5 play does not trail, + kFree u), which
+// decays with kSettleTau. A step past kSnap (a teleport, a zone load) or a new subject snaps. Render only: nothing sent to the sim reads it.
+static void settled_anchor(uint64_t id, const double raw[3], double dt, double out[2])
+{
+	constexpr double kWalk = 100, kFree = 0.5, kSnap = 300, kGrow = 2.0;	// MINE: u per sim s (sprint is 70), u, u, the step a frame may be of the last (a start ramps up)
+	const double tau = kSettleTau.get();
+	if (!app.slackOn || app.slackId != id || tau <= 0 || std::hypot(raw[0] - app.slackLast[0], raw[2] - app.slackLast[1]) > kSnap)
+	{
+		app.slackOn = true; app.slackId = id; app.slackResid[0] = app.slackResid[1] = 0; app.slackMotion = 0;
+	}
+	else
+	{
+		const double sx = raw[0] - app.slackLast[0], sz = raw[2] - app.slackLast[1], s = std::hypot(sx, sz);
+		// what counts as the body's own motion: up to its walk at the game speed (dtSim: this frame's sim seconds, 0 paused) AND no more than kGrow x the last
+		// frame's motion + kFree, so a standing body's shove at x5 (a step a sprint never makes from rest) is eased, while a steady x5 sprint is not trailed
+		const double allow = std::min(kFree + kWalk * std::max(app.sim.dtSim(), 0.0), kFree + kGrow * app.slackMotion);
+		if (s > allow) { const double ex = sx * (1 - allow / s), ez = sz * (1 - allow / s); app.slackResid[0] += ex; app.slackResid[1] += ez; }
+		app.slackMotion = std::min(s, allow);
+		const double k = dt > 0 ? std::exp(-dt / tau) : 1.0;
+		app.slackResid[0] *= k; app.slackResid[1] *= k;
+	}
+	app.slackLast[0] = raw[0]; app.slackLast[1] = raw[2];
+	out[0] = raw[0] - app.slackResid[0]; out[1] = raw[2] - app.slackResid[1];
+}
+
 // Follow camera: behind the character at followDist, its yaw smoothed towards the character's facing, or towards the route ahead so the corners
 // don't snap it; while driving the camera's yaw is the heading. Drive orders on change, steering at most at the tick rate.
 void update_follow(double dt)
@@ -684,7 +711,9 @@ void update_follow(double dt)
 	}
 	double f[3];
 	forward_vec(app.yaw, app.pitch, f);
-	const double pivot[3] = { pos[0], app.followPivotY, pos[2] };
+	double anc[2];
+	settled_anchor(app.followId, pos, dt, anc);
+	const double pivot[3] = { anc[0], app.followPivotY, anc[1] };
 	const double back[3] = { -f[0], -f[1], -f[2] };
 	// Terrain never shortens the boom (user 2026-11-19, "we're pivoting around a character, but that doesn't mean our camera shouldn't 'stand on' the terrain"):
 	// the eye rides at ground + kGroundClear at its own spot and the view looks down at the pivot from there. Walls and props are the sweep (cut no
@@ -738,6 +767,7 @@ void update_rts(double dt)
 	{
 		app.focusOn = "character";
 		std::copy(at, at + 3, app.focus);
+		{ double anc[2]; settled_anchor(app.centerId, at, dt, anc); app.focus[0] = anc[0]; app.focus[2] = anc[1]; }
 		app.focus[1] += kCenterLift;
 	}
 	else

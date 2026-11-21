@@ -1,5 +1,8 @@
 # Compares scene-test output with the baseline and builds contact sheets. Called by scene_test.sh:
-#   scene_compare.py OUTDIR BASEDIR BLESS SCENES_FILE
+#   scene_compare.py OUTDIR BASEDIR BLESS SCENES_FILE [KEEP_ALL]
+# Images are NAME.webp (lossless, the Linux default) or NAME.png (screenshot.format=png); baselines may be either. A scene that
+# passes keeps no image in OUTDIR (kenshi-k16.2.470.1): its row says "unchanged: NAME = <baseline file>" and summary.txt lists it;
+# only changed / new / FAIL scenes keep image, sheet and the overview. KEEP_ALL=1 (scene_test.sh --keep-all) keeps everything.
 import json, math, os, shutil, sys
 from PIL import Image, ImageChops, ImageDraw
 
@@ -8,6 +11,24 @@ PASS_PERCENT = 0.5	# changed pixels (% of the non-HUD area) up to which a scene 
 CELL = (640, 360)
 
 out, base, bless, scenes_file = sys.argv[1], sys.argv[2], sys.argv[3] == "1", sys.argv[4]
+keep_all = len(sys.argv) > 5 and sys.argv[5] == "1"
+summary = []
+
+def say(line):
+	print(line)
+	summary.append(line)
+
+def find(d, n):
+	for ext in (".webp", ".png"):
+		if os.path.exists(f"{d}/{n}{ext}"):
+			return f"{d}/{n}{ext}"
+	return None
+
+def save(img, path):
+	if path.endswith(".webp"):
+		img.save(path, lossless=True, exact=True)
+	else:
+		img.save(path)
 
 def scene_refs():
 	refs = {}
@@ -48,37 +69,62 @@ order = [l.split("\t")[0] for l in open(scenes_file) if l.strip() and not l.star
 names.sort(key=lambda n: order.index(n) if n in order else 999)
 rows = []
 failed = False
-print(f"{'scene':18} {'status':8} {'rmse':>6} {'chg%':>6} {'bld':>5} {'fol':>6} {'ter':>4} {'cpu ms':>7} {'wait ms':>8} {'sg':>3}")
+say(f"{'scene':18} {'status':8} {'rmse':>6} {'chg%':>6} {'bld':>5} {'fol':>6} {'ter':>4} {'cpu ms':>7} {'wait ms':>8} {'sg':>3}")
+ext = ".png"
 for n in names:
 	st = json.load(open(f"{out}/{n}.json"))
-	cur = Image.open(f"{out}/{n}.png")
-	bpng = f"{base}/{n}.png"
+	curpath = find(out, n)
+	if curpath is None:
+		say(f"{n:18} FAIL     no image was written")
+		failed = True
+		continue
+	ext = os.path.splitext(curpath)[1]
+	cur = Image.open(curpath)
+	cur.load()
+	bpath = find(base, n)
 	rmse = pct = None
-	if os.path.exists(bpng):
-		rmse, pct = compare(cur, Image.open(bpng), st["hud_box"])
+	if bpath:
+		oldimg = Image.open(bpath)
+		rmse, pct = compare(cur, oldimg, st["hud_box"])
 		status = "pass" if pct <= PASS_PERCENT else "changed"
 	else:
 		status = "new"
 	if st["sg_errors"] or st["load_failed"]:
 		status, failed = "FAIL", True
+	unchanged = status == "pass" and not keep_all
+	ref = bpath
 	if bless:
-		shutil.copy(f"{out}/{n}.png", bpng)
+		for e in (".webp", ".png"):
+			if os.path.exists(f"{base}/{n}{e}"):
+				os.remove(f"{base}/{n}{e}")
+		bpath = f"{base}/{n}{ext}"
+		shutil.copy(curpath, bpath)
 		shutil.copy(f"{out}/{n}.json", f"{base}/{n}.json")
 		status += "+blessed"
 	cmp = f"{rmse:6.2f} {pct:6.2f}" if rmse is not None else f"{'-':>6} {'-':>6}"
-	print(f"{n:18} {status:8} {cmp} {st['buildings_drawn']:5} {st['foliage_drawn']:6} {st['terrain_chunks_drawn']:4} {st['cpu_ms']:7.2f} {st['load_wait_ms']:8.0f} {st['sg_errors']:3}")
+	say(f"{n:18} {status:8} {cmp} {st['buildings_drawn']:5} {st['foliage_drawn']:6} {st['terrain_chunks_drawn']:4} {st['cpu_ms']:7.2f} {st['load_wait_ms']:8.0f} {st['sg_errors']:3}")
+	if unchanged:
+		say(f"unchanged: {n} = {ref}")
+		os.remove(curpath)
+		continue
 	rows.append((n, status, cur))
 	sheet = Image.new("RGB", (CELL[0] * 3, CELL[1]), (0, 0, 0))
-	for i, (path, label) in enumerate(((refs.get(n), "reference"), (bpng if not bless else None, "baseline"), (f"{out}/{n}.png", "current"))):
+	for i, (path, label) in enumerate(((refs.get(n), "reference"), (ref if not bless else None, "baseline"), (curpath, "current"))):
 		sheet.paste(tile(path, f"{n}: {label}"), (CELL[0] * i, 0))
-	sheet.save(f"{out}/{n}.sheet.png")
-if not rows:	# no scene rendered (kclient could not read scenes.txt: it is found beside the binary's parent dir): an empty overview image made PIL raise "tile cannot extend outside image"
+	save(sheet, f"{out}/{n}.sheet{ext}")
+if not names:	# no scene rendered (kclient could not read scenes.txt: it is found beside the binary's parent dir): an empty overview image made PIL raise "tile cannot extend outside image"
 	print("scene_compare: no scene was rendered; nothing to compare", file=sys.stderr)
 	sys.exit(1)
-cols = 3
-over = Image.new("RGB", (CELL[0] * cols, CELL[1] * ((len(rows) + cols - 1) // cols)), (0, 0, 0))
-for i, (n, status, cur) in enumerate(rows):
-	t = tile(f"{out}/{n}.png", f"{n} [{status}]")
-	over.paste(t, (CELL[0] * (i % cols), CELL[1] * (i // cols)))
-over.save(f"{out}/overview.png")
+if rows:	# the overview holds the scenes that kept an image (all of them with --keep-all)
+	cols = 3
+	over = Image.new("RGB", (CELL[0] * cols, CELL[1] * ((len(rows) + cols - 1) // cols)), (0, 0, 0))
+	for i, (n, status, cur) in enumerate(rows):
+		t = Image.new("RGB", CELL, (40, 40, 40))
+		t.paste(cur.convert("RGB").resize(CELL, Image.LANCZOS))
+		ImageDraw.Draw(t).text((6, CELL[1] - 14), f"{n} [{status}]", fill=(255, 255, 0))
+		over.paste(t, (CELL[0] * (i % cols), CELL[1] * (i // cols)))
+	save(over, f"{out}/overview{ext}")
+else:
+	say("every scene unchanged: no scene image kept (--keep-all keeps them)")
+open(f"{out}/summary.txt", "w").write("\n".join(summary) + "\n")
 sys.exit(1 if failed else 0)

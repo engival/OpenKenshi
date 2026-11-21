@@ -2,6 +2,7 @@
 // played, the Notes / Scenarios windows, --play, --bead's bd writer and shot copies, the scenario wire's answers. main.cpp reaches it only
 // through dev/devhooks.hpp; what it needs of the game it asks through the dev::Env main.cpp hands to init(). Built only with
 // KCLIENT_DEV_TOOLS.
+#include "assets/imagewrite.hpp"
 #include "dev/devhooks.hpp"
 
 #include <chrono>
@@ -89,7 +90,7 @@ void shot_bead_begin(const std::string& shotPath)
 	State& s = st();
 	if (s.bead.empty() || !s.playtest.running()) { return; }
 	ShotBead& sb = s.shotBeads.emplace_back();
-	sb.base = shotPath.ends_with(".png") ? shotPath.substr(0, shotPath.size() - 4) : shotPath;
+	sb.base = imagewrite::stripExt(shotPath);
 	sb.deadline = bead_seconds() + 6;	// the trees' own wait is 5 s: copy what came, whatever it was
 	sb.tag = "[playtest " + s.playtest.runTag().substr(1);	// the waker skips this prefix: a shot never wakes (k16.2.135)
 	const Env::ShotInfo info = s.env.shotInfo();
@@ -112,15 +113,15 @@ void shot_bead_finish(const ShotBead& sb)
 	if (ec) { bead_warn("bead: cannot make " + dir.string() + ": " + ec.message()); return; }
 	const std::string png = std::filesystem::path(sb.base).filename().string();
 	bool copied = false;
-	for (const char* ext : { ".png", ".txt", ".trees.txt", ".events.txt", ".route.tsv" })	// .route.tsv: the selected characters' routes (kenshi-k16.2.231.1); .trails.tsv is left out (it can be large)
+	for (const char* ext : { ".webp", ".png", ".txt", ".trees.txt", ".events.txt", ".route.tsv" })	// .route.tsv: the selected characters' routes (kenshi-k16.2.231.1); .trails.tsv is left out (it can be large)
 	{
 		const std::string src = sb.base + ext;
 		if (!std::filesystem::exists(src, ec)) { continue; }
 		std::filesystem::copy_file(src, dir / (png + ext), std::filesystem::copy_options::overwrite_existing, ec);
 		if (ec) { bead_warn("bead: cannot copy " + std::string(src) + " to " + dir.string() + ": " + ec.message()); }
-		else if (!std::strcmp(ext, ".png")) { copied = true; }
+		else if (!std::strcmp(ext, ".png") || !std::strcmp(ext, ".webp")) { copied = true; }
 	}
-	if (!copied) { bead_warn("bead: " + sb.base + ".png is not there: the shot is not copied for " + s.bead); return; }
+	if (!copied) { bead_warn("bead: " + sb.base + ".png/.webp is not there: the shot is not copied for " + s.bead); return; }
 	const std::string caption = png + ": " + sb.caption + "\n";
 	FILE* f = fopen((dir / "CAPTIONS.txt").c_str(), "a");
 	if (f) { fputs(caption.c_str(), f); fclose(f); printf("bead: %s", caption.c_str()); }

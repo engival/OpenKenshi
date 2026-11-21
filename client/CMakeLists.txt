@@ -261,6 +261,7 @@ set(KC_SRC_APP
 )
 set(KC_SRC_ASSETS
 	src/assets/dds.cpp
+	src/assets/imagewrite.cpp
 	src/assets/materials.cpp
 	src/assets/mods.cpp
 	src/assets/ogremesh.cpp
@@ -444,6 +445,19 @@ kc_layer(kc_knobs DIR knobs SOURCES ${KC_SRC_KNOBS})
 kc_layer(kc_net DIR net SOURCES ${KC_SRC_NET} ${KCLIENT_AI_TASK_NAMES_CPP})
 kc_layer(kc_platform DIR platform SOURCES ${KC_SRC_PLATFORM} DEPS kc_app)
 kc_layer(kc_assets DIR assets SOURCES ${KC_SRC_ASSETS} DEPS kc_app)
+# Lossless WebP for the shots (F12, scene_test, captures; kenshi-k16.2.470.1): Linux only, our own dev tooling; Windows and macOS keep PNG and
+# take no dependency. libwebp is BSD-3-Clause (docs/LICENSING.md). Not found: PNG shots, with a note.
+# Default follows KCLIENT_DEV_TOOLS: a release build (-DKCLIENT_DEV_TOOLS=OFF) never links libwebp and writes PNG.
+option(KCLIENT_WEBP "Lossless WebP shots (Linux only; needs libwebp; default follows KCLIENT_DEV_TOOLS)" ${KCLIENT_DEV_TOOLS})
+if(KCLIENT_WEBP AND UNIX AND NOT APPLE)
+	pkg_check_modules(WEBP IMPORTED_TARGET libwebp)
+	if(WEBP_FOUND)
+		target_compile_definitions(kc_assets PUBLIC KCLIENT_WEBP=1)
+		target_link_libraries(kc_assets PUBLIC PkgConfig::WEBP)
+	else()
+		message(STATUS "libwebp not found: screenshots stay PNG")
+	endif()
+endif()
 kc_layer(kc_render DIR render SOURCES ${KC_SRC_RENDER} src/render/drawlist.cpp DEPS kc_app kc_assets kc_knobs kc_net kc_platform)
 kc_layer(kc_world DIR world SOURCES ${KC_SRC_WORLD} DEPS kc_app kc_assets kc_knobs kc_net kc_platform kc_render)
 kc_layer(kc_characters DIR characters SOURCES ${KC_SRC_CHARACTERS} DEPS kc_app kc_assets kc_knobs kc_render)
@@ -499,6 +513,16 @@ if(KCLIENT_DEV_TOOLS)
 	add_executable(kmeshdump src/dev/tools/kmeshdump.cpp src/assets/ogremesh.cpp src/assets/resources.cpp src/assets/materials.cpp)
 	target_include_directories(kmeshdump PRIVATE src)
 	target_compile_options(kmeshdump PRIVATE -Wall -Wextra)
+
+	# imagewrite's round trip (PNG, lossless WebP), kenshi-k16.2.470.1.
+	add_executable(kimagewrite_test src/dev/tools/kimagewrite_test.cpp src/assets/imagewrite.cpp src/assets/stb_impl.cpp)
+	target_include_directories(kimagewrite_test PRIVATE src)
+	target_include_directories(kimagewrite_test SYSTEM PRIVATE third_party)
+	target_compile_options(kimagewrite_test PRIVATE -Wall -Wextra)
+	if(TARGET PkgConfig::WEBP)
+		target_compile_definitions(kimagewrite_test PRIVATE KCLIENT_WEBP=1)
+		target_link_libraries(kimagewrite_test PRIVATE PkgConfig::WEBP)
+	endif()
 
 	# Window geometry memory unit check (windowgeom.hpp's pure half: layout fingerprint, rect parse): header-only, nothing to link.
 	add_executable(kwindowgeom_test src/dev/tools/kwindowgeom_test.cpp)

@@ -7,6 +7,7 @@
 //   <shot>.trees.txt    the DEBUG_TREE of every on-screen character and its squad (KCLIENT_DEBUG_VIEW), and their "trees:" line.
 // main.cpp reaches this through dev/devhooks.hpp; what it needs of the game is the shared dev::Context (dev/debughost.hpp), never App.
 // Built only with KCLIENT_DEV_TOOLS.
+#include "assets/imagewrite.hpp"
 #include "dev/devhooks.hpp"
 
 #include <algorithm>
@@ -158,7 +159,7 @@ void shot_meta_file(const Context& cx, const std::string& path)
 // the shot's .txt sidecar (created for a scripted shot) and on the console.
 void shot_events(const std::string& shotPath)
 {
-	const std::string base = shotPath.ends_with(".png") ? shotPath.substr(0, shotPath.size() - 4) : shotPath;
+	const std::string base = imagewrite::stripExt(shotPath);
 	size_t n = 0;
 	// k16.2.127: the build is the events file's first line (it is what tells two runs' logs apart)
 	if (!evlog::writeFile(base + ".events.txt", 600, n, buildLine())) { fprintf(stderr, "kclient: events: cannot write %s.events.txt\n", base.c_str()); return; }
@@ -176,7 +177,7 @@ void shot_events(const std::string& shotPath)
 void shot_trails(const Context& cx, const std::string& shotPath)
 {
 	if (!cx.debug || !cx.trails.on()) { return; }
-	const std::string base = shotPath.ends_with(".png") ? shotPath.substr(0, shotPath.size() - 4) : shotPath;
+	const std::string base = imagewrite::stripExt(shotPath);
 	const std::string path = base + ".trails.tsv";
 	if (!cx.trails.writeFile(path)) { fprintf(stderr, "kclient: trails: cannot write %s\n", path.c_str()); return; }
 	const std::string note = "trails: " + std::filesystem::path(path).filename().string() + "\n";
@@ -287,7 +288,7 @@ void trees_finish(const Context& cx, const char* why)
 // <shot>.txt, <shot>.events.txt and <shot>.trails.tsv, in that order (the .txt first: the other two append their own lines to it).
 void shotSidecars(const Context& cx, const std::string& shotPath)
 {
-	const std::string base = shotPath.ends_with(".png") ? shotPath.substr(0, shotPath.size() - 4) : shotPath;
+	const std::string base = imagewrite::stripExt(shotPath);
 	shot_meta_file(cx, base + ".txt");	// the F12 sidecar, owner / primitive / rule lines included (k16.2.234.1)
 	shot_events(shotPath);
 	shot_trails(cx, shotPath);
@@ -303,7 +304,7 @@ void shotTreesBegin(const Context& cx, const std::string& shotPath)
 	st = ShotTrees();
 	if (!cx.sim.active()) { return; }	// no live link (a recorded stream, the creator): nothing to ask
 	std::string base = shotPath;
-	if (base.size() >= 4 && base.compare(base.size() - 4, 4, ".png") == 0) { base.resize(base.size() - 4); }
+	base = imagewrite::stripExt(base);
 	st.base = base;
 	st.startedAt = steady_seconds();
 	st.active = true;

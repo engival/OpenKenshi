@@ -421,6 +421,14 @@ static void logic_paths(FramePacket& pk)
 	if (app.follow) { update_follow(dt); }
 	else if (app.rts) { update_rts(dt); }
 	else { update_camera(dt); }
+	if (static const bool camTrace = std::getenv("KCLIENT_CAMTRACE") != nullptr; camTrace && app.scripted())	// kenshi-k16.2.474.1: per frame, the view's step check input (tools/camera_settle_check.sh)
+	{
+		const uint64_t sub = app.follow ? app.followId : app.centerId;
+		double dp[3] = {}, sp[3] = {}; float hull[3];
+		const bool have = sub && app.sim.placed(sub, dp, hull);
+		if (have) { app.sim.simPos(sub, sp); }
+		printf("camtrace: frame %llu mode %s id %llu eye %.3f %.3f %.3f drawn %.3f %.3f sim %.3f %.3f slack %.3f\n", (unsigned long long)app.frames, app.follow ? "follow" : app.rts ? "rts" : "free", (unsigned long long)sub, app.pos[0], app.pos[1], app.pos[2], dp[0], dp[2], sp[0], sp[2], std::hypot(app.slackResid[0], app.slackResid[1]));
+	}
 	app.sim.setDriven(app.follow && app.sim.isPlayer(app.followId) ? app.followId : 0);	// direct drive: the drawn body's travel facing (kenshi-k16.2.237.10)
 	CPUSTAGE("camera");
 	if (app.sim.active())

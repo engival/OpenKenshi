@@ -94,7 +94,7 @@ A new game that has editable squad members opens the creator first. The loading 
 - **Left column**: name; race, subrace and gender (each cycled with its arrows); `IMPORT` / `EXPORT` / `CLOTHES`;
   `CHARACTER n/N` steps through the squad's editable members; the race's description and stats; `CONFIRM`, and
   `CANCEL` (the new game's editor has no CANCEL: CONFIRM is the way out).
-  An animal in the squad (a bonedog) can only be renamed: its body, race and gender stay greyed out.
+  An animal in the squad (a bonedog) can only be renamed: race, subrace and gender show without arrows, and the look's buttons and tabs do nothing for it.
 - **Middle**: the character standing on the editor's platform, rendered live; the two are one assembly and move together.
   - **Drag** it with the left button: side to side turns it around (yaw), up and down tilts it (short of tipping over).
     The turn is about the point the view is framed on (see the wheel below), so the part you zoomed onto stays put.

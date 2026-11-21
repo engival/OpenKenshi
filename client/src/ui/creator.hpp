@@ -47,7 +47,7 @@ namespace ui
 		// (the animal's race name; no subrace or sex). Empty: the list's.
 		std::string raceText, subraceText, genderText;
 		int character = 0, characters = 1;	// CHANGE CHARACTER ("i/n", wrapping): index into the squad being made, and its size; hidden with one
-		bool editable = true;	// false (an animal in the squad): only the stepper, CONFIRM and turning the preview
+		bool editable = true;	// false (an animal in the squad): RACE / SUBRACE / GENDER without arrows, empty tab pages; the look's buttons do nothing
 		bool clothes = true;	// the CLOTHES toggle
 		std::string description;
 		std::vector<CreatorStat> stats;
@@ -110,7 +110,7 @@ namespace ui
 	private:
 		class Preview;
 		class Side;
-		struct Picker { Button* prev; Label* value; Button* next; int index = 0, count = 0; std::function<void(int)> CreatorActions::* send = nullptr; };
+		struct Picker { Button* prev; Label* value; Button* next; float valueW = 0; int index = 0, count = 0; std::function<void(int)> CreatorActions::* send = nullptr; };
 		struct Row { std::string name; Slider* slider; EditBox* box; };
 		Widget* screen_ = nullptr;
 		Window* left_ = nullptr;

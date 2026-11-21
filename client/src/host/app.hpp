@@ -523,6 +523,11 @@ struct App
 	bool rtsLog = false;	// script `rtsboom log`: update_rts prints its boom each frame (the eased length above: the direction window's value, kenshi-k16.2.353.4)
 	double followPivotY = 0;	// kenshi-k16.2.395.1: the follow camera's boom pivot y (the smoothed drawn body y + kEye), lightly smoothed itself; followPivotOn = one follow frame has set it (an engage snaps it)
 	bool followPivotOn = false;
+	// kenshi-k16.2.474.1: the view's horizontal anchor slack. A wire correction of the followed / centred body (a shove, a catch-up) steps its drawn x, z; the part of a
+	// frame's step past what the body can walk is kept here (resid) and decays, so the view glides over it. slackId = the subject it belongs to (a change snaps).
+	uint64_t slackId = 0;
+	bool slackOn = false;
+	double slackLast[2] = {}, slackResid[2] = {}, slackMotion = 0;	// slackMotion: last frame's step that counted as the body's own motion (u)
 	// The game camera (docs/CLIENT.md "Camera modes"): floating over the ground at rtsDist from focus, on yaw / pitch; centerId != 0 = auto-center on
 	// that character. Off = the debug free camera; follow (the hover / drive camera) overrides both.
 	bool rts = false;
@@ -534,6 +539,7 @@ struct App
 	// The world map's default view (k16.2.435): a new game, or a load whose sidecar has no map view, starts at the overview once the MAP page has a
 	// rect (its height is the default's zoom) and the towns are in; the sidecar's own view lands with the camera and clears this.
 	bool mapViewPending = true;
+	uint32_t cameraStartUsed = 0;	// the decoder's cameraStartSerial the session start has applied (CAMERA_START, kenshi-cym.40.2.3)
 	std::string camLoadName;	// the save name the client last asked to load; its reset arms camRestore
 	int camLoadFrame = 0;		// app.frames at that request (a load that never resets expires it)
 	bool navTrace = false;	// script `dump navdraw`: the next navmesh overlay draw prints its stair polygons	// what the floating camera's focus rests on (ground_under)

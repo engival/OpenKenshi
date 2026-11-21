@@ -1,5 +1,6 @@
 // The last composed frame, kept render side (lastframe.hpp; kenshi-k16.2.205.12.25).
 #include "frame/lastframe.hpp"
+#include "assets/imagewrite.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -103,10 +104,10 @@ void stallShot()
 		glReadPixels(0, 0, gW, gH, GL_RGBA, GL_UNSIGNED_BYTE, kp.data());
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 		for (size_t i = 3; i < kp.size(); i += 4) { kp[i] = 255; }
-		snprintf(path, sizeof path, "%s/kept.png", dir);
+		snprintf(path, sizeof path, "%s/kept%s", dir, imagewrite::defaultExt());
 		readback::write_png(path, gW, gH, kp.data());
 	}
-	snprintf(path, sizeof path, "%s/nopass-%02d.png", dir, gShots++);
+	snprintf(path, sizeof path, "%s/nopass-%02d%s", dir, gShots++, imagewrite::defaultExt());
 	if (readback::write_png(path, w, h, px.data())) { fprintf(stderr, "kclient: lockstep: wrote %s (the back buffer a frame without a pass swaps)\n", path); }
 	sg_reset_state_cache();
 #endif

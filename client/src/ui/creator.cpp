@@ -121,14 +121,14 @@ namespace ui
 		Box& files = top.add<Box>(false, 6);
 		import_ = &files.add<Button>("IMPORT");
 		import_->tooltip = "Load a saved character";
-		import_->onClicked = [this] { if (act_.importCharacter) { act_.importCharacter(); } };
+		import_->onClicked = [this] { if (last_.editable && act_.importCharacter) { act_.importCharacter(); } };
 		export_ = &files.add<Button>("EXPORT");
 		export_->tooltip = "Save this character";
-		export_->onClicked = [this] { if (act_.exportCharacter) { act_.exportCharacter(); } };
+		export_->onClicked = [this] { if (last_.editable && act_.exportCharacter) { act_.exportCharacter(); } };
 		clothes_ = &files.add<Button>("CLOTHES", Look::kToggle);
 		clothes_->checkable = true;
 		clothes_->tooltip = "Show the starting clothes";
-		clothes_->onToggle = [this](bool on) { if (act_.setClothes) { act_.setClothes(on); } };
+		clothes_->onToggle = [this](bool on) { if (last_.editable && act_.setClothes) { act_.setClothes(on); } };
 		addPicker(top, "CHARACTER", &CreatorActions::setCharacter);
 
 		ScrollView& info = leftBody_->add<ScrollView>();
@@ -183,13 +183,13 @@ namespace ui
 		acts.valign = A::kEnd;
 		randomAll_ = &acts.add<Button>("RANDOMISE ALL");
 		randomAll_->tooltip = "A random look: body, face and hair";
-		randomAll_->onClicked = [this] { if (act_.randomizeAll) { act_.randomizeAll(); } };
+		randomAll_->onClicked = [this] { if (last_.editable && act_.randomizeAll) { act_.randomizeAll(); } };
 		random_ = &acts.add<Button>("RANDOMISE");
 		random_->tooltip = "A random look for this tab only";
-		random_->onClicked = [this] { if (act_.randomize) { act_.randomize(page_); } };
+		random_->onClicked = [this] { if (last_.editable && act_.randomize) { act_.randomize(page_); } };
 		reset_ = &acts.add<Button>("RESET");
 		reset_->tooltip = "The race's default look";
-		reset_->onClicked = [this] { if (act_.resetDefaults) { act_.resetDefaults(); } };
+		reset_->onClicked = [this] { if (last_.editable && act_.resetDefaults) { act_.resetDefaults(); } };
 		showPage(kCreatorBody);
 		setCancel(std::move(act_.cancel));
 		refresh(true, true);
@@ -265,7 +265,8 @@ namespace ui
 		p.value = &row.add<Label>();
 		p.value->fit = false;
 		p.value->align = TextAlign::kCenter;
-		p.value->rect = { 0, 0, w - kCaptionW - 6 * 3 - 80, kRowH };
+		p.valueW = w - kCaptionW - 6 * 3 - 80;
+		p.value->rect = { 0, 0, p.valueW, kRowH };
 		p.next = &row.add<Button>(">");
 		p.next->rect.w = 40;
 		const size_t i = pickers_.size();
@@ -391,6 +392,7 @@ namespace ui
 		if (!s.raceText.empty()) { pickers_[kGroup].value->text = s.raceText; }
 		if (!s.subraceText.empty()) { pickers_[kRace].value->text = s.subraceText; }
 		if (!s.genderText.empty()) { pickers_[kSex].value->text = s.genderText; }
+		else if (!s.editable) { pickers_[kSex].value->text = "-"; }
 		setPicker(pickers_[kCharacter], s.character, s.characters, std::to_string(s.character + 1) + "/" + std::to_string(std::max(s.characters, 1)), s.characters >= 2);
 		pickers_[kCharacter].prev->parent()->visible = s.characters >= 2;	// one character: no CHANGE CHARACTER at all
 		setPicker(pickers_[kHead], s.head, s.heads, s.heads > 0 ? std::to_string(s.head + 1) + " / " + std::to_string(s.heads) : "-", s.heads >= 2);
@@ -398,14 +400,25 @@ namespace ui
 		setPicker(pickers_[kBeard], s.beard, s.beards);
 		setPicker(pickers_[kHairColour], s.hairColour, s.hairColours);
 		clothes_->checked = s.clothes;
-		if (!s.editable)	// an animal in the squad: only the stepper, CONFIRM, the name and turning the preview
+		// An animal in the squad, as the original draws it (kenshi-inspect/findings/kenshi-k16.2.472/original_creator_bonedog_fido.jpg):
+		// RACE / SUBRACE / GENDER without arrows (the value keeps its place), IMPORT / EXPORT / CLOTHES, the tabs and RANDOMISE ALL /
+		// RANDOMISE / RESET drawn as usual but sending nothing, the tab pages empty, RACE DESCRIPTION with an empty body.
+		for (int i = 0; i < (int)pickers_.size(); i++)
 		{
-			for (int i = 0; i < (int)pickers_.size(); i++) { if (i != kCharacter) { pickers_[i].prev->enabled = pickers_[i].next->enabled = false; } }
+			if (i == kCharacter) { continue; }
+			Picker& p = pickers_[i];
+			p.prev->visible = p.next->visible = s.editable;
+			p.value->rect.w = p.valueW + (s.editable ? 0 : 2 * (p.prev->rect.w + 6));
+			if (!s.editable)
+			{
+				p.prev->enabled = p.next->enabled = false;
+				p.value->colour = res::colour("Main");
+			}
 		}
-		for (Button* b : { import_, export_, clothes_, randomAll_, random_, reset_ }) { b->enabled = s.editable; }
-		for (Button* b : tabs_) { b->enabled = s.editable; }
+		clothes_->checkable = s.editable;	// a click on an animal's CLOTHES doesn't tick it
+		for (Widget* p : pages_) { pageBody(p).visible = s.editable; }
 		desc_->text = s.description;
-		descHead_->visible = desc_->visible = !s.description.empty();	// no empty headings while the host has nothing
+		descHead_->visible = desc_->visible = !s.description.empty() || !s.editable;	// no empty headings while the host has nothing; an animal's stays
 		statHead_->visible = !s.stats.empty();
 		if (stats) { rebuildStats(); }
 		if (rows) { rebuildSliders(); }

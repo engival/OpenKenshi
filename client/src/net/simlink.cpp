@@ -655,6 +655,17 @@ bool SimLinkDecoder::frame(uint16_t type, const uint8_t* p, size_t n)
 		if (!r.bad) { cages = std::move(v); cagesSerial++; }
 		break;
 	}
+	case kCameraStart:	// flags u8, pos f64 x3, rot f32 x4 (w, x, y, z), zoom f32, floor u8 (no tick)
+	{
+		CameraStart c;
+		c.flags = r.u8();
+		for (double& v : c.pos) { v = r.get<double>(); }
+		for (float& v : c.rot) { v = r.f32(); }
+		c.zoom = r.f32();
+		c.floor = r.u8();
+		if (!r.bad) { cameraStart = c; cameraStartSerial++; }
+		break;
+	}
 	case kNewGameResult:
 	{
 		newGame.result = r.u8();

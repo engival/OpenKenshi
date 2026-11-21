@@ -930,6 +930,13 @@ void exec_cmd(const Cmd& c)
 		printf("title: shown %d, pending %d, status \"%s\", new game %d\n", title_shown() ? 1 : 0, app.menuPending, title_status().c_str(),
 			app.newGame && app.newGame->shown() ? 1 : 0);
 	}
+	else if (c.op == "dump" && a.size() == 1 && a[0] == "creator")	// dump creator: the creator's member, its name (the host's and the box's) and which game panels are open (kenshi-k16.2.472.1; stdout)
+	{
+		const ui::EditBox* box = app.creatorUi ? dynamic_cast<const ui::EditBox*>(app.creatorUi->nameBox()) : nullptr;
+		printf("creator: shown %d, member %d/%zu, name \"%s\", box \"%s\", box focused %d, panels: stats %d, inventory %d, options %d, build %d, help %d\n", app.creatorUi && app.creatorUi->shown() ? 1 : 0,
+			app.ngIndex + 1, app.ngMembers.size(), app.creator.name.c_str(), box ? box->text.c_str() : "", box && ui::focusedWidget() == box ? 1 : 0, app.stats && app.stats->shown() ? 1 : 0,
+			app.itemsShown ? 1 : 0, app.options && app.options->shown() ? 1 : 0, app.build && app.build->shown() ? 1 : 0, app.tutorials && app.tutorials->browserShown() ? 1 : 0);
+	}
 	else if (c.op == "restmetric")	// the creator preview's rest pose (knees, pelvis) for the IK on / off check (dev/devhost.cpp, kenshi-k16.17.7.4)
 	{
 		if (!dev::restMetric()) { script_error(c); }

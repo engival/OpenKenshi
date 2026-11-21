@@ -1,0 +1,90 @@
+# creatorkeys (kenshi-k16.2.472.1): title -> NEW GAME -> Guy with a Dog (row 10) -> BEGIN; in the creator, on member 1 (the human) and member 2 (the
+# Bonedog): click the NAME box, select all, type a name, Enter -> `dump creator` shows the name; then bound letters (C stats, I inventory, B build, M map...)
+# typed with the box focused (they go into it) and with nothing focused (no game key may fire under the creator). check.sh reads the dump lines.
+300 mouse pos 433 202
+302 mouse down left
+304 mouse up left
+420 mouse pos 390 298
+422 mouse down left
+424 mouse up left
+500 mouse pos 640 378
+502 mouse down left
+504 mouse up left
+900 dump creator
+# member 1: the name box takes a typed name
+910 mouse pos 218 92
+912 mouse down left
+914 mouse up left
+920 key CTRL down
+922 key A down
+924 key A up
+926 key CTRL up
+930 type Rex
+940 key ENTER down
+942 key ENTER up
+950 dump creator
+# focused, a bound letter goes into the box: C and I, typed as the host gets them (key down, char, key up)
+960 mouse pos 218 92
+962 mouse down left
+964 mouse up left
+966 key C down
+968 type c
+970 key C up
+972 key I down
+974 type i
+976 key I up
+980 dump creator
+# nothing focused: click the panel's empty area, then the bound letters
+990 mouse pos 180 520
+992 mouse down left
+994 mouse up left
+1000 key C down
+1002 key C up
+1004 key I down
+1006 key I up
+1008 key B down
+1010 key B up
+1012 key M down
+1014 key M up
+1020 dump creator
+# member 2 (the dog): CHARACTER next arrow, then the same
+1030 mouse pos 303 240
+1032 mouse down left
+1034 mouse up left
+1060 dump creator
+1070 mouse pos 218 92
+1072 mouse down left
+1074 mouse up left
+1080 key CTRL down
+1082 key A down
+1084 key A up
+1086 key CTRL up
+1090 type Fido
+1100 key ENTER down
+1102 key ENTER up
+1110 dump creator
+1112 mouse pos 218 92
+1114 mouse down left
+1116 mouse up left
+1120 key C down
+1122 type c
+1124 key C up
+1130 dump creator
+1140 mouse pos 180 520
+1142 mouse down left
+1144 mouse up left
+1150 key C down
+1152 key C up
+1154 key I down
+1156 key I up
+1158 key B down
+1160 key B up
+1170 dump creator
+1180 screenshot OUTDIR/dog.png
+# CONFIRM: the spawned squad carries the typed names (the dog's too): check.sh reads the `dump chars` lines
+1190 mouse pos 300 664
+1192 mouse down left
+1194 mouse up left
+1900 dump chars
+1910 screenshot OUTDIR/world.png
+1950 quit

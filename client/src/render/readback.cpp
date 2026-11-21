@@ -10,7 +10,7 @@
 #include <thread>
 
 #include "sokol_gfx.h"
-#include "stb_image_write.h"
+#include "assets/imagewrite.hpp"
 #include "platform/windowgate.hpp"
 
 #if defined(SOKOL_GLCORE)
@@ -20,14 +20,7 @@
 namespace readback
 {
 
-bool write_png(const std::string& path, int w, int h, const unsigned char* rgba)
-{
-	static std::mutex m;	// stbi_flip_vertically_on_write is a process global: the screenshot writer, the anim lab and lastframe set it from different threads
-	std::lock_guard<std::mutex> lock(m);
-	stbi_flip_vertically_on_write(1);
-	if (!stbi_write_png(path.c_str(), w, h, 4, rgba, w * 4)) { return false; }
-	return true;
-}
+bool write_png(const std::string& path, int w, int h, const unsigned char* rgba) { return imagewrite::write(path, w, h, rgba); }
 
 namespace
 {
@@ -75,7 +68,7 @@ namespace
 			errno = 0;	// the reason a failed write gives is the file system's (kenshi-k16.2.312)
 			const bool ok = write_png(j.path, j.w, j.h, j.px.data());
 			std::string why;
-			if (!ok) { why = errno ? std::strerror(errno) : "stb_image_write failed"; fprintf(stderr, "failed to write %s: %s\n", j.path.c_str(), why.c_str()); }
+			if (!ok) { why = errno ? std::strerror(errno) : "image encode failed"; fprintf(stderr, "failed to write %s: %s\n", j.path.c_str(), why.c_str()); }
 			else { printf("wrote %s (%dx%d)\n", j.path.c_str(), j.w, j.h); }
 			lock.lock();
 			if (j.wrote) { wr.results.push_back({ std::move(j.wrote), ok, std::move(why) }); }

@@ -416,7 +416,17 @@ namespace ui
 					return true;
 				}
 				if (c_.focus && c_.focus->shown() && c_.focus->enabled && c_.focus->onKey(e.key_code, down)) { return true; }
-				if (lockedEdit() && !(e.key_code >= SAPP_KEYCODE_F1 && e.key_code <= SAPP_KEYCODE_F25)) { return true; }	// a disabled edit box keeps typing from the world
+				if (lockedEdit() && !(e.key_code >= SAPP_KEYCODE_F1 && e.key_code <= SAPP_KEYCODE_F25))	// a disabled edit box keeps typing from the world
+				{
+					// its leave keys still leave, as an enabled box's do: the keyboard back to the enclosing window (kenshi-k16.2.472.4)
+					if (down && (e.key_code == SAPP_KEYCODE_ESCAPE || e.key_code == SAPP_KEYCODE_ENTER || e.key_code == SAPP_KEYCODE_KP_ENTER))
+					{
+						Widget* f = c_.focus->parent();
+						while (f && !f->focusable()) { f = f->parent(); }
+						setFocus(f);
+					}
+					return true;
+				}
 				if (keys::pressed(e, "toggle_hints"))	// the UI's own setting: no host wiring (a focused key box takes the key first)
 				{
 					kControlHints.set(!kControlHints.get());

@@ -75,7 +75,7 @@ void runWrites();
 // Synchronous, on the thread that drew the target: a read of a target the caller just drew itself (the dev anim lab), not of the frame.
 std::vector<float> image_rgba32f(sg_image img, int w, int h);
 
-// Writes an RGBA8 image (top row first as given) as a PNG; the one PNG writer, for readers that process the pixels themselves. true on success.
+// Writes an RGBA8 image (bottom row first) as a PNG, or a lossless WebP for a ".webp" path (assets/imagewrite.hpp); the one image writer, for readers that process the pixels themselves. true on success.
 bool write_png(const std::string& path, int w, int h, const unsigned char* rgba);
 
 }

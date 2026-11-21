@@ -17,7 +17,7 @@ namespace simlink
 	constexpr uint32_t kMagic = 0x4D49534B;	// 'KSIM'
 	constexpr uint16_t kProtocol = 8;
 	enum FrameType : uint16_t { kHello = 1, kStrtab = 2, kError = 3, kPing = 4, kSnapBegin = 10, kSnapEnd = 11, kAppearance = 20, kDynamic = 21, kMedical = 22, kRoute = 23, kInteractable = 24, kInventory = 25, kDetect = 26, kItemQuality = 27, kItemGrid = 28, kItemStats = 29, kSquads = 30, kPlayerSquads = 31, kSaves = 32, kStarts = 33, kJobs = 34, kProspect = 35, kUnlocks = 36, kDiscovered = 37, kFactionRelations = 38, kTaskProgress = 39, kBuilding = 47, kBuildingGrid = 48, kCharStats = 49,
-		kClock = 40, kWeather = 41, kBounds = 42, kNavParams = 43, kNavTile = 44, kNavPolyFlags = 45, kEvent = 50, kTrade = 53, kScenarioList = 54, kScenarioStarted = 55, kScenarioMetrics = 56, kItemLock = 57, kBeams = 58, kSeenBy = 59, kDetectedBy = 60, kMenuEntries = 61, kNewGameResult = 62, kResearchState = 63, kCages = 64, kProfile = 70, kOrder = 100, kScenarioListReq = 102, kScenarioLoad = 103, kScenarioEnd = 104, kNewGame = 111 };
+		kClock = 40, kWeather = 41, kBounds = 42, kNavParams = 43, kNavTile = 44, kNavPolyFlags = 45, kEvent = 50, kTrade = 53, kScenarioList = 54, kScenarioStarted = 55, kScenarioMetrics = 56, kItemLock = 57, kBeams = 58, kSeenBy = 59, kDetectedBy = 60, kMenuEntries = 61, kNewGameResult = 62, kResearchState = 63, kCages = 64, kCameraStart = 65, kProfile = 70, kOrder = 100, kScenarioListReq = 102, kScenarioLoad = 103, kScenarioEnd = 104, kNewGame = 111 };
 	enum Flag : uint32_t { kCombat = 1, kStealth = 2, kDrawn = 4, kKO = 8, kDead = 16, kProne = 32, kPlayer = 64, kCarryL = 128, kCarryR = 256, kYValid = 512,
 		kLowDetail = 1024, kBlockMode = 2048, kRun = 4096, kHold = 8192,
 		kHostile = 16384,	// hostile: the sim's fight test says it would fight this session's characters (never on our own)
@@ -323,6 +323,12 @@ namespace simlink
 		struct Cage { uint64_t cage = 0; uint32_t record = 0; bool locked = false; uint16_t level = 0; float hardness = 0, maxHardness = 0; };
 		std::unordered_map<uint64_t, Cage> cages;
 		uint32_t cagesSerial = 0;	// counts CAGES frames
+		// CAMERA_START (65, SIMLINK.md "CAMERA_START", kenshi-cym.40.2.3): the imported save's camera and floor, once per session, no tick. flags bit 0:
+		// pos / rot / zoom valid; bit 1: floor valid. pos is the pivot (focus); rot (w, x, y, z) the pivot's world orientation, the original camera looking
+		// +Z; zoom as saved (negative: the eye's distance behind the pivot). Not world state: a reset does not clear it; the host consumes it by serial.
+		struct CameraStart { uint8_t flags = 0; double pos[3] = {}; float rot[4] = {}; float zoom = 0; uint8_t floor = 0; };
+		CameraStart cameraStart;
+		uint32_t cameraStartSerial = 0;	// counts CAMERA_START frames
 		// PROFILE (70, SIMLINK.md "PROFILE", kenshi-k16.2.148): a KSIM_PROFILE server's answer to order 120, the window summary and the per-system
 		// tick timings of docs/PROFILING.md, in that order for the whole server run. Each frame replaces the last; rows are keyed by name (the client
 		// keeps no row across answers), trailing bytes are ignored. Not world state: a load does not clear it.

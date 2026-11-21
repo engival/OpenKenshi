@@ -93,7 +93,7 @@ then
 	then
 		fail "scene_test in lockstep: scenes changed / new / FAIL (above), see $OUT/scenes.log. Compare with an off run before blaming lockstep; a stale baseline is --bless from the base build"
 	fi
-	echo "lockstep_check: ok   scene_test in lockstep: every scene passes against the baseline ($OUT/scenes/overview.png)"
+	echo "lockstep_check: ok   scene_test in lockstep: every scene passes against the baseline ($OUT/scenes/summary.txt)"
 fi
 
 # 3. a new game in lockstep with the logic half owning no sokol

@@ -22,7 +22,7 @@
 #include "sokol_glue.h"
 #include "sokol_log.h"
 #include "sokol_time.h"
-#include "stb_image_write.h"
+#include "assets/imagewrite.hpp"
 #include "assets/dds.hpp"
 #include "dev/launchguard.hpp"	// launchGuard: no window from a Claude session outside gamescope (kenshi-k16.2.392)
 #include "render/drawlist_gpu.hpp"
@@ -128,6 +128,7 @@ struct Demo
 	ui::CreatorState cs;
 	std::string crLog;	// the creator actions asked
 	bool showCreator = false;	// --show creator: the screenshot ends on the character creator
+	bool showCreatorAnimal = false;	// --show creator-animal: on an animal member (kenshi-k16.2.472.4)
 	std::unique_ptr<ui::Gear> gear;
 	ui::GearState gs;
 	std::string gearLog;	// the grid inventory actions asked
@@ -686,8 +687,7 @@ void save_png(const std::string& path)
 	glReadBuffer(GL_BACK);
 	glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
 	for (size_t i = 3; i < px.size(); i += 4) { px[i] = 255; }
-	stbi_flip_vertically_on_write(1);
-	if (stbi_write_png(path.c_str(), w, h, 4, px.data(), w * 4)) { printf("wrote %s (%dx%d)\n", path.c_str(), w, h); }
+	if (imagewrite::write(path, w, h, px.data())) { printf("wrote %s (%dx%d)\n", path.c_str(), w, h); }
 	else { fprintf(stderr, "failed to write %s\n", path.c_str()); }
 #else
 	fprintf(stderr, "--screenshot needs the glcore backend (%s)\n", path.c_str());
@@ -3433,19 +3433,37 @@ void script()
 		check(!demo.cr->pickerNext(C::kCharacter)->shown() && demo.cr->pickerNext(C::kGroup)->shown(), "creator: one character, no CHANGE CHARACTER");
 		ui::CreatorState animal = demo.cs;
 		animal.editable = false;
+		animal.description.clear();
 		demo.cr->update(animal);
-		check(!demo.cr->pickerNext(C::kGroup)->enabled && !demo.cr->pickerNext(C::kHair)->enabled && !demo.cr->randomButton()->enabled && !demo.cr->clothesButton()->enabled
-			&& demo.cr->nameBox()->enabled && !demo.cr->tab(ui::kCreatorFace)->enabled && !demo.cr->slider("Muscle")->enabled
-			&& demo.cr->pickerNext(C::kCharacter)->enabled && demo.cr->doneButton()->enabled, "creator: an animal: only the stepper, the name and CONFIRM");
+		// as the original (kenshi-k16.2.472.4): RACE / SUBRACE / GENDER without arrows, GENDER '-', the look's buttons and tabs shown enabled, empty
+		// tab pages, RACE DESCRIPTION shown with an empty body
+		check(!demo.cr->pickerNext(C::kGroup)->visible && !demo.cr->pickerPrev(C::kRace)->visible && !demo.cr->pickerNext(C::kSex)->visible && value(C::kSex) == "-"
+			&& demo.cr->randomButton()->enabled && demo.cr->clothesButton()->enabled && demo.cr->tab(ui::kCreatorFace)->enabled && !demo.cr->slider("Muscle")->shown()
+			&& demo.cr->nameBox()->enabled && demo.cr->pickerNext(C::kCharacter)->shown() && demo.cr->pickerNext(C::kCharacter)->enabled && demo.cr->doneButton()->enabled,
+			"creator: an animal: no race / subrace / gender arrows, the look's buttons drawn enabled, empty pages");
 		demo.crLog.clear();
-		check(clickOn(demo.cr->nameBox()) && key(SAPP_KEYCODE_END) && type("o") && key(SAPP_KEYCODE_ENTER) && demo.crLog.size() > 7 && demo.crLog.compare(demo.crLog.size() - 2, 2, "o;") == 0,
-			("creator: an animal's name takes typed text (" + demo.crLog + ")").c_str());
+		{
+			const bool clothes = static_cast<const ui::Button*>(demo.cr->clothesButton())->checked;
+			const bool clicked = clickOn(demo.cr->randomAllButton()) && clickOn(demo.cr->randomButton()) && clickOn(demo.cr->resetButton()) && clickOn(demo.cr->clothesButton())
+				&& clickOn(demo.cr->tab(ui::kCreatorFace)) && clickOn(demo.cr->tab(ui::kCreatorBody));
+			check(clicked && demo.crLog.empty() && static_cast<const ui::Button*>(demo.cr->clothesButton())->checked == clothes,
+				("creator: an animal: the look's buttons send nothing, CLOTHES stays (" + demo.crLog + ")").c_str());
+		}
+		check(demo.cr->description()->shown() && static_cast<const ui::Label*>(demo.cr->description())->text.empty(), "creator: an animal: RACE DESCRIPTION shown, empty");
+		demo.crLog.clear();
+		{
+			const bool typed = clickOn(demo.cr->nameBox()) && key(SAPP_KEYCODE_END) && type("o") && key(SAPP_KEYCODE_ENTER);	// before the label reads crLog
+			check(typed && demo.crLog.size() > 7 && demo.crLog.compare(demo.crLog.size() - 2, 2, "o;") == 0, ("creator: an animal's name takes typed text (" + demo.crLog + ")").c_str());
+		}
 		{
 			ui::EditBox* nb = static_cast<ui::EditBox*>(demo.cr->nameBox());
 			const std::string was = nb->text;
 			ui::focus(nb);
 			nb->enabled = false;
 			check(key(SAPP_KEYCODE_C) && type("c") && nb->text == was && !key(SAPP_KEYCODE_F5), "edit box: a focused disabled box eats keys, edits nothing, F keys go on");
+			check(key(SAPP_KEYCODE_ESCAPE) && ui::focusedWidget() != nb && ui::focusedWidget() && ui::focusedWidget()->focusable(), "edit box: Escape leaves a focused disabled box for its window");
+			ui::focus(nb);
+			check(key(SAPP_KEYCODE_ENTER) && ui::focusedWidget() != nb, "edit box: Enter leaves a focused disabled box too");
 			nb->enabled = true;
 			ui::focus(nullptr);
 		}
@@ -3462,6 +3480,17 @@ void script()
 	}
 	if (demo.frame == 46)
 	{
+		if (demo.showCreatorAnimal)	// --show creator-animal: a squad's dog, as kenshi-inspect/findings/kenshi-k16.2.472/original_creator_bonedog_fido.jpg
+		{
+			demo.cs.editable = false;
+			demo.cs.name = "Rex";
+			demo.cs.raceText = demo.cs.subraceText = "Bonedog";
+			demo.cs.genderText.clear();
+			demo.cs.description.clear();
+			demo.cs.stats = { { "Hit Points", "70" } };
+			demo.cs.characters = 2;
+			demo.cs.character = 1;
+		}
 		demo.cr->show(demo.showCreator);
 		check(demo.showCreator || demo.cr->previewRect().w == 0, "creator: hidden, no preview rect");
 		demoGear();
@@ -4596,7 +4625,14 @@ void script()
 	}
 	// The HUD's fixed tip box (ui.hud_tips=box): the medical bar hovered at 53 shows its tip there (no floating tooltip), beside the medical panel
 	// and clear of the squad tabs and the RUN / STOP row; ui.hud_tips=float hides it; with nothing hovered (55) it is hidden.
-	if (demo.frame == 54 && !demo.showDialogue && !demo.showGear && !demo.showStats)
+	// --show creator covers the HUD these hover: skipped there, said in the log (kenshi-k16.3.44; hiding the creator for them upsets the trade
+	// and message checks that follow). The plain run keeps them.
+	if (demo.frame == 54 && demo.showCreator)
+	{
+		printf("kui_demo script: skip hud tips: the creator covers the HUD (--show creator); the plain run checks them\n");
+		send(SAPP_EVENTTYPE_MOUSE_MOVE, 2, 2);	// where the checks leave the pointer
+	}
+	if (demo.frame == 54 && !demo.showDialogue && !demo.showGear && !demo.showStats && !demo.showCreator)
 	{
 		demo.hud->update(demo.hs);	// the hover moved at 53, after that frame's update
 		const ui::Rect b = demo.hud->hintBox()->screen(), m = demo.hud->medicalPanel()->screen(), run = demo.hud->toggleButton(ui::HudToggle::kRun)->screen();
@@ -4622,7 +4658,7 @@ void script()
 		check(statusTip == "In one piece, more or less." && demo.hud->hintText() == "What they are up to.", "hud tips: the status box's health sentence and a state row's tip in the box");
 		send(SAPP_EVENTTYPE_MOUSE_MOVE, 2, 2);	// off every widget
 	}
-	if (demo.frame == 55 && !demo.showDialogue && !demo.showGear && !demo.showStats)
+	if (demo.frame == 55 && !demo.showDialogue && !demo.showGear && !demo.showStats && !demo.showCreator)
 	{
 		demo.hud->update(demo.hs);
 		check(!demo.hud->hintBox()->visible && demo.hud->hintText().empty(), "hud tips: nothing hovered, the box is hidden");
@@ -7339,6 +7375,7 @@ sapp_desc sokol_main(int argc, char** argv)
 		else if (a == "--size" && more && sscanf(argv[i + 1], "%dx%d", &demo.w, &demo.h) == 2) { i++; }
 		else if (a == "--set" && more) { cfg::set(argv[++i]); }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "creator") { demo.showCreator = true; i++; }
+		else if (a == "--show" && more && std::string(argv[i + 1]) == "creator-animal") { demo.showCreator = demo.showCreatorAnimal = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "gear") { demo.showGear = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "dialogue") { demo.showDialogue = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "zone") { demo.showZone = true; i++; }
@@ -7414,7 +7451,7 @@ sapp_desc sokol_main(int argc, char** argv)
 			demo.showGear = true;
 		}
 		else if (a == "--theme" && more) { demo.themes.push_back(argv[++i]); }	// a mod folder with gui/ files, e.g. mods/Dark UI
-		else { fprintf(stderr, "usage: kui_demo [--data DIR] [--size WxH] [--set key=value] [--theme MODDIR]... [--show creator|gear|dialogue|zone|stats|options|prompt|toast|toast-text|squads|overview|mainmenu|gamemenu|gamemenu-exit|load|save|message|trade|food|weapon|blueprint|tag-CASE] [--screenshot out.png]\n"); exit(2); }
+		else { fprintf(stderr, "usage: kui_demo [--data DIR] [--size WxH] [--set key=value] [--theme MODDIR]... [--show creator|creator-animal|gear|dialogue|zone|stats|options|prompt|toast|toast-text|squads|overview|mainmenu|gamemenu|gamemenu-exit|load|save|message|trade|food|weapon|blueprint|tag-CASE] [--screenshot out.png]\n"); exit(2); }
 	}
 	ui::keys::setDebug(true);	// the demo shows and checks the development windows (the debug panel, its keys, the Debug keys tab)
 	dev::launchGuard("kui_demo");	// no window from a Claude session outside gamescope (src/dev/launchguard.cpp, kenshi-k16.2.392): after the

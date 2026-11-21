@@ -333,15 +333,15 @@ name<TAB>pos=x,y,z<TAB>yaw=DEG<TAB>pitch=DEG<TAB>day=N<TAB>time=HH:MM<TAB>weathe
 ### Scene test
 
 ```bash
-client/tools/scene_test.sh [--bless] [--scenes NAME,NAME] [OUTDIR]
+client/tools/scene_test.sh [--bless] [--keep-all] [--scenes NAME,NAME] [OUTDIR]
 ```
 
-Runs `kclient --scene-test OUTDIR [--scenes ...]` through `headless.sh`: per scene it jumps, sets time/day/weather, renders until nothing is loading (buildings, features, foliage; at least 3 frames; 1500 frames = load failure), and writes `OUTDIR/NAME.png` and `NAME.json`
+Runs `kclient --scene-test OUTDIR [--scenes ...]` through `headless.sh`: per scene it jumps, sets time/day/weather, renders until nothing is loading (buildings, features, foliage; at least 3 frames; 1500 frames = load failure), and writes `OUTDIR/NAME.webp` (lossless WebP on Linux builds with libwebp; `NAME.png` elsewhere or with `screenshot.format=png`) and `NAME.json`
 (drawn and resident counts: buildings, features, foliage, foliage cells, water chunks drawn, terrain chunks drawn/resident; CPU ms, load wait ms, failed mesh/texture counts, `sg_errors`, `hud_box`). Animation time and the clock are frozen, so repeated runs are pixel-identical.
 With `KCLIENT_PROFILE` on (the default; `cmake -DKCLIENT_PROFILE=OFF` compiles the GPU timers, the submit counters and their JSON fields out of the client and the UI library), the JSON also carries `gpu_characters_ms`, `gpu_character_shadows_ms`, `gpu_items_ms`, `gpu_ui_ms` and `passes`: per GPU section (the pass timers of `src/render/gputimer.hpp`), means over the measured frames of draw calls, instances, triangles and pipeline / binding changes, counted at the client's submit wrappers (`src/render/drawstats.hpp`) and at the sokol_gl batches of the UI layer, whose pipelines and bindings are internal to sgl and read 0. A section with no submits that frame is left out; `ui` draws only with the interface up, which a scene shot hides, and a scene of 3 frames often ends before the GL timer's results are collected (`gpu_*_ms` 0.00, the counters still exact).
-kclient exits non-zero on any `[sg][error]` or a scene that never finished loading. The wrapper then compares each PNG with the baseline in `~/.cache/kclient/scene-baseline/` (outside git; `KCLIENT_SCENE_BASELINE` overrides), ignoring the HUD box:
+kclient exits non-zero on any `[sg][error]` or a scene that never finished loading. The wrapper then compares each image with the baseline (`NAME.png` or `NAME.webp`; a mixed compare works) in `~/.cache/kclient/scene-baseline/` (outside git; `KCLIENT_SCENE_BASELINE` overrides), ignoring the HUD box:
 RMSE and the percentage of pixels with a channel difference above 16. `pass` = at most 0.5 % changed, otherwise `changed` (reported, exit code stays 0); `new` = no baseline yet. `--bless` copies the current output over the baseline.
-It prints one line per scene and writes `NAME.sheet.png` (reference | baseline | current) and `overview.png` (all scenes) into OUTDIR (default: a fresh `/tmp/scene-test.*`). A full run takes about 10 s.
+It prints one line per scene and keeps images only for the scenes that are not `pass` (kenshi-k16.2.470.1): a passing scene's image is deleted and its line is followed by `unchanged: NAME = <baseline file>`; `changed` / `new` / `FAIL` scenes keep `NAME.webp`, `NAME.sheet.webp` (reference | baseline | current), and `overview.webp` holds those scenes. `summary.txt` in OUTDIR is the printed table. `--keep-all` keeps every image, sheet and the overview of all scenes. `--bless` still writes every image to the baseline. OUTDIR defaults to a fresh `/tmp/scene-test.*`. A full run takes about 10 s.
 
 ### Vsync and present pacing (kenshi-k16.2.418.1)
 

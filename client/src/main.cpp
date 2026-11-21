@@ -89,6 +89,7 @@
 #include "platform/process.hpp"	// plat::unsetEnv
 #include "platform/windowgate.hpp"
 #include "platform/swapinfo.hpp"
+#include "assets/imagewrite.hpp"
 #include "render/readback.hpp"
 #include "render/renderqueue.hpp"
 #include "input/inputqueue.hpp"
@@ -502,7 +503,7 @@ constexpr double kDoorMatch = 150;
 
 // A held action key (ui::keys); not while an edit box has the keyboard
 bool title_shown() { return app.mainMenu && app.mainMenu->shown(); }
-bool menu_shown() { return title_shown() || (app.gameMenu && app.gameMenu->shown()) || (app.tutorials && app.tutorials->browserShown()) || (app.newGame && app.newGame->shown()) || (app.saves && app.saves->shown()); }	// the game's keys are off
+bool menu_shown() { return title_shown() || (app.gameMenu && app.gameMenu->shown()) || (app.tutorials && app.tutorials->browserShown()) || (app.newGame && app.newGame->shown()) || (app.saves && app.saves->shown()) || (app.creatorUi && app.creatorUi->shown()); }	// the game's keys are off
 bool held(const char* action) { return !menu_shown() && !dynamic_cast<ui::EditBox*>(ui::focusedWidget()) && ui::keys::held(action); }
 bool labels_shown() { return held("highlight"); }
 
@@ -556,6 +557,7 @@ const cfg::Bool kRouteLine{ cfg::Group{ "Markers" }, "markers.route", false, "De
 const cfg::Bool kOccluderFade{ cfg::Group{ "Building see-through" }, "camera.occluder_fade", true, "Buildings between the camera and the followed character turn see-through (auto-center and hover camera)" };
 const cfg::Bool kHudText{ cfg::Group{ "Developer text" }, "debug.hud_text", false, "Debug: the top-left developer text block (camera, ground, zone, nearest town, counts, time, weather, timings, sim); needs --debug. Off: the F12 shot's .txt still carries every line (hud.* keys)" };
 const cfg::Text kShotDir{ cfg::Group{ "Screenshots" }, "screenshot.dir", "", "Where the screenshot key saves (and its .txt scene notes); empty: the user data dir's kclient/screenshots ($XDG_DATA_HOME or ~/.local/share; Windows %LOCALAPPDATA%\\OpenKenshi\\data)" };
+const cfg::Text kShotFormat{ cfg::Group{ "Screenshots" }, "screenshot.format", "webp", { "webp", "png" }, "The format of a shot nobody named (F12, scene_test, lockstep shots): webp = lossless WebP (Linux builds with libwebp; half the PNG size; the other platforms always write png), png. A path with an explicit .png / .webp keeps its extension" };
 const cfg::Bool kPeek{ cfg::Group{ "Building see-through" }, "camera.peek", true, "Pointing at a building's inside from outside shows its walls as a ghost (ours; the original has none; playtest)" };
 const cfg::Text kSpeedUnit{ cfg::Group{ "HUD and labels" }, "ui.speed_unit", "kph", { "kph", "mph" }, "The unit of speeds in the panels (run speed, wind); the original shows mph" };
 // u/s -> the ui.speed_unit (1 u = 10 cm; mph: kinspect run_speed_mph.md, the exe's float)
@@ -1595,7 +1597,7 @@ static std::string tsv_text(const std::string& s)
 static void shot_route(const std::string& shotPath, int frame)	// frame: app.frames when the shot was requested (its done runs a frame later)
 {
 	if (!app.opt.debug || !app.sim.active()) { return; }
-	const std::string base = shotPath.ends_with(".png") ? shotPath.substr(0, shotPath.size() - 4) : shotPath;
+	const std::string base = imagewrite::stripExt(shotPath);
 	const std::string path = base + ".route.tsv";
 	FILE* f = fopen(path.c_str(), "w");
 	if (!f) { fprintf(stderr, "kclient: route: cannot write %s\n", path.c_str()); return; }
@@ -1982,8 +1984,35 @@ bool place_session_camera()
 		app.pitch = app.opt.cameraPitch * M_PI / 180.0;
 		app.rtsDist = std::clamp(app.opt.cameraDist, 10.0, 2000.0);
 	}
+	// An imported save's camera (CAMERA_START, kenshi-cym.40.2.3): the frame wins over --camera-pos. pos is the orbit pivot, rot its world orientation with
+	// the original's camera looking +Z, so the view's forward is R*(0,0,1) (our -Z camera: R*rotY(180)); zoom is minus the eye's distance. Bit 1 sets the
+	// floor level without engaging a follow: no auto-floor snap until a C / double click (kenshi-rwh.150).
+	bool cameraStarted = false;
+	{
+		const simlink::SimLinkDecoder& dec = app.sim.decoder();
+		if (dec.cameraStartSerial != app.cameraStartUsed)
+		{
+			app.cameraStartUsed = dec.cameraStartSerial;
+			const simlink::SimLinkDecoder::CameraStart& cs = dec.cameraStart;
+			if (cs.flags & 1)
+			{
+				const double w = cs.rot[0], x = cs.rot[1], y = cs.rot[2], z = cs.rot[3];
+				const double fx = 2 * (x * z + w * y), fy = 2 * (y * z - w * x), fz = 1 - 2 * (x * x + y * y);
+				app.rts = true;
+				app.centerId = 0;
+				std::copy(cs.pos, cs.pos + 3, app.focus);
+				app.yaw = std::atan2(fx, -fz);
+				app.pitch = std::asin(std::clamp(fy, -1.0, 1.0));
+				app.rtsDist = std::clamp((double)std::fabs(cs.zoom), 10.0, 2000.0);
+				cameraStarted = true;
+			}
+			const int floor = cs.flags & 2 ? cs.floor : 0;
+			app.buildings.restoreView(floor, 0);
+			printf("session: CAMERA_START flags %u pos %.3f %.3f %.3f rot %.5f %.5f %.5f %.5f zoom %.2f floor %d -> yaw %.2f pitch %.2f dist %.1f\n", cs.flags, cs.pos[0], cs.pos[1], cs.pos[2], cs.rot[0], cs.rot[1], cs.rot[2], cs.rot[3], cs.zoom, floor, app.yaw * 180 / M_PI, app.pitch * 180 / M_PI, app.rtsDist);
+		}
+	}
 	app.simCamera = true;
-	app.centerOnStart = haveFocus && !app.opt.camera;	// an explicit --camera-* framing stays put
+	app.centerOnStart = haveFocus && !app.opt.camera && !cameraStarted;	// an explicit --camera-* framing stays put
 	begin_session_load();
 	// the camera at the target now: the first world frame is drawn from it, not from the old position one frame later (k16.2.112.1)
 	update_rts(0.0);
@@ -3745,29 +3774,30 @@ void shot_pending_frame()
 		std::error_code ec;
 		std::filesystem::create_directories(dir, ec);
 		const std::string base = (dir / name).string();
-		if (ec) { shot_toast("Screenshot failed: could not write " + base + ".png"); }
+		const std::string ext = imagewrite::defaultExt();
+		if (ec) { shot_toast("Screenshot failed: could not write " + base + ext); }
 		else
 		{
 		// The sidecars describe the frame in the PNG (kenshi-k16.2.205.12.11): written here, at the request, from this frame's state; the readback's
 		// done runs a frame later under the render thread (overlap), when the camera, selection and sim have moved on. A failed read removes them.
-		dev::shotSidecars(dev_context(), base + ".png");	// F12: .txt, .events.txt, .trails.tsv (dev/shotsidecars.cpp)
+		dev::shotSidecars(dev_context(), base + ext);	// F12: .txt, .events.txt, .trails.tsv (dev/shotsidecars.cpp)
 #ifdef KCLIENT_DEV_TOOLS
-		shot_route(base + ".png", app.frames);	// F12: <shot>.route.tsv, the selected characters' routes and last move orders (--debug)
+		shot_route(base + ext, app.frames);	// F12: <shot>.route.tsv, the selected characters' routes and last move orders (--debug)
 #endif
-		dev::shotTreesBegin(dev_context(), base + ".png");	// the on-screen characters' trees (this frame's camera), beside the shot (docs/CLIENT.md "Screenshot debug trees")
+		dev::shotTreesBegin(dev_context(), base + ext);	// the on-screen characters' trees (this frame's camera), beside the shot (docs/CLIENT.md "Screenshot debug trees")
 		printf("shot request: frame %d eye %.1f %.1f %.1f yaw %.1f pitch %.1f (the .txt's camera line is this frame's)\n", app.frames, app.pos[0], app.pos[1], app.pos[2], app.yaw * 180 / 3.14159265358979, app.pitch * 180 / 3.14159265358979);
-		readback::screenshot(base + ".png", [base](bool ok) {
+		readback::screenshot(base + ext, [base, ext](bool ok) {
 		if (ok)
 		{
-			dev::shotBegin(base + ".png");		// a --bead run: the shot also goes to the item's findings folder and as a comment (k16.2.127)
+			dev::shotBegin(base + ext);		// a --bead run: the shot also goes to the item's findings folder and as a comment (k16.2.127)
 		}
 		else
 		{
 			for (const char* ext : { ".txt", ".events.txt", ".trails.tsv", ".route.tsv", ".trees.txt" }) { std::error_code rec; std::filesystem::remove(base + ext, rec); }	// no picture: no sidecars
-			shot_toast("Screenshot failed: could not write " + base + ".png");	// the pixels were not read: no file to wait for
+			shot_toast("Screenshot failed: could not write " + base + ext);	// the pixels were not read: no file to wait for
 		}
-		}, [base, name = std::string(name)](bool ok, const std::string& why) {	// the writer's result (kenshi-k16.2.312): the toast follows the file
-			shot_toast(ok ? "Screenshot saved: " + name + ".png" : "Screenshot failed: could not write " + base + ".png: " + why);	// the folder is screenshot.dir (the path alone wraps the toast)
+		}, [base, ext, name = std::string(name)](bool ok, const std::string& why) {	// the writer's result (kenshi-k16.2.312): the toast follows the file
+			shot_toast(ok ? "Screenshot saved: " + name + ext : "Screenshot failed: could not write " + base + ext + ": " + why);	// the folder is screenshot.dir (the path alone wraps the toast)
 		});
 		}
 	}
@@ -3898,6 +3928,7 @@ sapp_desc sokol_main(int argc, char* argv[])
 	{
 		if (!cfg::set(kv)) { fprintf(stderr, "kclient: bad --set '%s' (want KEY=VALUE for a known option)\n", kv.c_str()); exit(2); }
 	}
+	imagewrite::setWebp(kShotFormat.get() == "webp");	// after --set: screenshot.format=png
 	for (const std::string& m : modArgs)
 	{
 		if (!app.mods.set(m)) { fprintf(stderr, "kclient: bad --mod '%s' (want KEY=on|off, keys: nicemap darkui slopeless bughouse)\n", m.c_str()); exit(2); }
