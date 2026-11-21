@@ -398,13 +398,12 @@ namespace ui
 		setPicker(pickers_[kBeard], s.beard, s.beards);
 		setPicker(pickers_[kHairColour], s.hairColour, s.hairColours);
 		clothes_->checked = s.clothes;
-		if (!s.editable)	// an animal in the squad: only the stepper, CONFIRM and turning the preview
+		if (!s.editable)	// an animal in the squad: only the stepper, CONFIRM, the name and turning the preview
 		{
 			for (int i = 0; i < (int)pickers_.size(); i++) { if (i != kCharacter) { pickers_[i].prev->enabled = pickers_[i].next->enabled = false; } }
 		}
 		for (Button* b : { import_, export_, clothes_, randomAll_, random_, reset_ }) { b->enabled = s.editable; }
 		for (Button* b : tabs_) { b->enabled = s.editable; }
-		name_->enabled = s.editable;
 		desc_->text = s.description;
 		descHead_->visible = desc_->visible = !s.description.empty();	// no empty headings while the host has nothing
 		statHead_->visible = !s.stats.empty();

@@ -96,6 +96,13 @@ namespace ui
 			}
 		}
 
+		// A focused edit box that is disabled (read-only) but shown: it edits nothing, yet takes the keys an enabled one would (all but
+		// F1..F25), so a letter typed at it never reaches a game hotkey (kenshi-k16.2.472.2).
+		bool lockedEdit()
+		{
+			return c_.focus && c_.focus->shown() && !c_.focus->enabled && dynamic_cast<const EditBox*>(c_.focus);
+		}
+
 		// The old focus hears onBlur (an edit box commits). Blur handlers must not destroy widgets.
 		void setFocus(Widget* w)
 		{
@@ -409,6 +416,7 @@ namespace ui
 					return true;
 				}
 				if (c_.focus && c_.focus->shown() && c_.focus->enabled && c_.focus->onKey(e.key_code, down)) { return true; }
+				if (lockedEdit() && !(e.key_code >= SAPP_KEYCODE_F1 && e.key_code <= SAPP_KEYCODE_F25)) { return true; }	// a disabled edit box keeps typing from the world
 				if (keys::pressed(e, "toggle_hints"))	// the UI's own setting: no host wiring (a focused key box takes the key first)
 				{
 					kControlHints.set(!kControlHints.get());
@@ -417,7 +425,7 @@ namespace ui
 				return false;
 			}
 			case SAPP_EVENTTYPE_CHAR:
-				return c_.focus && c_.focus->shown() && c_.focus->enabled && c_.focus->onChar(e.char_code);
+				return (c_.focus && c_.focus->shown() && c_.focus->enabled && c_.focus->onChar(e.char_code)) || lockedEdit();
 			default:
 				return false;
 		}

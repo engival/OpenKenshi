@@ -3435,8 +3435,20 @@ void script()
 		animal.editable = false;
 		demo.cr->update(animal);
 		check(!demo.cr->pickerNext(C::kGroup)->enabled && !demo.cr->pickerNext(C::kHair)->enabled && !demo.cr->randomButton()->enabled && !demo.cr->clothesButton()->enabled
-			&& !demo.cr->nameBox()->enabled && !demo.cr->tab(ui::kCreatorFace)->enabled && !demo.cr->slider("Muscle")->enabled
-			&& demo.cr->pickerNext(C::kCharacter)->enabled && demo.cr->doneButton()->enabled, "creator: an animal: only the stepper and CONFIRM");
+			&& demo.cr->nameBox()->enabled && !demo.cr->tab(ui::kCreatorFace)->enabled && !demo.cr->slider("Muscle")->enabled
+			&& demo.cr->pickerNext(C::kCharacter)->enabled && demo.cr->doneButton()->enabled, "creator: an animal: only the stepper, the name and CONFIRM");
+		demo.crLog.clear();
+		check(clickOn(demo.cr->nameBox()) && key(SAPP_KEYCODE_END) && type("o") && key(SAPP_KEYCODE_ENTER) && demo.crLog.size() > 7 && demo.crLog.compare(demo.crLog.size() - 2, 2, "o;") == 0,
+			("creator: an animal's name takes typed text (" + demo.crLog + ")").c_str());
+		{
+			ui::EditBox* nb = static_cast<ui::EditBox*>(demo.cr->nameBox());
+			const std::string was = nb->text;
+			ui::focus(nb);
+			nb->enabled = false;
+			check(key(SAPP_KEYCODE_C) && type("c") && nb->text == was && !key(SAPP_KEYCODE_F5), "edit box: a focused disabled box eats keys, edits nothing, F keys go on");
+			nb->enabled = true;
+			ui::focus(nullptr);
+		}
 		demo.crLog.clear();
 		check(clickOn(demo.cr->pickerNext(C::kCharacter)) && demo.crLog == "character 2;", "creator: an animal: stepping on");
 		demo.cr->update(demo.cs);
