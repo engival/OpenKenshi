@@ -202,7 +202,8 @@ void stall_point(int at)
 
 void exec_cmd(const Cmd& c)
 {
-	logicthread::renderIdle();	// overlap (rule 12): an op may poke any renderer (partdepth, wind, the lab); scripted overlap and the console gate here
+	if (c.op != "stall" && c.op != "renderstall") { logicthread::renderIdle(); }	// the two stall ops only arm a sleep (kenshi-k16.2.205.12.118: a gate here would stop the redraw they test)
+	// overlap (rule 12): an op may poke any renderer (partdepth, wind, the lab); scripted overlap and the console gate here
 	if (!app.opt.debug && debug_script_op(c.op)) { script_needs_debug(c); }
 	sapp_event e = {};
 	e.frame_count = (uint64_t)app.frames;
@@ -568,6 +569,7 @@ void exec_cmd(const Cmd& c)
 			for (const Characters::EditorRange& r : app.creator.ranges()) { printf("creator:   %s / %s %g..%g = %g\n", r.category.c_str(), r.name.c_str(), r.min, r.max, app.creator.value(r.name)); }
 			for (size_t i = 0; i < ch.hairs.size(); i++) { printf("creator:   hair %s (weight %g)\n", ch.hairs[i].c_str(), ch.hairWeights[i]); }
 			for (size_t i = 0; i < ch.beards.size(); i++) { printf("creator:   beard %s (weight %g)\n", ch.beards[i].c_str(), ch.beardWeights[i]); }
+			printf("creator: spec %s\n", app.creator.specString().c_str());
 			printf("creator:   Hit Points %g\n", ch.hp);
 			for (const auto& [name, m] : ch.skills) { printf("creator:   %s %+ld%%\n", name.c_str(), std::lround((m - 1) * 100)); }
 			if (ch.noBleeding) { printf("creator:   No bleeding\n"); }

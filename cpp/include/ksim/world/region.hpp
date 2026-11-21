@@ -175,6 +175,8 @@ public:
 	std::int32_t regionCount() const noexcept { return regionCount_; }
 	std::int32_t regionsPerAxis() const noexcept { return regionsPerAxis_; }
 	std::int32_t regionOf(double x, double z) const;
+	// The regions (zones) a +-half box round (x, z) overlaps, clamped to the world; the original's loaded-zone rule is built from these.
+	std::vector<std::int32_t> boxRegions(double x, double z, double half) const;
 	// The region's world xz rectangle (kWorldMin origin, square regionSize).
 	void regionBounds(std::int32_t region, double& x0, double& z0, double& x1, double& z1) const;
 	// Which regions are Full detail (the player areas, or every region with fullDetailAll): the LOS hulls follow it.

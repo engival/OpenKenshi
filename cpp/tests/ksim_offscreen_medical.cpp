@@ -1,5 +1,9 @@
-// The off-screen medical step and the corpses it leaves (kenshi-k16.6.52; COMBAT_OPTIONS.md 8, RUNTIME_SAVE.md v100), behind
-// Simulation::setOffscreenMedical. A world squad is built beside the player, a member is hurt, the player leaves (the squad is a token) and the
+// The original's off-screen medical behaviour, and our deliberate deviation from it (kenshi-k16.6.52, k16.6.504; COMBAT_OPTIONS.md 8,
+// RUNTIME_SAVE.md v100; findings/rwh204_misc_b_validity_static.md section 1, rwh37, rwh38, rwh40, bq15, dt45).
+// The exe (setting off, the default): an unloaded character never bleeds, clots or heals (members are saved and re-created unchanged, a stored
+// record does not change however long the player is away), no squadmate treats it; a body is stamped at its FIRST ON-SCREEN evaluation (not at
+// death) and destroyed when now - stamp > 12 game h (strict), and a body in an unloaded zone does not age (here: is destroyed with it).
+// The cases under "Setting on" are the deviation behind Simulation::setOffscreenMedical. A world squad is built beside the player, a member is hurt, the player leaves (the squad is a token) and the
 // world runs. With the setting on:
 //   - a bleeding member dies off-screen and leaves a body at the token's position (CorpseDecay with its death tick and cause, the gear in its
 //     Inventory, a Fighter that is dead); the player returning finds a body he can loot;
@@ -168,8 +172,59 @@ void died(Case& c)
 	test::require(!c.scene.members[1].get<state::Fighter>() || !c.scene.members[1].get<state::Fighter>()->dead, "the others are alive");
 }
 
+// The original: nothing is stepped for a stored member, whatever its wounds and whoever carries a kit.
+void original()
+{
+	for (const Hurt hurt : {Hurt::BleedOut, Hurt::Clots, Hurt::Treatable})
+	{
+		// A kit and a medic-skilled squadmate beside the hurt one: the exe's ordinary squadmate (and a stored one) treats no one.
+		Case c = prepare(false, hurt, true);
+		depart(c);
+		const state::MemberDelta before = *c.scene.members[0].get<state::MemberDelta>();
+		const state::MemberDelta mate = *c.scene.members[1].get<state::MemberDelta>();
+		runMinutes(c.sim, 180);
+		test::require(!c.scene.members[0].has<state::Fighter>() && c.scene.members[0].has<state::MemberDelta>(), "setting off: the stored member neither dies nor heals off-screen");
+		const state::MemberDelta& after = *c.scene.members[0].get<state::MemberDelta>();
+		test::require(after.blood == before.blood && after.wounds == before.wounds, "setting off: no bleeding, clotting or healing of a stored member");
+		test::require(holds(c.scene.members[1], itemNamed(c.sim, "Basic First Aid Kit")), "setting off: the squadmate's kit is not used");
+		test::require(c.scene.members[1].get<state::MemberDelta>()->blood == mate.blood, "setting off: the squadmate's record is unchanged");
+		bool body = false;
+		ecsOf(c.sim).each([&](const state::Id&, const state::CorpseDecay&) { body = true; });
+		test::require(!body, "setting off: no body is left off-screen");
+	}
+
+	// A body on screen: the stamp is the first evaluation, the body goes when now - stamp > 12 game h.
+	Case d = prepare(false, Hurt::Clots, false);
+	const flecs::entity member = d.scene.members[1];
+	const std::uint64_t id = idOf(member);
+	state::Fighter& f = fighterOf(d.sim, member);
+	f.dead = true;
+	f.unconscious = true;
+	const auto stamp = [&]() -> double
+	{
+		const state::CorpseDecay* decay = member.get<state::CorpseDecay>();
+		return decay != nullptr ? decay->stamp : 0.0;
+	};
+	const auto present = [&]
+	{
+		bool there = false;
+		ecsOf(d.sim).each([&](const state::Id& i, const state::Fighter& dead) { there = there || (i.value == id && dead.dead); });
+		return there;
+	};
+	d.sim.run(2 * kCorpseIntervalTicks);
+	const double first = stamp();
+	test::require(first > 0.0 && std::abs(first - gameHoursIn(d.sim.clockTick())) < 0.2, "the stamp is written at the first on-screen evaluation");
+	d.sim.run(static_cast<std::uint64_t>((first + 11.5) * (kTicksPerGameDay / 24.0)) - d.sim.clockTick());
+	test::require(present() && stamp() == first, "on screen: 11.5 h after the stamp the body is still there, its stamp unchanged");
+	d.sim.run(kHour);
+	test::require(!present(), "on screen: more than 12 h after the stamp the body is gone");
+}
+
 void run()
 {
+	original();
+
+	// ---- Setting on: our deviation. ----
 	// Bleeding out: dies off-screen, leaves a body at the token.
 	Case c = prepare(true, Hurt::BleedOut, false);
 	depart(c);
@@ -259,7 +314,7 @@ void run()
 		test::require(!holds(aided.scene.members[1], itemNamed(aided.sim, "Basic First Aid Kit")) || aided.scene.members[1].has<state::MemberDelta>(), "the kit was used");
 	}
 
-	// Setting off: nothing is stepped, and a body no player area covers is destroyed.
+	// Setting off: a body no player area covers is destroyed (the zone unloads with it; a persistent platoon would keep it, which we do not model).
 	{
 		Case off = prepare(false, Hurt::BleedOut, false);
 		depart(off);

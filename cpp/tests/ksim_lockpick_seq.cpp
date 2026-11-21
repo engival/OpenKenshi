@@ -1,6 +1,5 @@
 // Lockpick order sequence as the original (kenshi-k16.6.324 / .323; CRIME_STATIC.md "2 Burglary"): the order walks to the lock with no crime and
-// no witness reaction; the crime and the reaction start when picking starts; the reaction does not end the order; a 0% order walks to the lock, never starts
-// picking (no crime, no reaction) and ends refused there (kenshi-k16.6.366, event 13 result 8 k16.6.377); a targeting stops the running task and the order restarts from its beginning, no fight alongside (kenshi-k16.6.335, rwh.165).
+// no witness reaction; the crime and the reaction start when picking starts; the reaction does not end the order; a 0% order is unplannable and does nothing (kenshi-rwh.178, k16.6.501); a targeting stops the running task and the order restarts from its beginning, no fight alongside (kenshi-k16.6.335, rwh.165).
 
 #include "ksim/core/clock.hpp"
 #include "ksim/law/crime.hpp"
@@ -200,6 +199,8 @@ void walkThenPick(const Data& w, const std::shared_ptr<MeshNavigator>& nav, cons
 	check(rig.lock().lockElapsed > 0.0 || rig.lock().lockAttempts > 0, "3: the pick keeps ticking after the reaction");
 }
 
+// The original (rwh.178): a 0% pick order is accepted by the menu but its goal cannot be planned: no walk, no pick, no refusal text, and the
+// character keeps doing what it did.
 void zeroChance(const Data& w, const std::shared_ptr<MeshNavigator>& nav, const kworld::LoadOrder& order)
 {
 	Rig rig(w, nav, order);
@@ -208,10 +209,9 @@ void zeroChance(const Data& w, const std::shared_ptr<MeshNavigator>& nav, const 
 	rig.tick(20 * 3);
 	check(pickChance(100.0, kSkill) < kMinPickChance, "4: the setup chance is below the floor (a 0% display)");
 	rig.order(w.holy, 14.0, kSkill, 100.0);
-	const auto distance = [&]() { return std::hypot(rig.f(rig.thief).x - rig.boxX, rig.f(rig.thief).z - rig.boxZ); };
-	const double first = distance();
-	rig.tick(); // the command is applied on the tick
-	check(rig.ordered() || rig.f(rig.thief).walking(), "4: the order is accepted whatever the chance (not refused at once)");
+	const double first = std::hypot(rig.f(rig.thief).x - rig.boxX, rig.f(rig.thief).z - rig.boxZ);
+	const double x0 = rig.f(rig.thief).x;
+	const double z0 = rig.f(rig.thief).z;
 	bool started = false;
 	bool crime = false;
 	bool walked = false;
@@ -219,23 +219,18 @@ void zeroChance(const Data& w, const std::shared_ptr<MeshNavigator>& nav, const 
 	{
 		rig.tick();
 		walked = walked || rig.f(rig.thief).walking();
-		started = started || rig.picking();
+		started = started || rig.picking() || rig.ordered();
 		crime = crime || rig.crimeOnThief() || rig.witnessed() > 0;
 	}
-	check(walked && distance() < first - 5.0, "4: the order walked to the lock (distance " + std::to_string(first) + " -> " + std::to_string(distance()) + ")");
+	check(!started, "4: no order task and no pick step is ever created");
+	check(!walked && std::hypot(rig.f(rig.thief).x - x0, rig.f(rig.thief).z - z0) < 0.5,
+		"4: no walk to the lock (box " + std::to_string(first) + " away)");
 	check(!crime, "4: no crime and no reaction");
 	check(rig.lock().lockElapsed == 0.0 && rig.lock().lockAttempts == 0, "4: no lock roll");
-	bool rolled = false;
-	int refused = 0;
+	bool anyEvent = false;
 	for (const InteractEvent& e : rig.interacts)
-	{
-		rolled = rolled || e.kind == InteractEvent::Kind::LockRoll;
-		refused += e.kind == InteractEvent::Kind::Done && e.action == 3 && e.result == 8 && e.result == InteractEvent::kTooHard; // 8 = the wire value (k16.6.377; the door and the wire: ksim_interact)
-	}
-	check(!rolled, "4: no LockRoll event");
-	check(refused == 1, "4: the order ended once, too hard at the lock (event 13 result 8)");
-	check(!rig.ordered() && !rig.picking(), "4: the order ended cleanly: no order, no pick step left");
-	check(!rig.f(rig.thief).walking(), "4: the character idles (no re-plan loop)");
+		anyEvent = anyEvent || e.kind == InteractEvent::Kind::LockRoll || e.kind == InteractEvent::Kind::Done;
+	check(!anyEvent, "4: no event 13 and no LockRoll: nothing is said");
 }
 
 // Attacked mid-order, the original (rwh.165): the character runs one task, so it never fights while the order runs (it is only hit); a targeting or a hit

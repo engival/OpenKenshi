@@ -628,6 +628,7 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 
 	// Phase 2: the world. The player's squads first: their positions decide which squads are Full detail.
 	std::vector<std::array<double, 2>> playerAt;
+	std::set<std::int32_t> loaded; // the zones the original keeps loaded; filled once the player's squads are in
 	const auto streaming = [&](const std::vector<std::array<double, 2>>& spots)
 	{
 		const MeshNavigator* nav = sim.navigation();
@@ -796,6 +797,25 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 		result.members = p.members.size();
 		report.gaps["squad purse (money; PLATOON `money`)"] += p.money != 0 ? 1 : 0;
 	}
+	if (report.hasCamera)
+	{
+		const int radius = sim.regions().config().areaRadiusRegions;
+		const std::int32_t centre = sim.regions().regionOf(report.cameraPos[0], report.cameraPos[2]);
+		const std::int32_t axis = sim.regions().regionsPerAxis();
+		for (int dz = -radius; dz <= radius; ++dz)
+		{
+			for (int dx = -radius; dx <= radius; ++dx)
+			{
+				const int rx = centre % axis + dx;
+				const int rz = centre / axis + dz;
+				if (rx >= 0 && rz >= 0 && rx < axis && rz < axis)
+					loaded.insert(rx + axis * rz);
+			}
+		}
+	}
+	for (const auto& at : playerAt)
+		for (const std::int32_t zone : sim.regions().boxRegions(at[0], at[1], options.characterBox))
+			loaded.insert(zone);
 
 	report.generatedRemoved = sim.importClearSquads();
 	for (Platoon& p : platoons)
@@ -847,8 +867,8 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 		const flecs::entity squad = sim.importSquad(instance, state::Position{p.x, p.z});
 		report.squadOfPool[p.pool] = squad.get<state::Id>()->value;
 		bool near = false;
-		for (const auto& at : playerAt)
-			near = near || std::hypot(at[0] - p.x, at[1] - p.z) <= options.fullRadius;
+		for (const std::int32_t zone : sim.regions().boxRegions(p.x, p.z, options.platoonBox))
+			near = near || loaded.count(zone) != 0;
 		const bool full = near && instance.source != state::SpawnSource::TownResident;
 		if (near && !full)
 			++report.gaps["resident squads inside the Full radius left as tokens (the resident pass builds them)"];

@@ -1695,8 +1695,11 @@ const Characters::GpuMesh* Characters::morphed(const Body& body, const std::unor
 	return (meshes_[key] = std::move(m)).get();
 }
 
-// Bone sizes from the editor values (14052e6c0, docs/reference/BODY_SHAPE.md): v = slider -> raw value (100 = 1). Bip01 is not sized.
-// UNSURE (left out): the race factor R (1 for humans), the thigh 0.8 flag (prosthetics?).
+// Bone sizes from the editor values (14052e6c0, docs/reference/BODY_SHAPE.md after rwh.234): v = slider -> raw value (100 = 1).
+// Bip01 is not sized. rwh.234: there is no slider curve -- the 0.935063 the live forearms carry is the muscle factor M1 (m = -0.2405
+// for a stat-1 body, below), and the table's trailing `* x` factors (A*A, h*h, g*g, Fe*Fe) are the decompile misreading a LIMB MASK
+// (1.0 on an intact limb) for the previous local: no squares, and the arms' length axis is Height only.
+// UNSURE (left out): the race factor R (1 for humans), the thigh 0.8 flag (prosthetics?), the severable-limb masks (1 here).
 void Characters::boneSizes(Char& c, const std::unordered_map<std::string, float>& v)
 {
 	const kworld::Skeleton& sk = c.body->skel;
@@ -1711,6 +1714,8 @@ void Characters::boneSizes(Char& c, const std::unordered_map<std::string, float>
 	auto mul = [](kworld::SkelVec3 a, kworld::SkelVec3 b) { return kworld::SkelVec3{ a.x * b.x, a.y * b.y, a.z * b.z }; };
 	auto sc = [](kworld::SkelVec3 a, float f) { return kworld::SkelVec3{ a.x * f, a.y * f, a.z * f }; };
 	const bool female = c.spec.female;
+	// m is the character's muscle (appearance +0x1a0): UNCLAMPED, (max(stat)*0.01 - 0.2) / 0.79, so a stat-1 body has m = -0.2405
+	// (M1 0.935, M2 0.969) and a trained one has m > 0 (rwh.234; the caller supplies it, nothing here invents it).
 	const float sk0 = std::clamp(c.spec.skinny, 0.0f, 1.0f), m = c.spec.muscle;
 	auto lerp = [](float a, float b, float t) { return a + (b - a) * t; };
 	const float tW = lerp(1, 0.7f, sk0), tC = lerp(1, 0.86f, sk0), tS = lerp(1, 0.6f, sk0), tB = lerp(1, 0.4f, sk0);
@@ -1724,8 +1729,9 @@ void Characters::boneSizes(Char& c, const std::unordered_map<std::string, float>
 	c.soleRest = false;
 	const float Lb = x("Legs bulk") * tW * M1;
 	const float f = (x("Legs shape") * Lb + (x("Hips") - 1) / 3) * Fs;
+	// live BODY_SHAPE's "Pelvis" row is the THIGH's source vector: the bone itself is Hips x Frame, with the Height on y (rwh.234, rwh.229)
 	const kworld::SkelVec3 pelvis = { f, Y, f };
-	set("Bip01 Pelvis", pelvis);
+	set("Bip01 Pelvis", { x("Hips") * Fs, Hs, x("Hips") * Fs });
 	const kworld::SkelVec3 leg = { 1, 0.95f, 1 };
 	const float g = (2 - x("Legs shape")) * Lb * Fs;
 	const float Fe = x("Feet") * Hs;
@@ -1733,9 +1739,9 @@ void Characters::boneSizes(Char& c, const std::unordered_map<std::string, float>
 	{
 		const std::string b = std::string("Bip01 ") + side;
 		set((b + " Thigh").c_str(), mul(pelvis, leg), { 1, Fs * (2 - Hs) * x("Hips"), 1 });
-		set((b + " Calf").c_str(), mul(sc({ g, Y, g }, g), leg));
-		set((b + " Foot").c_str(), sc({ Fe, x("Leg length"), Fe }, Fe));
-		set((b + " Toe0").c_str(), sc({ Fe, Fe, Fe }, Fe), { 1, 1, Fe });
+		set((b + " Calf").c_str(), { g, Y, g });	// the 0.95 leg factor is the Thigh's only (rwh.229 live: Calf y = Y)
+		set((b + " Foot").c_str(), { Fe, x("Leg length"), Fe });
+		set((b + " Toe0").c_str(), { Fe, Fe, Fe }, { 1, 1, Fe });
 	}
 	const float k = 1 + (x("Hips") - 1) * 0.6f, St = x("Stomach") * tS;
 	set("Bip01 Spine", { k * Fs, Hs, k * St * Fs });
@@ -1748,9 +1754,9 @@ void Characters::boneSizes(Char& c, const std::unordered_map<std::string, float>
 	{
 		const std::string b = std::string("Bip01 ") + side;
 		set((b + " Clavicle").c_str(), { S * Fs, (1 + 0.3f * (S - 1)) * Fs, S * Fs });
-		set((b + " UpperArm").c_str(), sc({ A, Hs, (1 + 1.5f * (Ab - 1)) * Fs }, A), { S * cx, 1, 1 });
-		set((b + " Forearm").c_str(), sc({ A, Hs, A }, A));
-		set((b + " Hand").c_str(), sc({ A, Hs, A }, h * h));
+		set((b + " UpperArm").c_str(), { A, Hs, (1 + 1.5f * (Ab - 1)) * Fs }, { S * cx, 1, 1 });
+		set((b + " Forearm").c_str(), { A, Hs, A });
+		set((b + " Hand").c_str(), sc({ A, Hs, A }, h));
 	}
 	set("Bip01 Neck", { x("Neck width") * tS * M2 * Fs, x("Neck length"), x("Neck") * tW * Fs });
 	const float Hd = x("Head size"), q = 1 + 0.25f * (Fs - 1);

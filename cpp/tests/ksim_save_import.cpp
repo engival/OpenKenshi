@@ -834,16 +834,27 @@ int main(int argc, char** argv)
 			test::require(csv.str().find("\n1,0,") != std::string::npos, "SkinHouse: the soak CSV has its first hourly row");
 			// The imported player faction is a living world (kenshi-cym.21): the full-detail area follows Engival, so the squad in his tower (template
 			// 66541-rebirth.mod, ~40 u from his saved move order) is built after the hour. Before, no area was set and it stayed a token for all 48 h.
-			std::size_t towerSquads = 0;
-			std::size_t towerBuilt = 0;
+			// The original has no radius (findings/rwh202_save_wire_validity_static.md 3): a platoon is active when its position is in a loaded zone, the 3x3
+			// zones round the camera focus plus the zones a +-340 u box round each player character overlaps. The tower is a player spot, so the zone it is in
+			// and its eight neighbours are loaded whatever the distance in metres.
+			const RegionEngine& zones = real.regions();
+			const std::int32_t axis = zones.regionsPerAxis();
+			const std::int32_t towerZone = zones.regionOf(72673.0, 94252.0);
+			std::size_t loadedSquads = 0;
+			std::size_t loadedBuilt = 0;
+			std::size_t farBuilt = 0;
 			real.world().ecs().each([&](flecs::entity e, const state::SquadInstance&, const state::Position& at)
 			{
-				if (std::hypot(at.x - 72673.0, at.z - 94252.0) > 1000.0)
+				const std::int32_t zone = zones.regionOf(at.x, at.z);
+				if (std::abs(zone % axis - towerZone % axis) > 1 || std::abs(zone / axis - towerZone / axis) > 1)
 					return;
-				++towerSquads;
-				towerBuilt += e.get<Detail>() != nullptr && e.get<Detail>()->level == DetailLevel::Full;
+				const bool built = e.get<Detail>() != nullptr && e.get<Detail>()->level == DetailLevel::Full;
+				++loadedSquads;
+				loadedBuilt += built;
+				farBuilt += built && std::hypot(at.x - 72673.0, at.z - 94252.0) > 1000.0;
 			});
-			test::require(towerSquads >= 1 && towerBuilt == towerSquads, "SkinHouse: the squads within 1000 u of Engival's tower are Full detail after an hour");
+			test::require(loadedSquads >= 1 && loadedBuilt == loadedSquads, "SkinHouse: every squad in a zone loaded round the tower is Full detail after an hour");
+			test::require(farBuilt >= 1, "SkinHouse: loaded squads beyond 1000 u are Full too (no radius)");
 			std::cout << "ksim_save_import: SkinHouse world state OK\n";
 		} else {
 			std::cout << "ksim_save_import: KSIM_SKINHOUSE not set, the SkinHouse section is skipped\n";

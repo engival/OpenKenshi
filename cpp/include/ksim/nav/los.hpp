@@ -7,7 +7,7 @@
 //
 // A ray is a straight world segment (eye to eye: eye height +18, LINE_OF_SIGHT.md 2). It is blocked by the first hull or
 // terrain hit. Foliage rocks and trunks with a collision file are in it (task k16.13.4); a doorway's leaf is a tree of its own
-// that blocks only while its door is shut. A region not at Full detail has no tree and blocks nothing (coarse perception is
+// that blocks only the pick ray (group 5 is in no sight, gun or bolt mask); foliage is in the indoor sight and bolt masks only. A region not at Full detail has no tree and blocks nothing (coarse perception is
 // unchanged).
 
 #include "ksim/combat/fighter_state.hpp"
@@ -79,7 +79,16 @@ public:
 
 	// The segment from -> to: the first hit of the hulls of every loaded region it crosses in xz, or of the terrain. The
 	// terrain is sampled every kTerrainStep and bisected (kTerrainRefines) to the crossing.
-	Hit trace(const std::array<double, 3>& from, const std::array<double, 3>& to) const;
+	// What a query tests beyond the building parts and the terrain, by the exe's collision-group masks (rwh.199): the foliage groups
+	// 6 / 14 are in the indoor sight mask 0x87fde44 and the bolt mask 0x87fde47, not in the outdoor sight mask 0x87f9e04 nor the gun
+	// line 0x87f9e07; a door leaf (group 5) is in none of them, only the pick ray's 0xffffde7f.
+	struct Layers
+	{
+		bool foliage;
+		bool doors;
+	};
+	static constexpr Layers kSightOutdoors{false, false}, kGunLine{false, false}, kSightIndoors{true, false}, kBolt{true, false}, kPick{true, true};
+	Hit trace(const std::array<double, 3>& from, const std::array<double, 3>& to, Layers layers = {}) const;
 	// The same segment against the walkable shapes (floors, stairs, ramps: the BUILDING path mode Walkable) and the terrain only: no
 	// furniture, counters, walls or doors. What the client rays a body onto (the height sweep's level check).
 	Hit traceGround(const std::array<double, 3>& from, const std::array<double, 3>& to) const;
@@ -140,6 +149,7 @@ private:
 	struct Region
 	{
 		kworld::HullTree tree;
+		kworld::HullTree foliage; // rocks and trunks (groups 6 / 14)
 		kworld::HullTree ground; // the Walkable shapes alone: what a character's ground ray lands on (traceGround)
 		std::vector<DoorLeaf> doors;
 		std::size_t placed = 0; // the placements that contributed shapes
@@ -149,12 +159,13 @@ private:
 		std::array<double, 6> ends{}; // ax, ay, az, bx, by, bz at the cast
 		std::uint64_t tick = 0;
 		bool visible = true;
+		bool indoors = false; // the observer's mask the answer was cast with
 	};
 
 	std::string dataDir_;
 	const kdata::GameData& gameData_;
 	const std::vector<kworld::PlacedInstance>& placements_;
-	Hit traceImpl(const std::array<double, 3>& from, const std::array<double, 3>& to, bool groundOnly) const;
+	Hit traceImpl(const std::array<double, 3>& from, const std::array<double, 3>& to, bool groundOnly, Layers layers = {}) const;
 	std::int32_t regionsPerAxis_ = 1;
 	double regionSize_ = 4608.0;
 	std::unique_ptr<kworld::CollisionLibrary> library_;

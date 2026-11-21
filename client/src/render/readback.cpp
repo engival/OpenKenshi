@@ -118,6 +118,7 @@ namespace
 		ProbeDone probeDone;
 		SampleDone sampleDone;
 		bool ok = false;
+		bool after = false;		// a kAfter request: runs logic-side code only (the script's ops gate themselves, exec_cmd)
 		std::vector<float> values;	// kProbe, kSample
 		ProbeInfo info;			// kProbe
 	};
@@ -255,7 +256,7 @@ void serve()
 		for (auto it = gQueue.begin(); it != gQueue.end(); ++it)
 		{
 			if (it->serial <= gDrawSerial) { mine.push_back(std::move(*it)); }
-			else { *keep++ = std::move(*it); }
+			else { if (keep != it) { *keep = std::move(*it); } ++keep; }	// never a self-move: libstdc++ empties a long string moved onto itself (a later packet's shot lost its path, kenshi-k16.2.205.12.118)
 		}
 		gQueue.erase(keep, gQueue.end());
 	}
@@ -269,7 +270,7 @@ void serve()
 		case Request::kScreenshot: f.ok = readScreenshot(r); break;
 		case Request::kProbe: f.ok = readProbe(r, f.values, f.info); break;
 		case Request::kSample: if (r.read) { f.values = r.read(); } f.ok = !f.values.empty(); break;
-		case Request::kAfter: f.ok = true; break;
+		case Request::kAfter: f.ok = true; f.after = true; break;
 		}
 		f.done = std::move(r.done);
 		f.probeDone = std::move(r.probeDone);
@@ -288,8 +289,9 @@ void runDone()
 		list.swap(gFinished);
 	}
 	// The dones read render-owned state (the draw's stats, the post's letterbox, the terrain's water chunks): with the draw idle, at the packet boundary (overlap
-	// rule 12; free in off and lockstep). The shot frames only; the dones also write nothing the draw reads (kenshi-k16.2.205.12.108).
-	if (!list.empty()) { logicthread::renderIdle(); }
+	// rule 12; free in off and lockstep). The shot frames only; the dones also write nothing the draw reads (kenshi-k16.2.205.12.108). Not for the `after`
+	// requests every world frame queues (logic_tail's shot sidecar steps: no-ops without a shot, and a shot's own request gates), kenshi-k16.2.205.12.118.
+	for (const Finished& f : list) { if (!f.after) { logicthread::renderIdle(); break; } }
 	for (Finished& f : list)	// in request order; a request a done makes belongs to the packet being filled now
 	{
 		if (f.probeDone) { f.probeDone(f.ok, f.values, f.info); }

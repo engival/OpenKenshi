@@ -205,6 +205,19 @@ std::int32_t RegionEngine::regionOf(double x, double z) const
 	return axis(x) + regionsPerAxis_ * axis(z);
 }
 
+std::vector<std::int32_t> RegionEngine::boxRegions(double x, double z, double half) const
+{
+	const std::int32_t lo = regionOf(x - half, z - half);
+	const std::int32_t hi = regionOf(x + half, z + half);
+	std::vector<std::int32_t> out;
+	for (std::int32_t rz = lo / regionsPerAxis_; rz <= hi / regionsPerAxis_; ++rz)
+	{
+		for (std::int32_t rx = lo % regionsPerAxis_; rx <= hi % regionsPerAxis_; ++rx)
+			out.push_back(rx + regionsPerAxis_ * rz);
+	}
+	return out;
+}
+
 void RegionEngine::regionBounds(std::int32_t region, double& x0, double& z0, double& x1, double& z1) const
 {
 	const std::int32_t cx = region % regionsPerAxis_;

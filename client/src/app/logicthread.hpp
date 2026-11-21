@@ -53,6 +53,7 @@ constexpr double kMissLogMs = 50.0;
 // log counts beside the callback interval.
 struct MissStats { long repeats = 0, runs = 0, longest = 0, printed = 0; double longestMs = 0; };
 MissStats takeMisses();
+bool lastWasRedraw();	// render thread only: the last renderFrame() redrew the drawing packet (overlap, rule 4) instead of taking a new one
 // Logic thread, at the end of a world frame's logic half (kenshi-k16.2.437.1): the packet's logic ms (FramePacket::logicMs), published atomically
 // so the pace log can put it against the render thread's bound; the render thread may read it while logic writes the next one.
 void noteLogicMs(double ms);

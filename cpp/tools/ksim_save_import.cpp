@@ -30,8 +30,8 @@ int main(int argc, char** argv)
 		const std::string arg = argv[i];
 		if (arg == "--no-snap")
 			options.snapFull = false;
-		else if (arg == "--radius" && i + 1 < argc)
-			options.fullRadius = std::atof(argv[++i]);
+		else if (arg == "--platoon-box" && i + 1 < argc)
+			options.platoonBox = std::atof(argv[++i]);
 		else if (arg == "--seed" && i + 1 < argc)
 			seed = std::strtoull(argv[++i], nullptr, 10);
 		else if (arg == "--ticks" && i + 1 < argc)

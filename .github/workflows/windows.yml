@@ -69,3 +69,32 @@ jobs:
             client/build/simdata/
             client/build/OpenKenshi.ldd.txt
           if-no-files-found: error
+  # The rolling 'nightly' pre-release (kenshi-379.40.1): every green push to main replaces OpenKenshi-windows-x64.zip and this platform's note line.
+  # `needs: build` is the green gate (OpenKenshi built, sim tests built, ctest passed, Runtime DLLs passed: any failed step fails the job); the event
+  # and ref conditions keep it off branches and off workflow_dispatch, so a failed or unmerged build leaves the previous asset and line in place.
+  release:
+    needs: build
+    if: needs.build.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    # windows.yml and macos.yml edit the same release, so their release jobs queue behind one another (never cancelled: the other upload would be lost).
+    concurrency:
+      group: nightly-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: OpenKenshi-windows-x64
+          path: dist
+      # Stable name (user 2026-11-20: friends download the same link): the exe at the zip root with its simdata/ beside it.
+      - name: Zip OpenKenshi.exe and simdata/
+        run: |
+          cd dist
+          zip -r -q ../OpenKenshi-windows-x64.zip OpenKenshi.exe simdata
+      - name: Update the nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/nightly.sh windows OpenKenshi-windows-x64.zip

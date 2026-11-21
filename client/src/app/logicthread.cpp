@@ -47,6 +47,10 @@ int gFilled = -1, gDrawing = -1;	// the filled slot (at most one), the drawing s
 unsigned long gFilledCount = 0, gDrawnCount = 0;	// packets logic marked filled, packets the render thread drew
 bool gInDraw = false;	// the render thread is inside hooks.render (set at the flip, cleared after the draw): what renderIdle waits on
 bool gExited = false;	// the logic thread left its loop
+// Overlap's closed gate (rule 12, kenshi-k16.2.205.12.118): logicthread::renderIdle() (a load, the title, the creator, the lab, a dev op) closes it once the render
+// thread is idle, logic's next fill opens it. While it is closed the render thread draws nothing, not even a redraw of its drawing packet.
+bool gClosed = false;
+bool gLastRedraw = false;	// render thread only: set by renderFrame
 
 // Render thread only: the waits that ran out since the last draw.
 int gMissed = 0;
@@ -105,6 +109,7 @@ void logicLoop()
 		gSlot[slot] = Slot::kFilled;
 		gFilled = slot;
 		const unsigned long mine = ++gFilledCount;
+		gClosed = false;	// the packet is the hand-over: the render thread may draw (and redraw) again
 		gCv.notify_all();
 		if (gMode == Mode::kOverlap)
 		{
@@ -175,6 +180,7 @@ bool stopping() { return gStop.load(); }
 
 bool renderFrame(double boundMs)
 {
+	gLastRedraw = false;
 	std::unique_lock<std::mutex> lk(gMutex);
 	const auto bound = std::chrono::duration<double, std::milli>(boundMs);
 	if (!gCv.wait_for(lk, bound, [] { return gFilled >= 0 || gExited; }) || gFilled < 0)
@@ -182,7 +188,20 @@ bool renderFrame(double boundMs)
 		if (gMissed++ == 0) { gMissStart = std::chrono::steady_clock::now(); }
 		gLastBound = boundMs;
 		gRepeats++;
-		return false;
+		// Overlap (rules 4 and 5, full overlap; kenshi-k16.2.205.12.118): no new packet in the bound: draw the drawing packet again. It is
+		// the one slot logic never writes, render_frame reads only the packet and render-owned state, and the resource jobs, the readbacks and
+		// the stats are serial-gated, so a second draw changes nothing but the pixels. Not behind a closed gate (renderIdle): logic is then
+		// writing what the draw reads, and the kept frame shows instead.
+		if (gMode != Mode::kOverlap || gDrawing < 0 || gClosed || gExited) { return false; }
+		gInDraw = true;
+		const int s = gDrawing;
+		lk.unlock();
+		gHooks.render(s);
+		lk.lock();
+		gInDraw = false;
+		gLastRedraw = true;
+		gCv.notify_all();
+		return true;
 	}
 	// The flip (rule 3): filled -> drawing, the slot drawn before -> free, then logic is told (it waits for the draw itself in lockstep).
 	const int s = gFilled;
@@ -202,7 +221,8 @@ bool renderFrame(double boundMs)
 		// jitter of a logic frame that just misses the bound; the count of those goes to the pace log (dev/pacelog.hpp).
 		if (ms > kMissLogMs)
 		{
-			fprintf(stderr, "kclient: lockstep: no packet for %.0f ms: %d frames without a pass showed the last frame\n", ms, gMissed);
+			if (gMode == Mode::kOverlap) { fprintf(stderr, "kclient: lockstep: no packet for %.0f ms: %d frames redrew the last packet (overlap)\n", ms, gMissed); }
+			else { fprintf(stderr, "kclient: lockstep: no packet for %.0f ms: %d frames without a pass showed the last frame\n", ms, gMissed); }
 			gPrinted++;
 		}
 		gMissed = 0;
@@ -219,10 +239,11 @@ void renderIdle()
 {
 	if (!tLogic || gMode != Mode::kOverlap) { return; }	// gMode is written before the thread is made, never after
 	std::unique_lock<std::mutex> lk(gMutex);
-	if (!gInDraw && gFilled < 0) { return; }
+	if (!gInDraw && gFilled < 0) { gClosed = true; return; }
 	const auto t0 = std::chrono::steady_clock::now();
 	// A filled slot here (not on the frame path: logic fills only at its frame's end) is waited out too: taken, drawn, then idle.
 	while (!gStop.load() && (gInDraw || gFilled >= 0)) { gCv.wait_for(lk, kLogicBound, [] { return gStop.load() || (!gInDraw && gFilled < 0); }); }
+	gClosed = true;	// still under the mutex: no redraw starts between the wait's end and logic's writes
 	lk.unlock();
 #ifdef KCLIENT_DEV_TOOLS
 	threadsplit::gateWait(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
@@ -264,6 +285,8 @@ IdleStats takeIdle()
 	gIdle = {};
 	return s;
 }
+
+bool lastWasRedraw() { return gLastRedraw; }
 
 MissStats takeMisses()
 {

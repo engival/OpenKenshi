@@ -2019,20 +2019,20 @@ int main(int argc, char** argv)
 			test::require(writable->lockAttempts == 0, "the resumed pick rolled before the shared 5 s was up");
 			d.run(20); // past 5 s: the attempt is made
 			test::require(writable->lockAttempts == 1, "the resumed pick did not roll at 5 s of shared time");
-			// Below the skill floor (k16.6.377): walked to, no roll, event 13 result 8 on the wire.
+			// Below the skill floor (rwh.178, k16.6.501): the goal cannot be planned: no walk, no roll, no event 13; the running pick is not touched.
+			d.order(4, [&](ks::BinaryWriter& w) { w.u16("n", 1); w.u64("id", pid); w.u8("hold", 0); });
+			d.run(2);
 			writable->state = 2;
 			writable->lockLevel = p.skills.lockpicking + 60.0; // level - skill > 41.7: chance < 5%
 			writable->lockElapsed = 0.0;
 			writable->lockAttempts = 0;
 			++writable->version;
+			const auto hasOrder = [&](std::uint64_t id) { bool has = false; d.sim->world().ecs().each([&](const state::Id& i, const state::Fighter&, const state::InteractTask&) { has = has || i.value == id; }); return has; };
 			const std::size_t fromHard = d.done.size();
 			d.expectApplied(d.interact(pid, doorId, 3));
-			// The resumed pick above is still running: the new order cancels it (result 5) before this one ends.
-			const auto endedHard = [&] { for (std::size_t i = fromHard; i < d.done.size(); ++i) if (d.done[i].target == doorId && d.done[i].result != InteractEvent::kCancelled) return std::optional<Rig::Done>(d.done[i]); return std::optional<Rig::Done>(); };
-			for (int waited = 0; !endedHard() && waited < 800; ++waited)
-				d.tick();
-			const auto hard = endedHard();
-			test::require(hard && hard->action == 3 && hard->result == 8, "a door lock below the skill floor did not end with event 13 result 8");
+			d.run(20 * 10);
+			test::require(d.done.size() == fromHard, "a door lock below the skill floor answered with an event 13");
+			test::require(!hasOrder(pid), "a door lock below the skill floor started an order");
 			test::require(writable->lockAttempts == 0 && writable->state == 2, "a too-hard door pick rolled or unlocked");
 			std::cout << "lockpick: an interrupted pick keeps its elapsed time on the lock\n";
 		}
@@ -2627,7 +2627,7 @@ int main(int argc, char** argv)
 					d.tick();
 				const auto none = d.doneFor(full, from3);
 				test::require(none && none->result == InteractEvent::kRefused && container(full).get<state::Inventory>()->carried(katanaSid) == 1, "a loot with no room did not end with result 1");
-				// A lock below the skill floor (k16.6.377): the order walks to the box and ends event 13 result 8 (too hard) on the wire, no roll.
+				// A lock below the skill floor (rwh.178, k16.6.501): unplannable, no order, no event 13, no roll.
 				{
 					state::Container* lockedBox = const_cast<state::Container*>(container(full).get<state::Container>());
 					lockedBox->locked = true;
@@ -2635,11 +2635,10 @@ int main(int argc, char** argv)
 					lockedBox->lockAttempts = 0;
 					stand(full, 2.0);
 					const std::size_t from4 = d.done.size();
+					const auto hasOrder = [&](std::uint64_t id) { bool has = false; d.sim->world().ecs().each([&](const state::Id& i, const state::Fighter&, const state::InteractTask&) { has = has || i.value == id; }); return has; };
 					d.expectApplied(d.interact(pid, full, 3));
-					for (int waited = 0; !d.doneFor(full, from4) && waited < 400; ++waited)
-						d.tick();
-					const auto hard = d.doneFor(full, from4);
-					test::require(hard && hard->action == 3 && hard->result == 8 && hard->result == InteractEvent::kTooHard, "a container lock below the skill floor did not end with event 13 result 8");
+					d.run(20 * 10);
+					test::require(d.done.size() == from4 && !hasOrder(pid), "a container lock below the skill floor started an order or answered");
 					test::require(lockedBox->lockAttempts == 0 && lockedBox->locked, "a too-hard container pick rolled or unlocked");
 					lockedBox->locked = false;
 				}

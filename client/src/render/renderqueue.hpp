@@ -73,7 +73,9 @@ namespace rq
 	public:
 		Handle() : s_(std::make_shared<State>()) {}
 		bool ready() const { return s_->ready.load(std::memory_order_acquire); }
-		const T& get() const { return s_->value; }	// render side, or logic after ready()
+		// The value once published, T{} before: logic reads a handle whose job may be running on the render thread (overlap without the gate, kenshi-k16.2.205.12.118:
+		// TSan found chardraw.cpp's key read racing publish), so the unready read goes through the acquire load, never to the value being written.
+		const T& get() const { static const T kUnset{}; return s_->ready.load(std::memory_order_acquire) ? s_->value : kUnset; }
 		void publish(const T& v) const	// render side, inside the job
 		{
 			s_->value = v;

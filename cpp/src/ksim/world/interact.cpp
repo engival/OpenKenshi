@@ -268,9 +268,8 @@ std::string checkInteract(const flecs::world& ecs, const CombatArena& arena, std
 	}
 	case InteractAction::Lockpick:
 	{
-		// A locked door or container; any hands (the chance is the exe's, door_plan.hpp). The order is accepted whatever the chance and walks
-		// to the lock; a chance below the floor never starts the pick there (stepDoorSteps: no crime, no roll, the order ends refused,
-		// kenshi-k16.6.366). UNSURE: what the original's order does instead.
+		// A locked door or container; any hands (the chance is the exe's, door_plan.hpp). A chance below the floor is accepted here and
+		// dropped by pickUnplannable (no walk, no pick, no word: the goal cannot be planned, rwh.178).
 		if (target.kind == InteractKind::Container)
 		{
 			const state::Container* box = flecs::entity(ecs.c_ptr(), target.entity).get<state::Container>();
@@ -1170,6 +1169,21 @@ void Simulation::cancelOrders(std::uint64_t id)
 	}
 }
 
+bool pickUnplannable(const flecs::world& ecs, const state::Fighter& actor, const InteractTarget& target, std::uint8_t action)
+{
+	if (static_cast<InteractAction>(action) != InteractAction::Lockpick || target.entity == 0)
+		return false;
+	const flecs::entity entity(ecs.c_ptr(), target.entity);
+	double level = 0.0;
+	if (const state::Container* box = entity.get<state::Container>())
+		level = box->lockLevel;
+	else if (const state::Door* door = entity.get<state::Door>())
+		level = door->lockLevel;
+	else
+		return false;
+	return !sufficientLockSkill(level, actor.skills.lockpicking, false);
+}
+
 void Simulation::beginInteract(std::uint64_t id, std::uint64_t target, std::uint8_t action, std::uint32_t seq,
 	std::vector<state::RoutePoint> route, bool approach, std::uint8_t flags)
 {
@@ -1251,6 +1265,8 @@ void Simulation::stepOrderQueues()
 					return Route{true};
 				return routeToInteract(*navigation_, fighter, target, next.action, false, body(fighter));
 			}();
+			if (next.kind == 2 && pickUnplannable(ecs, fighter, findInteractTarget(ecs, combat_.get(), next.target, this), next.action))
+				continue; // the goal cannot be planned (rwh.178): the queued order is never started, and nothing is said
 			if (next.kind == 2)
 			{
 				// Gone or refused: the arrival check says so with the proper event 13. A target out of reach by no route: unreachable.

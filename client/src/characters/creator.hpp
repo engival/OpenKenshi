@@ -25,6 +25,7 @@ public:
 	bool apply(std::string& err);			// rebuilds the preview from spec()
 	// A new race or sex resets the race-dependent choices (head, hair, beard, hair colour, sliders); false (nothing changed) for an unknown race.
 	bool setRace(const std::string& race, bool female, std::string& err);
+	bool reset(std::string& err);	// the RESET button: the default appearance, keeping hair, beard, hair colour and Age (kenshi-rwh.233); apply() after
 	// A non-editable member's preview (an animal in the squad): the race's default look in the creator scene (the edited member's look is the
 	// host's, so nothing is lost), keeping the preview's place and its standing idle. The wire Spec the sim sent is not touched. apply() after.
 	bool defaultLook(const std::string& race, bool female, std::string& err);

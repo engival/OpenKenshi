@@ -1709,6 +1709,7 @@ void run_script(bool post)
 				printf("  foliage: %zu cells resident (%zu pending), %zu instances, %zu groups; drawn %zu instances in %zu groups, %zu draws; generated %zu cells, gen avg %.0f max %.0f ms/cell (worker), %zu unresolved instances\n",
 					fs.cellsLoaded, fs.cellsPending, fs.instancesLoaded, fs.groupsLoaded, fs.instancesDrawn, fs.groupsDrawn, fs.draws, fs.generated,
 					fs.generated ? fs.genMs / fs.generated : 0.0, fs.genMaxMs, fs.unresolved);
+				printf("  foliage draws: %zu submesh draws (one per node: %zu); shadow candidates merged/flat L0 %zu/%zu L1 %zu/%zu L2 %zu/%zu\n", fs.draws, fs.drawsFlat, fs.shadowCands[0], fs.shadowFlat[0], fs.shadowCands[1], fs.shadowFlat[1], fs.shadowCands[2], fs.shadowFlat[2]);
 				printf("  foliage parts: %zu submesh draws held for a streaming diffuse, %zu drawn on a not-ready diffuse\n", fs.held, fs.greyDraws);
 				printf("  foliage: %s; %zu of %zu resident instances are children\n", app.foliage.cellReport(app.pos).c_str(), fs.children, fs.instancesLoaded);
 				printf("  foliage CPU this frame: cull+list %.2f ms, cell upload %.2f ms, draw submit %.2f ms; whole frame CPU %.2f ms (smoothed %.2f)\n", fs.cullMs, fs.uploadMs, framestats::stats().foliage.renderMs, framestats::stats().cpu.lastMs, framestats::stats().cpu.ms);
@@ -2078,7 +2079,7 @@ ui::CreatorActions creator_actions()
 	// ui::CreatorPage and Creator::Part list the tabs in the same order
 	act.randomize = [](int page) { app.creator.randomize(std::random_device()(), page); creator_apply(); };
 	act.randomizeAll = []() { app.creator.randomize(std::random_device()()); creator_apply(); };
-	act.resetDefaults = []() { creator_race(app.creator.spec().race, app.creator.spec().female); };
+	act.resetDefaults = []() { std::string err; if (!app.creator.reset(err)) { ui::toast(err); return; } creator_apply(); };
 	act.importCharacter = []() { ui::toast("import: not yet"); };
 	act.exportCharacter = []() { printf("creator: export --character '%s'\n", app.creator.specString().c_str()); ui::toast("exported to the log"); };
 	act.done = []()
@@ -2780,6 +2781,19 @@ static double lockstep_bound_ms()
 	return std::clamp(ms, 4.0, 20.0);
 }
 
+// Overlap's frame limiter (rule 11, kenshi-k16.2.205.12.118): gfx.fps_cap paces the render thread, at its frame start before the flip; one cap step at most, so
+// rule 4's bound holds. A frame more than a step late restarts the schedule.
+static void overlap_limiter()
+{
+	const int cap = kFpsCap.get();
+	if (cap <= 0) { return; }
+	static std::chrono::steady_clock::time_point next;
+	const auto now = std::chrono::steady_clock::now();
+	const auto step = std::chrono::nanoseconds(1000000000 / cap);
+	if (now < next) { std::this_thread::sleep_until(next); next += step; }
+	else { next = now + step; }
+}
+
 // The render thread's frame once the logic thread runs: wait about one refresh for a packet (lockstep_bound_ms), draw it and keep the composed
 // frame (lastframe.hpp); no packet in time: no pass, the kept frame is shown again (in lockstep a redraw would read app. while logic writes it).
 static void frame_lockstep()
@@ -2787,11 +2801,22 @@ static void frame_lockstep()
 #ifdef KCLIENT_DEV_TOOLS
 	logicthread::renderStallPoint();	// the script's `renderstall MS`: a window held in its swap
 #endif
+	if (logicthread::mode() == logicthread::Mode::kOverlap) { overlap_limiter(); }
+#ifdef KCLIENT_DEV_TOOLS
+	// Dev check of overlap's redraw (kenshi-k16.2.205.12.118): KCLIENT_REDRAW_SHOTS=1 moves the pointer a step every render frame (it is render-live: the
+	// draw reads pointer::x/y, not the packet) and, with KCLIENT_LOCKSTEP_STALL_SHOTS=DIR, writes the back buffer of the 1st and the 25th redraw.
+	static const bool redrawShots = std::getenv("KCLIENT_REDRAW_SHOTS") != nullptr;
+	static int redrawN = 0, frameN = 0;
+	if (redrawShots) { frameN++; pointer::set(200.0f + 8.0f * (float)(frameN % 100), 360.0f); }
+#endif
 	const double bound = lockstep_bound_ms();
 	const bool drew = logicthread::renderFrame(bound);
 	// The frame's frames without a pass and the logic half beside the bound, into the pace log's once-a-second line (kenshi-k16.2.437.1): the
 	// one-frame repeats do not print (logicthread::kMissLogMs), so this is where they are read.
 	pacelog::noteLockstep(logicthread::takeMisses(), logicthread::lastLogicMs(), bound);
+#ifdef KCLIENT_DEV_TOOLS
+	if (redrawShots && drew && logicthread::lastWasRedraw() && (++redrawN == 1 || redrawN == 25)) { lastframe::stallShot(); }
+#endif
 	if (drew) { lastframe::keep(); pacelog::note(true); return; }
 	lastframe::show();
 	pacelog::note(false);

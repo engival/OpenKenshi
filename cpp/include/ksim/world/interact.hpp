@@ -269,6 +269,10 @@ void clearReturnedMark(state::Inventory::Entry& piece, const std::string& holder
 std::string checkInteract(const flecs::world& ecs, const CombatArena& arena, std::uint64_t actor, const InteractTarget& target, std::uint8_t action,
 	std::uint8_t flags = 0, const kdata::GameData* data = nullptr, const class Simulation* sim = nullptr);
 
+// A lockpick order whose chance is at or below the planner's floor: the original's goal (iHaveSufficientLockSkill) cannot be planned, so the
+// order starts no walk and no pick, says nothing, and leaves the character as it was (kenshi-rwh.178). The sim drops such an order.
+bool pickUnplannable(const flecs::world& ecs, const state::Fighter& actor, const InteractTarget& target, std::uint8_t action);
+
 // Makes a state::Door entity for every placed door that has polygons in the navmesh (Hub scenarios call it once after the
 // characters spawn). Position and use point: the centre of the door's polygons. Initial state: Closed, or Locked for a door
 // whose record says `always locks` (UNSURE: the data has no other initial state for a placed door; SQUAD_TEMPLATE

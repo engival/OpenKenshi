@@ -26,9 +26,10 @@ struct Options
 	// Full squads' members (and the player's) are put on the navmesh's nearest walkable ground within 100 u of their saved spot (needs a navigation attached before the
 	// import, else no effect); off (--no-snap), they stand where the save put them. Tokens are never snapped.
 	bool snapFull = true;
-	// A squad whose position is within this distance of a player character becomes Full detail (UNSURE: the sim's own rule is the player area, the square
-	// of regions round the player's; one region is 4608 u).
-	double fullRadius = 4608.0;
+	// A squad becomes Full detail by the original's loaded-zone rule (findings/rwh37, rwh211): its +-platoonBox box overlaps a loaded zone, the 3x3 zones
+	// round the camera focus plus the zones a +-characterBox box round each player character overlaps. No radius.
+	double platoonBox = 170.0;
+	double characterBox = 340.0;
 };
 
 struct PlatoonResult

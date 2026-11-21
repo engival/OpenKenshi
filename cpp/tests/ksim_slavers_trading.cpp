@@ -78,13 +78,18 @@ void play(const std::uint64_t seed)
 	int bossAt = -1;
 	int hunters = 0;
 	bool down = false;
+	std::uint64_t downTick = 0; // the tick the player first went down: the goals after it are the squad's answer to the down
 	bool woke = false; // the aid woke the downed player before the capture (package order: Medic 58 at 100 over CAPTURE_NEW_SLAVES 167 at 24, k16.6.287)
 	// The guards carry their kits, so they first-aid the downed player before the capture: the run goes on past 1500 ticks until the cuff (or a wake).
 	for (int i = 0; i < 1500 || (i < 6000 && !woke && sim.combat()->find(kPlayer)->slaveState == 0); ++i)
 	{
 		sim.tick();
 		woke = woke || (down && !sim.combat()->find(kPlayer)->unconscious && sim.combat()->find(kPlayer)->slaveState == 0);
-		down = down || sim.combat()->find(kPlayer)->unconscious;
+		if (!down && sim.combat()->find(kPlayer)->unconscious)
+		{
+			down = true;
+			downTick = sim.clockTick();
+		}
 		if (i < 100 || down)
 			continue;
 		int hunting = 0;
@@ -106,7 +111,17 @@ void play(const std::uint64_t seed)
 	{
 		return std::count_if(lines.begin(), lines.end(), [&](const std::string& line) { return line.find(needle) != std::string::npos; });
 	};
-	test::require(count("fight goal 15 member") >= 1, "a fight goal on the downed player" + tag);
+	// Before the down the leader takes 15 (rwh.89 run 1); once the player is down the combat picker drops it (dt8_crawler section 3) and nobody picks it
+	// again: the squad takes 167 / 181 / 166 / 58. A fight goal on the downed player after the down is the wrong rule.
+	test::require(count("fight goal 15 member") >= 1, "the leader took a fight goal before the down" + tag);
+	const auto after = [&](const std::string& needle, const std::string& also)
+	{
+		return std::count_if(lines.begin(), lines.end(), [&](const std::string& line)
+		{
+			return std::stoull(line.substr(5)) > downTick && line.find(needle) != std::string::npos && line.find(also) != std::string::npos;
+		});
+	};
+	test::require(after("fight goal", " target " + std::to_string(kPlayer)) == 0, "no fight goal on the downed player after the down" + tag);
 	if (woke)
 	{
 		// The first aid (58) came before 167 and woke the player: no capture to follow in this run (the original's order, not a gap).

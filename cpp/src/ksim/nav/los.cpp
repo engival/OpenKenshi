@@ -101,6 +101,7 @@ void LineOfSight::ensure(std::int32_t region)
 	// The foliage whose collision a ray can hit: the rocks and trunks of the zone cells the region overlaps (the scatter is the
 	// exe's, kworld::generateFoliage; the instance's world transform is addFoliage's placeModel). The `navmesh cutter` discs (use
 	// Projected, a unit high) are the bake's, not a hull.
+	std::vector<kworld::WorldShape> foliageShapes;
 	if (foliage_ == nullptr)
 		foliage_ = std::make_unique<FoliageSource>(FoliageSource{kworld::BiomeMap::load(dataDir_ + "/newland/land/biomemap.png"),
 			kworld::Features::join(gameData_, dataDir_), kworld::Towns::join(gameData_, dataDir_)});
@@ -110,10 +111,11 @@ void LineOfSight::ensure(std::int32_t region)
 		for (int cx = lowCell.x; cx <= highCell.x; ++cx)
 			for (const kworld::FoliageInstance& tree : kworld::generateFoliage({cx, cz}, *terrain_, foliage_->biomes, gameData_, foliage_->features, foliage_->towns))
 			{
-				const std::size_t before = shapes.size();
-				library_->addFoliage(tree, shapes, coverage);
-				shapes.erase(std::remove_if(shapes.begin() + static_cast<std::ptrdiff_t>(before), shapes.end(),
-					[](const kworld::WorldShape& shape) { return shape.use == kworld::NavUse::Projected; }), shapes.end());
+				std::vector<kworld::WorldShape> rock;
+				library_->addFoliage(tree, rock, coverage);
+				for (kworld::WorldShape& shape : rock)
+					if (shape.use != kworld::NavUse::Projected)
+						foliageShapes.push_back(std::move(shape));
 			}
 	// Keep only what can be seen from this region: a shape whose bounds overlap it (a building's wall that straddles the
 	// border is in both regions). A doorway's leaf is its own tree (door key 0 is a ruin's doorway: no door, always open).
@@ -139,6 +141,8 @@ void LineOfSight::ensure(std::int32_t region)
 		built.doors.back().tree.build(leaf);
 	}
 	built.tree.build(kept);
+	std::erase_if(foliageShapes, [&](const kworld::WorldShape& shape) { return shape.max[0] < x0 || shape.min[0] > x1 || shape.max[2] < z0 || shape.min[2] > z1; });
+	built.foliage.build(foliageShapes);
 	kept.erase(std::remove_if(kept.begin(), kept.end(), [](const kworld::WorldShape& shape) { return shape.use != kworld::NavUse::Walkable; }), kept.end());
 	built.ground.build(kept);
 	regions_.emplace(region, std::move(built));
@@ -162,7 +166,7 @@ std::size_t LineOfSight::memoryBytes() const noexcept
 	std::size_t bytes = 0;
 	for (const auto& [region, entry] : regions_)
 	{
-		bytes += entry.tree.memoryBytes() + entry.ground.memoryBytes();
+		bytes += entry.tree.memoryBytes() + entry.foliage.memoryBytes() + entry.ground.memoryBytes();
 		for (const DoorLeaf& leaf : entry.doors)
 			bytes += leaf.tree.memoryBytes();
 	}
@@ -204,7 +208,7 @@ std::size_t LineOfSight::triangles(std::int32_t region) const
 	const auto it = regions_.find(region);
 	if (it == regions_.end())
 		return 0;
-	std::size_t count = it->second.tree.triangleCount();
+	std::size_t count = it->second.tree.triangleCount() + it->second.foliage.triangleCount();
 	for (const DoorLeaf& leaf : it->second.doors)
 		count += leaf.tree.triangleCount();
 	return count;
@@ -236,7 +240,7 @@ bool LineOfSight::visible(std::uint64_t observer, const state::Fighter& a, std::
 		// Exact ends only: a few units of tolerance let a save/load's fresh cache disagree with the straight run's warm one
 		// (four hash fixtures failed), because an answer cast at a slightly different position can differ. The pair's scan
 		// cadence (perception's 0.5-1.5 s per character) is what keeps the casts down for walkers.
-		const bool same = answer.ends[0] == a.x && answer.ends[1] == a.y && answer.ends[2] == a.z
+		const bool same = answer.indoors == a.indoors && answer.ends[0] == a.x && answer.ends[1] == a.y && answer.ends[2] == a.z
 			&& answer.ends[3] == b.x && answer.ends[4] == b.y && answer.ends[5] == b.z;
 		if (same && now >= answer.tick && now - answer.tick < kPairTicks)
 		{
@@ -246,11 +250,11 @@ bool LineOfSight::visible(std::uint64_t observer, const state::Fighter& a, std::
 	}
 	const std::array<double, 3> from{a.x, a.y + kEyeHeight, a.z};
 	const std::array<double, 3> to{b.x, b.y + kEyeHeight, b.z};
-	const bool open = !trace(from, to).blocked;
+	const bool open = !trace(from, to, a.indoors ? kSightIndoors : kSightOutdoors).blocked;
 	++pairCasts_;
 	if (pairs_.size() >= kPairCacheMax)
 		pairs_.clear(); // OURS: a long session's cache drops whole rather than growing (rare; the next scan re-casts)
-	pairs_[{key.first, key.second}] = PairAnswer{ends, now, open};
+	pairs_[{key.first, key.second}] = PairAnswer{ends, now, open, a.indoors};
 	return open;
 }
 
@@ -263,12 +267,12 @@ LineOfSight::Hit LineOfSight::firstBlocker(const std::array<double, 3>& muzzle, 
 {
 	if (!loaded(regionOf(target.x, target.z)))
 		return {}; // no hull tree there: coarse, nothing blocks
-	return trace(muzzle, {target.x, target.y + kEyeHeight, target.z});
+	return trace(muzzle, {target.x, target.y + kEyeHeight, target.z}, kGunLine);
 }
 
-LineOfSight::Hit LineOfSight::trace(const std::array<double, 3>& from, const std::array<double, 3>& to) const
+LineOfSight::Hit LineOfSight::trace(const std::array<double, 3>& from, const std::array<double, 3>& to, Layers layers) const
 {
-	return traceImpl(from, to, false);
+	return traceImpl(from, to, false, layers);
 }
 
 LineOfSight::Hit LineOfSight::traceGround(const std::array<double, 3>& from, const std::array<double, 3>& to) const
@@ -276,7 +280,7 @@ LineOfSight::Hit LineOfSight::traceGround(const std::array<double, 3>& from, con
 	return traceImpl(from, to, true);
 }
 
-LineOfSight::Hit LineOfSight::traceImpl(const std::array<double, 3>& from, const std::array<double, 3>& to, bool groundOnly) const
+LineOfSight::Hit LineOfSight::traceImpl(const std::array<double, 3>& from, const std::array<double, 3>& to, bool groundOnly, Layers layers) const
 {
 	++rays_;
 	Hit hit;
@@ -301,8 +305,13 @@ LineOfSight::Hit LineOfSight::traceImpl(const std::array<double, 3>& from, const
 				best = t;
 				hullHit = true;
 			}
+			if (!groundOnly && layers.foliage && it->second.foliage.trace(from, to, t) && t < best)
+			{
+				best = t;
+				hullHit = true;
+			}
 			for (const DoorLeaf& leaf : it->second.doors)
-				if (!groundOnly && !doorOpen(leaf.key) && leaf.tree.trace(from, to, t) && t < best)
+				if (layers.doors && !groundOnly && !doorOpen(leaf.key) && leaf.tree.trace(from, to, t) && t < best)
 				{
 					best = t;
 					hullHit = true;

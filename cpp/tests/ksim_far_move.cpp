@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <numbers>
 #include <set>
 #include <sstream>
 #include <string>
@@ -129,8 +130,8 @@ int main(int argc, char** argv)
 						w.slowTicks += f->forwardSpeed < 0.25 * w.peak; // corners dip to ~1/3 (a gait turn); a leg-end brake goes to 0
 						w.emptyTicks += f->route.empty();
 						double d = std::fabs(f->yaw - lastYaw);
-						d = std::min(d, 2.0 * M_PI - d);
-						w.reversals += d > M_PI / 2.0;
+						d = std::min(d, 2.0 * std::numbers::pi - d);
+						w.reversals += d > std::numbers::pi / 2.0;
 					}
 					lastYaw = f->yaw;
 				}

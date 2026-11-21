@@ -323,7 +323,7 @@ static void logic_paths(FramePacket& pk)
 	pk.width = windowgate::width();	// the applied size the packet is built for: the draw sizes its targets from it, never from the live window (RENDER_THREAD.md 7.1 rule 10)
 	pk.height = windowgate::height();
 	if (windowgate::appliedThisFrame()) { app.loadScreen.relayout(); }	// the load's text re-bakes at the applied height (a no-op when no load screen is up)
-	if (const int cap = kFpsCap.get())	// the frame limiter: sleep to the next slot; more than a frame late restarts the schedule
+	if (const int cap = (logicthread::running() && logicthread::mode() == logicthread::Mode::kOverlap) ? 0 : kFpsCap.get())	// the frame limiter (overlap: the render thread's, frame_lockstep, rule 11): sleep to the next slot; more than a frame late restarts the schedule
 	{
 		static std::chrono::steady_clock::time_point next;
 		const auto now = std::chrono::steady_clock::now();
@@ -529,9 +529,9 @@ static void logic_paths(FramePacket& pk)
 	dev::posFrame(app.sim, app.chars, app.pos, app.sim.active() ? app.sim.dtSim() : 0.0);
 	CPUSTAGE("sounds+trails");
 	// The frame's second half starts here (overlap review .85 section 1.1, part B): the writes to what the draw reads come after this line.
-	// Overlap (rule 12): the gate; the render thread is outside render_frame from here until this packet is filled. Off / lockstep: free.
+	// Overlap, full (kenshi-k16.2.205.12.118): no gate. Everything below writes only logic's own state or what the packet carries; the render
+	// thread may be drawing (or redrawing) the previous packet meanwhile (RENDER_THREAD.md 7.1 rule 12). `stall MS gate` / `stall MS b` both sleep here.
 	stall_point(0);
-	logicthread::renderIdle();
 	stall_point(1);
 	if (app.shadowFlip) { app.shadow.enabled = !app.shadow.enabled; app.shadowFlip = false; }	// F3 (debug_toggle)
 	app.animTime += app.sky.clock.paused ? 0.0 : dt;	// MINE: paused freezes the world's motion (user 2026-11-09); not scaled by the game speed

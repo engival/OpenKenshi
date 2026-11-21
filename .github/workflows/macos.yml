@@ -29,3 +29,58 @@ jobs:
       - name: ctest -LE slow
         if: always()
         run: ctest --test-dir cpp/build -LE slow --output-on-failure -j3
+      # The friend-facing zip (kenshi-379.40.1): a dev-off OpenKenshi runs its embedded server from simdata/ beside it, so the zip is the binary,
+      # simdata/, the bundled Homebrew dylibs and a README. Unsigned (right-click > Open, or xattr -dr com.apple.quarantine): no signing, no notarisation.
+      - name: Stage the app
+        run: |
+          mkdir -p dist
+          cp client/build/OpenKenshi dist/
+          cp -R client/build/simdata dist/simdata
+          cat > dist/README.txt <<'EOF'
+          OpenKenshi nightly (macOS arm64)
+
+          This is a pre-release built from the latest code: expect bugs.
+          Kenshi's game data is not included; point it at your own install (--data).
+
+          Keep OpenKenshi, simdata/ and lib/ in this folder and run it from here:
+          open Terminal in this folder and run ./OpenKenshi
+
+          The build is not signed or notarised, so macOS refuses it the first time.
+          Right-click (Control-click) OpenKenshi > Open, or run
+          xattr -dr com.apple.quarantine OpenKenshi
+          in this folder, then run it again.
+          EOF
+      # Homebrew's libvorbis / libogg by absolute path would not resolve on a friend's Mac: copy them into lib/ on @executable_path, re-sign ad-hoc.
+      - name: Bundle the Homebrew dylibs
+        run: .github/macos_bundle.sh bundle dist
+      # The macOS Runtime DLLs step: a load command outside /usr/lib, /System and the bundle fails the build, so a broken zip never reaches the release.
+      - name: Runtime libraries (otool -L)
+        run: .github/macos_bundle.sh check dist
+      - name: Zip OpenKenshi-macos-arm64.zip
+        run: cd dist && zip -r -q ../OpenKenshi-macos-arm64.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenKenshi-macos-arm64.zip
+          path: OpenKenshi-macos-arm64.zip
+          if-no-files-found: error
+  # The rolling 'nightly' pre-release (kenshi-379.40.1), as windows.yml: `needs: build` is the green gate and the if: keeps it to a push on main.
+  release:
+    needs: build
+    if: needs.build.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    # windows.yml and macos.yml edit the same release, so their release jobs queue behind one another (never cancelled: the other upload would be lost).
+    concurrency:
+      group: nightly-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: OpenKenshi-macos-arm64.zip
+      - name: Update the nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/nightly.sh macos OpenKenshi-macos-arm64.zip

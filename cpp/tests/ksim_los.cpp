@@ -685,25 +685,24 @@ int main(int argc, char** argv)
 				doorEntity.get_mut<state::Door>()->state = value;
 				rig.sim->tick(); // syncLineOfSight reads the doors
 			};
-			// The shut door: its leaf stops the line, as a wall does.
+			// The leaf is group 5, in no sight / gun / bolt mask (rwh.199): a shut or locked door passes the eye line and the shot; only the
+			// pick ray (kPick) is stopped by it, while shut. The wall around the doorway is what blocks.
 			setDoor(1);
 			test::require(!los.doorOpen(door.key), "a shut door reads open for sight");
-			const LineOfSight::Hit shut = los.trace(near, far);
-			test::require(shut.blocked && shut.hull && shut.t > 0.0 && shut.t < 1.0, "a shut door's leaf does not block the eye line");
-			test::require(!los.visible(950, inside, 951, outside), "perception sees through a shut door");
+			const LineOfSight::Hit shut = los.trace(near, far, LineOfSight::kPick);
+			test::require(shut.blocked && shut.hull && shut.t > 0.0 && shut.t < 1.0, "a shut door's leaf does not stop the pick ray");
+			test::require(!los.trace(near, far).blocked, "a shut door's leaf blocks the eye line (group 5 is in no sight mask)");
+			test::require(!los.trace(near, far, LineOfSight::kBolt).blocked, "a shut door's leaf blocks a bolt");
+			test::require(los.visible(950, inside, 951, outside), "perception is stopped by a shut door's leaf");
 			setDoor(2);
-			test::require(!los.visible(950, inside, 951, outside), "perception sees through a locked door");
-			// Open (0) and broken (3) pass it; the pair cache answers afresh the same tick (it is dropped when the door changes).
+			test::require(los.visible(950, inside, 951, outside), "perception is stopped by a locked door's leaf");
 			setDoor(0);
 			test::require(los.doorOpen(door.key), "an open door reads shut for sight");
-			test::require(!los.trace(near, far).blocked, "an open door's leaf still blocks the eye line");
-			test::require(los.visible(950, inside, 951, outside), "perception does not see through an open door (or the pair cache kept the shut answer)");
-			setDoor(1);
-			test::require(!los.visible(950, inside, 951, outside), "a door that shut again does not block a warm pair");
+			test::require(!los.trace(near, far, LineOfSight::kPick).blocked, "an open door's leaf still stops the pick ray");
 			setDoor(3);
-			test::require(los.visible(950, inside, 951, outside), "perception does not see through a broken door");
+			test::require(!los.trace(near, far, LineOfSight::kPick).blocked, "a broken door's leaf still stops the pick ray");
 			setDoor(1);
-			std::printf("door: leaf %zu triangles; shut/locked block, open/broken pass, the pair cache follows (first hit t %.3f)\n",
+			std::printf("door: leaf %zu triangles; the eye line passes it in every state, the pick ray stops at a shut one (t %.3f)\n",
 				los.doorLeafTriangles(door.key), shut.t);
 		}
 
@@ -748,14 +747,17 @@ int main(int argc, char** argv)
 				++tried;
 				kworld::HullTree own;
 				own.build(shapes);
-				const double mid = 0.5 * (lo[1] + hi[1]);
+				// Rocks sit on slopes: the line runs level, above the ground at both ends and still inside the rock's height.
+				const double mid = std::max({ 0.5 * (lo[1] + hi[1]), terrain.terrainHeight(lo[0], 0.5 * (lo[2] + hi[2])) + 2.0, terrain.terrainHeight(hi[0], 0.5 * (lo[2] + hi[2])) + 2.0 });
+				if (mid > hi[1] - 1.0)
+					continue;
 				const double cx = 0.5 * (lo[0] + hi[0]);
 				const double cz = 0.5 * (lo[2] + hi[2]);
 				const double reachX = 0.5 * (hi[0] - lo[0]) + 10.0;
 				const std::array<double, 3> from{ cx - reachX, mid, cz };
 				const std::array<double, 3> to{ cx + reachX, mid, cz };
 				double t = 0.0;
-				if (own.trace(from, to, t) && terrain.terrainHeight(from[0], from[2]) < mid - 1.0 && terrain.terrainHeight(to[0], to[2]) < mid - 1.0)
+				if (own.trace(from, to, t) && !los.trace(from, to).blocked && terrain.terrainHeight(from[0], from[2]) < mid - 1.0 && terrain.terrainHeight(to[0], to[2]) < mid - 1.0)
 					best = Rock{ tree.recordID, from, to, volume };
 			}
 			test::require(best.volume > 0.0, "no foliage rock with collision in the Bar's zone cell (" + std::to_string(tried) + " tried)");
@@ -767,11 +769,17 @@ int main(int argc, char** argv)
 			east.x = best.to[0];
 			east.z = best.to[2];
 			test::require(los.loaded(los.regionOf(west.x, west.z)), "the rock's region is not loaded");
-			const LineOfSight::Hit stop = los.trace(best.from, best.to);
-			test::require(stop.blocked && stop.hull && stop.t > 0.0 && stop.t < 1.0, "a foliage rock (" + best.record + ") does not block the eye line across it");
-			test::require(!los.visible(960, west, 961, east), "perception sees through a foliage rock");
-			test::require(los.shotBlocked({ best.from[0], best.from[1], best.from[2] }, east), "a shot passes through a foliage rock");
-			std::printf("rock: %s (volume %.0f) blocks sight and a shot\n", best.record.c_str(), best.volume);
+			// Group 6 / 14: outdoors in neither the sight nor the gun mask; the indoor sight mask and the bolt mask have it (rwh.199).
+			const LineOfSight::Hit stop = los.trace(best.from, best.to, LineOfSight::kSightIndoors);
+			test::require(stop.blocked && stop.hull && stop.t > 0.0 && stop.t < 1.0, "a foliage rock (" + best.record + ") does not block the indoor eye line across it");
+			test::require(los.trace(best.from, best.to, LineOfSight::kBolt).blocked, "a bolt passes through a foliage rock");
+			{ const LineOfSight::Hit plain = los.trace(best.from, best.to); test::require(!plain.blocked, "a foliage rock blocks the outdoor eye line (t " + std::to_string(plain.t) + (plain.hull ? " hull)" : " terrain)")); }
+			test::require(los.visible(960, west, 961, east), "perception is stopped by a foliage rock outdoors");
+			state::Fighter indoorsWest = west;
+			indoorsWest.indoors = true;
+			test::require(!los.visible(960, indoorsWest, 961, east), "an indoor observer sees through a foliage rock");
+			test::require(!los.shotBlocked({ best.from[0], best.from[1], best.from[2] }, east), "the gun line is stopped by a foliage rock");
+			std::printf("rock: %s (volume %.0f) blocks the indoor eye line and a bolt, not the outdoor eye line or the gun line\n", best.record.c_str(), best.volume);
 		}
 
 		std::cout << "ksim_los: ok\n";

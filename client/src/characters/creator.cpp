@@ -57,6 +57,26 @@ bool Creator::setRace(const std::string& race, bool female, std::string& err)
 	return true;
 }
 
+// The RESET button after the original (ResetButton -> 1405ef870 -> 14007a490(defaults, appearance, 0); kenshi-rwh.233): every Range at its mid (Posture 20),
+// Skin Tone 0 (palette[0]), the default head, the normal idle stance. Hair, beard, hair colour and Age stay.
+bool Creator::reset(std::string& err)
+{
+	if (!chars_) { err = "creator not open"; return false; }
+	const std::string hair = spec_.hair, beard = spec_.beard, hairColour = spec_.hairColour;
+	float age = 0;
+	bool hasAge = false;
+	for (const auto& [name, v] : spec_.shape) { if (name == "Age") { age = v; hasAge = true; } }
+	if (!setRace(spec_.race, spec_.female, err)) { return false; }
+	spec_.hair = hair;
+	spec_.beard = beard;
+	spec_.hairColour = hairColour;
+	if (hasAge) { setValue("Age", age); }
+	spec_.head = 0;
+	spec_.skin = 0;
+	spec_.stance = Characters::Spec().stance;
+	return true;
+}
+
 // The editor's Skin Tone slider top in tenths: (swatch count - 1) * 10 (140077090; kinspect rwh47_skin_tone_scale_static.md).
 int Creator::skinMax() const
 {

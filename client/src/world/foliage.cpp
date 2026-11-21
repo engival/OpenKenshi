@@ -345,7 +345,7 @@ void Foliage::prepare(const double cam[3], const float mvp[16], float, bool bloc
 {
 	frame_++;
 	stats_.cullMs = stats_.uploadMs = 0;
-	stats_.instancesDrawn = stats_.draws = stats_.groupsDrawn = stats_.held = stats_.greyDraws = 0;
+	stats_.instancesDrawn = stats_.draws = stats_.drawsFlat = stats_.groupsDrawn = stats_.held = stats_.greyDraws = 0;
 	out.draws.clear();
 	out.list.clear();
 	out.bufs.clear();
@@ -503,6 +503,26 @@ void Foliage::prepare(const double cam[3], const float mvp[16], float, bool bloc
 			if (slot == bufSlot_.end()) { slot = bufSlot_.emplace(k.cell, (int)out.bufs.size()).first; out.bufs.push_back(k.cp->buf); }
 			const bool band = k.dist + k.half + reach > end * kFadeStart;
 			const int subs = (int)m.subs.size();
+			// A node that continues the previous draw of this part in this cell (its instances follow the last drawn node's in the cell buffer, same fade
+			// end, same band) extends that draw's instance range instead of making a draw: the kd nodes of one record lie in the buffer in tree order, so a
+			// run of visible neighbours is one range. The same instances, the same base and fade: pixel-identical (kenshi-k16.2.205.12.123).
+			if (openPart_.size() <= k.part) { openPart_.resize(k.part + 256); }
+			OpenRun& run = openPart_[k.part];
+			stats_.drawsFlat += (size_t)subs;
+			if (run.stamp == frame_ && run.cell == k.cell && run.next == g.first && run.end == (float)end && run.band == band)
+			{
+				const Draw& od = out.draws[run.draw];
+				for (int s = 0; s < subs; s++)
+				{
+					out.list.opaque[od.first + s].count += g.count;
+					if (band) { out.list.opaque[od.first + subs + s].count += g.count; }
+				}
+				run.next = g.first + g.count;
+				stats_.instancesDrawn += (size_t)g.count;
+				stats_.groupsDrawn++;
+				continue;
+			}
+			run = { frame_, k.cell, (int)out.draws.size(), g.first + g.count, (float)end, band };
 			Draw d = { slot->second, (int)out.list.opaque.size(), subs, band };
 			if (drawPart_.size() <= k.part) { drawPart_.resize(k.part + 256); }
 			DrawPart& dp = drawPart_[k.part];
@@ -557,6 +577,8 @@ void Foliage::prepare(const double cam[3], const float mvp[16], float, bool bloc
 			}
 			out.shadow[l] = sc.list;
 			const ShadowList& sl = *sc.list;
+			stats_.shadowCands[l] = sl.cands.size();
+			stats_.shadowFlat[l] = sl.flat;
 			std::vector<FrameData::ShadowRef>& refs = out.shadowRef[l];
 			refs.resize(sl.cands.size());
 			const float sh[3] = { (float)(sl.origin[0] - cam[0]), (float)(sl.origin[1] - cam[1]), (float)(sl.origin[2] - cam[2]) };	// list origin -> this frame's camera
@@ -683,6 +705,7 @@ void Foliage::buildShadowList(const double cam[3], int level, ShadowList& sl)
 {
 	std::vector<ShadowCand>& list = sl.cands;
 	for (int k = 0; k < 3; k++) { sl.origin[k] = cam[k]; }
+	std::vector<int> lastOf;	// per part: the index in `list` of its last candidate
 	for (const auto& [idx, cell] : cells_)
 	{
 		const double base[3] = { kworld::zoneMinX(idx % 64) - cam[0], -cam[1], kworld::zoneMinZ(idx / 64) - cam[2] };
@@ -704,6 +727,35 @@ void Foliage::buildShadowList(const double cam[3], int level, ShadowList& sl)
 				if ((!diffuseGateOff() && !wb_->partTexturesReady(pid)) || !wb_->partReady(pid, &radius, &centreLen)) { continue; }	// cut-out leaves shadow by their diffuse alpha: wait for it (kenshi-k16.2.298.2)
 				const double end = fadeEnd(g, radius), size = (radius + centreLen) * g.maxScale;
 				if (dist - half - size > end + kShadowListDrift) { continue; }	// the list outlives the camera: kept for a drift of up to kShadowListDrift
+				// A node that continues the last candidate of this part in this cell (its instances follow in the buffer, same fade end) joins it: one candidate,
+				// so one draw per submesh, over the union of the two bounding spheres. The merged size is the larger (the per-cascade size test then keeps
+				// every member's shadow), kenshi-k16.2.205.12.123.
+				sl.flat++;
+				if (lastOf.size() <= pid) { lastOf.resize(pid + 256, -1); }
+				if (lastOf[pid] >= 0)
+				{
+					ShadowCand& p = list[lastOf[pid]];
+					if (p.cell == idx && p.first + p.count == g.first && p.fadeEnd == (float)end)
+					{
+						const double ax = p.ctr[0], ay = p.ctr[1], az = p.ctr[2], bx = ctr[0], by = ctr[1], bz = ctr[2];
+						const double dx = bx - ax, dy = by - ay, dz = bz - az, d = std::sqrt(dx * dx + dy * dy + dz * dz);
+						const double ra = p.reach, rb = half + size;
+						double r = ra, cx = ax, cy = ay, cz = az;
+						if (d + rb > ra && d + ra > rb)	// neither sphere holds the other
+						{
+							r = (d + ra + rb) * 0.5;
+							const double t = (r - ra) / d;
+							cx = ax + dx * t; cy = ay + dy * t; cz = az + dz * t;
+						}
+						else if (d + ra <= rb) { r = rb; cx = bx; cy = by; cz = bz; }
+						p.ctr[0] = (float)cx; p.ctr[1] = (float)cy; p.ctr[2] = (float)cz;
+						p.reach = (float)(r + 1e-3 * r);
+						p.size = std::max(p.size, (float)size);
+						p.count += g.count;
+						continue;
+					}
+				}
+				lastOf[pid] = (int)list.size();
 				list.push_back({ idx, g.first, g.count, pid, (int)wb_->meshes_[wb_->partRt_[pid].mesh].subs.size(),
 					{ (float)base[0], (float)base[1], (float)base[2] }, { (float)ctr[0], (float)ctr[1], (float)ctr[2] }, (float)(half + size), (float)size, (float)end });
 			}

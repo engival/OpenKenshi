@@ -705,7 +705,40 @@ void Characters::carryPlace(Char& c, const Char& carrier, const std::vector<kwor
 	c.orient = kworld::multiply(kworld::multiply(br, q1), q2);
 }
 
-// The skinning palette of this frame: node orientation x model(t) x inverse(bind) per bone, as row-major 3x4 rows.
+// OldBone::_getOffsetTransform (OgreMain 0x1e1dc0, read live 2026-11-20, kenshi-rwh.229; findings/rwh229_forearm_hand_transforms_live.md line ~111):
+//   M = [ R(dOri * bindInvOri) * diag(bindInvScale * dScale) | dPos + R(dOri * bindInvOri) * (s * bindInvPos) ],  s = bindInvScale * dScale
+// The derived scale goes on BEFORE the bind rotation, in the MESH's bind axes (a forearm's length runs along rest -y there and x = z is its thickness),
+// not after it in the bone's own axes: the child offset is placed by the parent's derived scale .y (BODY_SHAPE "Inheritance"), so both ends of a
+// bone's skin length share that one factor and the wrist stays closed at every body. Composing the bone's world matrix with its inverse binding
+// matrix instead (the generic skinning form, which is what the client did) puts the scale on the bone's own axes and opens a gap that grows with the
+// arm sliders: 0.56 u at the user's body, 1.34 u at Arm bulk 145.
+// invBind (charload.cpp: the inverse of the bind model) is the inverse binding matrix [A | t], A = R(bindInvOri) * diag(bindInvScale), t = A * bindInvPos.
+// rest: node * T(dPos) R(dOri) * [ A*diag(dScale) | A*diag(dScale)*bindInvPos ] -> out.
+static void offsetTransform(const kworld::SkelTransform& derived, const float invBind[16], const float node[16], float out[16])
+{
+	const kworld::SkelVec3& s = derived.scale;
+	float w[16];	// A * diag(s): column j is A's column j times the scale on mesh axis j
+	for (int j = 0; j < 3; j++) { for (int r = 0; r < 3; r++) { w[j * 4 + r] = invBind[j * 4 + r] * (j == 0 ? s.x : j == 1 ? s.y : s.z); } }
+	// bindInvPos = A^-1 * t (A is a rotation x a positive column scale, so A^-1 = diag(1/|col|^2) * A^T)
+	const float t[3] = { invBind[12], invBind[13], invBind[14] };
+	float bp[3];
+	for (int j = 0; j < 3; j++)
+	{
+		const float c = invBind[j * 4] * invBind[j * 4] + invBind[j * 4 + 1] * invBind[j * 4 + 1] + invBind[j * 4 + 2] * invBind[j * 4 + 2];
+		bp[j] = c > 1e-12f ? (invBind[j * 4] * t[0] + invBind[j * 4 + 1] * t[1] + invBind[j * 4 + 2] * t[2]) / c : 0.0f;
+	}
+	for (int r = 0; r < 3; r++) { w[12 + r] = w[r] * bp[0] + w[4 + r] * bp[1] + w[8 + r] * bp[2]; }
+	w[3] = w[7] = w[11] = 0.0f;
+	w[15] = 1.0f;
+	kworld::SkelTransform u = derived;
+	u.scale = { 1, 1, 1 };
+	kworld::toMatrix(u, out);	// T(dPos) R(dOri)
+	mul(out, node, out);
+	mul(out, out, w);
+}
+
+// The skinning palette of this frame: node orientation x OldBone::_getOffsetTransform(model(t), inverse bind) per bone (offsetTransform above), as
+// row-major 3x4 rows.
 // Layers apply like Ogre's AnimationTrack::applyToNode on a reset bone: each adds its keyframe offset scaled by its weight (translate x w, rotate by
 // nlerp(identity, q, w) post-multiplied, scale lerped). MINE: weights are normalised per bone over the layers that move it (Ogre's average mode scales every
 // state by 1 / total weight); with the traced deletes, lower and upper layers share no animated bone, so either reading gives the same pose.
@@ -894,9 +927,7 @@ void Characters::pose(Char& c, float dt)
 	for (size_t b = 0; b < sk.bones.size(); b++)
 	{
 		float* m = skin[b].data();
-		kworld::toMatrix(model[b], m);
-		mul(m, node, m);
-		mul(m, m, c.body->invBind[b].data());
+		offsetTransform(model[b], c.body->invBind[b].data(), node, m);
 		store(b, m);
 	}
 	for (const Char::Mount& mt : c.mounts)

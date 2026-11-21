@@ -2368,6 +2368,10 @@ void Simulation::apply(const Command& command)
 			fighterEntity(command.subject).set<state::OrderQueue>(std::move(queue));
 			break;
 		}
+		// An unplannable lockpick (chance at the floor) starts nothing and changes nothing, queued or not (rwh.178).
+		if (command.type == CommandType::FighterInteract
+			&& pickUnplannable(ecs, *f, findInteractTarget(ecs, combat_.get(), command.object, this), static_cast<std::uint8_t>(command.value)))
+			break;
 		// A replacing order wakes a sleeper (a move order included), so an ordered character can always get up; the residents
 		// wake the same way, when their goal changes (routine_scorer.cpp). A queued order replaces nothing yet: it waits.
 		if (f->asleep)

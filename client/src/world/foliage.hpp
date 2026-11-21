@@ -66,6 +66,7 @@ public:
 	{
 		double origin[3] = {};	// the camera position the candidates' base / ctr are relative to
 		std::vector<ShadowCand> cands;
+		size_t flat = 0;	// candidates before adjacent nodes were merged (debug counter)
 	};
 	// One frame's foliage work, in the frame packet slot (one per packet). prepare() fills it; render*() read only it.
 	struct FrameData
@@ -98,6 +99,8 @@ public:
 	{
 		size_t cellsLoaded = 0, cellsPending = 0, instancesLoaded = 0;	// resident
 		size_t held = 0, greyDraws = 0;	// last frame: submesh draws held out while their diffuse streams (each would have drawn the grey fallback); submesh draws in the list on a not-ready diffuse (0 by the gate)
+		size_t drawsFlat = 0;	// last frame: submesh draws one per node would make (draws is after adjacent nodes merged)
+		size_t shadowCands[kLevels] = {}, shadowFlat[kLevels] = {};	// the level's shadow candidates (nodes merged) / before merging
 		size_t instancesDrawn = 0, draws = 0, groupsDrawn = 0, groupsLoaded = 0;	// last frame; instances counted per drawn part (leaves count again)
 		double cullMs = 0, uploadMs = 0;	// last frame CPU: cull + draw list, taking the cell results (the draw submission ms are FrameStats::foliage)
 		size_t generated = 0;	// cells generated since start
@@ -153,6 +156,9 @@ private:
 	// takes from the group -- its instances, origin and fade (ResolvedDraw::base/fade, kenshi-k16.2.205.12.119). subs[mode - 1][sub].
 	struct DrawPart { uint64_t stamp = 0; std::vector<WorldBuildings::ResolvedDraw> subs[2]; };
 	std::vector<DrawPart> drawPart_;
+	// The last draw made for a part in prepare()'s draw list, to extend it with the next node that continues its instance range (see prepare).
+	struct OpenRun { uint64_t stamp = 0; int cell = -1, draw = 0, next = 0; float end = 0; bool band = false; };
+	std::vector<OpenRun> openPart_;	// by part id
 	uint64_t shadowKey() const;
 	double fadeEnd(const Group& g, double meshRadius) const;	// draw distance of a group: class distance x range, size limit, load radius, drawLimit
 	void worker();
