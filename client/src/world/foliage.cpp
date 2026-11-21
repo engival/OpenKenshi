@@ -23,6 +23,18 @@
 namespace
 {
 
+// The resident cells in cell-index order: cells_ is a hash map whose iteration order follows the order the generator threads' cells arrived in
+// (and the erase history), which moves with thread timing and so with the startup heap. The cull and the shadow list walk it, and the draw order
+// (pipeline changes, the overlap of blended foliage) followed it (kenshi-k16.2.465).
+template <class Map> std::vector<std::pair<int, const typename Map::mapped_type*>> cellsInOrder(const Map& m)
+{
+	std::vector<std::pair<int, const typename Map::mapped_type*>> v;
+	v.reserve(m.size());
+	for (const auto& [idx, cell] : m) { v.push_back({ idx, &cell }); }
+	std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+	return v;
+}
+
 #ifdef KCLIENT_DEV_TOOLS
 const cfg::Bool kNoDiffuseGate{ cfg::Group{ "Scripted runs" }, "debug.foliage_nogate", false, "Dev: foliage parts draw on the grey fallback while their diffuse streams (the before of kenshi-k16.2.298.2; for measuring only)" };
 inline bool diffuseGateOff() { return kNoDiffuseGate.get(); }
@@ -460,8 +472,9 @@ void Foliage::prepare(const double cam[3], const float mvp[16], float, bool bloc
 	stats_.instancesLoaded = stats_.groupsLoaded = stats_.children = 0;
 	needed_.clear();
 	if (stamp_.size() < wb_->data_.parts.size()) { stamp_.resize(wb_->data_.parts.size() + 256, 0); }
-	for (const auto& [idx, cell] : cells_)
+	for (const auto& [idx, cellp] : cellsInOrder(cells_))
 	{
+		const Cell& cell = *cellp;
 		stats_.instancesLoaded += cell.instances;
 		stats_.children += cell.children;
 		stats_.groupsLoaded += cell.groups.size();
@@ -719,8 +732,9 @@ void Foliage::buildShadowList(const double cam[3], int level, ShadowList& sl)
 	std::vector<ShadowCand>& list = sl.cands;
 	for (int k = 0; k < 3; k++) { sl.origin[k] = cam[k]; }
 	std::vector<int> lastOf;	// per part: the index in `list` of its last candidate
-	for (const auto& [idx, cell] : cells_)
+	for (const auto& [idx, cellp] : cellsInOrder(cells_))
 	{
+		const Cell& cell = *cellp;
 		const double base[3] = { kworld::zoneMinX(idx % 64) - cam[0], -cam[1], kworld::zoneMinZ(idx / 64) - cam[2] };
 		const std::vector<Group>& groups = level ? cell.shadowGroups[level - 1] : cell.groups;
 		for (size_t gi = 0; gi < groups.size(); gi++)

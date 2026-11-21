@@ -254,7 +254,12 @@ void init()
 	td.logger.func = slog_func;
 	sdtx_setup(&td);
 	init_ui();
-	plants::load(client_data_dir());	// client/data/foliage_plants.txt, the FCS ids the material rule gets wrong (kenshi-k16.2.420.6.1); before any part is made
+	if (!std::filesystem::is_directory(std::filesystem::path(client_data_dir()) / "ui"))
+	{
+		fprintf(stderr, "kclient: fatal: %s is not a directory (client/data/ui, the UI layouts): client/data missing or client.data_dir wrong\n", (std::filesystem::path(client_data_dir()) / "ui").string().c_str());
+		exit(1);
+	}
+	if (!plants::load(client_data_dir())) { exit(1); }	// a missing client/data is fatal, not a fallback (kenshi-k16.2.467). client/data/foliage_plants.txt, the FCS ids the material rule gets wrong (kenshi-k16.2.420.6.1); before any part is made
 	// The rest of the startup is a list of steps (a step returns false to be retried next frame). Scripted runs (screenshots, scenes) run them all here;
 	// interactive runs run one per frame behind the loading screen (frame_loading), so the window presents and stays responsive.
 	app.loadSteps = {

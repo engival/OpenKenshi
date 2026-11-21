@@ -32,15 +32,15 @@ std::unordered_map<std::string, plants::Override> g_table;
 namespace plants
 {
 
-void load(const std::string& clientDataDir)
+bool load(const std::string& clientDataDir)
 {
 	g_table.clear();
 	const std::filesystem::path path = std::filesystem::path(clientDataDir) / "foliage_plants.txt";
 	std::ifstream in(path);
 	if (!in)
 	{
-		fprintf(stderr, "kclient: plants: %s not read: the material rule decides every record\n", path.string().c_str());
-		return;
+		fprintf(stderr, "kclient: plants: cannot read %s (client/data missing or client.data_dir wrong)\n", path.string().c_str());
+		return false;	// fatal for the caller: the material rule alone renders other trees (kenshi-k16.2.467)
 	}
 	std::string line;
 	int number = 0;
@@ -64,6 +64,7 @@ void load(const std::string& clientDataDir)
 		g_table[id] = Override{ plant == 1, reason };	// a later line for the same id wins
 	}
 	fprintf(stderr, "kclient: plants: %zu exceptions from %s\n", g_table.size(), path.string().c_str());
+	return true;
 }
 
 const Override* overrideOf(std::string_view recordID)

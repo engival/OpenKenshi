@@ -35,7 +35,9 @@ struct Override
 //   <FCS string id> <0|1> <reason...>
 // `#` starts a comment; blank lines are skipped. A malformed line is one stderr line and is skipped (the record then
 // takes the material rule). The table is immutable afterwards, so the load must run before the first isPlant.
-void load(const std::string& clientDataDir);
+// Returns false when the file cannot be read: the caller treats that as fatal (kenshi-k16.2.467; the material rule still
+// decides every record the list does not name, but is no stand-in for the list).
+bool load(const std::string& clientDataDir);
 
 // The predicate: the data file's override when it names the record, else the FOLIAGE material rule. Rocks and props
 // are false, so their bend weight (wbdraw.cpp swayTop) is 0.

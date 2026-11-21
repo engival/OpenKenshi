@@ -12,11 +12,10 @@
 // The cost is one write per line instead of one per 4 KB: the playtest's stdout is a line every few frames at most, and the pace log
 // (dev/pacelog.cpp, one line a second) and the per-frame dev logs go to stderr, which was already unbuffered (the C library makes it
 // so; nothing to do here).
-// The buffer is our own static one on purpose: a null buffer makes setvbuf malloc 4 KB at startup, which moves every later heap
-// allocation - and 6 of the scene test's rain / weather scenes (rock_arch, greenlands_bridge, swamp_dawn_rain, swamp_noon_rain,
-// petal_hills, riveroverlook1) then render a different frame under render.thread=lockstep (kenshi-k16.2.461's findings: the malloc
-// version failed lockstep_check's scene half with rmse up to 15.8, this one passes all 49; whatever those scenes read moves with the
-// heap, which is worth its own look).
+// The buffer is our own static one (kept: it costs nothing and avoids a 4 KB malloc at startup). It is NOT needed for scene
+// determinism: kenshi-k16.2.461 blamed a startup malloc moving the heap for 6 rain scenes changing under render.thread=lockstep,
+// but kenshi-k16.2.465 showed the cause was a run without client/data (foliage_plants.txt missing, so the material rule alone
+// decided the trees); a missing client/data is now a fatal startup error (kenshi-k16.2.467).
 namespace plat {
 
 namespace {

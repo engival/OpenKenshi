@@ -50,7 +50,7 @@ int main(int argc, char** argv)
 {
 	if (argc != 3) { fprintf(stderr, "usage: %s <game data dir> <client data dir>\n", argv[0]); return 2; }
 	const kdata::GameData gd = loadMerged(argv[1]);
-	plants::load(argv[2]);
+	if (!plants::load(argv[2])) { return 2; }
 	const auto plant = [&](const char* id) { return plants::isPlant(gd, id); };
 
 	printf("game data: %zu records; %d plant exceptions loaded\n", gd.size(), plants::loadedOverrides());
