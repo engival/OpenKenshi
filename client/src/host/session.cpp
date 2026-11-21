@@ -628,6 +628,10 @@ bool init_characters()
 						b.function = f->intOr("function", 0);
 						b.outputRate = f->floatOr("output rate", 0);
 						b.mining = f->intOr("world resource mining", 0);
+						if (const kdata::RefCategory* st = f->findRefs("special tool"); st && !st->entries.empty())
+						{
+							if (const kdata::Record* tool = gd.find(st->entries.front().targetID)) { app.sim.setSpecialTool(r->stringID, tool->name); }
+						}
 						const kdata::RefCategory* p = f->findRefs("produces");
 						if (p && !p->entries.empty()) { b.produces = itemName(gd, p->entries.front().targetID); }
 					}

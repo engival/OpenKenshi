@@ -85,6 +85,7 @@ public:
 		std::vector<std::string> wear;	// ARMOUR record names
 		std::vector<std::string> weapons;	// WEAPON / CROSSBOW record names, "NAME/MATERIAL_SPECS_WEAPON" picks the model; [0] at the hip, [1] on the back
 		bool drawn = false;	// weapons[0] in the hand (its bare sword), the sheath left at the hip
+		std::string tool;	// ITEM record name held in the right hand (a producer's functionality `special tool`: Pickaxe, Hoe); "" = none. The caller sheathes the weapon (drawn = false) while it is held
 		bool loaded = false;	// crossbows hold a bolt (the drawn string and the live ammo), else the slack string
 		double pos[3] = {};
 		float yaw = 0;
@@ -712,6 +713,7 @@ private:
 	const GpuMesh* morphed(const Body& body, const std::unordered_map<std::string, float>& weights, std::string& err);
 	static void boneSizes(Char& c, const std::unordered_map<std::string, float>& v);
 	void addWeapon(Char& c, const std::string& spec, const std::string& point, bool drawn, bool loaded);
+	void addTool(Char& c, const std::string& item);	// an ITEM's mesh on `hands` (the special tool of an operated producer)
 	static std::vector<AttachPoint> readAttachPoints(const std::string& file, const kworld::Skeleton& skel);
 	Tex texture(const std::string& recordPath, const Tex& fallback);
 	Tex makeView(std::shared_ptr<const DdsImage> dds, std::shared_ptr<const std::vector<uint8_t>> rgba, int w, int h);	// queues the stream job (dds, else RGBA8 w x h)
@@ -824,6 +826,8 @@ private:
 	std::unordered_map<std::string, std::string> factionColours_;	// FACTION -> its COLOR_DATA name
 	std::unordered_map<std::string, WeaponInfo> weapons_;
 	std::unordered_map<std::string, WeaponModel> weaponModels_;
+	struct ToolInfo { std::string mesh, tex, nrm; };	// an ITEM's mesh and its material spec's maps (the special tool props)
+	std::unordered_map<std::string, ToolInfo> tools_;
 	std::unordered_map<std::string, std::unique_ptr<Body>> bodies_;	// race name + gender
 	std::unordered_set<std::string> warmed_;	// race keys (bodies_) whose race-only build warm() did, or whose body failed (kenshi-k16.2.205.12.77)
 	// contactsOf's results by (body, clip, record, the bone sizes): a function of those alone; a crowd shares bodies and slider sets (kenshi-k16.2.205.12.76)

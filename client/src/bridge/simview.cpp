@@ -580,6 +580,15 @@ Characters::Spec SimView::specOf(uint64_t id, const Characters& chars) const
 #endif
 	if (!hand.empty() || !hip.empty()) { s.weapons.push_back(hand.empty() ? hip : hand); s.drawn = drawn; }
 	if (!back.empty()) { if (s.weapons.empty()) { s.weapons.push_back(""); } s.weapons.push_back(back); }
+	// Operating a producer (CHAR_STATS goal 87 OPERATE_MACHINERY, targetId = the producer, SIMLINK row 16): its functionality's `special tool` ITEM is
+	// held in the right hand (the stonemine / farming clips have `has weapon R`), and the weapon goes back to its sheath. The sheathing is MINE: the
+	// original's weapon handling during the tool is NOT TRACED (Task_OperateMachine::vf1 1400b64b0).
+	if (const auto cs = dec_.charStats.find(id); cs != dec_.charStats.end() && cs->second.hasAi && cs->second.goalEnum == 87 && !specialTools_.empty())
+	{
+		const auto th = dec_.things.find(cs->second.targetId);
+		const auto tool = th != dec_.things.end() && th->second.kind == simlink::Interactable::kProducer ? specialTools_.find(dec_.str(th->second.record)) : specialTools_.end();
+		if (tool != specialTools_.end() && !tool->second.empty()) { s.tool = tool->second; s.drawn = false; }
+	}
 	s.loaded = a.crossbowAmmo > 0;
 	s.loco = true;	// an up character is drawn by the locomotion controller; its speed is the live vFwd (line 404), which may be negative
 	s.move = 0;
@@ -808,11 +817,12 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		if (carrier.severed != sl.severed) { rebuild_ = true; }	// a sever (rare): the next sync rebuilds the set with the stump
 		if (sl.index < 0 || sl.down != Up) { continue; }
 		const Characters::Spec& cur = chars.live((size_t)sl.index);	// by reference: the spec is copied only when something below differs
-		if (carrier.carry == sl.carry && carrier.drawn == cur.drawn && carrier.weapons == cur.weapons) { continue; }
+		if (carrier.carry == sl.carry && carrier.drawn == cur.drawn && carrier.weapons == cur.weapons && carrier.tool == cur.tool) { continue; }
 		Characters::Spec s = cur;
 		s.carry = carrier.carry;
 		s.drawn = carrier.drawn;
 		s.weapons = carrier.weapons;
+		s.tool = carrier.tool;
 		std::string err;
 		CPUSTAGE_ACC("sim.add.equip");	// a carry, drawn or weapon change: a rebuild (kenshi-k16.2.205.12.76)
 		if (chars.replace((size_t)sl.index, s, err)) { sl.carry = s.carry; sl.action = 0; sl.actionStart = 0; }

@@ -583,6 +583,22 @@ void Characters::init(const ResourceIndex* res, const kdata::GameData& gd, bool 
 		WeaponInfo& w = weapons_[folded(r->name)] = { r->fileOr("mesh"), r->fileOr("bare sword"), r->fileOr("sheath"), over != 21 ? over : r->intOr("skill category", 0) };
 		itemScale(r, w.scale);
 	}
+	for (const kdata::Record* r : gd.byType(kworld::itemTypeByName("ITEM")))
+	{
+		// the props a producer's functionality `special tool` names (Pickaxe, Hoe): the ITEM's mesh with its material spec's maps, as a ground item draws
+		ToolInfo t = { r->fileOr("mesh"), {}, {} };
+		if (t.mesh.empty()) { continue; }
+		const kdata::RefCategory* m = r->findRefs("material");
+		const kdata::Record* spec = m && !m->entries.empty() ? gd.find(m->entries.front().targetID) : nullptr;
+		for (int depth = 0; spec && depth < 4; depth++)
+		{
+			const kdata::RefCategory* n = spec->findRefs("material");	// a collection: its first entry
+			if (!n || n->entries.empty()) { break; }
+			spec = gd.find(n->entries.front().targetID);
+		}
+		if (spec) { t.tex = spec->fileOr("texture map"); t.nrm = spec->fileOr("normal map"); }
+		tools_[folded(r->name)] = std::move(t);
+	}
 	for (const kdata::Record* r : gd.byType(kworld::itemTypeByName("CROSSBOW")))
 	{
 		// The animation category a held crossbow gives the filters is 0 (live: AC+0x264 = the item's +0x238, written by 51c9c0; 5 with nothing in hand).
@@ -1123,6 +1139,7 @@ std::vector<std::string> Characters::textureFiles(const Spec& s)
 		const auto it = name->empty() ? hair_.end() : hair_.find(folded(*name));
 		if (it != hair_.end()) { add(it->second.head[g]); add(it->second.tex[g]); }
 	}
+	if (const auto ti = s.tool.empty() ? tools_.end() : tools_.find(folded(s.tool)); ti != tools_.end()) { add(ti->second.tex); add(ti->second.nrm); }
 	for (const std::string& w : s.weapons)
 	{
 		if (w.empty()) { continue; }
@@ -1223,6 +1240,7 @@ bool Characters::gearPending(const Spec& s, bool queue)
 		if (!(s.severed >> k & 1)) { continue; }
 		for (const RaceInfo& ri : races_) { if (folded(ri.name) == folded(s.race)) { want(ri.stump[k][g], false); break; } }
 	}
+	if (const auto ti = s.tool.empty() ? tools_.end() : tools_.find(folded(s.tool)); ti != tools_.end()) { want(ti->second.mesh, true); }
 	for (const std::string& w : s.weapons)
 	{
 		if (w.empty()) { continue; }
@@ -2084,6 +2102,7 @@ bool Characters::add(const Spec& in, std::string& err, bool* notReady)
 	}
 	const char* points[2] = { "hip", "back" };
 	for (size_t i = 0; i < s.weapons.size() && i < 2; i++) { if (!s.weapons[i].empty()) { addWeapon(c, s.weapons[i], points[i], i == 0 && s.drawn, s.loaded); } }	// "" = nothing at the hip
+	if (!s.tool.empty()) { addTool(c, s.tool); }
 	CPUSTAGE_OPT(lap, "char.add.locomote");
 	c.palette.assign((size_t)kMaxBones * 12, 0.0f);
 	if (s.loco)
@@ -2212,6 +2231,30 @@ void Characters::addWeapon(Char& c, const std::string& spec, const std::string& 
 		mount(loaded ? w.loaded : w.unloaded, at);
 		if (loaded) { mount(w.ammo, at, w.bolt); }
 	}
+}
+
+// A producer's special tool (BUILDING_FUNCTIONALITY `special tool`, an ITEM: "stuff like pickaxes, just used for appearance sake") in the right hand:
+// its mesh on `hands` = Bip01 Prop2 like a drawn weapon's bare mesh, at the ITEM's own scale (1). NOT TRACED: the exe's offset from the bone (Task_OperateMachine::vf1
+// 1400b64b0 attaches it); none is applied here, the same as a held weapon.
+void Characters::addTool(Char& c, const std::string& item)
+{
+	const auto ti = tools_.find(folded(item));
+	if (ti == tools_.end()) { fprintf(stderr, "kclient: characters: no tool ITEM named %s\n", item.c_str()); return; }
+	const kworld::Skeleton& sk = c.body->skel;
+	Char::Mount mt = { kMaxBones - 1 - (int)c.mounts.size(), sk.bone("Bip01 Prop2"), {} };
+	if (mt.bone < 0) { fprintf(stderr, "kclient: characters: %s: no Bip01 Prop2 for %s\n", label(c.spec).c_str(), item.c_str()); return; }
+	kworld::toMatrix(kworld::sampleModel(sk, nullptr, mt.bone, 0.0f), mt.local);
+	for (const AttachPoint& p : c.body->attach) { if (p.name == "hands") { mt.bone = p.bone; memcpy(mt.local, p.model, sizeof mt.local); } }
+	if (mt.slot < (int)sk.bones.size()) { fprintf(stderr, "kclient: characters: %s: no palette slot left for %s\n", label(c.spec).c_str(), item.c_str()); return; }
+	std::string err;
+	const GpuMesh* m = mesh(ti->second.mesh, nullptr, err, mt.slot);
+	if (!m) { fprintf(stderr, "kclient: characters: %s: %s\n", item.c_str(), err.c_str()); return; }
+	c.mounts.push_back(mt);
+	c.mountNames.push_back("in the hand @ hands (" + sk.bones[(size_t)mt.bone].name + ") tool " + item);
+	Part p = { kArmour, m, texture(ti->second.tex, nothing_), texture(ti->second.nrm, flat_), {}, { 0, 0, 0, 1 }, 0.6f, {}, 1.0f };
+	p.cmap = nothing_;
+	p.mounted = true;
+	c.parts.push_back(p);
 }
 
 // The hand filter (14051d240): per hand 0 = must be empty, 1 = must hold a weapon, 2 = either; a record wanting both passes with exactly one held.
