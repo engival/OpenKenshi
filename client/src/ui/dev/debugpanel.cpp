@@ -70,6 +70,7 @@ namespace ui
 
 	void DebugPanel::bind(Layout& l)
 	{
+		side_ = &l.at<ScrollView>("side");	// the toggles and scenes scroll inside the frame; the extra text stays under them in view (k16.3.45)
 		toggles_ = &l.at<Flex>("toggles");
 		scenesBox_ = &l.at<Flex>("scenesBox");
 		scenes_ = &l.at<Flex>("scenes");

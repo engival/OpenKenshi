@@ -291,6 +291,15 @@ static uint64_t squad_at(float x, float y)
 static void key_actions(const sapp_event& e)
 {
 	const auto pressed = [&](const std::string& action) { return ui::keys::pressed(e, action); };
+	// Follow mode (kenshi-cym.40.2.9): every key that sends an order or changes the selection or the camera is locked with the mouse (dev keys and the F8 panel are not).
+	// A locked press is logged once, so a run shows it was seen and refused.
+	const bool mirror = dev::mirrorLocked();
+	const auto open = [&](const std::string& action)
+	{
+		if (!pressed(action)) { return false; }
+		if (mirror) { printf("follow: key %s locked (mirror lock)\n", action.c_str()); return false; }
+		return true;
+	};
 #ifdef KCLIENT_DEV_TOOLS
 	if (app.opt.debug && e.type == SAPP_EVENTTYPE_KEY_DOWN && !e.key_repeat && e.key_code == SAPP_KEYCODE_F10 && e.modifiers == SAPP_MODIFIER_CTRL) { dev::heightProbeToggle(); }	// Ctrl+F10: the vertical height probe mode (dev/heightprobe.cpp)
 #endif
@@ -300,9 +309,9 @@ static void key_actions(const sapp_event& e)
 	if (pressed("debug.trails_panel")) { dev::toggleTrailsPanel(); }
 	if (pressed("debug.lights_panel") && app.lightsPanel) { app.lightsPanel->show(!app.lightsPanel->shown()); }
 #endif
-	if (pressed("camera_drive")) { debug_toggle("debug.follow"); }
-	if (pressed("debug.follow")) { debug_toggle("debug.follow"); }
-	if (pressed("cycle_run_speed")) { app.sim.setToggle(5, (uint8_t)((move_speed() + 1) % 4)); }	// the original's Num6: the speed diamond's next mode
+	if (open("camera_drive")) { debug_toggle("debug.follow"); }
+	if (open("debug.follow")) { debug_toggle("debug.follow"); }
+	if (open("cycle_run_speed")) { app.sim.setToggle(5, (uint8_t)((move_speed() + 1) % 4)); }	// the original's Num6: the speed diamond's next mode
 	if (app.foliageOn && (pressed("debug.foliage_more") || pressed("debug.foliage_less")))
 	{
 		static const double steps[] = { 0.5, 1, 2, 4, 6, 8, 12, 16 };
@@ -311,10 +320,10 @@ static void key_actions(const sapp_event& e)
 		app.foliage.foliageRange = steps[std::clamp(at + (pressed("debug.foliage_more") ? 1 : -1), 0, 7)];
 	}
 	// Our floor keys are R / F where the original's are PgUp / PgDn: Change_Level on the change (1407210a0 / 1407210f0), as the HUD's floor arrows
-	if (pressed("floor_up")) { if (app.buildings.stepFloor(1)) { post_event(audio::kChangeLevel, "Change_Level"); } }
-	if (pressed("floor_down")) { if (app.buildings.stepFloor(-1)) { post_event(audio::kChangeLevel, "Change_Level"); } }
+	if (open("floor_up")) { if (app.buildings.stepFloor(1)) { post_event(audio::kChangeLevel, "Change_Level"); } }
+	if (open("floor_down")) { if (app.buildings.stepFloor(-1)) { post_event(audio::kChangeLevel, "Change_Level"); } }
 	// the sneak key (X) is the SNEAK toggle: Stealth turning sneak on, General_Click turning it off (140721410)
-	if (pressed("toggle_sneak") && app.sim.active())
+	if (open("toggle_sneak") && app.sim.active())
 	{
 		const bool before = app.sim.sneakOn();
 		const bool sent = app.sim.sneak();
@@ -338,7 +347,8 @@ static void key_actions(const sapp_event& e)
 #ifdef KCLIENT_DEV_TOOLS
 	if (app.opt.debug && pressed("playtest.notes")) { dev::notesKey(false); }
 #endif
-	for (const char* a : { "toggle_options", "toggle_inventory", "toggle_stats", "toggle_squads", "toggle_map", "toggle_faction", "toggle_research", "toggle_crafting", "toggle_help", "prospect", "toggle_build", "quicksave", "quickload" }) { if (pressed(a)) { shortcut(a); } }
+	for (const char* a : { "toggle_options", "toggle_inventory", "toggle_stats", "toggle_squads", "toggle_map", "toggle_faction", "toggle_research", "toggle_crafting", "toggle_help", "prospect", "toggle_build", "quicksave" }) { if (pressed(a)) { shortcut(a); } }
+	if (open("quickload")) { shortcut("quickload"); }	// a load drops the world: locked under the mirror
 	if (pressed("debug.weather_prev") || pressed("debug.weather_next"))
 	{
 		app.weatherCycle += pressed("debug.weather_next") ? 1 : -1;
@@ -356,6 +366,11 @@ static void key_actions(const sapp_event& e)
 	}
 	if (pressed("debug.mouse_look")) { app.look = !app.look; app.lookDrag = true; sappcmd::lockMouse(app.look); }
 	if (!app.sim.active()) { return; }
+	if (mirror)	// pause, the speed keys, stop, the selection keys and the focus key: the stream owns them (a locked press is logged)
+	{
+		for (const char* a : { "pause", "speed_1", "speed_2", "speed_3", "stop_movement", "focus_char", "select_all", "character_next", "character_prev", "select_0", "select_1", "select_2", "select_3", "select_4", "select_5", "select_6", "select_7", "select_8", "select_9" }) { if (pressed(a)) { printf("follow: key %s locked (mirror lock)\n", a); } }
+		return;
+	}
 	// the sim's game speed (orders 40, 41) and the selection (the HUD bar's characters, in its order)
 	if (pressed("pause")) { app.sim.pause(!(app.sim.clock().pauseBits & 1)); }	// order 40 is bit 0 only; the dialogue freeze (bit 1) lifts with an answer
 	const float speeds[3] = { ui::Hud::kSpeeds[0], ui::Hud::kSpeeds[1], ui::Hud::kSpeeds[2] };

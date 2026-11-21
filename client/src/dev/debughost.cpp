@@ -31,6 +31,7 @@
 #include "dev/animlab.hpp"
 #include "app/logicthread.hpp"
 #include "dev/debughost.hpp"
+#include "dev/driftview.hpp"
 #include "dev/pickboxes.hpp"
 #include "audio/audiohook.hpp"
 #include "app/eventlog.hpp"
@@ -412,6 +413,7 @@ void createDebugPanels(const Context& cx, bool debug)
 	da.toggle = [](const std::string& id)
 	{
 		if (id == "debug.follow_lock") { followLockToggle(); return; }
+		if (id == "debug.drift_view") { drift::toggle(); return; }
 		for (const auto& t : kCfgToggles) { if (id == t.key) { cfg::setUser(t.key, cfgOn(t.key) ? "off" : "on"); return; } }
 		host->debugToggle(id);
 	};
@@ -488,6 +490,7 @@ void debugPanelFrame(const Context& cx)
 	add("debug.shadows", "Shadows", cx.shadow.enabled != cx.shadowFlip);
 	add("debug.walk", "Walk on the ground", cx.walk);
 	if (followActive()) { add("debug.follow_lock", "Follow mirror lock (camera + orders follow the original)", followLockOn(), false); }	// dev/followstream.cpp
+	if (followActive()) { add("debug.drift_view", "Drift view (original's ghosts + lines)", drift::on(), false); }	// dev/driftview.cpp
 	if (cx.sim.active()) { add("debug.follow", "Follow camera", cx.follow); }
 	add("debug.free_camera", "Free camera", !cx.rts && !cx.follow);
 	if (cx.follow) { add("debug.autorun", "Autorun", cx.autorun); }
@@ -499,6 +502,7 @@ void debugPanelFrame(const Context& cx)
 		snprintf(buf, sizeof buf, "{#%02x%02x%02x}# %s (%zu)\n", (int)(src.r * 255), (int)(src.g * 255), (int)(src.b * 255), src.name.c_str(), src.count);
 		s.extra += buf;
 	}
+	if (followActive()) { s.extra += drift::panelText(); }	// the 5 worst drifts (dev/driftview.cpp)
 #ifdef KCLIENT_DEBUG_VIEW
 	using G = ui::DebugGroup;
 	s.commands.push_back({ "debug.spawn_bandits", "Spawn bandit patrol", cx.sim.active() && cx.townsReady });

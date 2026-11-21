@@ -636,6 +636,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		resetSeen_ = dec_.resetSerial;
 		worldReset = true;
 		selected_.clear();
+		holdEmpty_ = false;
 		selectedOnce_ = false;	// the loaded game starts with its squad selected, as a new connection does
 		rosterWarm_ = false;	// a load's roster is a first roster too
 		viewOnce_ = false;	// resend the interest and the view focus: the new world's session may not hold them
@@ -796,7 +797,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 	}
 	// one of ours always selected: when the selection loses its last (gone from the wire, left the squad), the first player character
 	std::erase_if(selected_, [&](uint64_t id) { return !isPlayer(id); });
-	for (size_t i = 0; i < order_.size() && selected_.empty() && !squadWaiting_; i++) { if (isPlayer(order_[i])) { selected_.push_back(order_[i]); } }
+	for (size_t i = 0; i < order_.size() && selected_.empty() && !squadWaiting_ && !holdEmpty_; i++) { if (isPlayer(order_[i])) { selected_.push_back(order_[i]); } }
 	// carriers first: a carried character's `carry me` needs its carrier's spec carrying already (Characters::add). A live character is also
 	// rebuilt when the wire flips its drawn bit or swaps the weapon (kenshi-h2v.11.5.2): the weapon mesh moves hand <-> its sheathed attach and
 	// the idle / upper-body records change with the hands (characters.cpp handsFit); the original has no sheathe clip, so the pose just changes.
@@ -1926,6 +1927,7 @@ bool SimView::isPlayer(uint64_t id) const
 void SimView::select(uint64_t id, bool add)
 {
 	if (!id || !isPlayer(id)) { return; }
+	holdEmpty_ = false;
 	if (!add) { selected_.clear(); }
 	if (std::find(selected_.begin(), selected_.end(), id) == selected_.end()) { selected_.push_back(id); }
 }

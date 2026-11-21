@@ -257,4 +257,23 @@ namespace follow
 		else { return Status::kUnknown; }
 		return ok ? Status::kOk : Status::kMalformed;
 	}
+
+	void LineReader::feed(const char* data, size_t n, std::vector<std::string>& lines)
+	{
+		for (size_t i = 0; i < n; i++)
+		{
+			const char c = data[i];
+			if (c == '\n')
+			{
+				if (discarding_) { discarding_ = false; }
+				else { lines.push_back(std::move(buf_)); }
+				buf_.clear();
+			}
+			else if (!discarding_)
+			{
+				buf_.push_back(c);
+				if (buf_.size() + 1 > kMaxLine) { discarding_ = true; dropped_++; buf_.clear(); }	// the '\n' would be byte kMaxLine + 1
+			}
+		}
+	}
 }

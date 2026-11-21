@@ -1,0 +1,10 @@
+# Pass 2 of the matched-time check (kenshi-cym.40.2.6): the same walk, now the original: the agent replays the pass-1 path (TRACK, by game seconds since the unpause)
+# as `orig` records on the original clock; the client's `drift` lines must stay near 0 at matched time. records_drift_move2s.txt shifts the original's clock 3.3 game s (2 ticks, the render delay) (the control).
+0.5 align t=3353.533333
+0.2 cam pos={cx+0},{cy+0},{cz+0} rot=0.965926,0.258819,0.000000,0.000000 zoom=120.000 floor=0
+0.2 speed v=0
+0.2 select ids={m0}
+0.5 order kind=move ids={m0} to=1060.000,142.790,1000.000 src=29
+0.0 TRACK {m0} TRACKFILE 3.3
+6.0 speed v=0.2
+0.0 RUN 0.2

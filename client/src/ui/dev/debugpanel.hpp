@@ -8,8 +8,8 @@
 #include "ui/widget.hpp"
 
 // The debug panel (docs/UI.md; the user, 2026-11-05: the old key list (Ctrl+F1, now F8) was a wall of text): a movable DEBUG window, top left. On its
-// left (client/data/ui/debug.layout; resizable) the host's debug toggles (a tick box each, its key beside it), under them the host's extra rich text,
-// then the debug scenes (offline only); beside them the commands, time and weather. No key list (k16.2.352): the Options Keys tab lists every binding.
+// left (client/data/ui/debug.layout; resizable) the host's debug toggles (a tick box each, its key beside it) and the debug scenes (offline only)
+// in a list that scrolls when they outgrow the frame, under it the host's extra rich text, always in view (k16.3.45); beside them the commands, time and weather. No key list (k16.2.352): the Options Keys tab lists every binding.
 namespace ui
 {
 	struct DebugToggle
@@ -113,6 +113,7 @@ namespace ui
 		ClockDial* timeDial() const { return dial_; }
 		Label* reply() const { return reply_; }
 		Widget* extra() const;	// the RichText
+		ScrollView* sideList() const { return side_; }	// the toggles and scenes: scrolls when they outgrow the frame (k16.3.45)
 		const Layout& layout() const { return *layout_; }
 
 	private:
@@ -125,6 +126,7 @@ namespace ui
 		Widget *toggles_ = nullptr, *scenes_ = nullptr;
 		Widget* scenesBox_ = nullptr;
 		Widget* extraBox_ = nullptr;
+		ScrollView* side_ = nullptr;
 		RichText* extra_ = nullptr;
 		std::vector<Button*> toggleButtons_, sceneButtons_, commandButtons_, weatherButtons_;
 		Widget *commands_ = nullptr, *windows_ = nullptr, *windowsBox_ = nullptr;

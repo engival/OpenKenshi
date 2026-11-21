@@ -1,0 +1,5 @@
+# bring up the F8 panel and shoot (frames are scripted 1/60 s; the follow stream runs in wall time)
+900 key F8 down
+901 key F8 up
+1500 screenshot SHOT
+1510 quit

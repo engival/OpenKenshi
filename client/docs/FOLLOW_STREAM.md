@@ -29,6 +29,12 @@ Contents: 1 Transport · 2 Grammar · 3 Session and state · 4 Agent -> client r
 ## 3. Session and state
 
 - The client sends `hello` at once on connect, and `ready` when its sim session is on the imported world and paused.
+- On a reconnect the sim may be running: the client **pauses it first** (order 40, repeated each second until the clock shows paused), then sends
+  `ready`, so `ready` always means paused (kenshi-cym.40.2.9). The agent's `speed` after `ready` unpauses it again.
+- While the mirror lock is on (connected and ready) the client locks the mouse, the camera keys and every key that sends an order or changes the
+  selection or camera (pause, speed keys, stop, select keys, Tab, focus, sneak, run speed, floor keys, direct drive, quickload); the dev keys and the F8
+  panel stay free. A bare `select ids=` empties the client's selection and the client keeps it empty until the next `select`, a selection of its own
+  (lock released from the F8 panel) or a world load.
 - The agent sends nothing but `hello` before `ready`; what the original does between them is dropped, except the state.
 - `cam`, `speed` and `select` are **full state**, never deltas. Right after `ready` the agent sends each one even if
   nothing changed, then only on change. The client may replace its state from any of them at any time.

@@ -6802,11 +6802,12 @@ void script()
 		demo.debugLog.clear();
 		check(dp.scenesBox()->visible && clickOn(dp.scene(1)) && demo.debugLog == "scene squin_gate;", "debug: a scene button asks for its scene");
 		{
-			// The key list left the panel (k16.2.352: the Options Keys tab has every binding); the host's extra text sits under the toggles.
+			// The key list left the panel (k16.2.352: the Options Keys tab has every binding); the host's extra text sits under the toggles and
+			// the scenes (k16.3.45: under their scrolling list, always in view).
 			const ui::Widget* ex = dp.extra();
 			const ui::Rect er = ex->screen(), last = dp.toggle(3)->screen(), sb = dp.scenesBox()->screen();
-			check(static_cast<const ui::RichText*>(ex)->text == demo.dbg.extra && ex->shown() && er.h > 40 && er.y >= last.bottom() && er.bottom() <= sb.y + 0.5f
-				&& er.right() <= dp.command(0)->screen().x, ("debug: the host's extra text (two sources) under the toggles, above the scenes (" + std::to_string(er.y) + "+" + std::to_string(er.h) + ")").c_str());
+			check(static_cast<const ui::RichText*>(ex)->text == demo.dbg.extra && ex->shown() && er.h > 40 && er.y >= last.bottom() && er.y >= sb.bottom() - 0.5f
+				&& er.right() <= dp.command(0)->screen().x, ("debug: the host's extra text (two sources) under the toggles and the scenes (" + std::to_string(er.y) + "+" + std::to_string(er.h) + ")").c_str());
 			check(dp.window()->screen().w < 620 * ui::scale(), "debug: no key list, the panel narrows to the toggles and commands");
 		}
 		{
@@ -6997,6 +6998,25 @@ void script()
 			demo.dbg.extra = extra;
 			dp.update(demo.dbg);
 			check(hidden && dp.extra()->shown(), "debug: no extra text, no gap; back when the host sends it");
+		}
+		{
+			// k16.3.45: a live-sized state (17 toggles, a heading and 5 table rows of extra text, our own stand-ins) stays inside the frame: the
+			// toggles scroll, the extra text sits whole under them, above the window's bottom edge. The screenshot keeps this state.
+			for (int i = (int)demo.dbg.toggles.size(); i < 17; i++) { demo.dbg.toggles.push_back({ "more" + std::to_string(i), "Stand-in toggle " + std::to_string(i), false, "" }); }
+			demo.dbg.extra = "Worst drifts (5 tracked)\n";
+			const char* cols[] = { "ff5544", "ff5544", "ffdd44", "55ff66", "55ff66" };
+			for (int i = 0; i < 5; i++) { demo.dbg.extra += std::string("{#") + cols[i] + "}# " + std::to_string(901 + i) + " Walker " + std::to_string(i + 1) + "  " + std::to_string(40 - 8 * i) + ".0 u  >10 u for " + std::to_string(i) + " s\n"; }
+			dp.update(demo.dbg);
+			ui::frame(0);
+			const ui::Rect er = dp.extra()->screen(), wr = dp.window()->screen(), sl = dp.sideList()->screen();
+			check(dp.toggle(16) && dp.sideList()->thumb().h > 0 && er.h > 100 * ui::scale() && er.y >= sl.bottom() - 0.5f && er.bottom() <= wr.bottom() + 0.5f,
+				("debug: 17 toggles scroll, 6 lines of extra text whole inside the frame (" + std::to_string(er.y) + "+" + std::to_string(er.h) + " in ..." + std::to_string(wr.bottom()) + ")").c_str());
+			ui::Widget* t16 = dp.toggle(16);
+			const bool hiddenFirst = t16->screen().y >= sl.bottom();
+			dp.sideList()->onScroll(-100);
+			ui::frame(0);
+			check(hiddenFirst && t16->screen().bottom() <= sl.bottom() + 0.5f && dp.extra()->screen().y == er.y, "debug: the wheel brings the last toggle into view; the extra text stays put");
+			dp.sideList()->offset = 0;
 		}
 		demo.debugLog.clear();
 		check(key(SAPP_KEYCODE_ESCAPE) && !dp.shown() && demo.debugLog == "close;", "debug: Escape closes it");

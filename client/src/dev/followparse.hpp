@@ -12,6 +12,20 @@ namespace follow
 {
 	constexpr size_t kMaxLine = 4096;	// bytes, the '\n' included (section 2): a longer line is dropped by the reader
 
+	// Splits a byte stream into lines (no '\n') and applies the cap: a line whose bytes with its '\n' exceed kMaxLine is dropped whole, however the bytes
+	// are chunked (kenshi-cym.40.2.9). dropped() counts them. Used by dev/followstream.cpp's reader; tests/followstream/parse_test.cpp covers it.
+	class LineReader
+	{
+	public:
+		void feed(const char* data, size_t n, std::vector<std::string>& lines);
+		size_t dropped() const { return dropped_; }
+		void clear() { buf_.clear(); discarding_ = false; }
+	private:
+		std::string buf_;
+		bool discarding_ = false;	// inside an over-long line, up to its '\n'
+		size_t dropped_ = 0;
+	};
+
 	struct Line
 	{
 		std::string verb;

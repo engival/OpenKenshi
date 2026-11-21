@@ -1,0 +1,9 @@
+# Drift view fixture (kenshi-cym.40.2.6), sim paused. The fixture save (ksim_save_import_test --write-fixture) holds the hero at 1000,142.79,1000 and the mate at
+# 1010,142.66,1000; its clock is day 140 17:32 = 3353.533333 h. GHOST sends an `orig` a second from then on (t = the align time while paused).
+# Offsets from the imported positions: hero 0 u (green), mate 40 u (red). records_drift40.txt moves the mate's to 40 u (red).
+0.5 align t=3353.533333
+0.2 cam pos={cx+0},{cy+0},{cz+0} rot=0.965926,0.258819,0.000000,0.000000 zoom=90.000 floor=0
+0.2 speed v=0
+0.2 select ids={m0}
+0.2 GHOST {m0} 1000.000,142.790,1000.000
+0.0 GHOST {m1} 1010.000,142.660,1040.000

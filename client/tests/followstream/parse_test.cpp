@@ -1,7 +1,9 @@
 // kfollowparse_test: the follow stream's grammar, records and the original's position store, without a game (docs/FOLLOW_STREAM.md, kenshi-cym.40.2.5).
 #include <cmath>
 #include <cstdio>
+#include <algorithm>
 #include <string>
+#include <vector>
 
 #include "dev/followparse.hpp"
 #include "dev/origstore.hpp"
@@ -66,6 +68,26 @@ int main()
 	check(P("orig id=77 pos=1,2,3 yaw=0.5 t=100.25", r) == Status::kOk && r.state == State::kUp, "orig no state");
 	check(P("orig id=77 pos=1,2,3 yaw=0.5 t=1 state=flying", r) == Status::kMalformed, "orig bad state");
 	check(P("clock t=48.5 day=3 hours=0.5", r) == Status::kOk && r.t == 48.5 && r.day == 3, "clock");
+
+	// the line cap (section 2: at most 4096 bytes, the '\n' included; a longer line is dropped whole)
+	{
+		LineReader rd;
+		std::vector<std::string> out;
+		const std::string ok(kMaxLine - 1, 'a'), over(kMaxLine, 'b');
+		rd.feed((ok + "\n").data(), ok.size() + 1, out);
+		check(out.size() == 1 && out[0].size() == kMaxLine - 1 && rd.dropped() == 0, "a line of exactly 4096 bytes with its newline passes");
+		out.clear();
+		rd.feed((over + "\nhello v=1\n").data(), over.size() + 1 + 11, out);
+		check(out.size() == 1 && out[0] == "hello v=1" && rd.dropped() == 1, "a 4097-byte line is dropped, the next one survives");
+		out.clear();
+		const std::string huge = std::string(3 * kMaxLine, 'c') + "\nclock t=1\n";
+		for (size_t i = 0; i < huge.size(); i += 1000) { rd.feed(huge.data() + i, std::min<size_t>(1000, huge.size() - i), out); }
+		check(out.size() == 1 && out[0] == "clock t=1" && rd.dropped() == 2, "a huge line split over chunks is dropped once");
+		out.clear();
+		rd.feed("select ids=1,", 13, out);
+		rd.feed("2\n", 2, out);
+		check(out.size() == 1 && out[0] == "select ids=1,2", "a line split over two reads joins");
+	}
 
 	// the store
 	OrigStore s;

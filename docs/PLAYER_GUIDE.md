@@ -139,6 +139,7 @@ when the client next starts.
 - **Interface / Colours** — the flat style's colours, each with a swatch.
 - **Debug / Debug keys** (only with `--debug`) — the client's development keys.
 - **Follow mode** (`--debug --follow-stream 127.0.0.1:PORT --import-save DIR`, side-by-side with the original) — the camera, pause / speed, selection and orders follow the inspector agent's stream, and your own camera and mouse orders are locked with a toast; the F8 panel's "Follow mirror lock" row releases or re-takes the lock (`client/docs/FOLLOW_STREAM.md`).
+- **Drift view** (follow mode; F8 panel "Drift view", or `debug.drift_view`) — a ghost marks where the original has each character at the same game time, with a line to ours (green under `debug.drift_near` 1 u, yellow under `debug.drift_far` 10 u, red beyond); the panel lists the 5 worst drifts under its toggles (the toggles scroll with the wheel when the panel is short), and a `drift` record per character goes back to the agent once a second.
 
 Each row has its value at the right and a reset-to-default button; `DEFAULT` resets the tab's rows, `CLOSE` closes.
 

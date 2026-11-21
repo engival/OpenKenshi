@@ -420,6 +420,7 @@ if(KCLIENT_DEV_TOOLS)
 		src/dev/pickboxes.cpp
 		src/dev/pickmask.cpp
 		src/dev/routepreview.cpp
+		src/dev/driftview.cpp
 		src/dev/scenetest.cpp
 		src/dev/probe.cpp
 		src/dev/heightprobe.cpp

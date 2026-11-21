@@ -99,6 +99,11 @@ public:
 	int charIndex(uint64_t id, uint32_t* version = nullptr) const;	// id's index in Characters (-1: not built) and its appearance version
 	void select(uint64_t id, bool add);	// a non-player id (or 0) is ignored: the selection never empties
 	const std::vector<uint64_t>& selected() const { return selected_; }
+	// Follow mode (kenshi-cym.40.2.9): the stream's real empty selection. selectNone() empties it and the refill (one of ours always selected) stays off until
+	// a select() or releaseEmpty(); normal play never calls it.
+	void selectNone() { selected_.clear(); holdEmpty_ = true; }
+	void releaseEmpty() { holdEmpty_ = false; }
+	bool holdsEmpty() const { return holdEmpty_; }
 	// The debug shot's route sidecar (kenshi-k16.2.231.1): where a move_to click came from, beside the order itself (a dev-only record).
 	struct Click { const char* what = "click"; bool building = false; std::string buildingName; int floor = -1; };
 	bool moveTo(const double at[3], bool queue, bool yValid = true, const Click* click = nullptr);	// the selection; at: the clicked surface point (y sent as yValid; false: the heightmap's only, the sim takes the surface nearest in xz, ksim k16.8.10); false when nothing is sent
@@ -411,6 +416,7 @@ private:
 	simlink::OrderWriter orders_;
 	std::vector<uint64_t> selected_;
 	bool selectedOnce_ = false;
+	bool holdEmpty_ = false;	// selectNone(): leave the selection empty
 	bool squadWaiting_ = false;	// a new squad member is still decoding: the first selection (and what acts on it) waits for its build (kenshi-k16.2.205.12.63)
 	std::unordered_set<uint64_t> arrived_;	// dev: the ids whose arrival note was written (kenshi-k16.2.205.12.77)
 	bool rosterWarm_ = false;	// the first roster's races were queued on the decode workers (kenshi-k16.2.205.12.63)

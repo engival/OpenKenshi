@@ -14,6 +14,7 @@
 
 #include "bridge/simview.hpp"
 #include "dev/devhooks.hpp"
+#include "dev/driftview.hpp"
 #include "dev/followparse.hpp"
 #include "dev/origstore.hpp"
 
@@ -47,8 +48,8 @@ namespace
 		int fd = -1;
 		bool connecting = false, connected = false;
 		double retryAt = 0;
-		std::string rbuf, outbuf;
-		bool discarding = false;	// the rest of an over-long line
+		follow::LineReader reader;
+		std::string outbuf;
 		int connections = 0;
 
 		bool beginDone = false, readySent = false, everReady = false;
@@ -66,7 +67,7 @@ namespace
 		// speed
 		int pendPaused = -1;	// 0 / 1: the pause order sent and not yet seen in the sim's clock
 		double pendSpeed = 0;	// > 0: the speed order sent and not yet seen
-		double lastFrameAt = 0;
+		double lastFrameAt = 0, reconPauseAt = -10;
 
 		// selection
 		std::vector<uint64_t> wantSelect;
@@ -100,9 +101,8 @@ namespace
 		if (s.fd >= 0) { ::close(s.fd); }
 		s.fd = -1;
 		s.connecting = s.connected = false;
-		s.rbuf.clear();
+		s.reader.clear();
 		s.outbuf.clear();
-		s.discarding = false;
 	}
 
 	void sendLine(S& s, const std::string& line)
@@ -257,11 +257,24 @@ namespace
 		if (!s.readySent) { s.dropped++; if (s.dropped == 1) { logLine("records before ready are dropped (first: type %d)", (int)r.type); } return; }
 		switch (r.type)
 		{
-			case follow::Type::kAlign: follow::origStore().setAlign(r.t); logLine("align t=%.6f h", r.t); break;
+			case follow::Type::kAlign:
+			{
+				follow::origStore().setAlign(r.t);
+				const auto& c = s.host.sim().clock();
+				drift::onAlign(r.t, ((double)c.day - 1.0) * 24.0 + c.hour);
+				logLine("align t=%.6f h", r.t);
+				break;
+			}
 			case follow::Type::kCam: applyCam(s, r); break;
 			case follow::Type::kSpeed: applySpeed(s, r.speed); break;
 			case follow::Type::kSelect:
-				if (r.ids.empty()) { logLine("select: empty set (the client's selection never empties; left as it is)"); break; }
+				if (r.ids.empty())	// a real empty selection (s4): the sim view holds it empty while the stream drives (kenshi-cym.40.2.9)
+				{
+					s.selectPending = false;
+					s.host.sim().selectNone();
+					logLine("select: empty set applied (selection now %zu)", s.host.sim().selected().size());
+					break;
+				}
 				s.wantSelect = r.ids; s.selectPending = true; s.selectSince = nowSec(); trySelect(s);
 				break;
 			case follow::Type::kOrder: applyOrder(s, r); break;
@@ -308,18 +321,11 @@ namespace
 				logLine("recv failed (%s)", strerror(errno));
 				closeFd(s); s.retryAt = nowSec() + 2.0; return;
 			}
-			s.rbuf.append(buf, (size_t)n);
-			size_t nl;
-			while ((nl = s.rbuf.find('\n')) != std::string::npos)
-			{
-				std::string line = s.rbuf.substr(0, nl);
-				s.rbuf.erase(0, nl + 1);
-				if (s.discarding) { s.discarding = false; continue; }	// the tail of a dropped long line
-				if (line.size() + 1 > follow::kMaxLine) { logLine("a line over %zu bytes dropped", follow::kMaxLine); continue; }
-				handleLine(s, line);
-			}
-			if (s.rbuf.size() >= follow::kMaxLine && !s.discarding) { logLine("a line over %zu bytes dropped", follow::kMaxLine); s.discarding = true; s.rbuf.clear(); }
-			else if (s.discarding) { s.rbuf.clear(); }
+			const size_t before = s.reader.dropped();
+			std::vector<std::string> lines;
+			s.reader.feed(buf, (size_t)n, lines);
+			if (s.reader.dropped() != before) { logLine("a line over %zu bytes dropped (%zu so far)", follow::kMaxLine, s.reader.dropped()); }
+			for (const std::string& line : lines) { handleLine(s, line); }
 		}
 #endif
 	}
@@ -434,6 +440,7 @@ void followLockToggle()
 {
 	S& s = st();
 	s.lockOn = !s.lockOn;
+	if (!s.lockOn && s.inited) { s.host.sim().releaseEmpty(); }	// released: the one-of-ours-always-selected rule is back
 	if (s.inited && s.host.toast) { s.host.toast(s.lockOn ? "Follow mode: your camera and orders are locked to the original's." : "Follow mode: lock released, you can move the camera and give orders."); }
 	logLine("mirror lock %s", s.lockOn ? "on" : "off");
 }
@@ -473,6 +480,7 @@ void followPoll()
 		s.lockToasted = false;
 		s.malformedLogged.clear();
 		follow::origStore().clear();
+		drift::reset();
 		s.clockSeen = false;
 		sendLine(s, "hello v=1 client=" + follow::quote(s.host.clientHash.empty() ? "unknown" : s.host.clientHash));
 		logLine("connected to 127.0.0.1:%d (connection %d), hello sent", s.port, s.connections);
@@ -485,7 +493,13 @@ void followPoll()
 
 	if (s.connected)
 	{
-		if (!s.readySent && s.beginDone && s.host.worldOn() && (s.everReady || (sim.clock().pauseBits & 1)))
+		// ready = on the imported world AND paused (s3). On a reconnect the sim may be running: pause it first (order 40), send ready once it shows paused
+		// (kenshi-cym.40.2.9; the agent's speed record after ready unpauses it again).
+		if (!s.readySent && s.beginDone && s.host.worldOn() && s.everReady && !(sim.clock().pauseBits & 1))
+		{
+			if (now - s.reconPauseAt >= 1.0) { s.reconPauseAt = now; sim.pause(true); logLine("reconnect: sim is running, pause sent before ready"); }
+		}
+		if (!s.readySent && s.beginDone && s.host.worldOn() && (sim.clock().pauseBits & 1))
 		{
 			s.readySent = s.everReady = true;
 			sendLine(s, "ready");
@@ -508,6 +522,7 @@ void followPoll()
 			s.clockMissLogged = true;
 			logLine("no clock beat from the agent for %.1f s", now - s.lastClockRecv);
 		}
+		drift::frame(sim, s.readySent, now, [&s](const std::string& l) { sendLine(s, l); });
 		easeCamera(s, dt);
 		flush(s);
 	}

@@ -66,6 +66,7 @@
 #include "dev/devhooks.hpp"
 #ifdef KCLIENT_DEV_TOOLS
 #include "dev/pickmask.hpp"
+#include "dev/driftview.hpp"
 #include "dev/routepreview.hpp"
 #endif
 #include "knobs/lightterms.hpp"
@@ -542,6 +543,20 @@ void draw_sim_markers(const FramePacket& pk)
 			segment(a, b);
 		}
 		if (dev::routepreview::approach()) { double e[3] = { rp.back()[0], rp.back()[1], rp.back()[2] }; on_drawn_ground(e); ring(e, 2.5); }
+	}
+	for (const dev::drift::Ghost& g : dev::drift::ghosts())	// the side-by-side drift view (dev/driftview.cpp): the original's character, a line to ours, by distance
+	{
+		if (g.colour == 0) { ovl::c4f(0.25f, 1.0f, 0.35f, 0.95f); } else if (g.colour == 1) { ovl::c4f(1.0f, 0.9f, 0.2f, 0.95f); } else { ovl::c4f(1.0f, 0.25f, 0.2f, 0.95f); }
+		segment(g.ghost, g.ours);
+		ring(g.ghost, 2.0);
+		if (g.origState != g.ourState)	// the original's state differs from ours: a second ring (down), a cross (ko), both (dead), a pole (carried)
+		{
+			const double* c = g.ghost;
+			const double a[3] = { c[0] - 3.0, c[1], c[2] - 3.0 }, b[3] = { c[0] + 3.0, c[1], c[2] + 3.0 }, e[3] = { c[0] - 3.0, c[1], c[2] + 3.0 }, f[3] = { c[0] + 3.0, c[1], c[2] - 3.0 };
+			if (g.origState == 1 || g.origState == 3) { ring(c, 3.5); }
+			if (g.origState == 2 || g.origState == 3) { segment(a, b); segment(e, f); }
+			if (g.origState == 4) { const double top[3] = { c[0], c[1] + 8.0, c[2] }; segment(c, top); }
+		}
 	}
 #endif
 	// ground items: their record's mesh (WorldBuildings::setProps, BuildingSet::items); a small ring for one without (MINE), and the name label (the original's DropItemLabels) while ALT is held
