@@ -18,7 +18,6 @@ namespace host
 // A collision shape the click ray passed over and why (kenshi-k16.2.259): the F12 shot's pick report and `dump pick` name each.
 struct PickSkip { std::string name; double at[3]; std::string why; };
 
-constexpr double kPropBoxSlack = 0.5;	// how far past a container's drawn box a click still counts as the container (the sim's collision proxy for the piece sits a thousandth of a unit nearer than its mesh box, k16.2.239.1)
 
 // Ground item name labels (the original's DropItemLabels; kenshi-inspect picker.md): every item within kLabelRange shows one while ALT (the
 // original's `highlight` key) is held, otherwise only the hovered item's, which stays while the mouse is on the label itself. The box is the
@@ -63,7 +62,21 @@ bool use_producer(uint64_t id, bool queue);	// main.cpp
 bool open_body(uint64_t id, bool queue);	// main.cpp
 bool ray_ground(const double origin[3], const double dir[3], double hit[3]);	// main.cpp
 bool see_through(const double p[3], double bottom = 1e30, std::string* why = nullptr);	// main.cpp
-bool ray_hit(const double origin[3], const double dir[3], double hit[3], bool* building, const double* eye = nullptr, std::vector<PickSkip>* skipped = nullptr, float* hitBox = nullptr);
+// The click ray's world hit: the nearest DRAWN surface (kenshi-k16.2.396.5: WorldBuildings::drawnPickRay), a foliage shell's collision, or the terrain. instance: the drawn
+// instance hit (-1: not a drawn instance); hitBox: the foliage shell's box when it is one.
+bool ray_hit(const double origin[3], const double dir[3], double hit[3], bool* building, const double* eye = nullptr, std::vector<PickSkip>* skipped = nullptr, float* hitBox = nullptr, int* instance = nullptr);
+// The first collision shape the view draws (foliageOnly: building shapes are passed unreported); the camera ground and the old pick use it
+bool ray_shapes(const double origin[3], const double dir[3], double far, double hit[3], bool* building = nullptr,
+	const double* eye = nullptr, std::vector<PickSkip>* skipped = nullptr, float* hitBox = nullptr, bool foliageOnly = false);
+bool pick_hidden(const double pos[3], std::string* why = nullptr);	// the click's position test (WorldBuildings::cutAway)
+void note_thing_skip(std::vector<PickSkip>* skipped, const char* kind, const simlink::Interactable& th, const double at[3], const std::string& why);
+constexpr double kProducerMatch = 50;	// MINE: a foliage hit within this (XZ, MINE) of a producer's placement picks it (deposit rocks)
+#ifdef KCLIENT_DEV_TOOLS
+// debug.pick_collision: the old collision-shape pick, for parity comparisons (pickcollision.cpp)
+Pick pick_at_collision(const double dir[3], std::vector<PickSkip>* skipped);
+bool ray_hit_collision(const double origin[3], const double dir[3], double hit[3], bool* building, const double* eye, std::vector<PickSkip>* skipped, float* hitBox);
+bool pick_collision_on();
+#endif
 double ground_under(double x, double z, const char** on);
 float label_text_width(const std::string& text);
 float label_height();

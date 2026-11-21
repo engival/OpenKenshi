@@ -1,0 +1,10 @@
+# container_body (kenshi-k16.2.396.5, replay of kenshi-k16.2.396.3): a KO'd squadmate lying on the floor of the Hub Storm House bar beside the Safe
+# (-50545.7 1074.5 -1163.7), the Wooden Barrel (-50559.2 1075.8 -1163.6) and the Shop Counter. A container's pick must not take the lying body's pixels:
+# the body drawn in front of the container is the pick. radius=150 clears every default-world squad within 150 u of the centre; ko=100000 keeps the body down.
+KSCEN 2
+scenario title=A%20KO%27d%20squadmate%20lies%20beside%20a%20bar%20container setup=Your%20Carrier%20and%20a%20KO%27d%20Sleeper%20lie%20in%20the%20Hub%20Storm%20House%20bar%20beside%20the%20Safe. look_for=Hover%20the%20Sleeper%3A%20is%20the%20body%20picked%20where%20it%20is%20drawn%20and%20the%20Safe%20and%20barrel%20only%20where%20they%20are%20drawn%3F bead=kenshi-k16.2.396.3 metrics=targeted_player,player_downed_s
+source save=playtest game=1.0.68 radius=150 centre=-50550,-1175 leader=Carrier
+clock day=1 hour=14 minute=0
+squad id=1 name=Carrier faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Carrier template=1533662-rebirth.mod faction=204-gamedata.base x=-50530 y=1075 z=-1230 yaw=0 leader=1 player=1 chase=1 ranged=1
+char id=2 squad=1 name=Sleeper template=1533662-rebirth.mod faction=204-gamedata.base x=-50552 y=1075 z=-1170 yaw=1.57 player=1 ko=100000 unconscious=1

@@ -773,7 +773,7 @@ void pick_mask_update()
 		[](uint64_t id, float box[4]) -> bool
 		{
 			double lo[3], hi[3];
-			if (!app.buildings.propBox(id, lo, hi, kPropBoxSlack)) { return false; }
+			if (!app.buildings.propBox(id, lo, hi)) { return false; }
 			bool any = false;
 			for (int c = 0; c < 8; c++)
 			{

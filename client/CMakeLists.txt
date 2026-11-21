@@ -297,6 +297,7 @@ set(KC_SRC_HOST
 	src/host/orders.cpp
 	src/host/panels.cpp
 	src/host/pick.cpp
+	src/host/pickcollision.cpp
 	src/host/script.cpp
 	src/host/session.cpp
 	src/host/uihost.cpp

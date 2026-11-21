@@ -543,10 +543,11 @@ bool WorldBuildings::decodeMesh(const std::string& path, MeshCpu& out)
 }
 
 // Median split on the longest centroid axis, leaves of up to 6 triangles; triangles reordered into leaf order.
-void WorldBuildings::buildPick(PickMesh& out, const std::vector<float>& tris)
+void WorldBuildings::buildPick(PickMesh& out, const std::vector<float>& tris, const std::vector<uint8_t>& skip)
 {
 	const size_t n = tris.size() / 9;
 	out.tris.clear();
+	out.skip.clear();
 	out.nodes.clear();
 	if (n == 0) { return; }
 	std::vector<uint32_t> idx(n);
@@ -588,6 +589,8 @@ void WorldBuildings::buildPick(PickMesh& out, const std::vector<float>& tris)
 		stack.push_back({ (size_t)nd.b, mid, r.hi });
 	}
 	for (size_t k = 0; k < n; k++) { out.tris.insert(out.tris.end(), tris.begin() + (ptrdiff_t)idx[k] * 9, tris.begin() + (ptrdiff_t)idx[k] * 9 + 9); }
+	out.skip.reserve(n);
+	for (size_t k = 0; k < n; k++) { out.skip.push_back(skip[idx[k]]); }
 }
 
 void WorldBuildings::worker()
@@ -625,8 +628,11 @@ void WorldBuildings::worker()
 		if (r.ok && job.isMesh)	// the drawn triangles and their BVH, off the logic thread (kenshi-k16.2.382.2)
 		{
 			std::vector<float> tris;
+			std::vector<uint8_t> skip;	// glass and effect submeshes are drawn but never picked (kenshi-k16.2.396.5)
 			for (const Sub& sb : r.mesh.subs)
 			{
+				const std::string mat = lower(sb.material);
+				const uint8_t sk = mat.find("glass") != std::string::npos || mat.find("effect") != std::string::npos || mat.find("particle") != std::string::npos || mat.find("decal") != std::string::npos;
 				for (int i = 0; i + 2 < sb.indexCount; i += 3)
 				{
 					for (int c = 0; c < 3; c++)
@@ -634,9 +640,10 @@ void WorldBuildings::worker()
 						const float* v = &r.mesh.verts[((size_t)sb.firstVertex + r.mesh.indices[(size_t)sb.firstIndex + i + c]) * kVertexFloats];
 						tris.insert(tris.end(), v, v + 3);
 					}
+					skip.push_back(sk);
 				}
 			}
-			buildPick(r.mesh.pick, tris);
+			buildPick(r.mesh.pick, tris, skip);
 		}
 #ifdef KCLIENT_DEV_TOOLS
 		r.pickS = std::chrono::duration<double>(std::chrono::steady_clock::now() - pick0).count();

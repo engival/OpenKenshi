@@ -129,25 +129,29 @@ grep -q 'simlink: server: HELLO timeout' "$OUT/run-ghost.log" && fail "the ghost
 
 # A: the far floor, walkable, and the shape the camera is inside named as skipped for the floor cut, in the log and the F12 sidecar.
 grep -qE '^pick \(876, 617\): kind 1 id 0 .*walkable 1' "$OUT/shot.picks.txt" || fail "the shot's click did not pick the walkable floor"
-grep -qE '^pick skipped ".*4028-TwoStorey\.mod shape [0-9]+" at .*: the camera is inside it, above the floor cut of ' "$OUT/shot.picks.txt" \
-	|| fail "no shape named as skipped for the camera inside it, above the floor cut"
-grep -qE 'move_to 6833[78](\.[0-9])? ([0-9.]+ )?-71098(\.[0-9])?( \(navmesh point\))?: sent' "$OUT/shot.picks.txt" || fail "the click did not send the move_to"
+# kenshi-k16.2.396.5: the camera-inside collision shape no longer picks, so nothing names it skipped; the drawn rule is one-sided: the Interior_WALLS back face the
+# ray starts inside is not drawn, so the far floor is the pick (a changed assert, reason in the handback)
+grep -qE '^pick walk part ".*Storm_House_05_Interior_FLOOR' "$OUT/shot.picks.txt" || fail "the shot's click did not pick the Longhouse's Interior_FLOOR"
+grep -qE 'move_to 6833[78](\.[0-9])? ([0-9.]+ )?-7109[78](\.[0-9])?( \(navmesh point\))?: sent' "$OUT/shot.picks.txt" || fail "the click did not send the move_to"
 grep -qE '^move marker: seq [0-9]+ click .* -> route end ' "$OUT/shot.picks.txt" || fail "the move marker did not take the sim's route end"
 [ -f "$OUT/shot.png" ] && [ -f "$OUT/shot.txt" ] || fail "no screenshot or F12 sidecar written (the sidecar is <shot stem>.txt)"
 grep -q '^pick ray: near plane ' "$OUT/shot.txt" || fail "the F12 sidecar has no pick-ray (near plane) line"
-grep -q '^skipped shape: ".*the camera is inside it, above the floor cut of ' "$OUT/shot.txt" || fail "the F12 sidecar does not name the skipped shape"
 
 # B: the tank on floor 1 over the floor-0 click is not picked, and the report names the container as skipped.
 grep -qE '^pick \(658, 475\): kind 5 id 41365' "$OUT/tank.picks.txt" && fail "the tank above the cut still picks (Water Tank 41365)"
 grep -qE '^pick \(658, 475\): kind [0-9]' "$OUT/tank.picks.txt" || fail "the tank shot's click picked nothing"
-grep -qE '^pick skipped "container .*" at .*: above the (floor|level) cut of ' "$OUT/tank.picks.txt" || fail "the container above the cut is not named as skipped"
+# kenshi-k16.2.396.5: a container is no longer a box of its own: the Water Tank (thing 1099511628178, 68259 1453 -70754) is drawn instances of the Storm House, so
+# the report names the DRAWN parts at the tank's height (x 68200-68280, y 1440-1465) as skipped for the level cut (a changed assert, reason in the handback)
+grep -qE '^pick skipped "drawn [^"]*" at 682[0-7][0-9]\.[0-9] 14[4-6][0-9]\.[0-9] [^:]*: above the (floor|level) cut of ' "$OUT/tank.picks.txt" || fail "the drawn parts above the cut (the tank's) are not named as skipped"
 
 # C: the RTS camera across the house, the house named an occluder, and the click through the glass picking the ground beside the character.
 grep -qE '^follow state: mode rts center [0-9]+ drive 0 subject [0-9]+ ' "$OUT/ghost.picks.txt" || fail "Z did not put the camera in the RTS auto-centred mode"
 grep -qE '^Storm House at -50589,1073,-1225 .*: occluder$' "$OUT/ghost.picks.txt" \
 	|| fail "dump occluders does not name the Storm House an occluder (the ghost never fired across it)"
 grep -qE '^pick \(640, 480\): kind 1 id 0 .*walkable 1' "$OUT/ghost.picks.txt" || fail "the click through the glass did not pick the walkable ground"
-grep -qE '^pick skipped ".*" at .*: an occluder faded to glass' "$OUT/ghost.picks.txt" || fail "no shape is named as skipped for the occluder glass"
+# kenshi-k16.2.396.5: the hidden things are drawn instances now, skipped by see_through's cone wording (main.cpp); "faded to glass" is the ghost's shape wording, only the
+# collision pick (foliage shells) still meets it (a changed assert, reason in the handback)
+grep -qE '^pick skipped ".*" at .*: (an occluder faded to glass|inside the occluder fade.s cone)' "$OUT/ghost.picks.txt" || fail "no shape is named as skipped for the occluder glass"
 grep -q 'move_to .*: sent' "$OUT/ghost.picks.txt" || fail "the right click through the glass did not send the move_to"
 [ -f "$OUT/ghost.png" ] && [ -f "$OUT/ghost.txt" ] || fail "no screenshot or F12 sidecar written (the sidecar is <shot stem>.txt)"
 grep -q '^camera: rts eye ' "$OUT/ghost.txt" || fail "the F12 sidecar is not the RTS camera"
@@ -165,7 +169,6 @@ awk -v x="$1" -v y="$2" -v z="$3" 'BEGIN { exit !(x >= -50683 && x <= -50501 && 
 [ -n "$REC" ] || fail "the shot's click printed no 'click record:' line"
 grep -q '^clicks: [1-9][0-9]* recorded' "$OUT/shot.txt" || fail "the F12 sidecar has no 'clicks:' block"
 grep -q '^click record: .*at=876.0,617.0 .* eye=.* yaw=.* pitch=' "$OUT/shot.txt" || fail "the sidecar's click record lacks the camera / pointer words"
-grep -q '^  skipped ".*4028-TwoStorey' "$OUT/shot.record.txt" || fail "the click record does not list the skipped shape"
 grep -q '^  ghosts: ' "$OUT/shot.record.txt" || fail "the click record has no ghosts line"
 grep -qE '^click replay: .*: MATCH$' "$OUT/replay.picks.txt" || fail "the replay of the click record did not MATCH its recorded pick"
 echo "pick_drawn_check: PASS (camera inside a shape + above-cut floor in an empty building, container above the cut, the occluder glass across the Storm House, the click record and its replay)"

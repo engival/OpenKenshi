@@ -174,9 +174,11 @@ namespace host
 // kenshi-k16.2.259 (user 2026-11-15, "pick only what is drawn"): eye (the camera's position, null off the pick) - a shape the ray starts inside is passed
 // when it is not drawn at the camera either, MINE: the original reports a shape the ray starts inside at distance 0 (kenshi-rwh.142). skipped: each shape
 // passed over and why, for the report.
-static bool ray_shapes(const double origin[3], const double dir[3], double far, double hit[3], bool* building = nullptr,
-	const double* eye = nullptr, std::vector<PickSkip>* skipped = nullptr, float* hitBox = nullptr)
+bool ray_shapes(const double origin[3], const double dir[3], double far, double hit[3], bool* building,
+	const double* eye, std::vector<PickSkip>* skipped, float* hitBox, bool foliageOnly)
 {
+	bool isBuilding = false;
+	if (!building) { building = &isBuilding; }
 	double from[3] = { origin[0], origin[1], origin[2] }, t;
 	float box[6], skippedBox[6] = {};	// a shape passed through is passed whole (its exit face too), told apart by its bounds
 	bool solid = false;
@@ -185,7 +187,7 @@ static bool ray_shapes(const double origin[3], const double dir[3], double far, 
 	{
 		double at[3];
 		for (int k = 0; k < 3; k++) { at[k] = from[k] + dir[k] * t; }
-		const bool passed = std::equal(box, box + 6, skippedBox);
+		const bool passed = std::equal(box, box + 6, skippedBox) || (foliageOnly && *building);	// foliageOnly (the click pick, kenshi-k16.2.396.5): a building's shape never picks, only foliage shells
 		if (!passed)
 		{
 			std::string why;
@@ -218,46 +220,6 @@ static bool ray_shapes(const double origin[3], const double dir[3], double far, 
 // of sim.peek+hover on a camera jump to a fresh zone cell, Hub 22k shapes ~170 ms).
 const cfg::Bool kPickWait{ cfg::Group{ "Scripted runs" }, "debug.pick_wait", true, "Scripted runs: wait for the collision gather before each pick (deterministic clicks). Off: pick with the shapes at hand, as the player does" };
 
-// The click ray's world hit (SIMLINK 13: the picker's bottom layer). Ground layer (kenshi-k16.2.412.3, CLIENT.md "One ground solver, both directions"): the nearer
-// of the drawn walkable parts (BuildingPartDef::walkable, the stand solver's set; the cut and the ghost pass what they hide) and the terrain under the carve rule
-// (a hit inside a carved interior is the dune the interior mask clips, not drawn: SimView::setTerrainFn's masked). The collision shapes come first only where they are
-// nearer than that ground: a wall or an object, passed where they are see_through (a click there is on what shows behind; user 2026-11-03). False: nothing.
-// building: the hit is a building's (a shape, or a walkable part). kenshi-k16.2.259: origin is the near-plane start of the pick ray, eye the camera's position
-// (ray_shapes), skipped the report's shapes.
-bool ray_hit(const double origin[3], const double dir[3], double hit[3], bool* building, const double* eye, std::vector<PickSkip>* skipped, float* hitBox)
-{
-	*building = false;
-	if (app.scripted() && kPickWait.get()) { app.collide.wait(); }
-	const bool prevCuts = app.buildings.levelCuts;
-	app.buildings.levelCuts = true;	// the click pick: buildings nobody is in are cut at the floor selector's level (WorldBuildings::levelCuts)
-	double terrain[3], groundT = 1e30;
-	const bool onTerrain = ray_ground(origin, dir, terrain);
-	const bool carved = onTerrain && app.buildings.insideInterior(terrain, nullptr, nullptr, nullptr, true);
-	if (onTerrain && !carved) { groundT = std::sqrt(std::pow(terrain[0] - origin[0], 2) + std::pow(terrain[1] - origin[1], 2) + std::pow(terrain[2] - origin[2], 2)); }
-	double walkT = 1e30;
-	bool walk = false;
-	for (double from = 0; from < std::min(groundT, 20000.0);)	// the nearest walkable part the view draws: a hit the cut / ghost hides is passed
-	{
-		double t;
-		if (!app.buildings.walkableRay(origin, dir, from, std::min(groundT, 20000.0), t)) { break; }
-		const double at[3] = { origin[0] + dir[0] * t, origin[1] + dir[1] * t, origin[2] + dir[2] * t };
-		if (!see_through(at)) { walkT = t; walk = true; break; }
-		from = t + 0.5;
-	}
-	const double far = std::min(walk ? walkT : groundT, 20000.0);
-	const bool shape = ray_shapes(origin, dir, far, hit, building, eye, skipped, hitBox);
-	app.buildings.levelCuts = prevCuts;
-	if (shape) { return true; }
-	*building = false;
-	if (walk)
-	{
-		for (int k = 0; k < 3; k++) { hit[k] = origin[k] + dir[k] * walkT; }
-		*building = true;
-		return true;
-	}
-	if (onTerrain) { std::copy(terrain, terrain + 3, hit); }	// a carved hit nothing else answers: the terrain as before
-	return onTerrain;
-}
 
 // The floating camera's ground at (x, z): the highest surface drawn there, a building floor or roof (cut-away ones pass) or a rock, else the
 // terrain (kinspect camera_rts.md 3: a roof or floor under the pivot, ray from +3000, holds its y). on: "floor" or "terrain".
@@ -274,9 +236,63 @@ double ground_under(double x, double z, const char** on)
 	return shape ? hit[1] : terrain;
 }
 
+// The click ray's world hit (SIMLINK 13: the picker's bottom layer). kenshi-k16.2.396.5, the rule (user 2026-11-21, ask 396.4: "Item in the world has a 3d mesh,
+// that 3d mesh is what we ray cast against. Same system, all objects."): the nearest DRAWN surface along the ray wins. WorldBuildings::drawnPickRay tests the drawn
+// triangles of every instance (building parts, layout furniture, props, doors at their drawn pose); a hit the cut, the ghost or the occluder cone hides restarts
+// the ray just past it. Collision picks only foliage shells (trees, rocks, deposit rocks); the terrain is the ground under the carve rule (a hit inside a carved
+// interior is the dune the interior mask clips, not drawn: SimView::setTerrainFn's masked). False: nothing.
+// building: the hit is a building's (a drawn instance that is not a hand-placed feature). origin is the near-plane start of the pick ray, eye the camera's position,
+// skipped the report's hidden surfaces. instance: the drawn instance hit (-1 none); hitBox: the foliage shell's box when the hit is one.
+bool ray_hit(const double origin[3], const double dir[3], double hit[3], bool* building, const double* eye, std::vector<PickSkip>* skipped, float* hitBox, int* instance)
+{
+	*building = false;
+	if (instance) { *instance = -1; }
+	if (app.scripted() && kPickWait.get()) { app.collide.wait(); }
+#ifdef KCLIENT_DEV_TOOLS
+	if (pick_collision_on()) { return ray_hit_collision(origin, dir, hit, building, eye, skipped, hitBox); }
+#endif
+	const bool prevCuts = app.buildings.levelCuts;
+	app.buildings.levelCuts = true;	// the click pick: buildings nobody is in are cut at the floor selector's level (WorldBuildings::levelCuts)
+	double terrain[3], groundT = 1e30;
+	const bool onTerrain = ray_ground(origin, dir, terrain);
+	const bool carved = onTerrain && app.buildings.insideInterior(terrain, nullptr, nullptr, nullptr, true);
+	if (onTerrain && !carved) { groundT = std::sqrt(std::pow(terrain[0] - origin[0], 2) + std::pow(terrain[1] - origin[1], 2) + std::pow(terrain[2] - origin[2], 2)); }
+	const double reach = std::min(groundT, 20000.0);
+	double drawnT = reach;
+	uint32_t drawnInst = 0;
+	bool drawn = false;
+	for (double from = 0; from < reach;)
+	{
+		double t;
+		uint32_t i;
+		if (!app.buildings.drawnPickRay(origin, dir, from, reach, t, i)) { break; }
+		const double at[3] = { origin[0] + dir[0] * t, origin[1] + dir[1] * t, origin[2] + dir[2] * t };
+		std::string why;
+		if (!see_through(at, 1e30, &why)) { drawnT = t; drawnInst = i; drawn = true; break; }
+		if (skipped)
+		{
+			const std::string n = app.buildings.nameOfInstance((int)i);
+			skipped->push_back({ n.empty() ? "an unnamed drawn instance" : "drawn " + n, { at[0], at[1], at[2] }, why });
+		}
+		from = t + 0.5;
+	}
+	const bool shape = ray_shapes(origin, dir, drawnT, hit, building, eye, skipped, hitBox, true);	// foliage shells only
+	app.buildings.levelCuts = prevCuts;
+	if (shape) { return true; }
+	*building = false;
+	if (drawn)
+	{
+		for (int k = 0; k < 3; k++) { hit[k] = origin[k] + dir[k] * drawnT; }
+		const BuildingInstance* bi = app.buildings.instanceAt(drawnInst);
+		*building = !(bi && bi->feature);
+		if (instance) { *instance = (int)drawnInst; }
+		return true;
+	}
+	if (onTerrain) { std::copy(terrain, terrain + 3, hit); }	// a carved hit nothing else answers: the terrain as before
+	return onTerrain;
+}
+
 // What the mouse ray hits first: Pick, and its doc, are in pick.hpp (kenshi-k16.2.294.2, step 0 of the control-hints design); pick_at below fills it.
-constexpr double kProducerMatch = 50;	// MINE: a collision hit within this (XZ) of a producer's placement picks it (deposit rocks, a mine's shell)
-constexpr double kBedReach = 10, kBedLift = 3;	// a bed's pick sphere over its sleeping spot: MINE (a single bed is about 10 x 20 u)
 
 // Label text: the UI style's tag font (ui::drawTag's default) when the UI is up, else the debug font
 const ui::Font* label_font() { return app.uiOn ? ui::fonts::get("Kenshi_StandardFont_Medium") : nullptr; }
@@ -377,236 +393,156 @@ uint64_t label_at(double mx, double my)
 // The click's position test (kenshi-k16.2.259), cheap enough for every thing along the ray: pos is not drawn — in a ghosted occluder, on a sliced
 // building's hidden floor or, with levelCuts set around a pick, on any building's floor above the level. WorldBuildings::cutAway is the one test the
 // renderer's own cut and fade use, so a click on a thing there passes to what shows behind it.
-static bool pick_hidden(const double pos[3], std::string* why = nullptr) { return app.buildings.cutAway(pos, 1e30, why); }
+bool pick_hidden(const double pos[3], std::string* why) { return app.buildings.cutAway(pos, 1e30, why); }
 
 // A thing's own pick box the cut hides goes in the report too (kenshi-k16.2.259: the water tank's prop box on floor 1 over a floor-0
 // click): the name from the wire's record, at the box's hit point, with the cut's reason.
-static void note_thing_skip(std::vector<PickSkip>* skipped, const char* kind, const simlink::Interactable& th, const double at[3], const std::string& why)
+void note_thing_skip(std::vector<PickSkip>* skipped, const char* kind, const simlink::Interactable& th, const double at[3], const std::string& why)
 {
 	if (!skipped) { return; }
 	const std::string n = app.sim.nameOf(th.record, app.chars);
 	skipped->push_back({ std::string(kind) + " \"" + (n.empty() ? "no record name" : n) + "\"", { at[0], at[1], at[2] }, why });
 }
 
+
+// debug.pick_collision (dev): the old collision-shape pick, for parity comparisons
+#ifdef KCLIENT_DEV_TOOLS
+const cfg::Bool kPickCollision{ cfg::Group{ "Pick mask" }, "debug.pick_collision", false, "Debug: the click / hover pick as before the drawn-surface rule (collision shapes, per-layer patches), for parity comparisons (dev builds)" };
+bool pick_collision_on() { return kPickCollision.get(); }
+#endif
+
+// A thing with no drawn mesh has nothing to ray against (kenshi-k16.2.396.5: no sphere fallback): said once per thing in the event log, a bug to file
+static void log_meshless_things()
+{
+	// A thing's prop mesh binds when its instance streams in, seconds after the thing is announced: a thing is named only when it still has none kMeshWait frames
+	// after it was first seen (a meshless-at-first-sight check named every layout counter and barrel at the world load).
+	constexpr uint64_t kMeshWait = 900;
+	static std::map<uint64_t, uint64_t> firstSeen;
+	static std::set<uint64_t> told;
+	static uint64_t lastCheck = 0;
+	if (app.frames - lastCheck < 60) { return; }
+	lastCheck = app.frames;
+	for (const auto& [id, th] : app.sim.things())
+	{
+		const bool pickable = th.kind == simlink::Interactable::kItem || th.kind == simlink::Interactable::kContainer || th.kind == simlink::Interactable::kProducer;
+		if (!pickable || told.count(id)) { continue; }
+		if (app.buildings.hasMesh(id)) { firstSeen.erase(id); continue; }
+		const uint64_t first = firstSeen.emplace(id, app.frames).first->second;
+		if (app.frames - first < kMeshWait) { continue; }
+		told.insert(id);
+		evlog::add("pickmesh", 0, 0, "thing %llu \"%s\" has no drawn mesh: it cannot be picked (no sphere fallback)", (unsigned long long)id, app.sim.nameOf(th.record, app.chars).c_str());
+	}
+}
+
+// What the drawn instance the ray hit is: a door leaf (its door's interactable), a prop (item, container, producer, player's building: the prop the instance draws,
+// the nearest to the hit when a layout piece draws several) or the furniture piece a bed's sleeping spot lies in; else a plain building / world part (Ground).
+static void classify_drawn(Pick& p, uint32_t inst)
+{
+	const BuildingInstance* bi = app.buildings.instanceAt(inst);
+	if (!bi) { return; }
+	if (bi->door)
+	{
+		const auto it = app.doorPose.find(bi->door);
+		if (it != app.doorPose.end() && it->second.thing)
+		{
+			p.kind = Pick::Door;
+			p.id = it->second.thing;
+			return;
+		}
+	}
+	std::vector<uint64_t> ids;
+	app.buildings.propsOfInstance(inst, ids);
+	double bestD = 1e30;
+	for (const uint64_t id : ids)
+	{
+		Pick::Kind kind;
+		double c[3];
+		if (const simlink::Interactable* th = app.sim.thing(id))
+		{
+			kind = th->kind == simlink::Interactable::kContainer ? Pick::Container : th->kind == simlink::Interactable::kProducer ? Pick::Producer : th->kind == simlink::Interactable::kItem ? Pick::Item : Pick::Ground;
+			if (kind == Pick::Ground) { continue; }
+			for (int k = 0; k < 3; k++) { c[k] = th->pos[k]; }
+		}
+		else if (const auto b = app.sim.decoder().buildings.find(id); b != app.sim.decoder().buildings.end() && app.sim.playerBuilding(b->second))
+		{
+			p.kind = Pick::Ground;	// the player's building, like a world building: Ground with `building` (k16.2.36.1)
+			p.building = true;
+			p.id = id;
+			return;
+		}
+		else { continue; }
+		const double d = std::pow(c[0] - p.hit[0], 2) + std::pow(c[1] - p.hit[1], 2) + std::pow(c[2] - p.hit[2], 2);
+		if (d < bestD) { bestD = d; p.kind = kind; p.id = id; }
+	}
+	if (p.id) { return; }
+	if (bi->parent < 0) { return; }	// only a layout furniture piece is a bed
+	// beds (INTERACTABLE kind 5) are layout furniture: the piece holding the sleeping spot is the bed. The piece depends on the spot only, kept while the
+	// instance set and the Ready meshes stand.
+	static std::unordered_map<uint64_t, int> piece;
+	static uint64_t gen = ~0ull;
+	if (gen != app.buildings.pickGen()) { piece.clear(); gen = app.buildings.pickGen(); }
+	for (const auto& [id, th] : app.sim.things())
+	{
+		if (th.kind != simlink::Interactable::kBed) { continue; }
+		auto it = piece.find(id);
+		if (it == piece.end())
+		{
+			const double at[3] = { th.pos[0], th.pos[1], th.pos[2] };
+			it = piece.emplace(id, app.buildings.bedPiece(at, 6)).first;	// 6 u: a bed's sleeping spot can lie at the end of its drawn frame, off the mesh box
+		}
+		if (it->second == (int)inst) { p.kind = Pick::Bed; p.id = id; return; }
+	}
+}
+
+// What the mouse ray hits first (kenshi-k16.2.396.5): ONE nearest-wins loop. The world half is ray_hit (the nearest drawn surface, a foliage shell, the terrain);
+// the instance it hit says what it is (classify_drawn). Characters keep their pick volumes (SimView::pick: step A2 gives them bone capsules) and compete with
+// the world by distance, no slop.
 Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped)
 {
+#ifdef KCLIENT_DEV_TOOLS
+	if (pick_collision_on()) { return pick_at_collision(dir, skipped); }
+#endif
 	Pick p;
 	double from[3];	// the ray starts at the near clip plane, as the original's does (kenshi-k16.2.259, camera_near)
 	for (int k = 0; k < 3; k++) { from[k] = app.pos[k] + dir[k] * camera_near(); }
 	const bool prevCuts = app.buildings.levelCuts;
-	app.buildings.levelCuts = true;	// every layer below skips what the cut hides, not only the world's shapes
+	app.buildings.levelCuts = true;	// the characters' cut test below reads it too
+	log_meshless_things();
 	double best = 1e30;
-	float worldBox[6] = {};	// the box of the collision shape the world hit is, when it is one (not the terrain)
-	if (ray_hit(from, dir, p.hit, &p.building, app.pos, skipped, worldBox))
+	float worldBox[6] = {};
+	int inst = -1;
+	if (ray_hit(from, dir, p.hit, &p.building, app.pos, skipped, worldBox, &inst))
 	{
 		p.kind = Pick::Ground;
 		best = std::sqrt(std::pow(p.hit[0] - from[0], 2) + std::pow(p.hit[1] - from[1], 2) + std::pow(p.hit[2] - from[2], 2));
-	}
-	const double world = best;
-	double t;
-	// doors: the pose update_doors keeps per door (the drawn leaf's own): the leaf shapes sit where the leaf is drawn, closed in the frame, open
-	// (or broken) slid aside, between them mid-travel; a door with no interactable has no pick
-	const auto leaf = [&](const kworld::WorldShape& s, double off[3])
-	{
-		const auto it = app.doorPose.find(s.door);
-		if (it == app.doorPose.end() || !it->second.thing) { return false; }
-		if (!it->second.exact && it->second.open > 0) { return false; }	// not a box: no leaf normal, left out while open
-		for (int k = 0; k < 3; k++) { off[k] = it->second.off[k]; }
-		return true;
-	};
-	if (kworld::DoorKey key; app.collide.ray(from, dir, world, t, nullptr, leaf, &key) && app.doorPose[key].thing)
-	{
-		const double at[3] = { from[0] + dir[0] * t, from[1] + dir[1] * t, from[2] + dir[2] * t };
-		if (!see_through(at))	// a hidden building's doors do not pick
+		if (inst >= 0) { classify_drawn(p, (uint32_t)inst); }
+		else if (worldBox[3] > worldBox[0])
 		{
-			p.kind = Pick::Door;
-			p.id = app.doorPose[key].thing;
-			best = t;
-			std::copy(at, at + 3, p.hit);
-		}
-	}
-	for (const auto& [id, th] : app.sim.things())	// producers: by their placement's mesh boxes (the original's hover covers the whole mine)
-	{
-		if (th.kind != simlink::Interactable::kProducer || !app.buildings.propRay(id, from, dir, t) || t > std::min(best, world)) { continue; }
-		const double at[3] = { from[0] + dir[0] * t, from[1] + dir[1] * t, from[2] + dir[2] * t };
-		std::string why;
-		if (pick_hidden(at, &why))	// a producer on a floor the cut hides is not drawn (k16.2.259)
-		{
-			note_thing_skip(skipped, "producer", th, at, why);
-			continue;
-		}
-		p.kind = Pick::Producer;
-		p.id = id;
-		best = t;
-		std::copy(at, at + 3, p.hit);
-	}
-	for (const auto& [id, b] : app.sim.decoder().buildings)	// the player's drawn buildings, like a world building's shape: Ground with `building` (k16.2.36.1)
-	{
-		if (app.buildings.propInstance(id) < 0 || !app.sim.playerBuilding(b)) { continue; }
-		if (app.buildings.propRay(id, from, dir, t) && t <= std::min(best, world))
-		{
-			const double at[3] = { from[0] + dir[0] * t, from[1] + dir[1] * t, from[2] + dir[2] * t };
-			if (pick_hidden(at)) { continue; }
-			p.kind = Pick::Ground;
-			p.building = true;
-			p.id = id;
-			std::copy(at, at + 3, p.hit);
-			best = t;
-		}
-	}
-	// no placement (a deposit is a foliage rock): the rock's own collision, a hit shape whose footprint holds the producer's origin, or else a hit within
-	// kProducerMatch of it
-	if (float box[6]; p.kind != Pick::Producer && app.collide.ray(from, dir, std::min(best, world) + 1, t, box))
-	{
-		const double at[3] = { from[0] + dir[0] * t, from[1] + dir[1] * t, from[2] + dir[2] * t };
-		double near = kProducerMatch * kProducerMatch;
-		if (!pick_hidden(at))
-		{
+			// a deposit is a foliage rock with no placement: the rock's own collision, a hit shape whose footprint holds the producer's origin, or else a hit within
+			// kProducerMatch of it
+			double near = kProducerMatch * kProducerMatch;
 			for (const auto& [id, th] : app.sim.things())
 			{
 				if (th.kind != simlink::Interactable::kProducer) { continue; }
-				const bool own = th.pos[0] >= box[0] && th.pos[0] <= box[3] && th.pos[2] >= box[2] && th.pos[2] <= box[5];
-				const double d2 = own ? 0.0 : std::pow(th.pos[0] - at[0], 2) + std::pow(th.pos[2] - at[2], 2);
+				const bool own = th.pos[0] >= worldBox[0] && th.pos[0] <= worldBox[3] && th.pos[2] >= worldBox[2] && th.pos[2] <= worldBox[5];
+				const double d2 = own ? 0.0 : std::pow(th.pos[0] - p.hit[0], 2) + std::pow(th.pos[2] - p.hit[2], 2);
 				if (d2 < near || (own && near > 0))
 				{
 					near = d2;
 					p.kind = Pick::Producer;
 					p.id = id;
-					best = t;
-					std::copy(at, at + 3, p.hit);
 				}
 			}
 		}
 	}
-	// the item sphere, or a drawn container's mesh box; a thing on a floor the cut hides is not drawn, so the ray goes through it (k16.2.259)
-	const auto thingHidden = [&](uint64_t id)
-	{
-		const simlink::Interactable* th = app.sim.thing(id);
-		if (!th) { return true; }
-		if (th->kind == simlink::Interactable::kContainer && app.buildings.hasMesh(id)) { return true; }	// a drawn container: its mesh box picks, below
-		const double at[3] = { th->pos[0], app.sim.thingY(id, *th), th->pos[2] };
-		std::string why;
-		if (!pick_hidden(at, &why)) { return false; }
-		const bool box = th->kind == simlink::Interactable::kContainer;
-		const double reach = box ? SimView::kContainerReach : SimView::kItemReach;	// where the ray would have met it, its own hit point
-		const double c[3] = { at[0] - from[0], at[1] + (box ? SimView::kContainerLift : SimView::kItemLift) - from[1], at[2] - from[2] };
-		const double along = c[0] * dir[0] + c[1] * dir[1] + c[2] * dir[2];
-		const double d2 = c[0] * c[0] + c[1] * c[1] + c[2] * c[2] - along * along;
-		double t2 = std::max(0.0, along - std::sqrt(std::max(0.0, reach * reach - d2)));
-		const double hit[3] = { from[0] + dir[0] * t2, from[1] + dir[1] * t2, from[2] + dir[2] * t2 };
-		note_thing_skip(skipped, box ? "container" : "item", *th, hit, why);
-		return true;
-	};
-	if (const uint64_t id = app.sim.pickItem(from, dir, &t, thingHidden); id && t <= (best < world ? best : world + SimView::kContainerReach))	// a door or producer in front wins; the world only past the pick sphere (an item on a table sits in its collision box)
-	{
-		const simlink::Interactable* th = app.sim.thing(id);
-		p.kind = th && th->kind == simlink::Interactable::kContainer ? Pick::Container : Pick::Item;
-		p.id = id;
-		best = t;
-		for (int k = 0; k < 3; k++) { p.hit[k] = from[k] + dir[k] * t; }
-	}
-	int backed = 0;	// the world shape's drawn backing, tested on the first container behind it: 0 not yet, 1 none (undrawn proxy), 2 drawn
-	for (const auto& [id, th] : app.sim.things())	// drawn containers: by their mesh boxes (a container a layout piece draws: that piece's, any visible part of it)
-	{
-		if (th.kind != simlink::Interactable::kContainer) { continue; }
-		if (!app.buildings.propRay(id, from, dir, t, true))
-		{
-			// the ray misses the drawn triangles; a hidden container whose box it still crosses is named in the report, as before the refinement
-			double tb = 0;
-			if (app.buildings.propRay(id, from, dir, tb))
-			{
-				const double at[3] = { from[0] + dir[0] * tb, from[1] + dir[1] * tb, from[2] + dir[2] * tb };
-				std::string why;
-				if (pick_hidden(at, &why)) { note_thing_skip(skipped, "container", th, at, why); }
-			}
-			continue;
-		}
-		// the click is on the container's own drawn box while the collision proxy the sim bakes for the piece sits just outside it (a counter's
-		// face, k16.2.239.1): the box entry is a hair behind the world hit, so the container still picks; any other shape really in front (a wall,
-		// a floor edge) puts the hit point outside the box and keeps the click
-		double lo[3], hi[3];
-		const bool onProp = best == world && app.buildings.propBox(id, lo, hi, kPropBoxSlack) && p.hit[0] >= lo[0] && p.hit[0] <= hi[0] &&
-			p.hit[1] >= lo[1] && p.hit[1] <= hi[1] && p.hit[2] >= lo[2] && p.hit[2] <= hi[2];
-		// a building's collision shape in front of the container is an undrawn proxy volume unless something is drawn inside it along the ray (Storm House's
-		// staircase body: the barrel on the floor behind it lost its whole drawn body, k16.2.239.4.1): the shape holds the click only when a drawn surface backs it
-		if (t > best && !onProp && best == world && p.kind == Pick::Ground && p.building && !p.id)
-		{
-			if (!backed)
-			{
-				// the span of the ray inside the shape's box, up to the container's hit
-				double t0 = 0, t1 = 1e30;
-				const double blo[3] = { worldBox[0], worldBox[1], worldBox[2] }, bhi[3] = { worldBox[3], worldBox[4], worldBox[5] };
-				for (int a = 0; a < 3; a++)
-				{
-					const double lo2 = blo[a] - from[a], hi2 = bhi[a] - from[a];
-					if (std::abs(dir[a]) < 1e-12) { if (lo2 > 0 || hi2 < 0) { t1 = -1; } continue; }
-					t0 = std::max(t0, std::min(lo2 / dir[a], hi2 / dir[a]));
-					t1 = std::min(t1, std::max(lo2 / dir[a], hi2 / dir[a]));
-				}
-				double tb = 0;
-				bool drawn = t0 <= t1 && app.buildings.drawnHitIn(from, dir, blo, bhi, std::max(0.0, t0 - 1.0), std::min(t1 + 1.0, t), tb);
-				if (drawn)
-				{
-					const double bat[3] = { from[0] + dir[0] * tb, from[1] + dir[1] * tb, from[2] + dir[2] * tb };
-					drawn = !pick_hidden(bat);	// a surface the cut hides is not drawn
-				}
-				backed = drawn ? 2 : 1;
-			}
-			if (backed == 1) { best = 1e30; }	// no drawn surface inside the shape: it does not hide the container (nothing nearer held the click: best == world)
-		}
-		if (t > best && !onProp) { continue; }
-		const double at[3] = { from[0] + dir[0] * t, from[1] + dir[1] * t, from[2] + dir[2] * t };
-		std::string why;
-		if (pick_hidden(at, &why))	// the water tank's box on floor 1 over a floor-0 click (k16.2.259): not drawn, the ray goes through it
-		{
-			note_thing_skip(skipped, "container", th, at, why);
-			continue;
-		}
-		p.kind = Pick::Container;
-		p.id = id;
-		best = std::min(best, t);
-		std::copy(at, at + 3, p.hit);
-	}
-	// beds (INTERACTABLE kind 5): the bed's own placed shape, the layout furniture piece holding the sleeping spot (its mesh box, oriented: a click
-	// anywhere on the drawn bed picks it, not a sphere over the spot); a sphere only for a bed no drawn piece holds (MINE, k16.2.220)
-	double bedAt[3] = {};
-	{	// scope of the bed loop
-	CPUSTAGE_ACC("pa.beds");	// the bed loop's time (+pa.beds; kenshi-k16.2.205.12.109 found 0.55-0.65 ms at Heft, .111 memoizes bedRay's search)
-	for (const auto& [id, th] : app.sim.things())
-	{
-		if (th.kind != simlink::Interactable::kBed) { continue; }
-		const double at[3] = { th.pos[0], th.pos[1], th.pos[2] };
-		double entry = 0;
-		const int piece = app.buildings.bedRay(at, from, dir, entry);
-		bool hit = piece > 0;
-		if (piece < 0)	// no drawn piece holds the spot
-		{
-			const double c[3] = { th.pos[0] - from[0], th.pos[1] + kBedLift - from[1], th.pos[2] - from[2] };
-			const double along = c[0] * dir[0] + c[1] * dir[1] + c[2] * dir[2];
-			const double perp2 = c[0] * c[0] + c[1] * c[1] + c[2] * c[2] - along * along;
-			hit = along > 0 && perp2 < kBedReach * kBedReach;
-			entry = along - std::sqrt(std::max(0.0, kBedReach * kBedReach - perp2));
-		}
-		if (!hit || entry > std::min(best, world + 1)) { continue; }
-		// a bed on a floor the cut hides is not drawn: the ray goes through it (Storm House floor 0: the floor-1 beds sat over the stairs, k16.2.233.1).
-		// Tested only for a bed that would take the pick: cut_hidden casts a collide ray per bed, most of the loop's time at Heft once bedRay's search
-		// was memoized (kenshi-k16.2.205.12.111); a filter, so the pick is the same as testing it first.
-		if (cut_hidden(at) || pick_hidden(at)) { continue; }
-		p.kind = Pick::Bed;
-		p.id = id;
-		best = std::max(entry, 0.0);
-		for (int k = 0; k < 3; k++) { bedAt[k] = at[k]; p.hit[k] = from[k] + dir[k] * best; }
-	}
-	}
-	// a sleeper lies inside the bed's box, so it is behind the box's near face: the character wins over the bed it lies in. A character the floor cut
-	// hides is not drawn (Characters::culled): the ray goes through it (k16.2.259: the draw's own test, so a character that shows still picks).
+	// A character the floor cut hides is not drawn (Characters::culled): the ray goes through it (k16.2.259: the draw's own test, so a character that shows
+	// still picks). A lying / asleep character is hit along its drawn skeleton (head - pelvis - both feet), not the sim's segment (k16.2.223).
 	const auto charHidden = [](uint64_t id)
 	{
 		double feet[3];
 		float hull[3];
 		return app.sim.placed(id, feet, hull) && cut_hidden(feet);
 	};
-	// a lying / asleep character is hit along its drawn skeleton (head - pelvis - both feet), not the sim's segment: the placed, animated body in the bed (k16.2.223)
 	const auto drawnBody = [](uint64_t id, double pts[][3])
 	{
 		const int index = app.sim.charIndex(id);
@@ -617,24 +553,31 @@ Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped)
 		for (int j = 0; j < 3; j++) { for (int k = 0; k < 3; k++) { pts[2 * j][k] = seg[j][0][k]; pts[2 * j + 1][k] = seg[j][1][k]; } }
 		return 3;
 	};
-	if (const uint64_t id = app.sim.pick(from, dir, &t, charHidden, drawnBody); id)
+	double t;
+	// kenshi-k16.2.224.3, kept until the character capsules (kenshi-1rnr) replace it: a character whose sim position is on the picked bed's sleeping spot (the bed's
+	// occupant) wins over the bed, though the bed's drawn mesh is nearer; every other character competes by distance.
+	uint64_t sleeper = 0;
+	if (p.kind == Pick::Bed) { if (const simlink::Interactable* bed = app.sim.thing(p.id)) { sleeper = bed->occupant; } }
+	if (sleeper)
 	{
-		bool inBed = false;	// the character lies in the picked bed: its sim position is on the sleeping spot
-		if (double cp[3]; p.kind == Pick::Bed && app.sim.simPos(id, cp)) { inBed = std::hypot(cp[0] - bedAt[0], cp[2] - bedAt[2]) < kBedReach && std::fabs(cp[1] - bedAt[1]) < 4; }
-		// a character drawn beside the bed (a KO'd body on the floor next to it) is not the bed's: the bed's box reaches 8-11 u above the floor and takes its
-		// pixels. Its own drawn triangles decide: the bed holds the click only when the ray meets them before the body (k16.2.224.3)
-		bool beside = false;
-		if (p.kind == Pick::Bed && !inBed && t > best && t <= world + 3)
-		{
-			double td = 0;
-			beside = app.buildings.bedRay(bedAt, from, dir, td, true) != 1 || td > t;
-		}
-		if (beside || t <= (inBed ? std::max(best, world) + 2 * kBedReach : std::min(best, world + 3)))
+		double ts;
+		const auto onlySleeper = [&](uint64_t id) { return charHidden(id) || id != sleeper; };
+		if (const uint64_t id = app.sim.pick(from, dir, &ts, onlySleeper, drawnBody))
 		{
 			p.kind = Pick::Character;
 			p.id = id;
-			for (int k = 0; k < 3; k++) { p.hit[k] = from[k] + dir[k] * t; }
+			p.building = false;
+			for (int k = 0; k < 3; k++) { p.hit[k] = from[k] + dir[k] * ts; }
+			app.buildings.levelCuts = prevCuts;
+			return p;
 		}
+	}
+	if (const uint64_t id = app.sim.pick(from, dir, &t, charHidden, drawnBody); id && t <= best)
+	{
+		p.kind = Pick::Character;
+		p.id = id;
+		p.building = false;
+		for (int k = 0; k < 3; k++) { p.hit[k] = from[k] + dir[k] * t; }
 	}
 	app.buildings.levelCuts = prevCuts;
 	return p;
@@ -939,37 +882,27 @@ std::string pick_owner_report(const Pick& p, double mx, double my, const std::ve
 			const double at[3] = { t->pos[0], t->pos[1], t->pos[2] };
 			const int piece = app.buildings.bedPiece(at);
 			owner += fmt(" occupant %llu furniture record %u", (unsigned long long)t->occupant, t->furniture);
-			prim = piece >= 0 ? "layout furniture piece, oriented mesh box (WorldBuildings::bedRay): " + app.buildings.describeInstance(piece)
-				: fmt("sphere radius %.0f over the sleeping spot lifted %.0f (no drawn layout piece holds the spot)", kBedReach, kBedLift);
+			prim = piece >= 0 ? "drawn triangles of the layout furniture piece holding the sleeping spot: " + app.buildings.describeInstance(piece)
+				: "no drawn layout piece holds the sleeping spot: nothing to ray against (no sphere fallback)";
 		}
 		else if (p.kind == Pick::Door)
 		{
-			std::string leaf = "door leaf collision shape";
-			double t2;
-			float box[6];
-			std::string hn;
-			kworld::DoorKey key;
-			const auto off = [&](const kworld::WorldShape& s, double o[3])
+			const BuildingInstance* leaf = nullptr;
+			for (uint32_t i = 0; (leaf = app.buildings.instanceAt(i)) != nullptr; i++)
 			{
-				const auto it = app.doorPose.find(s.door);
-				if (it == app.doorPose.end() || !it->second.thing || (!it->second.exact && it->second.open > 0)) { return false; }
-				for (int k = 0; k < 3; k++) { o[k] = it->second.off[k]; }
-				return true;
-			};
-			if (app.collide.ray(app.pos, dir, 20000, t2, box, off, &key, nullptr, nullptr, &hn)) { leaf = fmt("door leaf collision shape %s box %.0f %.0f %.0f - %.0f %.0f %.0f (leaf pose offset applied)", hn.c_str(), box[0], box[1], box[2], box[3], box[4], box[5]); }
-			prim = leaf;
+				if (leaf->door && app.doorPose.count(leaf->door) && app.doorPose[leaf->door].thing == p.id) { prim = "drawn triangles of the door leaf at its drawn pose: " + app.buildings.describeInstance((int)i); break; }
+			}
+			if (prim.empty()) { prim = "door leaf (no drawn instance found)"; }
 		}
 		else if (p.kind == Pick::Item)
 		{
-			double ti;
-			app.sim.pickItem(app.pos, dir, &ti);
-			prim = fmt("item pick sphere (SimView::pickItem) at the item position, ray t %.1f", ti);
+			const int inst = instanceOf(p.id);
+			prim = inst >= 0 ? "drawn triangles of the item's mesh: " + app.buildings.describeInstance(inst) : "the item has no drawn mesh: nothing to ray against (no sphere fallback)";
 		}
 		else
 		{
-			double tt = 0;
 			const int inst = instanceOf(p.id);
-			if (inst >= 0 && app.buildings.propRay(p.id, app.pos, dir, tt)) { prim = fmt("prop mesh box, ray t %.1f: ", tt) + app.buildings.describeInstance(inst); }
+			if (inst >= 0) { prim = "drawn triangles: " + app.buildings.describeInstance(inst); }
 			else { prim = "no drawn prop mesh: the rock's own collision shape, or a pick label (item label under the pointer)"; }
 		}
 	}
@@ -981,11 +914,21 @@ std::string pick_owner_report(const Pick& p, double mx, double my, const std::ve
 		if (name.empty()) { name = pb ? app.sim.nameOf(pb->record, app.chars) : ""; }
 		if (name.empty()) { name = "no record name: player building"; }
 		owner = fmt("player building \"%s\" id %llu at %.1f %.1f %.1f%s", name.c_str(), (unsigned long long)p.id, p.hit[0], p.hit[1], p.hit[2], pb && (pb->flags & simlink::SimLinkDecoder::Building::kBuilt) ? " built" : " not built");
-		prim = inst >= 0 ? "prop mesh box: " + app.buildings.describeInstance(inst) : "building shape";
+		prim = inst >= 0 ? "drawn triangles: " + app.buildings.describeInstance(inst) : "building shape";
 	}
 	else if (p.kind == Pick::Ground)
 	{
-		// the nearest drawn world shape at the hit point (the pick's own walk over the ray), else the terrain
+		// the drawn instance whose triangles are at the hit point (the pick's own rule), else a foliage shell's collision, else the terrain
+		std::string drawnPrim;
+		for (double t0 = 0; t0 < 20000;)
+		{
+			double t3;
+			uint32_t di;
+			if (!app.buildings.drawnPickRay(app.pos, dir, t0, 20000, t3, di)) { break; }
+			const double at[3] = { app.pos[0] + dir[0] * t3, app.pos[1] + dir[1] * t3, app.pos[2] + dir[2] * t3 };
+			if (std::hypot(std::hypot(at[0] - p.hit[0], at[1] - p.hit[1]), at[2] - p.hit[2]) < 1.0) { drawnPrim = "drawn triangles: " + app.buildings.describeInstance((int)di); break; }
+			t0 = t3 + 0.5;
+		}
 		double from[3] = { app.pos[0], app.pos[1], app.pos[2] }, t2;
 		float box[6];
 		bool solid = false, bld = false, found = false;
@@ -996,7 +939,12 @@ std::string pick_owner_report(const Pick& p, double mx, double my, const std::ve
 			for (int k = 0; k < 3; k++) { at[k] = from[k] + dir[k] * t2; from[k] = at[k] + dir[k] * 0.5; }
 			if (std::hypot(std::hypot(at[0] - p.hit[0], at[1] - p.hit[1]), at[2] - p.hit[2]) < 1.0) { found = true; }
 		}
-		if (found)
+		if (!drawnPrim.empty())
+		{
+			owner = fmt("world drawn surface at %.1f %.1f %.1f (no sim id: scenery%s)", p.hit[0], p.hit[1], p.hit[2], p.building ? ", a building or layout part" : "");
+			prim = drawnPrim;
+		}
+		else if (found)
 		{
 			owner = fmt("world %s \"%s\" at %.1f %.1f %.1f (no sim id: static scenery%s)", bld ? "building shape" : "foliage / rock", hn.empty() ? "no record name: unnamed collision shape" : hn.c_str(), p.hit[0], p.hit[1], p.hit[2], bld ? ", a layout or building placement" : "");
 			prim = fmt("collision shape box %.0f %.0f %.0f - %.0f %.0f %.0f%s", box[0], box[1], box[2], box[3], box[4], box[5], solid ? " (solid: stairs / gateway body)" : "");
@@ -1008,19 +956,6 @@ std::string pick_owner_report(const Pick& p, double mx, double my, const std::ve
 		}
 	}
 	else { owner = "unknown pick (no thing with that id)"; prim = "unknown"; }
-	// beds the ray also crosses that did not take the pick (hidden by the floor cut, or behind the hit): the stairs case of k16.2.233, a bed's box over the treads
-	std::string also;
-	for (const auto& [id, th] : app.sim.things())
-	{
-		if (th.kind != simlink::Interactable::kBed || (p.kind == Pick::Bed && p.id == id)) { continue; }
-		const double at[3] = { th.pos[0], th.pos[1], th.pos[2] };
-		double entry = 0;
-		const int piece = app.buildings.bedRay(at, app.pos, dir, entry);
-		if (piece != 1) { continue; }
-		also += fmt("%sbed id %llu at %.1f %.1f %.1f, box entered at t %.1f: %s", also.empty() ? "" : "; ", (unsigned long long)id, th.pos[0], th.pos[1], th.pos[2], entry,
-			cut_hidden(at) ? "not picked, hidden by the floor cut" : "not picked, behind the hit or nearer shape wins");
-	}
-	if (!also.empty()) { prim += "\nalso under the ray: " + also; }
 	std::string passed;	// kenshi-k16.2.259: what the ray passed, so a click that lands somewhere odd says which shape it went through and why
 	for (const dev::PickSkip& s : skipped) { passed += "\nskipped shape: \"" + s.name + "\" at " + fmt("%.1f %.1f %.1f", s.at[0], s.at[1], s.at[2]) + ": " + s.why; }
 	return "owner: " + owner + "\nprimitive: " + prim + passed + "\nrule: " + (hoverRule.empty() ? "no hover decision made yet this run" : hoverRule) + " (cursor " + app.cursors.current() + ")\n";

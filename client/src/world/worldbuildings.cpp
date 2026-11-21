@@ -60,6 +60,76 @@ bool WorldBuildings::propRay(uint64_t id, const double origin[3], const double d
 	return it != propMeshes_.end() && instanceRay(it->second, origin, dir, t, drawn);
 }
 
+
+// The pick's broad-phase boxes: every instance's box over its pickable Ready parts; a door leaf's box moved by its pose (setDoors), as the leaf is drawn.
+void WorldBuildings::refreshPickBoxes() const
+{
+	if (pickBoxData_ == dataGen_ && pickBoxHold_ == holdGen_ && pickBoxDoor_ == doorGen_) { return; }
+	pickBoxes_.clear();
+	for (uint32_t i = 0; i < data_.instances.size(); i++)
+	{
+		const BuildingInstance& b = data_.instances[i];
+		PickBox pb{ i, { 1e30f, 1e30f, 1e30f }, { -1e30f, -1e30f, -1e30f } };
+		bool any = false;
+		for (uint32_t k = 0; k < b.partCount; k++)
+		{
+			if (!partPickable(data_.parts[data_.partRefs[b.firstPart + k]])) { continue; }
+			double plo[3], phi[3];
+			if (!partWorldBox(b, k, plo, phi)) { continue; }
+			for (int a = 0; a < 3; a++) { pb.lo[a] = std::min(pb.lo[a], (float)plo[a]); pb.hi[a] = std::max(pb.hi[a], (float)phi[a]); }
+			any = true;
+		}
+		if (!any) { continue; }
+		if (b.door)
+		{
+			if (const auto off = doorOffsets_.find(b.door); off != doorOffsets_.end()) { for (int a = 0; a < 3; a++) { pb.lo[a] += (float)off->second[a]; pb.hi[a] += (float)off->second[a]; } }
+		}
+		pickBoxes_.push_back(pb);
+	}
+	pickBoxData_ = dataGen_;
+	pickBoxHold_ = holdGen_;
+	pickBoxDoor_ = doorGen_;
+}
+
+bool WorldBuildings::drawnPickRay(const double origin[3], const double dir[3], double tMin, double tMax, double& t, uint32_t& instance, WalkHit* who) const
+{
+	refreshPickBoxes();
+	bool hit = false;
+	for (const PickBox& pb : pickBoxes_)
+	{
+		double t0 = tMin, t1 = hit ? std::min(tMax, t) : tMax;	// the ray's span through the box (slab test), no farther than the best hit
+		for (int a = 0; a < 3 && t0 <= t1; a++)
+		{
+			if (std::abs(dir[a]) < 1e-12) { if (origin[a] < pb.lo[a] || origin[a] > pb.hi[a]) { t1 = -1; } continue; }
+			const double ta = (pb.lo[a] - origin[a]) / dir[a], tb = (pb.hi[a] - origin[a]) / dir[a];
+			t0 = std::max(t0, std::min(ta, tb));
+			t1 = std::min(t1, std::max(ta, tb));
+		}
+		if (t0 > t1) { continue; }
+		const BuildingInstance& b = data_.instances[pb.index];
+		double o[3] = { origin[0], origin[1], origin[2] };
+		if (b.door)
+		{
+			if (const auto off = doorOffsets_.find(b.door); off != doorOffsets_.end()) { for (int a = 0; a < 3; a++) { o[a] -= off->second[a]; } }
+		}
+		double tt;
+		WalkHit w;
+		if (instanceRay(pb.index, o, dir, tt, true, t0, t1, false, &w, 0, true) && (!hit || tt < t))
+		{
+			if (who) { *who = w; }
+			t = tt;
+			instance = pb.index;
+			hit = true;
+		}
+	}
+	return hit;
+}
+
+void WorldBuildings::propsOfInstance(uint32_t instance, std::vector<uint64_t>& out) const
+{
+	for (const auto& [id, inst] : propMeshes_) { if (inst == instance) { out.push_back(id); } }
+}
+
 // The top-level instance boxes, current with the instance set and the mesh loads (see drawnHitIn)
 void WorldBuildings::refreshTopBoxes() const
 {
@@ -354,7 +424,7 @@ bool WorldBuildings::instanceHolds(uint32_t index, const double p[3], double sla
 
 // The nearest hit of the ray (mesh frame, already offset-free: `off` is the part's offset) on the mesh's triangles; a mesh whose triangles cannot be
 // read keeps its box (true, t unchanged).
-bool WorldBuildings::triangleRay(int mesh, const double o[3], const double d[3], const double off[3], double& t, double tMin, double tMax, double minUp) const
+bool WorldBuildings::triangleRay(int mesh, const double o[3], const double d[3], const double off[3], double& t, double tMin, double tMax, double minUp, bool pickable, bool cullBack) const
 {
 	const std::string& path = meshes_[mesh].path;
 	const auto it = pickTris_.find(path);	// filled by uploadMesh (wbload.cpp) when the mesh loads; a Ready mesh always has its entry
@@ -383,6 +453,7 @@ bool WorldBuildings::triangleRay(int mesh, const double o[3], const double d[3],
 		if (nd.count == 0) { if (sp + 2 <= 64) { stack[sp++] = nd.a; stack[sp++] = nd.b; } continue; }
 		for (int k = 0; k < nd.count; k++)
 		{
+			if (pickable && pm.skip[(size_t)(nd.a + k)]) { continue; }
 			const float* tr = &pm.tris[(size_t)(nd.a + k) * 9];
 			const float* a = tr;
 			const double e1[3] = { tr[3] - (double)a[0], tr[4] - (double)a[1], tr[5] - (double)a[2] };
@@ -396,6 +467,7 @@ bool WorldBuildings::triangleRay(int mesh, const double o[3], const double d[3],
 			const double p[3] = { d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0] };
 			const double det = e1[0] * p[0] + e1[1] * p[1] + e1[2] * p[2];
 			if (std::abs(det) < 1e-14) { continue; }
+			if (cullBack && det < 0) { continue; }	// CCW front: det = -(d . n) > 0 when the ray meets the face from its front; the renderer culls the rest
 			const double s[3] = { ox - a[0], oy - a[1], oz - a[2] };
 			const double u = (s[0] * p[0] + s[1] * p[1] + s[2] * p[2]) / det;
 			if (u < 0 || u > 1) { continue; }
@@ -411,7 +483,7 @@ bool WorldBuildings::triangleRay(int mesh, const double o[3], const double d[3],
 	return true;
 }
 
-bool WorldBuildings::instanceRay(uint32_t index, const double origin[3], const double dir[3], double& t, bool drawn, double tMin, double tMax, bool walkableOnly, WalkHit* who, double minUp) const
+bool WorldBuildings::instanceRay(uint32_t index, const double origin[3], const double dir[3], double& t, bool drawn, double tMin, double tMax, bool walkableOnly, WalkHit* who, double minUp, bool pickable) const
 {
 	const BuildingInstance& b = data_.instances[index];
 	// the ray in the instance's mesh frame; a linear map, so t is the same along both
@@ -427,7 +499,7 @@ bool WorldBuildings::instanceRay(uint32_t index, const double origin[3], const d
 		const uint32_t pid = data_.partRefs[b.firstPart + k];
 		const BuildingPartDef& def = data_.parts[pid];
 		const int mesh = partRt_[pid].mesh;
-		if (def.kind == 2 || (walkableOnly && !def.walkable) || mesh < 0 || meshes_[mesh].state != Ready) { continue; }
+		if (def.kind == 2 || (walkableOnly && !def.walkable) || (pickable && !partPickable(def)) || mesh < 0 || meshes_[mesh].state != Ready) { continue; }
 		const MeshEntry& m = meshes_[mesh];
 		double off[3];
 		toMesh(offsetFrame, def.offset, off);
@@ -441,7 +513,7 @@ bool WorldBuildings::instanceRay(uint32_t index, const double origin[3], const d
 			t1 = std::min(t1, std::max(ta, tb));
 		}
 		if (t0 > t1 || t1 < tMin || t0 > tMax) { continue; }	// the box's span along the ray misses the window
-		if (drawn && !triangleRay(mesh, o, d, off, t0, tMin, tMax, minUp)) { continue; }	// the box is only the cheap test; the drawn triangles decide
+		if (drawn && !triangleRay(mesh, o, d, off, t0, tMin, tMax, minUp, pickable, pickable && cullsBackFaces(def))) { continue; }	// the box is only the cheap test; the drawn triangles decide
 		if (!hit || t0 < t)
 		{
 			t = t0;
@@ -530,9 +602,9 @@ std::string WorldBuildings::nameOfInstance(int index) const
 
 // The layout furniture piece a bed's sleeping spot `at` lies in: the piece whose oriented mesh box (grown by kBedSlack) holds the spot, the nearest
 // to it when several do; -1 none. bedRay's search (through its memo) and the F12 shot's pick lines (kenshi-k16.2.234.1).
-int WorldBuildings::bedPiece(const double at[3]) const
+int WorldBuildings::bedPiece(const double at[3], double kBedSlack) const
 {
-	constexpr double kBedSlack = 2, kBedSearch = 12;
+	constexpr double kBedSearch = 14;
 	double bestD = 1e30;
 	int found = -1;
 	for (int dx = -3; dx <= 3; dx++)

@@ -576,14 +576,25 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 		double from[3];	// the pick's own ray: the near plane (pick_at)
 		for (int k = 0; k < 3; k++) { from[k] = cx.pos[k] + dir[k] * cx.cameraNear(); }
 		std::vector<PickSkip> skipped;
-		int kind;
+		int kind, nDrawn = 0;
 		uint64_t pid;
 		cx.pickAt(cx.mouseX, cx.mouseY, kind, pid, ph, skipped);
 		printf("pick ray: near plane %.2f from %.1f %.1f %.1f (eye %.1f %.1f %.1f)\n", cx.cameraNear(), from[0], from[1], from[2], cx.pos[0], cx.pos[1], cx.pos[2]);
 		printf("pick (%.0f, %.0f): kind %d id %llu hit %.1f %.1f %.1f walkable %d\n", cx.mouseX, cx.mouseY, kind, (unsigned long long)pid, ph[0], ph[1], ph[2], (int)cx.nav.walkable(ph));
 		for (const PickSkip& s : skipped) { printf("pick skipped \"%s\" at %.1f %.1f %.1f: %s\n", s.name.c_str(), s.at[0], s.at[1], s.at[2], s.why.c_str()); }
 		if (cx.rayGround(from, dir, hit)) { printf("pick terrain %.1f %.1f %.1f\n", hit[0], hit[1], hit[2]); }
-		if (double ti; const uint64_t item = sim.pickItem(from, dir, &ti)) { printf("pick item sphere %llu at t %.1f\n", (unsigned long long)item, ti); }
+		WorldBuildings::WalkHit dw;
+		for (double t0 = 0, td; t0 < 20000 && cx.buildings.drawnPickRay(from, dir, t0, 20000, td, (uint32_t&)kind, &dw); )	// every drawn instance along the ray (kenshi-k16.2.396.5: the pick's one query), nearest first
+		{
+			const uint32_t di = (uint32_t)kind;
+			std::vector<uint64_t> ids;
+			cx.buildings.propsOfInstance(di, ids);
+			std::string props;
+			for (const uint64_t id : ids) { props += " " + std::to_string(id); }
+			printf("pick drawn t %.3f instance %u part %u (%s kind %d) props%s: %s\n", td, di, dw.part, dw.mesh.c_str(), dw.kind, props.empty() ? " none" : props.c_str(), cx.buildings.describeInstance((int)di).c_str());
+			t0 = td + 0.5;
+			if (++nDrawn >= 6) { break; }
+		}
 		double cur[3] = { from[0], from[1], from[2] }, t;
 		float b[6];
 		bool solid = false;
@@ -606,6 +617,13 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 				printf("pick walk part \"%s\" instance %u part %u kind %d walkable %d at y %.2f (%s)\n", who.mesh.c_str(), (unsigned)who.instance, (unsigned)who.part, who.kind, (int)who.walkable,
 					from[1] + dir[1] * tw, cx.buildings.describe(who.instance).c_str());
 			}
+		}
+		for (const auto& [id, th] : sim.things())	// beds: the layout piece holding the sleeping spot (the instance a hit on it classifies as the bed)
+		{
+			if (th.kind != simlink::Interactable::kBed) { continue; }
+			const double at[3] = { th.pos[0], th.pos[1], th.pos[2] };
+			const int piece = cx.buildings.bedPiece(at, 6);
+			printf("pick bed %llu at %.1f %.1f %.1f piece instance %d: %s\n", (unsigned long long)id, at[0], at[1], at[2], piece, piece >= 0 ? cx.buildings.describeInstance(piece).c_str() : "none");
 		}
 		for (const auto& [id, th] : sim.things())	// containers: the distance into the piece's box (propRay) against the world hit's
 		{

@@ -11,6 +11,8 @@ TREE=$(cd "$HERE/../.." && pwd)
 OUT=${1:?usage: bed_pick_check.sh OUT_DIR [PORT]}
 PORTARG=(); [ -n "${2:-}" ] && PORTARG=(--port "$2")	# no PORT: demo.sh picks a free one and retries on a bind failure (kenshi-k16.2.417.3)
 mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
+# The click (530,150) is on the bed's drawn tent pole (tent3_poles): under the drawn-surface rule (kenshi-k16.2.396.5) the old centre pixel 640,360
+# is floorboards, and the bed's own mesh is the tent. The assert is unchanged.
 BED=6285449610646571553	# a Storm House floor-1 bed in scenarios/bar_lure.kscen
 # no select: the lead is the selection at the start of bar_lure (a fixed character id went stale, kenshi-k16.2.417.4)
 cat > "$OUT/script.txt" <<EOS
@@ -25,7 +27,7 @@ cat > "$OUT/script.txt" <<EOS
 1508 key R up
 1509 key R down
 1510 key R up
-1511 mouse pos 640 360
+1511 mouse pos 530 150
 1512 dump pick
 1513 screenshot $OUT/bed_floor3.png
 1520 key F down
