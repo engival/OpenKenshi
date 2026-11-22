@@ -162,6 +162,7 @@ namespace dev
 	// The scene test (dev/scenetest.cpp, kenshi-k16.2.153.11 pass 7): client/scenes.txt, --scene-test, `set scene` and the debug panel's rows.
 	void sceneSetup(bool debug);	// after parsing: the scenes file and the test's list (exits on a bad one); the scene flags need --debug
 	bool sceneTesting();	// a --scene-test run: scripted mode and the held clock
+	bool sceneWaiting();	// a --scene-test run whose shot / floor step has no done yet: overlap builds frames meanwhile that a lockstep run never has (kenshi-38zv)
 	double sceneSimTime(double animTime);	// a scene shot's fixed animation time, else animTime
 	bool scenesNeedCharacters();	// a scene places char= specs: the game data is wanted
 	std::vector<std::string> sceneNames();	// the loaded scenes' names (the debug panel's rows)
@@ -263,6 +264,7 @@ namespace dev
 	inline void shotTreesReset() {}
 	inline void sceneSetup(bool) {}
 	inline bool sceneTesting() { return false; }
+	inline bool sceneWaiting() { return false; }
 	inline double sceneSimTime(double animTime) { return animTime; }
 	inline bool scenesNeedCharacters() { return false; }
 	inline std::vector<std::string> sceneNames() { return {}; }

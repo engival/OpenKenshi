@@ -245,6 +245,8 @@ struct RenderState
 	uint32_t (&sglShown)[2];
 	bool reflSkyOnly = false;	// the reflection's last decision (kenshi-k16.2.205.11): little water on screen, the pass draws the sky alone; render-owned
 	bool adaptedOnce = false;	// the HDR adaptation has run at least once (the creator skips it): render-owned
+	uint64_t steppedSerial = ~0ull;	// the serial of the packet whose frame step the time-driven render state (light volume blend, HDR adaptation) last took (kenshi-38zv)
+	double stepDt = 0;	// this draw's step for that state: the packet's dt on its first draw, 0 on overlap's redraw of the same packet
 };
 
 // The draw of one packet: the resource jobs queued for it, the readbacks it serves, its passes, sg_commit. On one thread frame() calls it after

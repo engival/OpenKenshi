@@ -823,6 +823,7 @@ static void logic_paths(FramePacket& pk)
 		CPUSTAGE("buildings.update");
 		// render.interior_light / shafts / lamps / sun bounce (overlap review T19): the baked buildings' volumes, collected here (it starts the bakes and reads the building tables), carried in
 		// the packet; the draw side only uploads them (renderframe worldSetup). The conditions are the ones the draw used to evaluate on the packet's copies.
+		app.buildings.scanHold = dev::sceneWaiting();
 		if (!editor)
 		{
 			const float strength = (float)(1.0 - kInteriorLight.get());
@@ -995,7 +996,7 @@ static void logic_paths(FramePacket& pk)
 	CPUSTAGE("particles+blood");
 	// the hand-off to the draw (render hook 6): the locals the draw half reads
 	pk.path = FramePath::kWorld;
-	pk.dt = dt;
+	pk.dt = dev::sceneWaiting() ? 0.0 : dt;	// overlap builds frames while a scene shot waits for its done; the draw's time-driven state (light volume blend) must not step on them (kenshi-38zv)
 	pk.editor = editor;
 	pk.views[0] = cam;
 	pk.viewCount = 1;

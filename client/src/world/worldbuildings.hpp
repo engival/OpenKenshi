@@ -159,6 +159,7 @@ public:
 	// (interiorclip.inc) and the particle clip (particles.glsl) read it. update() collects them only while `maskWanted` (render.interior_mask); drawn inside the mask pass,
 	// per view (the mvp is that view's).
 	bool maskWanted = false;
+	bool scanHold = false;	// a scene test's waiting frame (overlap only): lightVolumes() does not advance its rescan counter, so the volumes appear at the frame a lockstep run shows them (kenshi-38zv)
 	void renderMask(const DrawList& list, const float mvp[16]);	// hasMask: !list.mask.empty()
 	// CPU side of the same hulls (kenshi-kyat.2): is the world point inside an interior mask hull of a building near the camera (the buildings update() asked
 	// interior parts of; independent of maskWanted)? A vertical ray in the building's frame crosses a closed hull an odd number of times above the point.

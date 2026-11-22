@@ -885,7 +885,7 @@ bool WorldBuildings::lightVolumes(const double cam[3], double radius, size_t max
 {
 	out.clear();
 	if (data_.instances.empty()) { return false; }
-	if (volScan_++ % 30 == 0)
+	if ((scanHold ? volScan_ : volScan_++) % 30 == 0)
 	{
 		std::vector<std::pair<double, uint32_t>> near;
 		const double r2 = radius * radius;

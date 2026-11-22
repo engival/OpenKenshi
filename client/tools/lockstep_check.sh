@@ -106,10 +106,9 @@ then
 	[ "$RC" = 0 ] || { tail -25 "$OUT/scenes_overlap.log" >&2; fail "scene_test in overlap exited $RC, see $OUT/scenes_overlap.log"; }
 	grep -q 'render.thread=overlap: the logic thread starts' "$OUT/scenes_overlap/run.log" || fail "the overlap scene run never started the logic thread: render.thread=overlap + debug.overlap_scripted=1 did not reach the client (a scripted overlap without the override runs lockstep), see $OUT/scenes_overlap/run.log"
 	! grep -q 'a scripted run runs lockstep' "$OUT/scenes_overlap/run.log" || fail "the overlap scene run fell back to lockstep, see $OUT/scenes_overlap/run.log"
-	# Known overlap-only differences (reported, not failed): debug_light_probes renders darker in a full overlap run, 3 times of 3 (53.08 / 88.44), and
-	# is pass alone in overlap and in a full lockstep run: the eye adaptation steps once per redraw, so the scene before it leaves it at another level
-	# (review .101 A: "a render-clock effect"). Shrink this list when that is fixed; OVERLAP_KNOWN_CHANGED="" makes the leg strict.
-	KNOWN_OVERLAP=${OVERLAP_KNOWN_CHANGED-debug_light_probes}
+	# Known overlap-only differences (reported, not failed): none; the leg is strict (kenshi-38zv). debug_light_probes used to read darker: the interior light volume blend-in
+	# steps per drawn frame, and overlap builds frames a lockstep run does not while a scene shot waits (not eye adaptation: scripted runs jump it). OVERLAP_KNOWN_CHANGED="NAME NAME" lists scenes to tolerate.
+	KNOWN_OVERLAP=${OVERLAP_KNOWN_CHANGED-}
 	BADSCENES=$(grep -E '^[a-z0-9_.-]+ +(changed|new|FAIL)' "$OUT/scenes_overlap.log" | grep -vE "^(${KNOWN_OVERLAP// /|}) " || true)
 	grep -E '^[a-z0-9_.-]+ +(changed|new|FAIL)' "$OUT/scenes_overlap.log" | grep -E "^(${KNOWN_OVERLAP// /|}) " | sed 's/^/lockstep_check: known overlap difference: /' >&2
 	if [ -n "$BADSCENES" ]

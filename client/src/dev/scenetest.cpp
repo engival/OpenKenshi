@@ -231,6 +231,7 @@ bool sceneArg(int argc, char** argv, int& i, std::vector<std::string>& windowOff
 }
 
 bool sceneTesting() { return !sc().test.empty(); }
+bool sceneWaiting() { return sceneTesting() && sc().st.waiting; }
 
 bool scenesNeedCharacters()
 {

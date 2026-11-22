@@ -51,7 +51,11 @@
 // opened); moved from main.cpp in sitting 9 (kenshi-k16.2.205.12.54), same order. Returns whether the interior mask was drawn (the particles sample it).
 static bool world_setup(const FramePacket& pk, RenderState& rs)
 {
-	const double dt = pk.dt;
+	// Time-driven render state (the light volumes' blend-in and cross-fade, the HDR adaptation) steps by the packet's dt once: overlap's redraw of the same packet
+	// (rule 4) is the same logic frame, so it steps 0 (kenshi-38zv: the blend ran per drawn frame, so a scene shot after a redraw read a further blend-in).
+	rs.stepDt = pk.serial != rs.steppedSerial ? pk.dt : 0.0;
+	rs.steppedSerial = pk.serial;
+	const double dt = rs.stepDt;
 	const bool editor = pk.editor;
 	const FramePacket::Scene& sc0 = pk.scene;
 	const Camera& cam = pk.views[0];	// mono: view 0 only (a stereo frame loops the views here)
@@ -558,7 +562,7 @@ void render_frame(const FramePacket& pk, RenderState& rs)
 	hf.key = 0.55f;		// the game's EXPOSURE_KEY (the original's display: a hard clip, no curve to lift the mid tones)
 	hf.minLum = pk.sky.minLum;
 	hf.maxLum = pk.sky.maxLum;
-	hf.dt = (float)std::fmin(pk.dt, 0.25);
+	hf.dt = (float)std::fmin(rs.stepDt, 0.25);
 	if (pk.post.eyeAdapt) { hf.floorLum = 0.02f; hf.eyeExp = 0.85f; }
 	hf.instant = pk.post.scriptedJump || framestats::drawing().frames == 0 || !rs.adaptedOnce;
 	hf.fixedExposure = dev::lightOff(pk.lightOff, dev::kLtExposure) ? 1.0f : pk.post.fixedExposure;	// the light debugger's exposure switch: no auto exposure, gain 1
