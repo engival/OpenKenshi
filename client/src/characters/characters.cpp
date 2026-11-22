@@ -980,6 +980,112 @@ void Characters::setPreviewOrbit(size_t i, const double center[3], const kworld:
 	for (int k = 0; k < 3; k++) { previewCenter_[k] = center[k]; previewShift_[k] = shift[k]; }
 }
 
+// The pick capsules (see the header). Built from the first posed frame: every skinned vertex goes to its heaviest bone (weight >= 0.4), in that bone's
+// frame; the capsule's axis runs from the bone origin to the vertices' centroid (the longest local axis when they surround the origin), its length is
+// their extent along it and its radius the 85th percentile of their distance to it (a stray weighted vertex does not fatten the limb).
+int Characters::pickCapsules(size_t i, std::vector<PickCapsule>& out) const
+{
+	if (i >= chars_.size() || !chars_[i].body || chars_[i].palette.empty() || chars_[i].model.empty()) { return 0; }
+	const Char& c = chars_[i];
+	const auto frame = [&](size_t b, double o[3], kworld::SkelQuat& q)
+	{
+		const kworld::SkelVec3 r = kworld::rotate(c.orient, c.model[b].pos);
+		o[0] = c.pos[0] + r.x; o[1] = c.pos[1] + r.y; o[2] = c.pos[2] + r.z;
+		q = kworld::multiply(c.orient, c.model[b].rot);
+	};
+	if (!c.capsBuilt)
+	{
+		c.capsBuilt = true;
+		const size_t nb = c.model.size();
+		std::vector<std::vector<std::array<float, 3>>> pts(nb);
+		auto scan = [&](const ogre::Geometry& g)
+		{
+			if (g.boneIndex.empty()) { return; }
+			for (uint32_t v = 0; v < g.count; v++)
+			{
+				int heaviest = -1;
+				float top = 0;
+				double p[3] = {};
+				for (int k = 0; k < 4; k++)
+				{
+					const uint8_t b = g.boneIndex[v * 4 + k];
+					const float w = g.boneWeight[v * 4 + k];
+					if (w <= 0) { continue; }
+					if (w > top) { top = w; heaviest = (int)b; }
+					const float* m = &c.palette[(size_t)b * 12];
+					for (int r = 0; r < 3; r++) { p[r] += w * (m[r * 4] * g.pos[v * 3] + m[r * 4 + 1] * g.pos[v * 3 + 1] + m[r * 4 + 2] * g.pos[v * 3 + 2] + m[r * 4 + 3]); }
+				}
+				if (heaviest < 0 || top < 0.4f || (size_t)heaviest >= nb) { continue; }
+				double o[3];
+				kworld::SkelQuat q;
+				frame((size_t)heaviest, o, q);
+				const kworld::SkelQuat qi{ q.w, -q.x, -q.y, -q.z };
+				const kworld::SkelVec3 l = kworld::rotate(qi, kworld::SkelVec3{ (float)(c.pos[0] + p[0] - o[0]), (float)(c.pos[1] + p[1] - o[1]), (float)(c.pos[2] + p[2] - o[2]) });
+				pts[(size_t)heaviest].push_back({ l.x, l.y, l.z });
+			}
+		};
+		if (c.body->src.hasShared) { scan(c.body->src.shared); }
+		for (const ogre::Submesh& sm : c.body->src.submeshes) { if (!sm.shared) { scan(sm.geometry); } }
+		for (size_t b = 0; b < nb; b++)
+		{
+			const auto& v = pts[b];
+			if (v.size() < 6) { continue; }
+			double cen[3] = {}, lo[3] = { 1e30, 1e30, 1e30 }, hi[3] = { -1e30, -1e30, -1e30 };
+			for (const auto& q : v) { for (size_t k = 0; k < 3; k++) { cen[k] += q[k]; lo[k] = std::min(lo[k], (double)q[k]); hi[k] = std::max(hi[k], (double)q[k]); } }
+			for (int k = 0; k < 3; k++) { cen[k] /= (double)v.size(); }
+			double d[3] = { cen[0], cen[1], cen[2] };
+			double len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+			if (len < 1.5)
+			{
+				int ax = 0;
+				for (int k = 1; k < 3; k++) { if (hi[k] - lo[k] > hi[ax] - lo[ax]) { ax = k; } }
+				d[0] = d[1] = d[2] = 0;
+				d[ax] = 1;
+				len = 1;
+			}
+			for (int k = 0; k < 3; k++) { d[k] /= len; }
+			double tmin = 1e30, tmax = -1e30;
+			std::vector<float> perp;
+			perp.reserve(v.size());
+			for (const auto& q : v)
+			{
+				const double t = q[0] * d[0] + q[1] * d[1] + q[2] * d[2];
+				tmin = std::min(tmin, t);
+				tmax = std::max(tmax, t);
+				const double e[3] = { q[0] - d[0] * t, q[1] - d[1] * t, q[2] - d[2] * t };
+				perp.push_back((float)std::sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2]));
+			}
+			const size_t nth = perp.size() * 85 / 100;
+			std::nth_element(perp.begin(), perp.begin() + (long)nth, perp.end());
+			const double r = std::max(0.5f, perp[nth]);
+			double t0 = tmin + r, t1 = tmax - r;
+			if (t1 < t0) { t0 = t1 = 0.5 * (tmin + tmax); }
+			Char::BoneCap cp{ (int)b, {}, {}, (float)r };
+			for (int k = 0; k < 3; k++) { cp.a[k] = (float)(d[k] * t0); cp.b[k] = (float)(d[k] * t1); }
+			c.caps.push_back(cp);
+		}
+	}
+	int n = 0;
+	for (const Char::BoneCap& cp : c.caps)
+	{
+		double o[3];
+		kworld::SkelQuat q;
+		frame((size_t)cp.bone, o, q);
+		PickCapsule w;
+		const float* e[2] = { cp.a, cp.b };
+		double* dst[2] = { w.a, w.b };
+		for (int s = 0; s < 2; s++)
+		{
+			const kworld::SkelVec3 r = kworld::rotate(q, kworld::SkelVec3{ e[s][0], e[s][1], e[s][2] });
+			dst[s][0] = o[0] + r.x; dst[s][1] = o[1] + r.y; dst[s][2] = o[2] + r.z;
+		}
+		w.r = cp.r;
+		out.push_back(w);
+		n++;
+	}
+	return n;
+}
+
 // The ray's nearest point to a bone inside `radius` (see the header): bones are the skeleton's own joints, so the ray through a hand picks the hand.
 bool Characters::skeletonRay(size_t i, const double origin[3], const double dir[3], double hit[3], double radius) const
 {

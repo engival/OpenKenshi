@@ -20,4 +20,6 @@ void draw_navmesh(const knav::NavMesh& mesh, const float mvp[16], const double c
 // Debug (script `dump nav X Z`): every polygon holding (x, z) in XZ, any height: tile, index, centre, slope, area, flags, vertex count (stdout).
 #ifdef KCLIENT_DEV_TOOLS
 void dump_navmesh_at(const knav::NavMesh& mesh, double x, double z);
+// Script `dump navfaces X Z R`: every polygon within R of (X, Z): ref, tile, y range, slope, overlay class, vertices as drawn (kenshi-gu1f).
+void dump_navmesh_faces(const knav::NavMesh& mesh, double x, double z, double r, double ref, double band, float stairDeg, const std::function<bool(const double p[3])>& cut);
 #endif

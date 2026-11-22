@@ -495,6 +495,7 @@ struct App
 	uint32_t cagesSeen = 0;	// the last CAGES frame logged (--debug)
 	bool hoverHitOk = false;	// the cursor is over ground (hover_cursor's pick) and hoverHit is its point (the debug route preview)
 	double hoverHit[3] = {};
+	uint64_t hoverChar = 0;	// the character under the cursor (hover_cursor), 0 = none: debug.pick_mask's subject when no thing is hovered (kenshi-1rnr)
 	uint64_t hoverThing = 0;	// the ground item, container or door under the cursor (hover_cursor), 0 = none
 	// The open item windows besides the character's (kenshi-k16.20.13.2): opencont.hpp holds the record, the dev `dump windows` op reads it too.
 	using OpenCont = ::OpenCont;

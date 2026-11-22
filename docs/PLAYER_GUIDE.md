@@ -857,7 +857,7 @@ These are development views. They exist only when the client runs with `--debug`
   overlay's flip partner. The shapes are the barricades that block movement and line of sight, which bodies do not stand on since kenshi-k16.2.382.2.
   Colours: walls, floors and roofs bluish white, doorways yellow, stairs orange, furniture and thin props grey, barricades red, foliage brown, and the drawn
   terrain a body does stand on (`Heightmap::terrainHeight`, the drawn triangles) a green grid on its 18 u lattice. Only the outline is drawn: a flat
-  face's diagonals are left out. Both overlays draw only within the **overlay range** of the selected character (else the camera focus), the
+  face's diagonals are left out. The "Collision: filled faces" row (`debug.collision_fill`) also fills each face in its colour, faintly (alpha 0.15), under the outline. Both overlays draw only within the **overlay range** of the selected character (else the camera focus), the
   "Overlay range" slider right under the navmesh and collision rows of the panel (`debug.overlay_range`, also in F8 > Settings...; default 300 u, about one
   room; 0 = no limit, the value beside it reads "no limit"; it takes effect while you drag), fading to nothing at the range; a line in the developer text
   counts what is drawn. What a body stands on at a point (a

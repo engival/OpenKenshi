@@ -322,4 +322,47 @@ void dump_navmesh_at(const knav::NavMesh& mesh, double x, double z)
 	}
 	if (n == 0) { printf("nav at %.1f %.1f: no polygon\n", x, z); }
 }
+
+// `dump navfaces X Z R`: every polygon whose box lies within R of (X, Z) in XZ: ref (the wire's polygon id is this tile.index), slope, the overlay class its
+// edges / fill are drawn with (stair when the slope >= stairDeg; the overlay's fill and orange edges apply to it at stairWeight whatever the floor cut), the
+// vertices as the overlay draws them (the mesh's own, the overlay adds only a +2 lift in y), the stair weight and cut state at ref height (kenshi-gu1f).
+void dump_navmesh_faces(const knav::NavMesh& mesh, double x, double z, double r, double ref, double band, float stairDeg, const std::function<bool(const double p[3])>& cut)
+{
+	const dtNavMesh& nav = mesh.detour();
+	const float stairCos = std::cos(stairDeg * 0.0174533f);
+	int n = 0;
+	for (int t = 0; t < nav.getMaxTiles(); t++)
+	{
+		const dtMeshTile* tile = nav.getTile(t);
+		if (!tile || !tile->header) { continue; }
+		for (int i = 0; i < tile->header->polyCount; i++)
+		{
+			const dtPoly& poly = tile->polys[i];
+			if (poly.getType() == DT_POLYTYPE_OFFMESH_CONNECTION) { continue; }
+			float lo[3] = { 1e30f, 1e30f, 1e30f }, hi[3] = { -1e30f, -1e30f, -1e30f }, c[3] = {}, nm[3] = {};
+			for (int j = 0, k = poly.vertCount - 1; j < poly.vertCount; k = j++)
+			{
+				const float* u = &tile->verts[poly.verts[j] * 3];
+				const float* v = &tile->verts[poly.verts[k] * 3];
+				nm[0] += (v[1] - u[1]) * (v[2] + u[2]);
+				nm[1] += (v[2] - u[2]) * (v[0] + u[0]);
+				nm[2] += (v[0] - u[0]) * (v[1] + u[1]);
+				for (int m = 0; m < 3; m++) { c[m] += u[m] / poly.vertCount; lo[m] = std::min(lo[m], u[m]); hi[m] = std::max(hi[m], u[m]); }
+			}
+			if (hi[0] < x - r || lo[0] > x + r || hi[2] < z - r || lo[2] > z + r) { continue; }
+			const float l = std::sqrt(nm[0] * nm[0] + nm[1] * nm[1] + nm[2] * nm[2]);
+			const float ny = l > 0 ? std::abs(nm[1]) / l : 1;
+			const bool stair = ny < stairCos;
+			const double dc[3] = { c[0], c[1], c[2] };
+			const float w = std::clamp(4.0f + 1 - (float)(std::abs(c[1] - ref) / band), 0.0f, 1.0f);
+			printf("navface ref %llu tile %d.%d poly %d y %.1f..%.1f slope %.1f area %d flags 0x%x class %s%s stairWeight %.2f cut %d verts",
+				(unsigned long long)(nav.getPolyRefBase(tile) | (dtPolyRef)i), tile->header->x, tile->header->y, i, lo[1], hi[1], std::acos(std::min(1.0f, ny)) * 57.2958f,
+				(int)poly.getArea(), poly.flags, stair ? "stair(orange)" : "flat(cyan)", poly.flags == 0 ? " pruned" : "", stair ? w : 0.0f, cut && cut(dc) ? 1 : 0);
+			for (int j = 0; j < poly.vertCount; j++) { const float* u = &tile->verts[poly.verts[j] * 3]; printf(" (%.1f %.1f %.1f)", u[0], u[1] + 2, u[2]); }
+			printf("\n");
+			n++;
+		}
+	}
+	printf("navfaces at %.1f %.1f r %.1f: %d polygons (ref y %.1f)\n", x, z, r, n, ref);
+}
 #endif

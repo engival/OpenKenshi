@@ -482,6 +482,7 @@ void debugPanelFrame(const Context& cx)
 	const auto add = [&](const char* id, const char* label, bool on, bool keyed = true) { s.toggles.push_back({ id, label, on, keyed ? id : "" }); };
 	add("debug.navmesh", "Navmesh", cx.navOverlay.get());
 	add("debug.collision", "Collision (barricades + terrain)", collisionOn());	// dev/colloverlay.cpp
+	add("debug.collision_fill", "Collision: filled faces", collisionFillOn(), false);	// a config key, no binding (kenshi-k16.2.502)
 	add("debug.navmesh_pruned", "Navmesh: pruned polygons", cx.navPruned.get(), false);	// a config key, no binding
 	add("debug.height_probe", "Height probe (Ctrl+F10)", dev::heightProbeMode(), false);	// Ctrl+F10 is hard-wired in host/events.cpp, not a keys:: action (kenshi-k16.2.413.1)
 	for (const auto& t : kCfgToggles) { add(t.key, t.label, cfgOn(t.key), false); }
@@ -548,6 +549,16 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 	if (a.size() == 3 && a[0] == "nav")	// dump nav X Z: the client navmesh's polygons at (X, Z), every height (stdout)
 	{
 		if (cx.nav.mesh()) { dump_navmesh_at(*cx.nav.mesh(), atof(a[1].c_str()), atof(a[2].c_str())); }
+		else { printf("nav: no mesh\n"); }
+		return true;
+	}
+	if (a.size() == 4 && a[0] == "navfaces")	// dump navfaces X Z R: every polygon within R of (X, Z): id, tile, y, slope, overlay class, vertices as drawn (stdout; kenshi-gu1f)
+	{
+		if (cx.nav.mesh())
+		{
+			const double ref = cx.rts ? cx.focus[1] : cx.pos[1];
+			dump_navmesh_faces(*cx.nav.mesh(), atof(a[1].c_str()), atof(a[2].c_str()), atof(a[3].c_str()), ref, 20, 30, [&](const double p[3]) { return cx.buildings.cutAway(p); });
+		}
 		else { printf("nav: no mesh\n"); }
 		return true;
 	}

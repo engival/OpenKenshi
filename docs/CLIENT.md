@@ -476,6 +476,9 @@ Moved to `CLIENT_GOALS.md` (one section per feature): M1 — walk the bare terra
     magenta; foliage 0.75 0.55 0.25 0.80 brown; terrain 0.30 1.00 0.35 0.55 green. Navmesh: inner face edge 0.10 0.90 1.00 0.55 cyan; split of one
     flat face 0.10 0.90 1.00 0.22 (the cyan, fainter); tile seam 0.60 0.50 1.00 0.30 violet; rim 1.00 0.95 0.40 0.90 yellow; stair or ramp 1.00 0.55 0.10 0.90 orange.
     A shape takes the first match in the order door, foliage, stairs, furniture/thin, barricade, projected, building.
+  - Collision face fill (`debug.collision_fill`, off by default, F8 row "Collision: filled faces", kenshi-k16.2.502): each shape's faces filled in its kind
+    colour above at **alpha 0.15** (`overlay_colour::kFillAlpha`; this replaces the colour's own alpha) times the same per-vertex fade and range, the
+    outlines drawn on top. kinspect uses the same alpha 0.15.
   - Navmesh split edges: the cache keeps no face id, so "a split of one original face" is a heuristic: an inner edge between two polygons of one area and
     flags whose normals agree within ~1.8 deg and whose centres are within 2 u in height.
 - [x] **Whole-fight trails** (user 2026-11-10, debug; kenshi-k16.2.73): every drawn character's two foot contacts (the animation viewer's sole

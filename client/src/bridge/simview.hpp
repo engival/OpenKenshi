@@ -63,6 +63,9 @@ public:
 	// tOut: the hit's distance along dir; skip: leave a character out of the pick (the click passes one it does not draw, main.cpp)
 	// body (k16.2.223): a lying / asleep character's drawn skeleton as world segments (point pairs, at most 4), their count; 0 = none, the sim's segment is used
 	uint64_t pick(const double origin[3], const double dir[3], double* tOut = nullptr, const std::function<bool(uint64_t)>& skip = {}, const std::function<int(uint64_t, double[][3])>& body = {}) const;
+	// pickBody (kenshi-1rnr): the same, by the drawn skeleton's per-bone capsules (Characters::pickCapsules, posed this frame), the click pick's character half.
+	// `capsules` appends a character's capsules by its id (0: none, not built). pick above is the original's box / lying segment, kept for debug.pick_collision.
+	uint64_t pickBody(const double origin[3], const double dir[3], double* tOut, const std::function<bool(uint64_t)>& skip, const std::function<int(uint64_t, std::vector<Characters::PickCapsule>&)>& capsules) const;
 	bool isPlayer(uint64_t id) const;
 	bool placed(uint64_t id, double pos[3], float hull[3]) const;
 	// The catch-up's own world velocity this frame (u/s, x z; the slot's catchV: the correction the legs walk besides the wire's), the log gait dump's (kenshi-h2v.1.9.1). False: no such drawn character.

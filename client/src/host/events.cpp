@@ -239,6 +239,7 @@ void debug_toggle(const std::string& id)
 {
 	if (id == "debug.navmesh") { kNavOverlay.set(!kNavOverlay.get()); }
 	else if (id == "debug.collision") { dev::collisionToggle(); }
+	else if (id == "debug.collision_fill") { dev::collisionFillToggle(); }
 	else if (id == "debug.trails") { app.trails.toggle(); }
 	else if (id == "debug.navmesh_pruned") { kNavPruned.set(!kNavPruned.get()); }
 	else if (id == "debug.squad_overlay") { app.squads.on = !app.squads.on; }

@@ -277,6 +277,10 @@ public:
 	// debug (dump bones): the drawn body node and a bone's world position this frame (the node plus the bone's model-space offset, rotated by it)
 	void nodeWorld(size_t i, double out[3]) const;
 	bool boneWorld(size_t i, const char* name, double out[3]) const;
+	// The click pick's character volumes (kenshi-1rnr): one capsule per skinned bone, posed from this frame's skeleton. Fitted once per built character from
+	// its skinned vertices (the heaviest bone of each, in the bone's frame, so race and body sliders are in it); a / b the axis ends, r the radius.
+	struct PickCapsule { double a[3], b[3], r; };
+	int pickCapsules(size_t i, std::vector<PickCapsule>& out) const;	// appends; the count (0: not built / not posed yet)
 	// The character editor's preview assembly (kenshi-k16.2.433.1, main.cpp creator_frame): character i is drawn where the creator builds it and its
 	// node is then p' = center + q x (p - center) + shift, q x orient, by every update() until clearPreviewOrbit. The creator turns the character AND
 	// the platform (which draws with the same q) about the pivot it frames, so the two stay one assembly as the original's charedit_chars_rotation
@@ -562,6 +566,9 @@ private:
 		std::vector<std::string> mountNames;	// per mount, its place ("in the hand @ hands (Bip01 Prop2)", "sheathed @ hip (...)"): the dump lines
 		std::vector<float> palette;	// 3 rows x 4 per bone, this frame
 		std::vector<kworld::SkelTransform> model;	// per bone, model space, this frame
+		struct BoneCap { int bone; float a[3], b[3], r; };	// pickCapsules: in the bone's frame (node orientation x model rotation)
+		mutable std::vector<BoneCap> caps;
+		mutable bool capsBuilt = false;
 		// Pose cache (kenshi-k16.2.205.11): a paused / scripted frame (dt 0) computes the same pose when nothing the pose reads changed
 		// (Characters::pose's signature); the palette and model above then stay as the last frame's. Store the frame's pose inputs' hash.
 		std::uint64_t poseSig = 0;

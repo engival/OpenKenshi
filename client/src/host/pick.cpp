@@ -498,8 +498,8 @@ static void classify_drawn(Pick& p, uint32_t inst)
 }
 
 // What the mouse ray hits first (kenshi-k16.2.396.5): ONE nearest-wins loop. The world half is ray_hit (the nearest drawn surface, a foliage shell, the terrain);
-// the instance it hit says what it is (classify_drawn). Characters keep their pick volumes (SimView::pick: step A2 gives them bone capsules) and compete with
-// the world by distance, no slop.
+// the instance it hit says what it is (classify_drawn). Characters are the other half: SimView::pickBody, a capsule per bone of the drawn skeleton (kenshi-1rnr), competing
+// with the world by distance, no slop.
 Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped)
 {
 #ifdef KCLIENT_DEV_TOOLS
@@ -539,46 +539,41 @@ Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped)
 		}
 	}
 	// A character the floor cut hides is not drawn (Characters::culled): the ray goes through it (k16.2.259: the draw's own test, so a character that shows
-	// still picks). A lying / asleep character is hit along its drawn skeleton (head - pelvis - both feet), not the sim's segment (k16.2.223).
+	// still picks). A character is hit by its drawn skeleton's bone capsules.
 	const auto charHidden = [](uint64_t id)
 	{
 		double feet[3];
 		float hull[3];
 		return app.sim.placed(id, feet, hull) && cut_hidden(feet);
 	};
-	const auto drawnBody = [](uint64_t id, double pts[][3])
+	// the character half of the one nearest-wins test (kenshi-1rnr): a capsule per bone of the drawn skeleton, posed this frame (Characters::pickCapsules)
+	const auto capsules = [](uint64_t id, std::vector<Characters::PickCapsule>& out)
 	{
 		const int index = app.sim.charIndex(id);
-		double head[3], pelvis[3], lf[3], rf[3];
-		if (index < 0 || !app.chars.boneWorld((size_t)index, "Bip01 Head", head) || !app.chars.boneWorld((size_t)index, "Bip01 Pelvis", pelvis) ||
-			!app.chars.boneWorld((size_t)index, "Bip01 L Foot", lf) || !app.chars.boneWorld((size_t)index, "Bip01 R Foot", rf)) { return 0; }
-		const double* seg[3][2] = { { head, pelvis }, { pelvis, lf }, { pelvis, rf } };
-		for (int j = 0; j < 3; j++) { for (int k = 0; k < 3; k++) { pts[2 * j][k] = seg[j][0][k]; pts[2 * j + 1][k] = seg[j][1][k]; } }
-		return 3;
+		return index < 0 ? 0 : app.chars.pickCapsules((size_t)index, out);
 	};
 	double t;
-	// kenshi-k16.2.224.3, kept until the character capsules (kenshi-1rnr) replace it: a character whose sim position is on the picked bed's sleeping spot (the bed's
-	// occupant) wins over the bed, though the bed's drawn mesh is nearer; every other character competes by distance.
-	uint64_t sleeper = 0;
-	if (p.kind == Pick::Bed) { if (const simlink::Interactable* bed = app.sim.thing(p.id)) { sleeper = bed->occupant; } }
-	if (sleeper)
+#ifdef KCLIENT_DEV_TOOLS
+	const auto cost0 = std::chrono::steady_clock::now();
+#endif
+	const uint64_t bodyId = app.sim.pickBody(from, dir, &t, charHidden, capsules);
+#ifdef KCLIENT_DEV_TOOLS
+	if (app.opt.debug)	// the character half's cost (kenshi-1rnr): median / p99 over 300 picks, one line each
 	{
-		double ts;
-		const auto onlySleeper = [&](uint64_t id) { return charHidden(id) || id != sleeper; };
-		if (const uint64_t id = app.sim.pick(from, dir, &ts, onlySleeper, drawnBody))
+		static std::vector<double> us;
+		us.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - cost0).count());
+		if (us.size() >= 300)
 		{
-			p.kind = Pick::Character;
-			p.id = id;
-			p.building = false;
-			for (int k = 0; k < 3; k++) { p.hit[k] = from[k] + dir[k] * ts; }
-			app.buildings.levelCuts = prevCuts;
-			return p;
+			std::sort(us.begin(), us.end());
+			fprintf(stderr, "pickbody cost: %zu picks, %zu characters drawn, median %.1f us, p99 %.1f us, max %.1f us\n", us.size(), app.sim.characterIds().size(), us[us.size() / 2], us[us.size() * 99 / 100], us.back());
+			us.clear();
 		}
 	}
-	if (const uint64_t id = app.sim.pick(from, dir, &t, charHidden, drawnBody); id && t <= best)
+#endif
+	if (bodyId && t <= best)
 	{
 		p.kind = Pick::Character;
-		p.id = id;
+		p.id = bodyId;
 		p.building = false;
 		for (int k = 0; k < 3; k++) { p.hit[k] = from[k] + dir[k] * t; }
 	}

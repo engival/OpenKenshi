@@ -1752,6 +1752,46 @@ uint64_t SimView::pick(const double origin[3], const double dir[3], double* tOut
 	return best;
 }
 
+uint64_t SimView::pickBody(const double origin[3], const double dir[3], double* tOut, const std::function<bool(uint64_t)>& skip, const std::function<int(uint64_t, std::vector<Characters::PickCapsule>&)>& capsules) const
+{
+	constexpr double kBroad = 30;	// a body (lying, ragdolled) stays within this of its node: the cheap reject before the capsules are posed
+	uint64_t best = 0;
+	double bestT = 1e30;
+	std::vector<Characters::PickCapsule> caps;
+	const auto nearRay = [&](const double c[3])
+	{
+		const double w[3] = { c[0] - origin[0], c[1] - origin[1], c[2] - origin[2] };
+		const double t = w[0] * dir[0] + w[1] * dir[1] + w[2] * dir[2];
+		if (t < -kBroad) { return false; }
+		return w[0] * w[0] + w[1] * w[1] + w[2] * w[2] - t * t < kBroad * kBroad;
+	};
+	for (const uint64_t id : order_)
+	{
+		const Slot& sl = slots_.at(id);
+		if (sl.index < 0 || (!nearRay(sl.sim) && !nearRay(sl.pos)) || (skip && skip(id))) { continue; }
+		caps.clear();
+		if (capsules(id, caps) <= 0) { continue; }
+		for (const Characters::PickCapsule& c : caps)
+		{
+			double a[3], u[3];
+			for (int k = 0; k < 3; k++) { a[k] = c.a[k] - origin[k]; u[k] = c.b[k] - c.a[k]; }
+			const double uu = u[0] * u[0] + u[1] * u[1] + u[2] * u[2], du = dir[0] * u[0] + dir[1] * u[1] + dir[2] * u[2];
+			const double da = dir[0] * a[0] + dir[1] * a[1] + dir[2] * a[2], ua = u[0] * a[0] + u[1] * a[1] + u[2] * a[2];
+			const double den = uu - du * du;
+			double s = den > 1e-9 ? std::clamp((du * da - ua) / den, 0.0, 1.0) : 0.0;
+			const double t = std::max(0.0, da + du * s);
+			s = uu > 1e-9 ? std::clamp((t * du - ua) / uu, 0.0, 1.0) : 0.0;
+			double d2 = 0;
+			for (int k = 0; k < 3; k++) { const double e = dir[k] * t - a[k] - u[k] * s; d2 += e * e; }
+			if (d2 >= c.r * c.r) { continue; }
+			const double front = std::max(0.0, t - std::sqrt(c.r * c.r - d2));	// the ray's entry into the capsule
+			if (front < bestT) { bestT = front; best = id; }
+		}
+	}
+	if (tOut) { *tOut = bestT; }
+	return best;
+}
+
 void SimView::view(double x, double z)
 {
 	if (mode_ != Live || !helloSent_ || fd_ == kutil::net::kNoSocket) { return; }

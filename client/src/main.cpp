@@ -716,11 +716,12 @@ void hover_cursor()
 	app.hoverHitOk = false;
 	if (app.look) { hoverRule = "mouse look: no hover decision (the cursor is hidden)"; return; }
 	if (app.boxDown && app.boxDrag) { hoverRule = "box select drag: the hover cursor holds still"; return; }	// while the box shows the hover cursor holds still (the original skips the hover dispatch; kenshi-rwh.134)
-	if (app.uiOn && ui::wantsMouse()) { app.hoverThing = 0; hoverCage = 0; hoverRule = "pointer over a UI panel -> arrow (no world pick)"; app.cursors.set("arrow"); return; }
+	if (app.uiOn && ui::wantsMouse()) { app.hoverThing = 0; app.hoverChar = 0; hoverCage = 0; hoverRule = "pointer over a UI panel -> arrow (no world pick)"; app.cursors.set("arrow"); return; }
 	const Pick p = pick_screen(app.mouseX, app.mouseY);
 	if (p.kind == Pick::Ground) { app.hoverHitOk = true; std::copy(p.hit, p.hit + 3, app.hoverHit); }
 	hoverRule = "no rule matched (nothing hit, or a hit with no cursor of its own) -> arrow";
 	app.hoverThing = p.kind == Pick::Item || p.kind == Pick::Door || p.kind == Pick::Container || p.kind == Pick::Producer ? p.id : 0;
+	app.hoverChar = p.kind == Pick::Character ? p.id : 0;
 	std::string name = "arrow";
 	hoverCage = 0;
 	if (const simlink::SimLinkDecoder::Cage* cg = p.kind == Pick::Character ? locked_cage(app.sim, p.id) : nullptr)
@@ -769,19 +770,41 @@ void hover_cursor()
 // debug.pick_mask (dev/pickmask.cpp, kenshi-k16.2.239.5.1): the mask runs pick_at() itself per cell, so it shows what a click hits.
 void pick_mask_update()
 {
-	if (!app.opt.debug || (!dev::pickmask::on() && !app.hoverThing)) { return; }	// development features need --debug
+	if (!app.opt.debug || (!dev::pickmask::on() && !app.hoverThing && !app.hoverChar)) { return; }	// development features need --debug
 	static const dev::pickmask::Host host{
 		[](double mx, double my) -> uint64_t
 		{
 			double dir[3];
 			mouse_ray(mx, my, dir);
 			const Pick p = pick_at(dir);
-			return p.kind == Pick::Item || p.kind == Pick::Door || p.kind == Pick::Container || p.kind == Pick::Producer ? p.id : 0;
+			return p.kind == Pick::Item || p.kind == Pick::Door || p.kind == Pick::Container || p.kind == Pick::Producer || p.kind == Pick::Character ? p.id : 0;
 		},
 		[](uint64_t id, float box[4]) -> bool
 		{
 			double lo[3], hi[3];
-			if (!app.buildings.propBox(id, lo, hi)) { return false; }
+			if (!app.buildings.propBox(id, lo, hi))
+			{
+				// a character: the box of its posed pick capsules (their ends, each grown by the radius)
+				const int index = app.sim.charIndex(id);
+				std::vector<Characters::PickCapsule> caps;
+				if (index < 0 || app.chars.pickCapsules((size_t)index, caps) <= 0) { return false; }
+				bool seen = false;
+				for (const Characters::PickCapsule& c : caps)
+				{
+					for (const double* e : { c.a, c.b })
+					{
+						for (int k = 0; k < 8; k++)
+						{
+							const double w[3] = { e[0] + ((k & 1) ? c.r : -c.r), e[1] + ((k & 2) ? c.r : -c.r), e[2] + ((k & 4) ? c.r : -c.r) };
+							float x, y;
+							if (!world_to_screen(w, x, y)) { return false; }
+							if (!seen) { box[0] = box[2] = x; box[1] = box[3] = y; seen = true; }
+							box[0] = std::min(box[0], x); box[1] = std::min(box[1], y); box[2] = std::max(box[2], x); box[3] = std::max(box[3], y);
+						}
+					}
+				}
+				return seen;
+			}
 			bool any = false;
 			for (int c = 0; c < 8; c++)
 			{
@@ -800,7 +823,7 @@ void pick_mask_update()
 			for (double d : v) { uint64_t b; std::memcpy(&b, &d, 8); h = (h ^ b) * 1099511628211ull; }
 			return h;
 		} };
-	dev::pickmask::update(host, app.hoverThing, app.mouseX, app.mouseY);
+	dev::pickmask::update(host, app.hoverThing ? app.hoverThing : app.hoverChar, app.mouseX, app.mouseY);
 }
 #endif
 

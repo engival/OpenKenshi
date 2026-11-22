@@ -16,6 +16,9 @@ namespace overlay_colour
 	constexpr OverlayRgba kProjected{ 0.90f, 0.40f, 0.85f, 0.85f };	// magenta: NavUse::Projected, a 2D footprint cut through all heights
 	constexpr OverlayRgba kBuilding{ 0.70f, 0.85f, 1.00f, 0.90f };	// bluish white: NavUse::Walkable, a wall / floor / roof
 	constexpr OverlayRgba kTerrain{ 0.30f, 1.00f, 0.35f, 0.55f };	// green: the drawn terrain grid
+	// the collision overlay's optional face fill (debug.collision_fill): each shape's faces in its colour above at this alpha (replacing the colour's own
+	// alpha) x the same per-vertex fade, the outlines drawn over it; kinspect uses the same value (docs/CLIENT.md "Debug overlays")
+	constexpr float kFillAlpha = 0.15f;
 	// navmesh edges
 	constexpr OverlayRgba kNavInner{ 0.10f, 0.90f, 1.00f, 0.55f };	// cyan: an inner edge between two faces
 	constexpr OverlayRgba kNavSeam{ 0.60f, 0.50f, 1.00f, 0.30f };	// violet: a tile seam

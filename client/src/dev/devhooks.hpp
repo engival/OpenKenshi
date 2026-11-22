@@ -139,6 +139,8 @@ namespace dev
 	// shapes (the barricades that block movement and line of sight; bodies do not stand on them, k16.2.382.2) and the drawn terrain bodies stand on,
 	// round the camera focus. Toggled by its key and the debug panel's row; the draw runs in logicframe.cpp beside the navmesh overlay's, into the caller's list.
 	void collisionToggle();
+	void collisionFillToggle();	// debug.collision_fill: the faces filled in the kind colours (kenshi-k16.2.502)
+	bool collisionFillOn();
 	bool collisionOn();	// the settings key (a dev key: --debug gates the draw, as the navmesh overlay's)
 	bool collisionLegend(std::string& line);	// the debug text's line while it is on (its last draw's counts): false when it is off
 	void collisionOverlay(const CollisionPick& pick, const kworld::Heightmap* hm, const double focus[3], const float mvp[16], const double cam[3], float width, float height);

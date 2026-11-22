@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -44,6 +45,8 @@ namespace
 	constexpr float kCoplanar = 0.9995f;	// cos of ~1.8 degrees: two triangles whose normals agree this closely are one face
 	const cfg::Bool kCollision{ cfg::Group{ "Navmesh" }, "debug.collision", false,
 		"Debug: collision and terrain, within debug.overlay_range of the selected character, else the camera focus: each collision shape's outline (feature edges only), coloured by use (walls and floors bluish white, doorways yellow, stairs orange, furniture and thin props grey, barricades red, foliage brown), the barricades that block movement and line of sight, which bodies do not stand on since k16.2.382.2, and the drawn terrain bodies stand on (Heightmap::terrainHeight, the drawn triangles) as a green wire grid on its 18 u lattice; the F10 height probe lists what a body stands on at a point" };
+	const cfg::Bool kCollisionFill{ cfg::Group{ "Navmesh" }, "debug.collision_fill", false,
+		"Debug: with debug.collision on, also fill each collision shape's faces in its kind colour at a faint alpha (overlay_colour::kFillAlpha, the same fade and range as the outlines), the outlines drawn on top; off: the outlines only" };
 	struct Stats
 	{
 		int shapes = 0, edges = 0, cells = 0, skipped = 0;
@@ -135,6 +138,8 @@ namespace dev
 {
 	bool collisionOn() { return kCollision.get(); }
 	void collisionToggle() { kCollision.set(!kCollision.get()); }
+	bool collisionFillOn() { return kCollisionFill.get(); }
+	void collisionFillToggle() { kCollisionFill.set(!kCollisionFill.get()); }
 
 	bool collisionLegend(std::string& out)
 	{
@@ -210,9 +215,55 @@ namespace dev
 			g_stats.edges++;
 		};
 		ovl::disable_texture();
+		const std::shared_ptr<const std::vector<kworld::WorldShape>> shapes = pick.gathered();
+		// optional fill (debug.collision_fill): each face in its kind colour at kFillAlpha x the per-vertex fade, under the outlines. A face is split
+		// until its edges are under range/4 so the fade follows the distance across a big slab; a piece wholly out of range is dropped.
+		if (kCollisionFill.get() && shapes)
+		{
+			ovl::begin_triangles();
+			struct P { double x, y, z; };
+			const double maxEdge = range / 4;
+			bool full = false;
+			std::function<void(const P&, const P&, const P&, const OverlayRgba&, int)> tri = [&](const P& a, const P& b, const P& c, const OverlayRgba& col, int depth)
+			{
+				if (full) { return; }
+				const auto d2 = [](const P& p, const P& q) { return std::hypot(p.x - q.x, p.z - q.z); };
+				const double longest = std::max({ d2(a, b), d2(b, c), d2(c, a) });
+				const float fa = (float)fade(a.x, a.z), fb = (float)fade(b.x, b.z), fc = (float)fade(c.x, c.z);
+				if (longest > maxEdge && depth < 5)
+				{
+					const P ab{ (a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2 }, bc{ (b.x + c.x) / 2, (b.y + c.y) / 2, (b.z + c.z) / 2 }, ca{ (c.x + a.x) / 2, (c.y + a.y) / 2, (c.z + a.z) / 2 };
+					tri(a, ab, ca, col, depth + 1); tri(ab, b, bc, col, depth + 1); tri(ca, bc, c, col, depth + 1); tri(ab, bc, ca, col, depth + 1);
+					return;
+				}
+				if (fa <= 0 && fb <= 0 && fc <= 0 && fade((a.x + b.x + c.x) / 3, (a.z + b.z + c.z) / 3) <= 0) { return; }
+				if (ovl::num_vertices() + 3 > kMaxVertices) { g_stats.skipped++; full = true; return; }
+				float sx[3], sy[3];
+				if (!project(a.x, a.y, a.z, sx[0], sy[0]) || !project(b.x, b.y, b.z, sx[1], sy[1]) || !project(c.x, c.y, c.z, sx[2], sy[2])) { return; }
+				const float f[3] = { fa, fb, fc };
+				for (int k = 0; k < 3; k++) { ovl::c4f(col.r, col.g, col.b, overlay_colour::kFillAlpha * f[k]); ovl::v2f(sx[k], sy[k]); }
+			};
+			for (const kworld::WorldShape& s : *shapes)
+			{
+				if (s.max[0] < focus[0] - range || s.min[0] > focus[0] + range || s.max[2] < focus[2] - range || s.min[2] > focus[2] + range) { continue; }
+				const float box[6] = { (float)s.min[0], (float)s.min[1], (float)s.min[2], (float)s.max[0], (float)s.max[1], (float)s.max[2] };
+				const OverlayRgba col = colourOf(s, box);
+				const size_t nv = s.vertices.size() / 3;
+				for (size_t i = 0; i + 2 < s.indices.size(); i += 3)
+				{
+					const size_t v[3] = { s.indices[i], s.indices[i + 1], s.indices[i + 2] };
+					if (v[0] >= nv || v[1] >= nv || v[2] >= nv) { continue; }
+					P p[3];
+					for (int k = 0; k < 3; k++) { p[k] = { s.vertices[v[k] * 3], s.vertices[v[k] * 3 + 1], s.vertices[v[k] * 3 + 2] }; }
+					tri(p[0], p[1], p[2], col, 0);
+				}
+			}
+			ovl::count_triangles();
+			ovl::end();
+		}
 		// the collision shapes the gather holds (buildings first, then foliage): outlines, coloured by use
 		ovl::begin_lines();
-		if (const std::shared_ptr<const std::vector<kworld::WorldShape>> shapes = pick.gathered())
+		if (shapes)
 		{
 			if (g_cache.owner != shapes) { g_cache.owner = shapes; g_cache.edges.clear(); }
 			for (const kworld::WorldShape& s : *shapes)
