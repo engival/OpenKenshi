@@ -63,6 +63,8 @@ public:
 	{
 		bool ready = false;		// the layer table was ready (the first such prepare queues the pipeline and sprites)
 		double cam[3] = {};
+		float windStrength = 1, windDir[2] = { 0.8f, 0.6f };	// the live foliage wind at prepare (foliagewind::g is logic's: the draw reads this copy, review .101 B3)
+		double windPhase = 0;
 		std::vector<DrawTile> tiles;	// this frame's drawn tiles, nearest-first order of the tile table
 		std::vector<DrawRange> ranges;
 	};

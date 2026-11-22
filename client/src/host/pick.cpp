@@ -584,7 +584,7 @@ Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped)
 // What is under the screen point: an item label (while shown), else the world pick along the ray. skipped (the F12 report): the shapes the ray passed.
 Pick pick_screen(double mx, double my, std::vector<PickSkip>* skipped)
 {
-	if (const int bar = app.post.letterboxBar(); my < bar || my >= view::height() - bar) { return {}; }	// the letterbox bars cover the world: nothing there to pick
+	if (const int bar = Post::letterboxBar(view::width(), view::height()); my < bar || my >= view::height() - bar) { return {}; }	// the letterbox bars cover the world: nothing there to pick
 	if (const uint64_t id = label_at(mx, my))
 	{
 		Pick p;

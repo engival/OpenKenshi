@@ -58,6 +58,8 @@ public:
 	// At the packet's fill (kWorld with a live sim): up to `budget` queued jobs into `out` (the original: one per frame), each with its cell.
 	void send(std::vector<PortraitJob>& out, int budget);
 	// At logic's frame start: what the render thread did with the jobs sent before (Portraits::take).
+	// A packet taken back untaken (rule 6's skip): its jobs were never drawn, queue them again like a kNotRun done (kenshi-k16.2.205.12.z79f).
+	void giveBack(const std::vector<PortraitJob>& jobs);
 	void apply(const std::vector<PortraitDone>& done);
 	void setOrigin(bool topLeft) { topLeft_ = topLeft; }	// sokol's features.origin_top_left, read once at Portraits::init (the uv's row order)
 	void clear();

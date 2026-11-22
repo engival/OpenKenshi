@@ -118,7 +118,7 @@ static ClickRec* click_begin(double mx, double my, bool right, bool shift, const
 	c.mode = camera_mode_name();
 	c.w = view::width();
 	c.h = view::height();
-	c.bar = app.post.letterboxBar();
+	c.bar = Post::letterboxBar(view::width(), view::height());
 	c.aspect = windowgate::aspect();
 	c.near = camera_near();
 	for (int k = 0; k < 3; k++) { c.eye[k] = app.pos[k]; c.focus[k] = app.focus[k]; }

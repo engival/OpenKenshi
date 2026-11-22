@@ -1339,6 +1339,15 @@ void start_logic_thread()
 		}
 		gIdleSeen = {};
 	};
+	h.skipped = [](int slot)	// rule 6's skip, logic thread: the untaken packet's one-shot work goes back (review .101 B1, B4)
+	{
+		const FramePacket& pk = gPackets[slot];
+		if (pk.path != FramePath::kWorld) { return; }
+		if (!pk.portraitJobs.empty()) { fprintf(stderr, "kclient: overlap: a skipped packet carried %zu portrait job%s, queued again\n", pk.portraitJobs.size(), pk.portraitJobs.size() == 1 ? "" : "s"); }
+		app.portraitTable.giveBack(pk.portraitJobs);
+		const int lost = app.shadow.lostPacket();
+		if (lost) { fprintf(stderr, "kclient: overlap: a skipped packet had %d shadow cascade redraw%s, due again\n", lost, lost == 1 ? "" : "s"); }
+	};
 	h.render = [](int slot)
 	{
 		const FramePacket& pk = gPackets[slot];

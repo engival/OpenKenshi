@@ -6,11 +6,11 @@
 //   lockstep  a real logic thread, started once loading first ends (rule 7). The two threads strictly alternate (rule 9): logic fills a slot and
 //             waits until the render thread has drawn it; the render thread draws only while logic waits. So render_frame's `app.` reads stay
 //             legal and there is no data race by construction.
-//   overlap   gated overlap (overlap review .85 section 1.1 stage 1, kenshi-k16.2.205.12.96): logic waits only until the render thread has
-//             TAKEN its packet, runs the first half of its next frame while that packet is drawn, and calls renderIdle() before its second
-//             half (and before any rare write to what the draw reads), which waits until the draw has ended (rule 12). When the take-wait's
-//             bound runs out, logic takes its untaken packet back and runs the next frame (rule 6's skip). Scripted runs and the scene test
-//             run lockstep unless debug.overlap_scripted (review A3).
+//   overlap   full overlap (kenshi-k16.2.205.12.118, stage 2): logic waits only until the render thread has TAKEN its packet and runs its
+//             whole next frame while that packet is drawn (or redrawn). renderIdle() is called only for frames that are not plain world
+//             frames and before rare writes to what the draw reads; it waits until no draw runs and closes the gate (rule 12). When the
+//             take-wait's bound runs out, logic takes its untaken packet back and runs the next frame (rule 6's skip; Hooks::skipped).
+//             Scripted runs and the scene test run lockstep unless debug.overlap_scripted (review A3).
 // The packet slots themselves are the caller's (gPackets); this module owns their states (free / filled / drawing, rule 1), the one mutex and
 // condition variable, and the thread.
 #include <functional>
@@ -26,6 +26,9 @@ struct Hooks
 	// Logic thread, its wait for the draw timed out while the render thread had not taken the slot yet (rule 9): keep the sim link moving
 	// without stepping the world. Runs under the hand-off mutex, so the render thread cannot flip (and start reading app.) while it runs.
 	std::function<void()> idle;
+	// Logic thread, overlap: rule 6's skip took slot `slot` back untaken. Its packet is never drawn, so the one-shot work it carried (portrait jobs,
+	// a shadow cascade's redraw) must be handed back to its owners; the slot is free and logic's again (kenshi-k16.2.205.12.z79f).
+	std::function<void(int slot)> skipped;
 };
 
 Mode mode();	// render.thread as read by configure() (kOff before); from start() on, the mode the thread runs (a scripted overlap: kLockstep)

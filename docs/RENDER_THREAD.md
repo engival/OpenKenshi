@@ -410,8 +410,9 @@ with its `serial`, a counter that logic increments for each packet it fills.
    screen, as `frame_blank` does today).
 5. **`render_frame` is legal twice on one packet.** *[R1, consequence of rule 4]* Drawing the same serial again changes
    nothing but the pixels:
-   - each renderer's `upload()` keys on the packet's serial and skips a serial it has already uploaded (`Grass` already
-     does this);
+   - the per-frame uploads (`chars.upload`, `buildings.upload`, `particles.upload`, `arrows.update`) are NOT skipped on a second draw of a
+     serial: they rewrite the same data from the packet, which costs CPU and is harmless (overlap review kenshi-k16.2.205.12.101 A; `Grass`
+     alone keys on the serial);
    - readback requests and resource jobs are served on the first draw of a serial only (rule 2: they are not in the
      packet);
    - every counter that a draw increments today (`app.frames++`, the `cpuMs` family, `app.fogDrawn`,
@@ -457,18 +458,15 @@ with its `serial`, a counter that logic increments for each packet it fills.
      of such frames over 50 ms logs one line (`logicthread::kMissLogMs`), a shorter run only goes into the `pace:` line
      (kenshi-k16.2.437.1; `client/README.md` "Vsync and present pacing"). Rule 6's skip is never taken in lockstep. When the bound runs out, logic polls the sim link without
      stepping the world and waits again: determinism comes before liveness.
-   - *overlap*: **full overlap** since kenshi-k16.2.205.12.118 (stage 2, no gate in the frame path; rules 4, 5, 11 and 12 below). Before it, **gated overlap** (overlap review kenshi-k16.2.205.12.85 section 1.1, stage 1; landed with
-     kenshi-k16.2.205.12.96). Logic fills packet N, waits only until the render thread has *taken* it (rule 6's wait,
-     with its skip), then runs the first half of N+1 (part A: the event drain, the script, the camera, `sim.update`, peek
-     and hover, the UI, `chars.update`, the sounds) while N is drawn. Before the first write of part B it calls
-     `logicthread::renderIdle()`, which returns once the draw of N has ended (rule 12). The frame period is
-     max(A, R) + B instead of lockstep's A + B + R (R = the draw's CPU). Its preconditions were the deltas out of the
-     packet (rule 2, proved by kenshi-k16.2.205.12.93's digest and poison), an `app`-free `render_frame`
-     (kenshi-k16.2.205.12.27) and the stray part-A writes gated or moved (kenshi-k16.2.205.12.95). Before its default
-     can flip: a clean ThreadSanitizer run in overlap (kenshi-k16.2.205.12.29's build, run with
-     `debug.overlap_scripted`) and the go of the overlap review before the flip (the review's T15). *Full overlap* (no
-     gate; rules 4, 5 and 11 as written) is stage 2: the shadow's and the buildings' draw state move into the packet
-     first, and it waits for a measured gate wait (stage 2 starts when `lt.gate`'s mean is over 0.5 ms at a user camera).
+   - *overlap*: **full overlap** since kenshi-k16.2.205.12.118 (stage 2: no gate in the world frame; rules 4, 5, 11 and 12 below). Logic fills
+     packet N, waits only until the render thread has *taken* it (rule 6's wait, with its skip), then runs the whole of
+     frame N+1 (the event drain, the script, the camera, `sim.update`, the UI, `chars.update`, the weather, `shadow.update`,
+     the prepares, the packet) while N is drawn or redrawn. The frame period is max(A + B, R + P) instead of lockstep's
+     A + B + R (R = the draw's CPU). It rests on the deltas out of the packet (rule 2, proved by kenshi-k16.2.205.12.93's
+     digest and poison), an `app`-free `render_frame` (kenshi-k16.2.205.12.27), the shadow's and the buildings' draw state in the
+     packet (T17-T20) and the stray writes gated or moved (kenshi-k16.2.205.12.95). A gate remains only for frames that are not plain world
+     frames and for rare writes (rule 12). It is still opt-in: its default waits on the overlap review's go
+     (kenshi-k16.2.205.12.101) and the user's play test (kenshi-k16.2.205.12.106).
    **Scripted runs (`--script`, `--screenshot`, the headless tools) and `tools/scene_test.sh` run lockstep** whenever
    `render.thread` is not off: overlap prints `render.thread=overlap: a scripted run runs lockstep` and falls back to
    lockstep for them. The exception is `debug.overlap_scripted=1` (dev; review A3): the scripted run then really
@@ -537,18 +535,15 @@ with its `serial`, a counter that logic increments for each packet it fills.
     (`lockstep_bound_ms`: with vsync on and `gfx.fps_cap` under the refresh, the longer of the refresh period and the
     cap's step, in both modes), and a frame without a packet blits the kept frame as in lockstep. The limiter's move to
     the render thread comes with stage 2's redraw.
-12. **The gate.** *Stage 2 (kenshi-k16.2.205.12.118): the world frame has no gate: `logicthread::renderIdle()` is gone from `logic_paths`' part B, and part B
-    runs while the render thread draws (or redraws) the previous packet. What follows is the gate that remains for the frames that are not plain world frames, and
-    the stage-1 text for reference.* `renderIdle()` now also **closes** the gate (`gClosed`, under the mutex): until logic's next fill the render thread
-    draws nothing, not even a redraw (it shows the kept frame, as in lockstep), so a load, the title, the creator, the lab and a dev op still write the
-    renderers under no draw. Logic's fill opens it. The stage-1 text: **The render thread is inside `render_frame` only between
-    logic's fill of a packet and logic's next return from `logicthread::renderIdle()`.** It holds because the render
-    thread draws only a packet it took at a flip, a filled slot exists only between logic's fill and that flip, and
-    logic cannot fill again before it has passed its gate. Rule 6's skip keeps it: a packet taken back was never drawn.
-    So everything logic writes after the gate (part B: the weather, `sky.update`, `shadow.update`, the props,
-    `buildings.update`, the foliage's and grass's prepare, the particles, the blood, the packet) is handed over in an
-    exclusive window exactly as in lockstep, and what part A writes must be logic's own or reach the draw through the
-    packet (review section 1.3's list; kenshi-k16.2.205.12.95 moved the strays).
+12. **The gate.** *Stage 2 (kenshi-k16.2.205.12.118): the world frame has no gate: `logicthread::renderIdle()` is gone from `logic_paths`' part B, and the whole
+    frame runs while the render thread draws (or redraws) the previous packet. The invariant that replaced the stage-1 one: logic never writes the drawing slot, and
+    whatever logic writes outside the packet is not read by a draw, except behind a closed gate.* `renderIdle()` **closes** the gate (`gClosed`, under the mutex):
+    until logic's next fill the render thread draws nothing, not even a redraw (it shows the kept frame, as in lockstep), so a load, the title, the creator, the
+    lab and a dev op write the renderers under no draw. Logic's fill opens it. Rule 6's skip keeps the invariant: a packet taken back was never drawn, and
+    the one-shot work it carried (portrait jobs, a shadow cascade's redraw) is handed back to its owners by `Hooks::skipped`
+    (`PortraitTable::giveBack`, `Shadow::lostPacket`; kenshi-k16.2.205.12.z79f). What logic writes must be its own or reach the draw through the
+    packet (review section 1.3's list; kenshi-k16.2.205.12.95 moved the strays; the letterbox bar is computed on logic from the view size, the grass reads
+    the wind copied into its `FrameData`).
     - `renderIdle()` waits under the hand-off mutex until the render thread is outside its draw hook and no slot is
       filled; the wait checks the stop flag every 100 ms (rule 8's notify wakes it) and never gives up otherwise. Its
       time is `lt.gate` on the stages line (`threadsplit::gateWait`). It is free in off and lockstep and on any thread

@@ -243,6 +243,7 @@ namespace dev
 	inline void debugPanelFrame(const Context&) {}
 	inline void trailsPanelFrame(const Context&) {}
 	inline void collisionToggle() {}
+	inline void collisionFillToggle() {}
 	inline bool collisionOn() { return false; }
 	inline bool collisionLegend(std::string&) { return false; }
 	inline void collisionOverlay(const CollisionPick&, const kworld::Heightmap*, const double[3], const float[16], const double[3], float, float) {}

@@ -96,6 +96,7 @@ public:
 	void selectTile(const FrameData& fd, int i);
 	void endPass();
 	void invalidate();	// logic side of "the atlas is not trustworthy (shadows were off)": redraw every cascade next frame, no crossfade into the old set
+	int lostPacket();	// logic side: the packet that updated the cascades was taken back undrawn (rule 6's skip): the cascades it asked to redraw redraw again
 	void invalidateAtlas();	// render side: forget the cache slots and the clean flags
 
 	// The static-caster cache (render.shadow_cache, kenshi-k16.2.205.12.2). The static casters (terrain, buildings, features, foliage) of each (atlas set, cascade) are drawn into a

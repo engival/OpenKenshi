@@ -1,4 +1,4 @@
-// The logic thread in lockstep and gated overlap (logicthread.hpp; docs/RENDER_THREAD.md §7.1 rules 1, 3, 4, 6-9, 12; kenshi-k16.2.205.12.25,
+// The logic thread in lockstep and full overlap (logicthread.hpp; docs/RENDER_THREAD.md §7.1 rules 1, 3, 4, 6-9, 12; kenshi-k16.2.205.12.25,
 // kenshi-k16.2.205.12.96).
 #include "app/logicthread.hpp"
 
@@ -21,8 +21,8 @@ namespace
 {
 const cfg::Text kThread{ cfg::Group{ "Performance" }, "render.thread", "off", { "off", "lockstep", "overlap" },
 	"The render thread (docs/RENDER_THREAD.md 7.1): off = one thread; lockstep = a logic thread that alternates with the render thread; overlap = "
-	"the logic thread's next frame starts while the render thread draws (gated: its second half waits for the draw's end; scripted runs stay "
-	"lockstep unless debug.overlap_scripted). Read at startup" };
+	"the logic thread's whole next frame runs while the render thread draws the previous packet (and redraws it when no new one comes); loads, "
+	"the title and the creator still wait for the draw. Scripted runs stay lockstep unless debug.overlap_scripted. Read at startup" };
 const cfg::Bool kOverlapScripted{ cfg::Group{ "Scripted runs" }, "debug.overlap_scripted", false,
 	"Scripted runs with render.thread=overlap really overlap (a ThreadSanitizer run of the overlap, overlap review .85 A3), with rule 6's skip; "
 	"frame-exact shots are not expected. Off: scripted runs and the scene test run lockstep (docs/RENDER_THREAD.md 7.1 rule 9)" };
@@ -118,6 +118,7 @@ void logicLoop()
 			// Overlap (rule 12): wait only for the take, then run the next frame's first half while this packet is drawn. A skipped packet's
 			// slot is free again: the next frame refills it. The slot drawn before this one went free at this one's flip.
 			if (waitTaken(lk, slot)) { slot ^= 1; }
+			else if (gHooks.skipped) { gHooks.skipped(slot); }	// the packet was taken back untaken: its one-shot work is lost, hand it back (rule 2)
 			continue;
 		}
 		// Lockstep (rule 9): wait until the render thread has drawn this packet (and finished its readbacks); no skip.

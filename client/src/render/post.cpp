@@ -241,7 +241,7 @@ void Post::render(Hdr& hdr, const Hdr::Frame& f, int w, int h)
 	set_ = settings();
 	// The applied size (windowgate.hpp, from the packet): while a window change is held the chain keeps the last applied size, whose image the
 	// final pass scales onto the window (k16.2.222).
-	bar_ = set_.letterbox > 0 ? std::max(0, (int)std::lround(0.5 * (h - w / set_.letterbox))) : 0;	// none when the screen is already as wide
+	bar_ = letterboxBar(w, h);	// render-owned copy for the final pass; logic computes its own (letterboxBar is a pure function)
 	if (!set_.any()) { return; }
 	makeTargets(w, h);
 	if (set_.smaa && !area_.id) { makeLuts(); }
@@ -484,4 +484,10 @@ void Post::stylize()
 	sg_apply_uniforms(UB_stylize_params, SG_RANGE(u));
 	drawstats::draw(0, 3, 1);
 	sg_end_pass();
+}
+
+int Post::letterboxBar(int w, int h)
+{
+	const float lb = (float)kLetterbox.get();
+	return lb > 0 ? std::max(0, (int)std::lround(0.5 * (h - w / lb))) : 0;	// none when the screen is already as wide
 }

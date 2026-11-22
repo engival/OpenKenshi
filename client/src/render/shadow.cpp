@@ -502,4 +502,11 @@ void Shadow::invalidate()
 	fade_ = 1.0f;	// whatever the other set holds is from before the gap: no crossfade into it
 }
 
+int Shadow::lostPacket()
+{
+	int n = 0;
+	for (int c = 0; c < kCascades; c++) { if (render_[c] && valid_[c]) { valid_[c] = false; n++; } }	// its matrices describe a tile that was never drawn
+	return n;
+}
+
 void Shadow::endPass() { sg_end_pass(); }

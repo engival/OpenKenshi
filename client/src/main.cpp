@@ -2900,7 +2900,8 @@ static void overlap_limiter()
 }
 
 // The render thread's frame once the logic thread runs: wait about one refresh for a packet (lockstep_bound_ms), draw it and keep the composed
-// frame (lastframe.hpp); no packet in time: no pass, the kept frame is shown again (in lockstep a redraw would read app. while logic writes it).
+// frame (lastframe.hpp); no packet in time: lockstep shows the kept frame again with no pass, overlap redraws its drawing packet (the draw reads the
+// packet and render-owned state only, so a redraw is legal while logic writes app.).
 static void frame_lockstep()
 {
 #ifdef KCLIENT_DEV_TOOLS

@@ -177,6 +177,13 @@ void PortraitTable::apply(const std::vector<PortraitDone>& done)
 	}
 }
 
+void PortraitTable::giveBack(const std::vector<PortraitJob>& jobs)
+{
+	std::vector<PortraitDone> done;
+	for (const PortraitJob& j : jobs) { done.push_back({ j.key, j.cell, PortraitDone::kNotRun }); }
+	apply(done);
+}
+
 void PortraitTable::clear()
 {
 	cells_.clear();

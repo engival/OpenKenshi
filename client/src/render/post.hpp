@@ -30,7 +30,8 @@ public:
 	void present(Hdr& hdr, const Hdr::Frame& f);
 	// post.letterbox: the height in framebuffer pixels of each of the two black bars (top and bottom) over the 3D view this frame, 0 = none. Clicks and
 	// the cursor inside them must not reach the world.
-	int letterboxBar() const { return bar_; }
+	// Computed from the size and the option, never read back from the draw (review .101 B2: the draw wrote it, logic read it).
+	static int letterboxBar(int w, int h);
 	void debugOff(uint32_t mask) { dbgOff_ = mask; }	// the light debugger's switched-off terms (knobs/lightterms.hpp), from the packet: bloom and the grade read it in settings()
 
 private:
@@ -59,7 +60,7 @@ private:
 
 	uint32_t dbgOff_ = 0;
 	int w_ = 0, h_ = 0;
-	int bar_ = 0;	// letterboxBar()
+	int bar_ = 0;	// render thread only: the bar of the frame being drawn
 	Hdr::Target input_ = {};
 	Hdr::Target graded_ = {}, edges_ = {}, weights_ = {}, aa_ = {};	// SMAA's, made on first use
 	static constexpr int kBloomLevels = 5;	// half res down to 1/32

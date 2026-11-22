@@ -593,6 +593,10 @@ void Grass::prepare(const double cam[3], const float mvp[16], bool blocking, Fra
 	out.tiles.clear();
 	out.ranges.clear();
 	out.ready = ready_;
+	out.windStrength = foliagewind::g.strength;
+	out.windDir[0] = foliagewind::g.dir[0];
+	out.windDir[1] = foliagewind::g.dir[1];
+	out.windPhase = foliagewind::g.phase;
 	if (!out.ready) { return; }
 	if (!pipelineQueued_)	// the first ready frame: the render side makes the pipeline and the sprites, before any tile buffer
 	{
@@ -719,8 +723,7 @@ void Grass::render(const FrameData& d, const float mvp[16], const LightParams& l
 	memcpy(vs.mvp, mvp, sizeof vs.mvp);
 	for (int i = 0; i < 3; i++) { vs.camw[i] = (float)d.cam[i]; }
 	const bool live = kGrassLiveWind.get();
-	const foliagewind::State& fw = foliagewind::g;
-	vs.camw[3] = live ? (float)fw.phase : (float)time;
+	vs.camw[3] = live ? (float)d.windPhase : (float)time;
 	grass_fs_params_t fs = {};
 	fs.fade[2] = kAlphaTest;
 	sg_bindings b = {};
@@ -759,9 +762,9 @@ void Grass::render(const FrameData& d, const float mvp[16], const LightParams& l
 			drawstats::bindings(&b);
 			// The original: GrassLoader's direction is UNIT_X, written only in its ctor (kinspect foliage_wind.md §2), so the default sways along +X.
 			// render.grass_live_wind: amplitude, rate and direction follow the live foliage wind, like the leaves.
-			vs.wind[0] = live ? def.wind * fw.strength : def.wind;
-			vs.wind[1] = live ? fw.dir[0] : 1.0f;
-			vs.wind[2] = live ? fw.dir[1] : 0.0f;
+			vs.wind[0] = live ? def.wind * d.windStrength : def.wind;
+			vs.wind[1] = live ? d.windDir[0] : 1.0f;
+			vs.wind[2] = live ? d.windDir[1] : 0.0f;
 			vs.wind[3] = live ? 0.0f : 1.0f;	// shader mode: the original's sway (grass.glsl) unless live
 			sg_apply_uniforms(UB_grass_vs_params, SG_RANGE(vs));
 			sg_apply_uniforms(UB_grass_fs_params, SG_RANGE(fs));
