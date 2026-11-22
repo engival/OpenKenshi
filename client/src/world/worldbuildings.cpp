@@ -65,10 +65,33 @@ bool WorldBuildings::propRay(uint64_t id, const double origin[3], const double d
 void WorldBuildings::refreshPickBoxes() const
 {
 	if (pickBoxData_ == dataGen_ && pickBoxHold_ == holdGen_ && pickBoxDoor_ == doorGen_) { return; }
-	pickBoxes_.clear();
+	// One slot per instance (lo > hi: none). A mesh load or a door move bumps the generations for the whole set, so a slot is recomputed only when the stamp of its parts
+	// (meshes and load states, topBoxStamp) or its door's pose moved: the streaming churn costs a walk over the parts, not a box per instance (kenshi-sagp: the Heft
+	// hover's p99 was this rebuild).
+	const auto t0 = std::chrono::steady_clock::now();
+	if (pickBoxSet_ != topBoxGen_ || pickBoxes_.size() != data_.instances.size())	// the instance / part set changed (setData, addPart); setProps moves instances in place and shows in the stamp
+	{
+		pickBoxSet_ = topBoxGen_;
+		pickBoxes_.assign(data_.instances.size(), PickBox{ 0, { 1e30f, 1e30f, 1e30f }, { -1e30f, -1e30f, -1e30f } });
+		pickStamp_.assign(data_.instances.size(), ~0ull);
+	}
+	size_t rebuilt = 0;
 	for (uint32_t i = 0; i < data_.instances.size(); i++)
 	{
 		const BuildingInstance& b = data_.instances[i];
+		uint64_t stamp = topBoxStamp(b);
+		{
+			const auto mixBits = [&](const void* p, size_t n) { uint64_t u = 0; std::memcpy(&u, p, n); stamp = (stamp ^ u) * 1099511628211ull; };
+			mixBits(&b.x, 8); mixBits(&b.y, 8); mixBits(&b.z, 8); mixBits(&b.scale, 4); mixBits(&b.qw, 4); mixBits(&b.qx, 4); mixBits(&b.qy, 4); mixBits(&b.qz, 4);
+			mixBits(&b.stretch[0], 4); mixBits(&b.stretch[1], 4); mixBits(&b.stretch[2], 4); mixBits(&b.firstPart, 4); mixBits(&b.partCount, 4);
+		}
+		if (b.door)
+		{
+			if (const auto off = doorOffsets_.find(b.door); off != doorOffsets_.end()) { for (int a = 0; a < 3; a++) { float f = (float)off->second[a]; uint32_t u; std::memcpy(&u, &f, 4); stamp = (stamp ^ u) * 1099511628211ull; } }
+		}
+		if (stamp == pickStamp_[i]) { continue; }
+		pickStamp_[i] = stamp;
+		rebuilt++;
 		PickBox pb{ i, { 1e30f, 1e30f, 1e30f }, { -1e30f, -1e30f, -1e30f } };
 		bool any = false;
 		for (uint32_t k = 0; k < b.partCount; k++)
@@ -79,12 +102,11 @@ void WorldBuildings::refreshPickBoxes() const
 			for (int a = 0; a < 3; a++) { pb.lo[a] = std::min(pb.lo[a], (float)plo[a]); pb.hi[a] = std::max(pb.hi[a], (float)phi[a]); }
 			any = true;
 		}
-		if (!any) { continue; }
-		if (b.door)
+		if (any && b.door)
 		{
 			if (const auto off = doorOffsets_.find(b.door); off != doorOffsets_.end()) { for (int a = 0; a < 3; a++) { pb.lo[a] += (float)off->second[a]; pb.hi[a] += (float)off->second[a]; } }
 		}
-		pickBoxes_.push_back(pb);
+		pickBoxes_[i] = pb;
 	}
 	pickBoxData_ = dataGen_;
 	pickBoxHold_ = holdGen_;
@@ -97,6 +119,7 @@ bool WorldBuildings::drawnPickRay(const double origin[3], const double dir[3], d
 	bool hit = false;
 	for (const PickBox& pb : pickBoxes_)
 	{
+		if (pb.lo[0] > pb.hi[0]) { continue; }	// no pickable Ready part
 		double t0 = tMin, t1 = hit ? std::min(tMax, t) : tMax;	// the ray's span through the box (slab test), no farther than the best hit
 		for (int a = 0; a < 3 && t0 <= t1; a++)
 		{
@@ -422,9 +445,37 @@ bool WorldBuildings::instanceHolds(uint32_t index, const double p[3], double sla
 	return false;
 }
 
+// A part's alpha cut-outs for the pick, per submesh, as the fragment shader discards them (mesh.glsl: ALPHA mode, normal map alpha < 0.5; a feature's cutoff on the
+// diffuse alpha or, FOLIAGE, the normal map's). Returns how many submesh entries it filled; a submesh with no cut has a null alpha, 0 = no cut-out at all.
+int WorldBuildings::pickCuts(uint32_t pid, PickCut* out, int cap) const
+{
+	const PartRt& rt = partRt_[pid];
+	const BuildingPartDef& def = data_.parts[pid];
+	if (rt.mesh < 0) { return 0; }
+	const int mode = modeFor(pid);
+	if (mode >= 2) { return 0; }	// emissive, dual, triplanar, terrain: no cut-out (misc.x is 0, or triplanar uv)
+	const float cutf = cutOf(pid);
+	const bool normalSrc = mode == 1 || (cutf > 0 && def.featureMode == 4);
+	const float cut = mode == 1 ? 128.0f : cutf * 255.0f;
+	if (cut <= 0) { return 0; }
+	const MeshEntry& m = meshes_[rt.mesh];
+	const int n = std::min<int>(cap, (int)m.subs.size());
+	bool any = false;
+	for (int si = 0; si < n; si++)
+	{
+		out[si] = PickCut{};
+		const int t = normalSrc ? rt.normalTex : si < (int)rt.subTex.size() ? rt.subTex[si] : -1;
+		if (t < 0 || textures_[t].state != Ready || textures_[t].alpha.empty()) { continue; }
+		const TexEntry& te = textures_[t];
+		out[si] = PickCut{ te.alpha.data(), te.tw, te.th, cut, def.tileX, def.tileY };
+		any = true;
+	}
+	return any ? n : 0;
+}
+
 // The nearest hit of the ray (mesh frame, already offset-free: `off` is the part's offset) on the mesh's triangles; a mesh whose triangles cannot be
 // read keeps its box (true, t unchanged).
-bool WorldBuildings::triangleRay(int mesh, const double o[3], const double d[3], const double off[3], double& t, double tMin, double tMax, double minUp, bool pickable, bool cullBack) const
+bool WorldBuildings::triangleRay(int mesh, const double o[3], const double d[3], const double off[3], double& t, double tMin, double tMax, double minUp, bool pickable, bool cullBack, const PickCut* cuts, int ncuts) const
 {
 	const std::string& path = meshes_[mesh].path;
 	const auto it = pickTris_.find(path);	// filled by uploadMesh (wbload.cpp) when the mesh loads; a Ready mesh always has its entry
@@ -475,7 +526,21 @@ bool WorldBuildings::triangleRay(int mesh, const double o[3], const double d[3],
 			const double v = (d[0] * q[0] + d[1] * q[1] + d[2] * q[2]) / det;
 			if (v < 0 || u + v > 1) { continue; }
 			const double tt = (e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]) / det;
-			if (tt >= tMin && tt <= tMax && tt < best) { best = tt; }
+			if (!(tt >= tMin && tt <= tMax && tt < best)) { continue; }
+			if (cuts)	// an alpha cut-out texel the renderer discards is not there to pick (kenshi-sagp): the texture's alpha at the hit's UV, as mesh.glsl tests it
+			{
+				const size_t tri = (size_t)(nd.a + k);
+				const PickCut& c = cuts[std::min<int>(pm.sub[tri], ncuts - 1)];
+				if (pm.sub[tri] < ncuts && c.a)
+				{
+					const float* uv = &pm.uv[tri * 6];
+					const double hu = ((double)uv[0] + u * ((double)uv[2] - uv[0]) + v * ((double)uv[4] - uv[0])) * c.tx, hv = ((double)uv[1] + u * ((double)uv[3] - uv[1]) + v * ((double)uv[5] - uv[1])) * c.ty;
+					const double fu = hu - std::floor(hu), fv = hv - std::floor(hv);	// the sampler repeats
+					const int px = std::min(c.w - 1, (int)(fu * c.w)), py = std::min(c.h - 1, (int)(fv * c.h));
+					if (c.a[(size_t)py * c.w + px] < c.cut) { continue; }
+				}
+			}
+			best = tt;
 		}
 	}
 	if (best >= 1e30) { return false; }
@@ -513,7 +578,10 @@ bool WorldBuildings::instanceRay(uint32_t index, const double origin[3], const d
 			t1 = std::min(t1, std::max(ta, tb));
 		}
 		if (t0 > t1 || t1 < tMin || t0 > tMax) { continue; }	// the box's span along the ray misses the window
-		if (drawn && !triangleRay(mesh, o, d, off, t0, tMin, tMax, minUp, pickable, pickable && cullsBackFaces(def))) { continue; }	// the box is only the cheap test; the drawn triangles decide
+		PickCut cuts[8];
+		int ncuts = 0;
+		if (drawn && pickable) { ncuts = pickCuts(pid, cuts, 8); }
+		if (drawn && !triangleRay(mesh, o, d, off, t0, tMin, tMax, minUp, pickable, pickable && cullsBackFaces(def), ncuts ? cuts : nullptr, ncuts)) { continue; }	// the box is only the cheap test; the drawn triangles decide
 		if (!hit || t0 < t)
 		{
 			t = t0;

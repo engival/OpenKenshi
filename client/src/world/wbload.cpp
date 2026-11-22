@@ -543,11 +543,13 @@ bool WorldBuildings::decodeMesh(const std::string& path, MeshCpu& out)
 }
 
 // Median split on the longest centroid axis, leaves of up to 6 triangles; triangles reordered into leaf order.
-void WorldBuildings::buildPick(PickMesh& out, const std::vector<float>& tris, const std::vector<uint8_t>& skip)
+void WorldBuildings::buildPick(PickMesh& out, const std::vector<float>& tris, const std::vector<uint8_t>& skip, const std::vector<float>& uvs, const std::vector<uint8_t>& sub)
 {
 	const size_t n = tris.size() / 9;
 	out.tris.clear();
 	out.skip.clear();
+	out.uv.clear();
+	out.sub.clear();
 	out.nodes.clear();
 	if (n == 0) { return; }
 	std::vector<uint32_t> idx(n);
@@ -591,6 +593,10 @@ void WorldBuildings::buildPick(PickMesh& out, const std::vector<float>& tris, co
 	for (size_t k = 0; k < n; k++) { out.tris.insert(out.tris.end(), tris.begin() + (ptrdiff_t)idx[k] * 9, tris.begin() + (ptrdiff_t)idx[k] * 9 + 9); }
 	out.skip.reserve(n);
 	for (size_t k = 0; k < n; k++) { out.skip.push_back(skip[idx[k]]); }
+	out.sub.reserve(n);
+	for (size_t k = 0; k < n; k++) { out.sub.push_back(sub[idx[k]]); }
+	out.uv.reserve(n * 6);
+	for (size_t k = 0; k < n; k++) { out.uv.insert(out.uv.end(), uvs.begin() + (ptrdiff_t)idx[k] * 6, uvs.begin() + (ptrdiff_t)idx[k] * 6 + 6); }
 }
 
 void WorldBuildings::worker()
@@ -629,6 +635,9 @@ void WorldBuildings::worker()
 		{
 			std::vector<float> tris;
 			std::vector<uint8_t> skip;	// glass and effect submeshes are drawn but never picked (kenshi-k16.2.396.5)
+			std::vector<float> uvs;	// per triangle, the three corners' texcoords: the alpha cut-out test (kenshi-sagp)
+			std::vector<uint8_t> subOf;	// per triangle, its submesh (255: past the 254th)
+			uint32_t subNo = 0;
 			for (const Sub& sb : r.mesh.subs)
 			{
 				const std::string mat = lower(sb.material);
@@ -639,11 +648,15 @@ void WorldBuildings::worker()
 					{
 						const float* v = &r.mesh.verts[((size_t)sb.firstVertex + r.mesh.indices[(size_t)sb.firstIndex + i + c]) * kVertexFloats];
 						tris.insert(tris.end(), v, v + 3);
+						uvs.push_back(v[6]);
+						uvs.push_back(v[7]);
 					}
 					skip.push_back(sk);
+					subOf.push_back((uint8_t)std::min<uint32_t>(subNo, 255));
 				}
+				subNo++;
 			}
-			buildPick(r.mesh.pick, tris, skip);
+			buildPick(r.mesh.pick, tris, skip, uvs, subOf);
 		}
 #ifdef KCLIENT_DEV_TOOLS
 		r.pickS = std::chrono::duration<double>(std::chrono::steady_clock::now() - pick0).count();
@@ -735,9 +748,14 @@ void WorldBuildings::uploadTexture(TexEntry& t, DdsImage&& tex, bool blocking)
 		std::vector<uint8_t> rgba;
 		int w = 0, h = 0;
 		t.thumb.clear();
+		t.alpha.clear();
 		t.tw = t.th = 0;
 		if (dds_decode(tex, level, rgba, w, h) && w > 0 && h > 0 && rgba.size() >= (size_t)w * h * 4)
 		{
+			// the alpha channel for the pick's cut-out test (kenshi-sagp), kept only when some texel is not opaque
+			uint8_t amin = 255;
+			for (size_t i = 0; i < (size_t)w * h; i++) { amin = std::min(amin, rgba[i * 4 + 3]); }
+			if (amin < 255) { t.alpha.resize((size_t)w * h); for (size_t i = 0; i < t.alpha.size(); i++) { t.alpha[i] = rgba[i * 4 + 3]; } }
 			t.thumb.resize((size_t)w * h);
 			for (size_t i = 0; i < t.thumb.size(); i++) { const uint8_t* p = &rgba[i * 4]; t.thumb[i] = (uint8_t)(0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2]); }
 			t.tw = w;

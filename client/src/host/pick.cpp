@@ -425,7 +425,10 @@ static void log_meshless_things()
 	for (const auto& [id, th] : app.sim.things())
 	{
 		const bool pickable = th.kind == simlink::Interactable::kItem || th.kind == simlink::Interactable::kContainer || th.kind == simlink::Interactable::kProducer;
-		if (!pickable || told.count(id)) { continue; }
+		// A foliage deposit (a copper / iron rock: its id is kIdBase + kFoliageIdBase + ..., cpp/include/ksim/economy/producers.hpp) is not a prop: the rock is a foliage
+		// instance the foliage layer draws, and the pick matches it to the producer through the rock's shell (ray_hit's foliage case). It never has a prop mesh (kenshi-sagp).
+		constexpr uint64_t kFoliageDepositBase = (1ull << 62) + (1ull << 40);
+		if (!pickable || told.count(id) || (th.kind == simlink::Interactable::kProducer && id >= kFoliageDepositBase)) { continue; }
 		if (app.buildings.hasMesh(id)) { firstSeen.erase(id); continue; }
 		const uint64_t first = firstSeen.emplace(id, app.frames).first->second;
 		if (app.frames - first < kMeshWait) { continue; }

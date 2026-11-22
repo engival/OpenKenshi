@@ -563,7 +563,7 @@ public:
 	bool propBox(uint64_t id, double lo[3], double hi[3], double grow = 0) const;
 	// kenshi-k16.2.396.5: the click / hover pick's one world query. The nearest DRAWN triangle along the ray with t in [tMin, tMax] over every instance
 	// (building shells, layout furniture, props, doors at their drawn pose, player buildings): a per-instance box is only the broad phase. A part of the
-	// glass / foliage / marker kind and a glass or effect submesh never pick; alpha cut-outs count as solid (coarse, MINE). instance: the hit's instance.
+	// glass / foliage / marker kind and a glass or effect submesh never pick; a triangle the renderer's alpha test discards at the hit's texel never picks (pickCuts, kenshi-sagp). instance: the hit's instance.
 	bool drawnPickRay(const double origin[3], const double dir[3], double tMin, double tMax, double& t, uint32_t& instance, WalkHit* who = nullptr) const;
 	// The props (sim things) an instance draws: its ids (a layout piece draws several containers, a placed mine one producer); appended to out.
 	void propsOfInstance(uint32_t instance, std::vector<uint64_t>& out) const;
@@ -577,17 +577,20 @@ private:
 	// instance set, a door or a mesh state moved (dataGen_ / holdGen_ / doorGen_).
 	struct PickBox { uint32_t index; float lo[3], hi[3]; };
 	mutable std::vector<PickBox> pickBoxes_;
-	mutable uint64_t pickBoxData_ = ~0ull, pickBoxHold_ = ~0ull, pickBoxDoor_ = ~0ull;
+	mutable uint64_t pickBoxData_ = ~0ull, pickBoxHold_ = ~0ull, pickBoxDoor_ = ~0ull, pickBoxSet_ = ~0ull;
+	mutable std::vector<uint64_t> pickStamp_;	// per instance: what its box was computed from (meshes, transform, door pose)
 	void refreshPickBoxes() const;
-	bool partPickable(const BuildingPartDef& def) const { return def.kind != 2 && !def.blackCap && !def.marker && def.materialType != 2; }	// alpha (1), dual (3) and emissive (4) parts pick: cut-outs count as solid (coarse); glass is a submesh material, flagged per triangle
+	bool partPickable(const BuildingPartDef& def) const { return def.kind != 2 && !def.blackCap && !def.marker && def.materialType != 2; }	// alpha (1), dual (3) and emissive (4) parts pick, an ALPHA part only where its texel passes the cut-out (pickCuts); glass is a submesh material, flagged per triangle
 	bool instanceRay(uint32_t index, const double origin[3], const double dir[3], double& t, bool drawn = false, double tMin = 0, double tMax = 1e30, bool walkableOnly = false, WalkHit* who = nullptr, double minUp = 0, bool pickable = false) const;
-	bool triangleRay(int mesh, const double o[3], const double d[3], const double off[3], double& t, double tMin = 0, double tMax = 1e30, double minUp = 0, bool pickable = false, bool cullBack = false) const;	// cullBack (the pick, kenshi-k16.2.396.5): a back face the part's pipeline culls does not pick (CCW front)
+	struct PickCut { const uint8_t* a = nullptr; int w = 0, h = 0; float cut = 0, tx = 1, ty = 1; };	// one submesh's cut-out: the texture's alpha texels (0..255), the cutoff on them, the uv tile
+	int pickCuts(uint32_t pid, PickCut* out, int cap) const;
+	bool triangleRay(int mesh, const double o[3], const double d[3], const double off[3], double& t, double tMin = 0, double tMax = 1e30, double minUp = 0, bool pickable = false, bool cullBack = false, const PickCut* cuts = nullptr, int ncuts = 0) const;	// cullBack (the pick, kenshi-k16.2.396.5): a back face the part's pipeline culls does not pick (CCW front)
 	// A mesh's drawn triangles with a BVH over them (kenshi-k16.2.382.2): built on the worker beside the decode (buildPick), moved into pickTris_ by uploadMesh.
 	// tris: xyz x 3 per triangle, mesh units, in leaf order; node: its box, and for an inner node (count 0) its children, for a leaf the first triangle and the count.
 	struct PickNode { float lo[3], hi[3]; int32_t a, b, count; };
-	struct PickMesh { std::vector<float> tris; std::vector<uint8_t> skip; std::vector<PickNode> nodes;	// skip: per triangle (leaf order), 1 = glass / effect submesh, never picked (the click picks drawn surfaces, kenshi-k16.2.396.5)
-		size_t bytes() const { return tris.size() * sizeof(float) + skip.size() + nodes.size() * sizeof(PickNode); } };
-	static void buildPick(PickMesh& out, const std::vector<float>& tris, const std::vector<uint8_t>& skip);
+	struct PickMesh { std::vector<float> tris; std::vector<uint8_t> skip; std::vector<PickNode> nodes; std::vector<float> uv; std::vector<uint8_t> sub;	// skip: per triangle (leaf order), 1 = glass / effect submesh, never picked (kenshi-k16.2.396.5); uv: 6 floats a triangle, sub: its submesh (the cut-out test, kenshi-sagp)
+		size_t bytes() const { return (tris.size() + uv.size()) * sizeof(float) + skip.size() + sub.size() + nodes.size() * sizeof(PickNode); } };
+	static void buildPick(PickMesh& out, const std::vector<float>& tris, const std::vector<uint8_t>& skip, const std::vector<float>& uvs, const std::vector<uint8_t>& sub);
 	// The top-level instances' world boxes (what partWorldBox gives for their Ready parts), one per topLevel_ slot: drawnHitIn tests only the instances whose box
 	// the vertical window reaches (kenshi-k16.2.382.2: the per-query instance loop was the stand ray's cost). A new instance set rebuilds them all; after that a
 	// box is recomputed only when the stamp of its parts (each part's mesh and that mesh's load state) moved, so the set's streaming churn costs a walk of the
@@ -646,6 +649,7 @@ private:
 		rq::PrioPtr prio = std::make_shared<rq::Prio>();	// as MeshEntry::prio
 		float score = 1e30f;
 		uint64_t scoreFrame = 0;
+		std::vector<uint8_t> alpha;	// the alpha channel of the same <= 128 px mip as thumb (tw x th), empty when every texel is opaque: the pick's cut-out test (kenshi-sagp)
 		std::vector<uint8_t> thumb;	// render.open_windows: the albedo's luma at <= 128 px (openwindows::Texel), from the decode
 		int tw = 0, th = 0;
 		uint64_t lastUsed = 0;
