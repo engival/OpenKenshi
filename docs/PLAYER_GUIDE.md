@@ -202,7 +202,7 @@ Mods) and a group inside it, so related settings sit together. The same grouping
 | Keys | Debug keys | `key.debug_*` (with --debug) |
 | Debug (F8 > Settings) | Light debug | `render.sun_shafts_debug`, `debug.light_probes` |
 | Debug (F8 > Settings) | Logging | `debug.audio_trace`, `debug.simjump`, `debug.nonfinite` |
-| Debug (F8 > Settings) | Navmesh | `debug.navmesh`, `debug.navmesh_stair`, `debug.navmesh_pruned`, `debug.navmesh_band`, `debug.collision` |
+| Debug (F8 > Settings) | Navmesh | `debug.navmesh`, `debug.navmesh_stair`, `debug.navmesh_pruned`, `debug.navmesh_band`, `debug.collision`, `debug.overlay_range` (the range slider for the navmesh and collision overlays) |
 | Debug (F8 > Settings) | Pick mask | `debug.pick_mask` |
 | Debug (F8 > Settings) | Route preview | `debug.route_preview` |
 | Debug (F8 > Settings) | Run files | `anim.wire_still_ticks`, `anim.draw_y_off` |
@@ -853,12 +853,16 @@ These are development views. They exist only when the client runs with `--debug`
 
 `F8` opens a movable, resizable `DEBUG` window:
 
-- **Toggles**, each with its key: Navmesh overlay (`Ctrl+F5`), Collision (the building collision shapes and the drawn terrain, `Ctrl+F7`; the navmesh
-  overlay's flip partner: the collision shapes in white, doorways yellow, the thin props grey — the barricades that block movement and line of sight,
-  which bodies do not stand on since kenshi-k16.2.382.2 — and the drawn terrain a body does stand on (`Heightmap::terrainHeight`, the drawn triangles) as a
-  green grid on its 18 u lattice, all fading out 900 u from the focus; a line in the developer text counts them. What a body stands on at a point (a
+- **Toggles**, each with its key: Navmesh overlay (`Ctrl+F5`), Collision (each collision shape's outline and the drawn terrain, `Ctrl+F7`; the navmesh
+  overlay's flip partner. The shapes are the barricades that block movement and line of sight, which bodies do not stand on since kenshi-k16.2.382.2.
+  Colours: walls, floors and roofs bluish white, doorways yellow, stairs orange, furniture and thin props grey, barricades red, foliage brown, and the drawn
+  terrain a body does stand on (`Heightmap::terrainHeight`, the drawn triangles) a green grid on its 18 u lattice. Only the outline is drawn: a flat
+  face's diagonals are left out. Both overlays draw only within the **overlay range** of the selected character (else the camera focus), the
+  "Overlay range" slider right under the navmesh and collision rows of the panel (`debug.overlay_range`, also in F8 > Settings...; default 300 u, about one
+  room; 0 = no limit, the value beside it reads "no limit"; it takes effect while you drag), fading to nothing at the range; a line in the developer text
+  counts what is drawn. What a body stands on at a point (a
   drawn floor, a stair, the terrain) is the `Ctrl+F10` height probe (6.5a) or `probe height X Z` from a script. Like the navmesh overlay it has no depth
-  test: indoors the terrain grid shows through floors — read the white wires there), Navmesh: pruned polygons (no key; a settings key), Height
+  test: indoors the terrain grid shows through floors), Navmesh: pruned polygons (no key; a settings key), Height
   probe (`Ctrl+F10`; the probe mode of 6.5a, the same switch as the key), Trails
   (`Ctrl+F6`), Squad overlay (`Ctrl+F4`), Shadows (`Ctrl+F3`), Walk on the ground (`Ctrl+G`), Follow camera
   (`Ctrl+C`, with a running game), Free camera (`Ctrl+F`; with Options open it goes to
@@ -935,9 +939,9 @@ raw rows.
 
 ### 6.5 The navmesh overlay
 
-`Ctrl+F5` draws the client's navmesh as glowing edges round the focus: walkable polygons, stairs and ramps in orange,
+`Ctrl+F5` draws the client's navmesh as glowing edges within the overlay range (6.1) of the selected character, else the focus: walkable polygons, stairs and ramps in orange,
 the wall band, the height band round the selected character's feet (below dimmed, above faint), the hovered polygon
-white, and — from the F8 panel's "Navmesh: pruned polygons" — the polygons the bake pruned in dim red.
+white, tile seams and splits of one flat face fainter, and — from the F8 panel's "Navmesh: pruned polygons" — the polygons the bake pruned in dim red.
 
 ### 6.5a The vertical height probe
 

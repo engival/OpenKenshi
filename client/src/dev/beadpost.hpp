@@ -3,6 +3,7 @@
 // comment on that beads item. The posts go out on a worker thread, one `bd -C <repo> --actor user comments add <item> <text>` child
 // process each, so a frame never waits on bd (a desktop dolt call, a missing bd or a hung one). The text is one argv element, never a
 // shell. The answers (posted, or why not) come back on the frame thread through pump().
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
@@ -20,8 +21,9 @@ public:
 	~BeadPost();
 	// repo: the -C directory, the kenshi repo the client's playtests/ live in. Starts the thread; a second call is a no-op.
 	void start(const std::string& repo);
-	// The run is over: the thread stops. Its current post finishes first (bounded by the timeout); the posts still queued are dropped
-	// and said so on stdout (their texts are in the run file). Answers never delivered are dropped too: pump() after this does nothing.
+	// The run is over: the queued posts go first, all of them within one 20 s cap (a post's own timeout is cut to what is left); what is
+	// still queued past the cap is dropped and counted on stdout (their texts are in the run file). Answers never delivered are dropped
+	// too: pump() after this does nothing.
 	void stop();
 	void post(const std::string& item, const std::string& text, Done done);	// queues one comment (the text is copied)
 	void pump();	// the frame thread: run the answers that came in since the last pump
@@ -42,7 +44,7 @@ private:
 	};
 
 	void run();	// the worker thread: the queue, one bd child per post
-	bool runBd(const std::string& repo, const std::string& item, const std::string& text, std::string& why) const;
+	bool runBd(const std::string& repo, const std::string& item, const std::string& text, double limitSeconds, std::string& why) const;
 
 	std::string repo_;
 	std::thread thread_;
@@ -51,5 +53,7 @@ private:
 	std::deque<Job> queue_;
 	std::deque<Answer> answers_;
 	bool quit_ = false;
+	std::chrono::steady_clock::time_point quitBy_;	// stop(): the drain's end, 20 s after the call (guarded by mu_)
+	size_t dropped_ = 0;	// posts left unposted at that end (guarded by mu_)
 	bool running_ = false;
 };

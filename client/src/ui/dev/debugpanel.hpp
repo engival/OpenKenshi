@@ -1,9 +1,11 @@
 #pragma once
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "app/config.hpp"
 #include "ui/layout.hpp"
 #include "ui/widget.hpp"
 
@@ -114,12 +116,18 @@ namespace ui
 		Label* reply() const { return reply_; }
 		Widget* extra() const;	// the RichText
 		ScrollView* sideList() const { return side_; }	// the toggles and scenes: scrolls when they outgrow the frame (k16.3.45)
+		// "Overlay range" (kenshi-e155): a slider bound to debug.overlay_range, under the navmesh / collision toggles; null while that
+		// setting is not declared (a build without the overlays). Its value label shows the range, "no limit" at 0.
+		Slider* rangeSlider() const { return range_; }
+		Label* rangeValue() const { return rangeValue_; }
 		const Layout& layout() const { return *layout_; }
 
 	private:
 		void rebuildSide();
 		void rebuildMid();	// the command buttons and the weather rows
 		void refreshMid();	// enabled / checked / the reply, from last_
+		void addRange(const cfg::Info& info);	// the "Overlay range" row, appended to toggles_
+		void refreshRange();	// its thumb and label, from the setting
 		CaptionWindow* win_ = nullptr;
 		void bind(Layout& l);	// the file's widgets, after each (re)build
 		std::unique_ptr<Layout> layout_;
@@ -127,6 +135,9 @@ namespace ui
 		Widget* scenesBox_ = nullptr;
 		Widget* extraBox_ = nullptr;
 		ScrollView* side_ = nullptr;
+		Slider* range_ = nullptr;
+		Label* rangeValue_ = nullptr;
+		uint64_t rangeGen_ = 0;	// cfg::generation() the row last showed
 		RichText* extra_ = nullptr;
 		std::vector<Button*> toggleButtons_, sceneButtons_, commandButtons_, weatherButtons_;
 		Widget *commands_ = nullptr, *windows_ = nullptr, *windowsBox_ = nullptr;

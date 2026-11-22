@@ -503,7 +503,7 @@ std::string CollisionPick::report(double x, double z, double radius, bool thinOn
 		const bool building = si < buildings, isThin = building && thin(box);
 		if (thinOnly && !isThin) { continue; }
 		char line[256];
-		snprintf(line, sizeof line, "%s %s box %.0f %.0f %.0f - %.0f %.0f %.0f size %.0f %.0f %.0f (%s)\n", isThin ? "thin" : building ? "solid" : "foliage",
+		snprintf(line, sizeof line, "%s %s box %.1f %.1f %.1f - %.1f %.1f %.1f size %.1f %.1f %.1f (%s)\n", isThin ? "thin" : building ? "solid" : "foliage",
 			si < names->size() ? (*names)[si].c_str() : "?", box[0], box[1], box[2], box[3], box[4], box[5], box[3] - box[0], box[4] - box[1], box[5] - box[2], s.use == kworld::NavUse::Walkable ? "walkable" : "other");
 		out += line;
 	}

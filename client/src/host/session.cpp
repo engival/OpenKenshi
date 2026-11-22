@@ -896,6 +896,8 @@ void cleanup()
 		fprintf(stderr, "kclient: quit: logic thread joined in %.0f ms\n", ms);
 		lastframe::shutdown();
 	}
+	readback::runWrites();	// after the join (logic can no longer be in its own runWrites / shotFrame): the writes' done callbacks, a --bead shot's copy follows its file
+	dev::shotDrain();	// every pending --bead copy and comment goes now (a quit right after F12), before the server stops
 	{	// every quit path (menu button, window close, scripted quit) ends here: stop the in-process server before anything else, not in the static App's
 		// destructor, which can hang on another member first (Grass::~Grass) and never reach ~LocalServer: the server kept ticking (kenshi-379.12)
 		const auto t0 = std::chrono::steady_clock::now();

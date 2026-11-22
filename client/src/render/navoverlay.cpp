@@ -1,5 +1,7 @@
 #include "render/navoverlay.hpp"
 #include "render/drawstats.hpp"
+#include "render/overlaycolours.hpp"
+#include "app/config.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -16,7 +18,10 @@
 
 namespace
 {
-	constexpr float kRadius = 900;	// the fade: full strength within half of it, gone at it (MINE)
+	constexpr float kNoLimit = 900;	// the fade's reach when the range is 0 (off): full strength within half of it, gone at it (MINE)
+	// The range (user 2026-11-21, kenshi-k16.2.500): one radius for the navmesh and collision overlays, default one room. 0 = no limit.
+	const cfg::Float kRange{ cfg::Group{ "Navmesh" }, "debug.overlay_range", 300, 0, 900,
+		"Debug overlays: the radius (world units, 10 per metre) round the selected character, else the camera focus, within which the navmesh and collision overlays draw; the fade sits inside it (full to half, gone at it). 0: no limit (the fade at 900)" };
 	constexpr float kLift = 2;	// over the polygon, so the lines sit on its surface rather than in it
 	constexpr float kDepth = 4;	// below the band: gone this many bands down (MINE)
 	constexpr double kHoverDy = 12;	// the hover polygon: within this of the ground hit in height (ClientNav's walkable extent 10, and a margin)
@@ -28,9 +33,12 @@ namespace
 	constexpr int kMaxVertices = 56000;
 }
 
+float overlay_range() { const double r = kRange.get(); return r > 0 ? (float)r : kNoLimit; }
+
 void draw_navmesh(const knav::NavMesh& mesh, const float mvp[16], const double cam[3], const double focus[3], float width, float height, const NavBands& bands)
 {
 	const dtNavMesh& nav = mesh.detour();
+	const float kRadius = overlay_range();	// the range: the fade's reach, nothing drawn past it
 	int skipped = 0;	// polygons and edges past kMaxVertices this frame (k16.19.6.1); the cap is reported once a run
 	auto project = [&](const float* v, float& sx, float& sy)
 	{
@@ -241,13 +249,26 @@ void draw_navmesh(const knav::NavMesh& mesh, const float mvp[16], const double c
 				const float f = fade(a, b) * std::max(bw, stair);
 				if (f <= 0) { continue; }
 				if (ovl::num_vertices() + 2 > kMaxVertices) { skipped++; continue; }	// k16.19.6.1: never fill the default context
-				float r = 0.1f, g = 0.9f, bl = 1.0f, al = 0.55f;	// inner: the cyan grid
+				auto set = [&](const OverlayRgba& c, float& r, float& g, float& bl, float& al) { r = c.r; g = c.g; bl = c.b; al = c.a; };
+				float r, g, bl, al;
+				set(overlay_colour::kNavInner, r, g, bl, al);	// inner: the cyan grid
+				// an inner edge between two flat, level polygons of one area is most likely a split of one original face (the bake caps a face at 6 corners
+				// and cuts at tile seams, and the cache keeps no face id): drawn fainter than a true face edge (kenshi-uuh8)
+				bool split = false;
+				if (nei != 0 && !(nei & DT_EXT_LINK) && nei - 1 < tile->header->polyCount)
+				{
+					const dtPoly& other = tile->polys[nei - 1];
+					float oc[3], on[3];
+					plane(tile, other, oc, on);
+					split = other.getArea() == poly.getArea() && other.flags == poly.flags && pn[0] * on[0] + pn[1] * on[1] + pn[2] * on[2] > 0.9995f && std::abs(oc[1] - pc[1]) < 2.0f;
+				}
 				if (poly.flags == 0) { r = 0.8f; g = 0.15f; bl = 0.15f; al = 0.5f; }	// pruned (debug.navmesh_pruned)
 				else if (area == knav::Area::DoorOpen) { r = 0.3f; g = 1.0f; bl = 0.3f; al = 0.9f; }
 				else if (area == knav::Area::DoorClosed) { r = 1.0f; g = 0.25f; bl = 0.2f; al = 0.9f; }
-				else if (nei == 0) { r = 1.0f; g = 0.95f; bl = 0.4f; al = 0.9f; }	// the rim: walls, cliffs, gaps
-				else if (nei & DT_EXT_LINK) { r = 0.6f; g = 0.5f; bl = 1.0f; al = 0.3f; }	// a tile seam
-				else if (stair > 0) { r = 1.0f; g = 0.55f; bl = 0.1f; al = 0.9f; }	// a stair or ramp
+				else if (nei == 0) { set(overlay_colour::kNavRim, r, g, bl, al); }	// the rim: walls, cliffs, gaps
+				else if (nei & DT_EXT_LINK) { set(overlay_colour::kNavSeam, r, g, bl, al); }	// a tile seam
+				else if (stair > 0) { set(overlay_colour::kNavStair, r, g, bl, al); }	// a stair or ramp
+				else if (split && area != knav::Area::Edge && area != knav::Area::Shallow && area != knav::Area::Swim) { set(overlay_colour::kNavSplit, r, g, bl, al); }	// a split of one face
 				else if (area == knav::Area::Edge) { r = 0.9f; g = 0.35f; bl = 0.75f; al = 0.45f; }	// the wall band (costlier: routes keep off walls)
 				else if (area == knav::Area::Shallow || area == knav::Area::Swim) { r = 0.2f; g = 0.4f; bl = 1.0f; }
 				float ax, ay, bx, by;

@@ -323,6 +323,19 @@ void shotFrame()
 	}
 }
 
+// Quit: the pictures are written (flushWrites) and their done callbacks have run, so every pending copy goes now, whatever its trees capture
+// or deadline; the comments they queue are then posted by the bd writer before it stops.
+void shotDrain()
+{
+	State& s = st();
+	while (!s.shotBeads.empty())
+	{
+		shot_bead_finish(s.shotBeads.front());
+		s.shotBeads.pop_front();
+	}
+	s.beadPost.stop();
+}
+
 // A playtest run ends with a NEW_GAME (END: its metrics still answers, and its file is rewritten); a recipe's run does not: the new game
 // is the flow it records (k16.2.97), and its file is written when it is left.
 void newGameLeave()

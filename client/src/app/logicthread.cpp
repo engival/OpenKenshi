@@ -178,6 +178,7 @@ void start(Hooks hooks, bool scripted)
 }
 
 bool running() { return gRunning; }
+bool onLogicThread() { return gThread.get_id() == std::this_thread::get_id(); }	// a default id (never started, or joined) matches no thread
 void setLoadScreen(bool up) { gLoadScreen.store(up, std::memory_order_relaxed); }
 bool stopping() { return gStop.load(); }
 

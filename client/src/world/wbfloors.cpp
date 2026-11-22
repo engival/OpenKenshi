@@ -586,6 +586,11 @@ std::string WorldBuildings::partsReport(uint32_t instance) const
 			d.mesh.c_str(), d.texture.empty() ? "-" : d.texture.c_str(), d.offset[0], d.offset[1], d.offset[2], d.marker ? " marker" : "",
 			rt.mesh >= 0 ? (int)meshes_[rt.mesh].state : -1);
 		out += line;
+		if (double lo[3], hi[3]; partWorldBox(b, k, lo, hi))	// the part's mesh box as the client draws it, a world AABB (kenshi-uuh8: against the sim's stair hull, u59y)
+		{
+			snprintf(line, sizeof line, "    world box %.1f %.1f %.1f - %.1f %.1f %.1f%s\n", lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], d.stairs ? " (stairs part)" : "");
+			out += line;
+		}
 		out += subs(pid);
 	}
 	for (size_t i = 0; i < staticCount_; i++)	// its layout furniture: name, part meshes and their load state

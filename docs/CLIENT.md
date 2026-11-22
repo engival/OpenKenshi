@@ -444,7 +444,7 @@ Moved to `CLIENT_GOALS.md` (one section per feature): M1 — walk the bare terra
   (newgame, Dust Bandit fight: full Blood bar, "Bleeding", 1 '<'; `findings/scripts/med/tail.txt`). Not yet seen live:
   bandage, splint, a stump, robot = Oil, the in-bed and digesting flags.
 - [x] Navmesh overlay (user 2026-11-03, debug): `debug.navmesh` / Ctrl+F5, 2e1f4ec navoverlay.cpp: poly edges
-  within 900 u of the focus, cyan grid, rims and unlinked tile portals yellow, seams faint, doors green / red. Lines draw over everything
+  within the overlay range (default 300 u, below) of the selected character, else the focus, cyan grid, rims and unlinked tile portals yellow, seams and splits of one flat face faint, doors green / red. Lines draw over everything
   (no depth); a real glow pass is a later nicety. Height bands (user 2026-11-04, 169b1e6): the selected character's level (else the focus
   ground) within `debug.navmesh_band` (20 u) full strength and its polygons filled; below dimmed, greyed, gone 4 bands down; above faint, hidden
   fainter where cut away (never hidden). Stairs / ramps (slope >= `debug.navmesh_stair`, 30 deg) orange within 4 bands whatever the cut; the
@@ -454,14 +454,30 @@ Moved to `CLIENT_GOALS.md` (one section per feature): M1 — walk the bare terra
   vertices (`kMaxVertices`, navoverlay.cpp) and reports the skipped polygons once a run (`sgl: navmesh overlay capped at 56000 vertices`), a
   `dump navdraw` trace line giving the frame's count. Measured with the overlay on: Heng 21,822 vertices, Blister Hill 20,365, the Hub
   12,240-12,430, Mourn 4,585 (every level in the fade); the cap is for the worst case, not a normal frame.
-- [x] Collision overlay (user 2026-11-18, debug; kenshi-k16.2.383.1, wording kenshi-k16.2.382.4): `debug.collision` / Ctrl+F7, dev/colloverlay.cpp:
-  the building collision shapes and the drawn terrain, round the focus with the navmesh overlay's 900 u fade and its own key beside Ctrl+F5 so the two
-  flip over the same spot. White wire: the building collision shapes the CollisionPick gather holds — the barricades that block movement and line of
-  sight, which bodies do not stand on since kenshi-k16.2.382.2; yellow: doorways (NavUse::Door); grey: the thin props (CollisionPick::thin); green:
-  the drawn terrain bodies stand on, Heightmap::terrainHeight's drawn triangles on the 18 u lattice (each cell's two edges and its split diagonal), the
-  ground k16.2.382.1 put the stand ray and the yValid-clear fallback on. What a body stands on at a point is the Ctrl+F10 height probe / `probe height X Z`. A debug-text line counts the
-  shapes, triangles and cells drawn; capped at 90,000 vertices (the navmesh overlay's k16.19.6.1 rule). No depth test, like the navmesh overlay:
-  indoors the terrain grid shows through the floor (read the white wires there).
+- [x] Collision overlay (user 2026-11-18, debug; kenshi-k16.2.383.1, wording kenshi-k16.2.382.4; outlines and colours kenshi-uuh8): `debug.collision` / Ctrl+F7,
+  dev/colloverlay.cpp: the collision shapes the CollisionPick gather holds (`kworld::AreaGatherer`, the list the sim's bake reads) and the drawn terrain, within
+  the **overlay range** of the centre, with its own key beside Ctrl+F5 so the two flip over the same spot. Each shape is its **outline**: the feature edges only
+  (an edge shared by two coplanar triangles, a quad's diagonal, is not drawn; user 2026-11-21: the original draws box outlines), coloured by the
+  shape's `WorldShape` fields (table below). They are the barricades that block movement and line of sight, which bodies do not stand on since
+  kenshi-k16.2.382.2. Green: the drawn terrain bodies stand on, Heightmap::terrainHeight's drawn triangles on the 18 u lattice (each cell's two edges and its split
+  diagonal). What a body stands on at a point is the Ctrl+F10 height probe / `probe height X Z`. A debug-text line counts the shapes, edges and cells drawn
+  and the range; capped at 90,000 vertices (k16.19.6.1). No depth test: indoors the terrain grid shows through the floor.
+  **Debug overlays: range, fade and colours** (user 2026-11-21, kenshi-k16.2.500; one home for both overlays and kinspect's, kenshi-cym.40.1.7). Code table:
+  `render/overlaycolours.hpp`; change both together.
+  - Range: `debug.overlay_range` (DEBUG SETTINGS slider, F8 > Settings..., 0-900 u, default **300**: about one room, a Storm House floor is ~250 u
+    across, and it draws a few thousand vertices where 900 u drew tens of thousands; 0 = no limit, the fade at 900). One radius for both overlays,
+    round the first selected character, else the camera focus; shapes, edges and polygons beyond it are not drawn.
+  - Fade: weight = clamp(2 - 2 d / R, 0, 1), d the horizontal distance from the centre, R the range (900 when the range is 0): full to R/2, gone at R.
+    The collision overlay fades per vertex along each edge (clipped to the range, cut into pieces); the old per-triangle-centroid fade drew a big slab at
+    full strength from its far corners (the user's shot). kinspect's fade is the absolute 450/900 u: the same law only at range 900.
+  - Colours (RGBA, alpha times the fade): collision building wall / floor / roof (`NavUse::Walkable`) 0.70 0.85 1.00 0.90 bluish white; door
+    (`NavUse::Door`) 1.00 0.90 0.20 0.90 yellow; stairs (`solid`: a stair or gateway body) 1.00 0.55 0.10 0.90 orange; furniture (`furniture`) and thin props
+    0.62 0.62 0.62 0.80 grey; barricade (`NavUse::Obstacle`) 1.00 0.35 0.30 0.90 red; projected footprint (`NavUse::Projected`) 0.90 0.40 0.85 0.85
+    magenta; foliage 0.75 0.55 0.25 0.80 brown; terrain 0.30 1.00 0.35 0.55 green. Navmesh: inner face edge 0.10 0.90 1.00 0.55 cyan; split of one
+    flat face 0.10 0.90 1.00 0.22 (the cyan, fainter); tile seam 0.60 0.50 1.00 0.30 violet; rim 1.00 0.95 0.40 0.90 yellow; stair or ramp 1.00 0.55 0.10 0.90 orange.
+    A shape takes the first match in the order door, foliage, stairs, furniture/thin, barricade, projected, building.
+  - Navmesh split edges: the cache keeps no face id, so "a split of one original face" is a heuristic: an inner edge between two polygons of one area and
+    flags whose normals agree within ~1.8 deg and whose centres are within 2 u in height.
 - [x] **Whole-fight trails** (user 2026-11-10, debug; kenshi-k16.2.73): every drawn character's two foot contacts (the animation viewer's sole
   points, the lower of heel and ball a foot; not `dump feet`'s lowest skinned vertex), its sim centre (`SimView::simPos`, dashed) and its drawn
   centre (solid) at half the click box above the feet, recorded every frame and drawn floating in 3D over the scene for the whole fight (user

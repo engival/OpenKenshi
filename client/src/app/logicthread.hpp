@@ -42,6 +42,7 @@ void renderIdle();
 // Logic thread: the session load screen is up (the load gate, kenshi-k16.2.437.4.3): a stall that touches it is expected and prints nothing.
 void setLoadScreen(bool up);
 bool running();	// start() ran and stop() has not
+bool onLogicThread();	// any thread: the caller is the logic thread (false before start() and after stop())
 // Render thread, once per frame() after start(): waits up to boundMs for a filled slot. Found: flips it to drawing (the slot drawn before goes
 // free), runs hooks.render, and lets logic go on (true). Not found: false, nothing drawn (the caller keeps the window's last frame). A wait that
 // ran out is counted; a run of them over kMissLogMs prints one line when it ends (kenshi-k16.2.437.1), shorter runs stay in takeMisses().

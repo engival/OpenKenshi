@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #include "app/config.hpp"
 #include "ui/keys.hpp"
@@ -129,12 +130,86 @@ namespace ui
 		if (ready() && bar_) { root().remove(bar_); }
 	}
 
+	namespace
+	{
+		const char* const kRangeKey = "debug.overlay_range";	// render/navoverlay.cpp (kenshi-uuh8): the navmesh and collision overlays' radius
+
+		bool overlayToggle(const std::string& id) { return id.find("navmesh") != std::string::npos || id.find("collision") != std::string::npos; }
+
+		std::string rangeText(const cfg::Info& info, double v)
+		{
+			if (v <= 0 && info.min <= 0) { return "no limit"; }
+			char buf[32];
+			snprintf(buf, sizeof buf, info.type == cfg::Type::kInt ? "%.0f u" : "%.3g u", v);
+			return buf;
+		}
+	}
+
+	// The "Overlay range" row (kenshi-e155, the user on k16.2.500): drawn as the DEBUG SETTINGS window draws a cfg::Float (ui/options.cpp: its
+	// min / max, a hundredth of the span a step, a notch at the default), written with cfg::setUser on every change, so a drag is live.
+	void DebugPanel::addRange(const cfg::Info& info)
+	{
+		Widget& row = toggles_->add<Widget>();
+		row.rect = { 0, 0, kSideW, 50 };	// two lines: the name and the value, the slider under them across the column
+		row.halign = Widget::Align::kStretch;
+		row.tooltip = info.help;
+		Label& name = row.add<Label>("Overlay range", "Kenshi_StandardFont_Medium");
+		name.rect = { 4, 0, 0, 22 };
+		const double step = info.type == cfg::Type::kInt ? 1 : (info.max - info.min) / 100;
+		range_ = &row.add<Slider>(info.min, info.max, step);
+		range_->rect = { 0, 24, kSideW - 4, 26 };
+		range_->tooltip = info.help;
+		range_->notches.push_back(std::strtod(info.def.c_str(), nullptr));
+		range_->onChange = [info](double v)
+		{
+			char buf[32];
+			snprintf(buf, sizeof buf, info.type == cfg::Type::kInt ? "%.0f" : "%.3g", v);
+			cfg::setUser(info.key, buf);
+		};
+		rangeValue_ = &row.add<Label>("", "Kenshi_StandardFont_MediumSmall");
+		rangeValue_->colour = res::colour("DebugKey").alpha(0.8f);
+		rangeValue_->rect = { 0, 0, 0, 22 };
+		rangeValue_->halign = Widget::Align::kEnd;
+		rangeGen_ = 0;
+		refreshRange();
+	}
+
+	void DebugPanel::refreshRange()
+	{
+		if (!range_ || rangeGen_ == cfg::generation()) { return; }
+		rangeGen_ = cfg::generation();
+		for (const cfg::Info& i : cfg::find(kRangeKey))
+		{
+			if (i.key != kRangeKey) { continue; }
+			const double v = std::strtod(i.value.c_str(), nullptr);
+			if (!pressed(range_)) { range_->value = v; }	// a drag owns the thumb (its notch hold) until the release
+			rangeValue_->text = rangeText(i, v);
+		}
+	}
+
 	void DebugPanel::rebuildSide()
 	{
 		toggles_->clear();
 		toggleButtons_.clear();
-		for (const DebugToggle& t : last_.toggles)
+		range_ = nullptr;
+		rangeValue_ = nullptr;
+		const cfg::Info* range = nullptr;
+		const std::vector<cfg::Info> found = cfg::find(kRangeKey);
+		for (const cfg::Info& i : found) { if (i.key == kRangeKey) { range = &i; } }
+		// under the navmesh / collision toggles: after the last of the first run of them, else after every toggle
+		size_t rangeAt = last_.toggles.size();
+		for (size_t i = 0; i < last_.toggles.size(); i++)
 		{
+			if (!overlayToggle(last_.toggles[i].id)) { continue; }
+			while (i + 1 < last_.toggles.size() && overlayToggle(last_.toggles[i + 1].id)) { i++; }
+			rangeAt = i + 1;
+			break;
+		}
+		for (size_t ti = 0; ti <= last_.toggles.size(); ti++)
+		{
+			if (ti == rangeAt && range) { addRange(*range); }
+			if (ti == last_.toggles.size()) { break; }
+			const DebugToggle& t = last_.toggles[ti];
 			Widget& row = toggles_->add<Widget>();
 			row.rect = { 0, 0, kSideW, 28 };
 			row.halign = Widget::Align::kStretch;
@@ -263,6 +338,7 @@ namespace ui
 
 	void DebugPanel::update(const DebugState& s)
 	{
+		refreshRange();	// the setting may change elsewhere (DEBUG SETTINGS, the console)
 		if (built_ && s == last_) { return; }
 		const bool side = !built_ || s.toggles.size() != last_.toggles.size() || s.scenes != last_.scenes;
 		const bool newWeather = !built_ || s.weather != last_.weather;

@@ -16,6 +16,7 @@ extern char** environ;
 namespace
 {
 constexpr double kTimeoutSeconds = 15;	// a bd that has not answered in this is killed and its post reported failed
+constexpr double kQuitSeconds = 20;	// stop(): the whole queue's drain at quit, in total (not per comment); the rest is dropped and counted
 
 // The last non-empty line of bd's stderr (its error), trimmed, capped for one console line.
 std::string errorLine(const std::string& err)
@@ -58,21 +59,22 @@ void BeadPost::start(const std::string& repo)
 void BeadPost::stop()
 {
 	if (!running_) { return; }
-	size_t dropped = 0;
 	{
 		std::lock_guard<std::mutex> lock(mu_);
-		quit_ = true;
-		dropped = queue_.size();
-		queue_.clear();
+		quit_ = true;	// the queued comments go first (run() posts them, then returns); the whole drain is bounded by kQuitSeconds
+		quitBy_ = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(kQuitSeconds));
+		dropped_ = 0;
 	}
 	cv_.notify_all();
 	if (thread_.joinable()) { thread_.join(); }
 	running_ = false;
+	size_t dropped = 0;
 	{
 		std::lock_guard<std::mutex> lock(mu_);
 		answers_.clear();	// nobody pumps any more
+		dropped = dropped_;
 	}
-	if (dropped) { printf("bead: %zu queued comment(s) dropped at quit (the run file has the notes)\n", dropped); }
+	if (dropped) { printf("bead: %zu queued comment(s) dropped at quit, past the %.0f s cap (the run file has the notes)\n", dropped, kQuitSeconds); }
 }
 
 void BeadPost::post(const std::string& item, const std::string& text, Done done)
@@ -114,15 +116,22 @@ void BeadPost::run()
 	for (;;)
 	{
 		Job job;
+		double limit = kTimeoutSeconds;
 		{
 			std::unique_lock<std::mutex> lock(mu_);
 			cv_.wait(lock, [this] { return quit_ || !queue_.empty(); });
-			if (queue_.empty()) { return; }	// quit_, and stop() emptied the queue
+			if (queue_.empty()) { return; }	// quit_ and nothing left to post
+			if (quit_)	// the quit drain: one overall cap; what is left past it is dropped and counted
+			{
+				const double left = std::chrono::duration<double>(quitBy_ - std::chrono::steady_clock::now()).count();
+				if (left <= 0) { dropped_ += queue_.size(); queue_.clear(); return; }
+				limit = std::min(limit, left);
+			}
 			job = std::move(queue_.front());
 			queue_.pop_front();
 		}
 		std::string why;
-		const bool ok = runBd(repo, job.item, job.text, why);
+		const bool ok = runBd(repo, job.item, job.text, limit, why);
 		std::lock_guard<std::mutex> lock(mu_);
 		answers_.push_back({ job.item, std::move(job.done), ok, std::move(why) });
 	}
@@ -130,7 +139,7 @@ void BeadPost::run()
 
 // One child: bd -C <repo> --actor user comments add <item> <text>. Its stderr is kept for the failure's reason; stdin and stdout are
 // /dev/null. False (and why) when bd is not on PATH, exits non-zero, or has not finished in kTimeoutSeconds.
-bool BeadPost::runBd(const std::string& repo, const std::string& item, const std::string& text, std::string& why) const
+bool BeadPost::runBd(const std::string& repo, const std::string& item, const std::string& text, double limitSeconds, std::string& why) const
 {
 	why.clear();
 	int err[2];
@@ -163,7 +172,7 @@ bool BeadPost::runBd(const std::string& repo, const std::string& item, const std
 		const pid_t w = waitpid(pid, &status, WNOHANG);
 		if (w == pid) { break; }
 		if (w < 0 && errno != EINTR) { why = std::string("waitpid: ") + std::strerror(errno); break; }
-		if (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() >= kTimeoutSeconds)
+		if (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() >= limitSeconds)
 		{
 			kill(pid, SIGKILL);
 			waitpid(pid, &status, 0);
@@ -183,7 +192,7 @@ bool BeadPost::runBd(const std::string& repo, const std::string& item, const std
 		}
 	}
 	close(err[0]);
-	if (timedOut) { why = "no answer in 15 s"; return false; }
+	if (timedOut) { why = "no answer in " + std::to_string((int)(limitSeconds + 0.5)) + " s"; return false; }
 	if (!why.empty()) { return false; }
 	const bool ok = WIFEXITED(status) && WEXITSTATUS(status) == 0;
 	if (!ok)

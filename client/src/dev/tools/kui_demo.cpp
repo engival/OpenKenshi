@@ -104,6 +104,7 @@ const cfg::Float kSunnyHaze{ cfg::Group{ "Indoor lighting (experimental)" }, "re
 // find (k16.2.419.1).
 const cfg::Bool kNavOverlay{ cfg::Group{ "Navmesh" }, "debug.navmesh", false, "Demo stand-in: the navmesh overlay" };
 const cfg::Float kNavStair{ cfg::Group{ "Navmesh" }, "debug.navmesh_stair", 30, 5, 80, "Demo stand-in: the steepness (degrees) drawn as a stair" };
+const cfg::Float kOverlayRange{ cfg::Group{ "Navmesh" }, "debug.overlay_range", 300, 0, 900, "Demo stand-in: the navmesh and collision overlays' radius; 0 no limit" };	// kclient: render/navoverlay.cpp
 const cfg::Bool kNavPruned{ cfg::Group{ "Navmesh" }, "debug.navmesh_pruned", false, "Demo stand-in: the pruned polygons too" };
 const cfg::Float kNavBand{ cfg::Group{ "Navmesh" }, "debug.navmesh_band", 20, 2, 500, "Demo stand-in: the level band's half-height" };
 
@@ -2927,14 +2928,14 @@ void script()
 				ui::frame(0);
 				ui::frame(0);
 				found.clear();
-				bool settings = d.matches() == 4;
+				bool settings = d.matches() == 5;	// the four debug.navmesh* and debug.overlay_range (its help names the navmesh; kenshi-e155)
 				for (size_t k = 0; k < d.matches(); k++)
 				{
 					found += d.matchKey(k) + " ";
-					settings = settings && d.matchKey(k).compare(0, 13, "debug.navmesh") == 0;
+					settings = settings && (d.matchKey(k).compare(0, 13, "debug.navmesh") == 0 || d.matchKey(k) == "debug.overlay_range");
 				}
-				check(settings && d.highlighted() == "debug.navmesh" && d.rowInView("debug.navmesh") && d.countText() == "1 of 4",
-					("debug settings find: 'navmesh' finds the four navmesh settings, no key binding (" + found + ")").c_str());
+				check(settings && d.highlighted() == "debug.navmesh" && d.rowInView("debug.navmesh") &&  d.countText() == "1 of 5",
+					("debug settings find: 'navmesh' finds the four navmesh settings and the overlay range, no key binding (" + found + ")").c_str());
 				d.find("gamma");
 				d.update();
 				ui::frame(0);
@@ -6799,6 +6800,34 @@ void script()
 		check(clickOn(dp.toggle(0)) && demo.debugLog == "toggle navmesh;", ("debug: a click asks for the toggle (" + demo.debugLog + ")").c_str());
 		dp.update(demo.dbg);
 		check(dp.toggle(0)->checked, "debug: the host's next state ticks it");
+		if (ui::Slider* rs = dp.rangeSlider())
+		{
+			// kenshi-e155: "Overlay range" under the navmesh toggles, bound to debug.overlay_range, live while dragging.
+			const ui::Rect r = rs->screen();
+			check(r.y >= dp.toggle(0)->screen().bottom() - 0.5f && r.bottom() <= dp.toggle(1)->screen().y + 0.5f && rs->min == 0 && rs->max == 900 && rs->value == 300
+				&& dp.rangeValue()->text == "300 u", ("debug: Overlay range under the navmesh toggle, the setting's range and value (" + dp.rangeValue()->text + ")").c_str());
+			const float h = r.h, lw = h * 29 / 51, tw = h * 27 / 51, trackW = r.w - lw - h * 31 / 51 - tw;
+			auto px = [&](double v) { return r.x + lw + trackW * (float)(v / 900) + tw / 2; };
+			const float y = r.y + r.h / 2;
+			send(SAPP_EVENTTYPE_MOUSE_MOVE, px(500), y);
+			send(SAPP_EVENTTYPE_MOUSE_DOWN, px(500), y);
+			send(SAPP_EVENTTYPE_MOUSE_MOVE, px(600), y);
+			const double mid = kOverlayRange.get();
+			dp.update(demo.dbg);
+			const std::string midText = dp.rangeValue()->text, midCfg = cfgValue("debug.overlay_range");
+			send(SAPP_EVENTTYPE_MOUSE_MOVE, px(720), y);
+			send(SAPP_EVENTTYPE_MOUSE_UP, px(720), y);
+			const double end = kOverlayRange.get();
+			check(mid > 550 && mid < 650 && end > 670 && end < 770 && midText == midCfg + " u",
+				("debug: dragging Overlay range sets debug.overlay_range as it goes ("  + std::to_string(mid) + " " + midText + ", " + std::to_string(end) + ")").c_str());
+			for (int i = 0; i < 120 && kOverlayRange.get() > 0; i++) { click(r.x + 2, y); }	// the left arrow, down to 0
+			dp.update(demo.dbg);
+			check(kOverlayRange.get() == 0 && dp.rangeValue()->text == "no limit", ("debug: Overlay range 0 reads no limit (" + dp.rangeValue()->text + ")").c_str());
+			kOverlayRange.set(300);
+			dp.update(demo.dbg);
+			check(rs->value == 300 && dp.rangeValue()->text == "300 u", "debug: Overlay range follows the setting changed elsewhere");
+		}
+		else { check(false, "debug: an Overlay range slider while debug.overlay_range is declared"); }
 		demo.debugLog.clear();
 		check(dp.scenesBox()->visible && clickOn(dp.scene(1)) && demo.debugLog == "scene squin_gate;", "debug: a scene button asks for its scene");
 		{

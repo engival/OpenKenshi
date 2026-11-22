@@ -1208,6 +1208,15 @@ static void record_debug_views(const FramePacket& pk, ovl::List& out, ovl::List&
 	float mvp[16];
 	cam.mvp(mvp);
 	ovl::Record rec(out);
+	// the overlays' range centre (debug.overlay_range, kenshi-uuh8): the first selected character, else the camera focus
+	double centre[3];
+	{
+		const double* f = app.rts ? app.focus : app.pos;
+		std::copy(f, f + 3, centre);
+		double at[3];
+		float hull[3];
+		if (app.opt.debug && !app.sim.selected().empty() && app.sim.placed(app.sim.selected().front(), at, hull)) { std::copy(at, at + 3, centre); }
+	}
 	if (app.opt.debug && kNavOverlay.get() && app.nav.mesh())	// a debug overlay: --debug gates the config key too
 	{
 		NavBands bands;	// the level: the first selected character's feet, else the focus ground
@@ -1226,11 +1235,11 @@ static void record_debug_views(const FramePacket& pk, ovl::List& out, ovl::List&
 		const Pick hp = pick_screen(app.mouseX, app.mouseY);
 		bands.hover = hp.kind == Pick::Ground && app.nav.walkable(hp.hit) == ClientNav::Reach::kYes;	// the cursor's own test: no highlight where it says invalidmove
 		std::copy(hp.hit, hp.hit + 3, bands.hoverAt);
-		draw_navmesh(*app.nav.mesh(), mvp, cam.pos, app.rts ? app.focus : app.pos, view::widthf(), view::heightf(), bands);
+		draw_navmesh(*app.nav.mesh(), mvp, cam.pos, centre, view::widthf(), view::heightf(), bands);
 	}
 	if (app.opt.debug)	// debug.collision, the flip partner of the navmesh overlay (dev/colloverlay.cpp: off by default, and off in an OFF build)
 	{
-		dev::collisionOverlay(app.collide, app.hm ? &*app.hm : nullptr, app.rts ? app.focus : app.pos, mvp, cam.pos, view::widthf(), view::heightf());
+		dev::collisionOverlay(app.collide, app.hm ? &*app.hm : nullptr, centre, mvp, cam.pos, view::widthf(), view::heightf());
 	}
 	if (kLightProbes.get())	// the baked light probes of the nearest building (kenshi-jj3.1.1); off: nothing runs
 	{

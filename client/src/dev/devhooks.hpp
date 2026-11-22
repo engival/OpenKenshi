@@ -101,6 +101,7 @@ namespace dev
 	std::string buildLine();	// "build: client <hash> sim <hash or ?>": the first line of a shot's .txt and .events.txt
 	void shotBegin(const std::string& shotPath);	// a shot was just saved: a --bead run copies it to the item and comments
 	void shotWritten(const std::string& shotPath);	// the screenshot writer is done with shotPath (ok or not): its pending --bead copy may go
+	void shotDrain();	// every quit path, after the writes done callbacks ran: every pending --bead copy and comment goes now (deadline and trees wait ignored), the bd writer drained
 	void shotFrame();	// every frame after a shot: a pending --bead copy goes once its trees are done
 	void newGameLeave();	// a new game starts: the run being played ends (a recipe's does not)
 	void leaveRun();	// the session ends (back to the title): the run being played is rewritten and its END sent
@@ -215,6 +216,7 @@ namespace dev
 	inline std::string buildLine() { return {}; }
 	inline void shotBegin(const std::string&) {}
 	inline void shotWritten(const std::string&) {}
+	inline void shotDrain() {}
 	inline void shotFrame() {}
 	inline void newGameLeave() {}
 	inline void leaveRun() {}

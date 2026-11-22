@@ -226,6 +226,14 @@ App app;
 [[noreturn]] void exit_now(int code)
 {
 	readback::flushWrites();	// a screenshot still on the writer thread (the load shot's done ends here)
+	// The writes' done callbacks and the --bead shot drain touch logic-thread state (dev's shotBeads): only when the logic thread is not
+	// running or this is it. exit_now() on any other thread with logic running skips them (the file is flushed above; its copy and comment
+	// are lost, as before kenshi-1dpr), never racing the logic thread's own runWrites / shotFrame.
+	if (!logicthread::running() || logicthread::onLogicThread())
+	{
+		readback::runWrites();
+		dev::shotDrain();
+	}
 	app.server.stop(false);	// SIGKILL: no handler race, no unbounded wait (kenshi-k16.2.271.1)
 	fflush(stdout);	// _exit skips the C library's exit flush: a line half written (kenshi-k16.2.461; the lines are already out, platform/posix/console.cpp)
 	fflush(stderr);
