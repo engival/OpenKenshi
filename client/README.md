@@ -11,7 +11,7 @@ Rule: a merge that adds or changes something the player can see or press updates
 ## Build
 
 ```bash
-client/tools/get_shdc.sh                  # once: fetches the prebuilt sokol-shdc into client/bin/
+client/tools/get_shdc.sh                  # optional, configure runs it when client/bin/sokol-shdc is missing: links the shared per-host copy ~/git/kenshi/bin/sokol-shdc-<pin> (fetched once; offline after)
 cmake -S client -B client/build -G Ninja  # -DKENSHI_GFX=vulkan builds the (experimental, untested) Vulkan backend
 nice -n 10 cmake --build client/build -j8
 # configure uses the shared ccache (CCACHE_DIR=/var/cache/kenshi-ccache) by itself when /var/cache/kenshi-ccache/ccache.conf exists and no CMAKE_CXX_COMPILER_LAUNCHER is set
@@ -379,6 +379,17 @@ Only a run lasting over 50 ms prints, once, when it ends
 `logic ms` is the mean of the world frames' logic half (`FramePacket::logicMs`, published by `logicthread::noteLogicMs`) against the bound the
 render thread waits for a packet (`lockstep_bound_ms`: the refresh period, or the cap's step under `gfx.fps_cap` with vsync off): logic time at or
 over the bound is why a packet arrives late.
+
+**`gfx.vrr`** (Options, Graphics, beside vsync; default off, kenshi-k16.2.437.3): for a G-Sync / FreeSync display. With it on, the render thread waits up
+to 33 ms for the logic thread's packet (`kVrrBoundMs`, one 30 Hz frame, about the bottom of a VRR panel's range) instead of one refresh, so a late
+frame is shown once, when it is ready, and the kept frame is repeated only after a stall over 33 ms. It is a setting because VRR cannot be detected
+reliably at run time. It is off by default because on a fixed-refresh display a packet that lands just late would make FIFO hold a whole refresh.
+Windows VRR also needs vsync off (sync interval 0 + `ALLOW_TEARING`); that is not done. Off: the bound is as above.
+
+**Real fps** (`src/app/realfps.hpp`): sokol's `sapp_frame_duration` is an EMA of the callback interval and counts a repeated frame like a new one. The dev
+HUD's "fps" is now the frames a second that drew a new packet, with the repeat rate after it when non-zero (`58 fps (+2 rep)`); it is right with
+`render.thread=off` too (there every callback is a unique frame). The `pace:` line starts with `swaps/s` (callbacks), `unique/s` and the unique
+frames' present-to-present p50 / p95 / max ms.
 
 ### Per-frame profiling (dev builds)
 

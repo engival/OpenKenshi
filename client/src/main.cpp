@@ -72,6 +72,7 @@
 #include "dev/debughost.hpp"
 #include "dev/devhooks.hpp"
 #include "dev/pacelog.hpp"
+#include "app/realfps.hpp"
 #ifdef KCLIENT_DEV_TOOLS
 #include "dev/pickmask.hpp"
 #endif
@@ -583,6 +584,7 @@ const cfg::Bool kInteriorMask{ cfg::Group{ "Interiors" }, "render.interior_mask"
 const cfg::Bool kTitleAtStart{ cfg::Group{ "Screens" }, "ui.title_at_start", true, "Start on the title screen (interactive runs)" };
 const cfg::Text kServerExe{ cfg::Group{ "Single player" }, "session.server", "", "Single player: the OpenKenshi-server to start (empty: the one built with this client, its build dir's cpp/OpenKenshi-server: target ksim_server)" };
 const cfg::Bool kVsync{ cfg::Group{ "Performance" }, "gfx.vsync", true, "Wait for the monitor's refresh before showing a frame. Takes effect after a restart (the driver may override it)" };
+const cfg::Bool kVrr{ cfg::Group{ "Performance" }, "gfx.vrr", false, "For a variable refresh rate (G-Sync / FreeSync) display: with the render thread on, wait up to 33 ms for the next frame instead of showing the last one again, so a late frame is shown once, when it is ready. Leave off on a fixed-refresh display (a late frame then costs a whole refresh). Off: no change" };
 const cfg::Int kFpsCap{ cfg::Group{ "Performance" }, "gfx.fps_cap", 0, 0, 1000, "Frame rate limit, 0 none (applies at once; with vsync on, the refresh rate already limits it)" };
 const cfg::Int kSessionLoadScreen{ cfg::Group{ "Single player" }, "session.loading_screen", 1, 0, 2, "A loading screen until the world round the squad has streamed in (new game, load, connect): 0 off, 1 on (not in scripted runs), 2 always" };
 const cfg::Text kServerArgs{ cfg::Group{ "Single player" }, "session.server_args", "--scenario newgame", "Single player: the server's arguments, split at spaces (e.g. add --navworld DIR, --save-dir DIR)" };
@@ -2876,8 +2878,11 @@ RenderState& render_state()
 // Rule 4's "about one refresh" (kenshi-k16.2.205.12.87, review .85 section 1.8): the display's refresh period (RandR, published with the window
 // snapshot; 16.7 ms when unknown), or 1000 / gfx.fps_cap under a cap with vsync off (with vsync on: the longer of the two), clamped to [4, 20] ms. Never sapp's measured interval:
 // with vsync off that is the callback interval, which the no-pass callbacks shorten themselves, so the bound fell below logic's frame.
+// gfx.vrr (kenshi-k16.2.437.3): the wait is one 30 Hz frame, about the bottom of a VRR panel's range; a packet later than that shows the kept frame.
+constexpr double kVrrBoundMs = 33.0;
 static double lockstep_bound_ms()
 {
+	if (kVrr.get()) { return kVrrBoundMs; }
 	const int cap = kFpsCap.get();
 	const bool vsync = sapp_query_desc().swap_interval > 0;	// the swap interval the window was made with (gfx.vsync applies after a restart)
 	const double refresh = view::refreshPeriodLive();
@@ -2923,9 +2928,11 @@ static void frame_lockstep()
 #ifdef KCLIENT_DEV_TOOLS
 	if (redrawShots && drew && logicthread::lastWasRedraw() && (++redrawN == 1 || redrawN == 25)) { lastframe::stallShot(); }
 #endif
-	if (drew) { lastframe::keep(); pacelog::note(true); return; }
+	const bool unique = drew && !logicthread::lastWasRedraw();	// an overlap redraw of the drawing packet is a repeat
+	realfps::note(unique);
+	if (drew) { lastframe::keep(); pacelog::note(true, unique); return; }
 	lastframe::show();
-	pacelog::note(false);
+	pacelog::note(false, false);
 #ifdef KCLIENT_DEV_TOOLS
 	lastframe::stallShot();
 #endif
@@ -2974,7 +2981,8 @@ void frame()
 	if (pk.path == FramePath::kWorld) { threadsplit::split(pk.logicStart, pk.logicMs, false); }
 #endif
 	render_frame(pk, render_state());
-	pacelog::note(true);
+	realfps::note(true);
+	pacelog::note(true, true);
 	sappcmd::flush();
 	// render.thread=lockstep (RENDER_THREAD.md 7.1 rule 7): the logic thread starts once, at the end of the first frame that is not loading, and
 	// frame() never runs logic_frame again. Off: never.

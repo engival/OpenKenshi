@@ -403,7 +403,9 @@ with its `serial`, a counter that logic increments for each packet it fills.
    waits"]* The render thread is sokol_app's loop thread. If it blocks, X events stop and a quit is never processed.
    Its wait for a filled slot is bounded at about one refresh: the display's refresh period (X11 RandR on the sapp thread,
    published with `view`'s window snapshot; 16.7 ms when unknown), or `1000 / gfx.fps_cap` under a cap with vsync off,
-   clamped to [4, 20] ms. Never a measured interval: with vsync off sapp's frame duration is the callback interval, which
+   clamped to [4, 20] ms (`gfx.vrr` on, kenshi-k16.2.437.3: 33 ms, one 30 Hz frame, about the bottom of a VRR panel's range; default off, because on a
+   fixed-refresh display a packet that lands just late then makes FIFO hold a whole refresh; on a VRR display the late packet is shown once, when ready,
+   and only a stall over 33 ms repeats the kept frame. Windows VRR also needs vsync off, sync interval 0 + ALLOW_TEARING: not done). Never a measured interval: with vsync off sapp's frame duration is the callback interval, which
    the no-packet callbacks shorten themselves (kenshi-k16.2.205.12.87, review .85 section 1.8). When
    no packet arrives in time, it draws its current drawing slot again. This is P2's acceptance ("a 1.2 s decode stall
    keeps the window drawing"). Before the first packet, the render thread draws the blank path (black and the load

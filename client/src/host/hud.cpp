@@ -1,6 +1,7 @@
 #include <algorithm>
 #include "kutil/executable.hpp"
 #include "render/lightbake.hpp"
+#include "app/realfps.hpp"
 #include "render/drawstats.hpp"
 #include "render/framestats.hpp"
 #include <array>
@@ -702,7 +703,14 @@ std::vector<HudLine> hud_lines()
 	double heading = std::fmod(app.yaw * 180.0 / 3.14159265358979, 360.0);
 	if (heading < 0) { heading += 360.0; }
 	char line[256];
-	snprintf(line, sizeof line, "x %.0f  z %.0f  ground %.0f  alt %.0f  zone %d.%d  %.0f fps", app.pos[0], app.pos[2], ground, app.pos[1] - ground, zone.x, zone.z, app.fps);
+	// The real fps (kenshi-k16.2.437.3, app/realfps.hpp): frames that drew a new packet a second, not sokol's callback-interval EMA (a repeat of the
+	// kept frame counts there); the repeats a second follow when there are any: "58 fps (+2 rep)".
+	const realfps::Rate rf = realfps::last();
+	const double shown = rf.unique > 0 ? rf.unique : app.fps;	// the first second: the EMA
+	const double rep = rf.swaps - rf.unique;
+	char fpsText[48];
+	if (rf.unique > 0 && rep >= 0.5) { snprintf(fpsText, sizeof fpsText, "%.0f fps (+%.0f rep)", shown, rep); } else { snprintf(fpsText, sizeof fpsText, "%.0f fps", shown); }
+	snprintf(line, sizeof line, "x %.0f  z %.0f  ground %.0f  alt %.0f  zone %d.%d  %s", app.pos[0], app.pos[2], ground, app.pos[1] - ground, zone.x, zone.z, fpsText);
 	out.push_back({ "pos", line, 1.0f, 1.0f, 1.0f });
 	// the exact camera, so another session can frame the same shot (kinspect knavshot: eye, pivot, dist, yaw, pitch; fovy 45) and the tracked character
 	int at = snprintf(line, sizeof line, "heading %s %.1f  pitch %.1f  eye %.1f %.1f %.1f", compass(heading), heading, app.pitch * 180 / 3.14159265358979, app.pos[0], app.pos[1], app.pos[2]);

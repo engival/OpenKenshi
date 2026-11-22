@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "app/logicthread.hpp"
+#include "app/realfps.hpp"
 #include "platform/swapinfo.hpp"
 #include "platform/windowgate.hpp"
 
@@ -31,7 +32,9 @@ namespace
 using Clock = std::chrono::steady_clock;
 Clock::time_point gLast{}, gWindow{};
 std::vector<double> gDt;	// ms between callback starts this second
-long gCb = 0, gDrew = 0;
+long gCb = 0, gDrew = 0, gUniq = 0;
+Clock::time_point gLastUniq{};
+std::vector<double> gUdt;	// ms between unique frames this second (kenshi-k16.2.437.3)
 long long gMsc = -1;
 long gHist[4] = {};	// vblank advance 0, 1, 2, 3+
 bool gHaveMsc = false;
@@ -65,11 +68,14 @@ static void report(Clock::time_point now)
 			gLockRepeats, gLockRuns, gLockLongest, gLockLongestMs, gLockPrinted, (long)logicthread::kMissLogMs, gLockLogic ? gLockLogicSum / gLockLogic : 0.0,
 			gLockBound);
 	}
-	fprintf(stderr, "pace: cb/s %.1f drew/s %.1f | callback interval ms (steady clock, callback starts) mean %.2f p50 %.2f p95 %.2f p99 %.2f max %.2f | <0.75R %ld >1.5R %ld (R=%.2f ms%s) | vblanks per callback (glXGetSyncValuesOML) %s%s\n",
-		gCb / secs, gDrew / secs, gDt.empty() ? 0.0 : sum / gDt.size(), pct(0.5), pct(0.95), pct(0.99), gDt.empty() ? 0.0 : gDt.back(), lo, hi, R,
+	std::sort(gUdt.begin(), gUdt.end());
+	auto upct = [&](double p) { return gUdt.empty() ? 0.0 : gUdt[std::min(gUdt.size() - 1, (size_t)(p * gUdt.size()))]; };
+	fprintf(stderr, "pace: swaps/s %.1f unique/s %.1f (present-to-present ms p50 %.2f p95 %.2f max %.2f; the HUD shows %.1f) | cb/s %.1f drew/s %.1f | callback interval ms (steady clock, callback starts) mean %.2f p50 %.2f p95 %.2f p99 %.2f max %.2f | <0.75R %ld >1.5R %ld (R=%.2f ms%s) | vblanks per callback (glXGetSyncValuesOML) %s%s\n",
+		gCb / secs, gUniq / secs, upct(0.5), upct(0.95), gUdt.empty() ? 0.0 : gUdt.back(), realfps::last().unique, gCb / secs, gDrew / secs, gDt.empty() ? 0.0 : sum / gDt.size(), pct(0.5), pct(0.95), pct(0.99), gDt.empty() ? 0.0 : gDt.back(), lo, hi, R,
 		gRefreshMs > 0 ? "" : ", refresh unknown: 60 Hz assumed", vb, lk);
 	gDt.clear();
-	gCb = gDrew = 0;
+	gCb = gDrew = gUniq = 0;
+	gUdt.clear();
 	for (long& h : gHist) { h = 0; }
 	gLockCalls = gLockRepeats = gLockRuns = gLockLongest = gLockPrinted = gLockLogic = 0;
 	gLockLongestMs = gLockLogicSum = 0;
@@ -91,7 +97,16 @@ void beginSlow()
 	if (now - gWindow >= std::chrono::seconds(1)) { report(now); }
 }
 
-void noteSlow(bool drew) { gCb++; if (drew) { gDrew++; } }
+void noteSlow(bool drew, bool unique)
+{
+	gCb++;
+	if (drew) { gDrew++; }
+	if (!unique) { return; }
+	const auto now = Clock::now();
+	gUniq++;
+	if (gLastUniq.time_since_epoch().count() != 0) { gUdt.push_back(std::chrono::duration<double, std::milli>(now - gLastUniq).count()); }
+	gLastUniq = now;
+}
 
 void noteLockstepSlow(const logicthread::MissStats& m, double logicMs, double boundMs)
 {

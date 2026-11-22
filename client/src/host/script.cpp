@@ -202,7 +202,12 @@ void stall_point(int at)
 
 void exec_cmd(const Cmd& c)
 {
-	if (c.op != "stall" && c.op != "renderstall") { logicthread::renderIdle(); }	// the two stall ops only arm a sleep (kenshi-k16.2.205.12.118: a gate here would stop the redraw they test)
+	// debug.overlap_scripted (review .101 C1): key, type and mouse down/up go through gInput like live input, drained at the next frame's start while the
+	// previous packet is drawn, so TSan sees the handlers beside a draw. Every other op keeps the gate.
+	const bool queued = logicthread::mode() == logicthread::Mode::kOverlap && logicthread::running()
+		&& (c.op == "key" || c.op == "type" || (c.op == "mouse" && c.args.size() == 2 && (c.args[0] == "down" || c.args[0] == "up")));
+	const auto deliver = [&](const sapp_event& ev) { if (queued) { gInput.push(ev); } else { event(&ev); } };
+	if (c.op != "stall" && c.op != "renderstall" && !queued) { logicthread::renderIdle(); }	// the two stall ops only arm a sleep (kenshi-k16.2.205.12.118: a gate here would stop the redraw they test)
 	// overlap (rule 12): an op may poke any renderer (partdepth, wind, the lab); scripted overlap and the console gate here
 	if (!app.opt.debug && debug_script_op(c.op)) { script_needs_debug(c); }
 	sapp_event e = {};
@@ -221,7 +226,7 @@ void exec_cmd(const Cmd& c)
 		e.key_code = key_by_name(a[0]);
 		e.type = a[1] == "down" ? SAPP_EVENTTYPE_KEY_DOWN : SAPP_EVENTTYPE_KEY_UP;
 		if (e.key_code == SAPP_KEYCODE_INVALID || (a[1] != "down" && a[1] != "up")) { script_error(c); }
-		event(&e);
+		deliver(e);
 	}
 	else if (c.op == "type" && !a.empty())	// type TEXT...: one CHAR event per character (an edit box's typing)
 	{
@@ -231,7 +236,7 @@ void exec_cmd(const Cmd& c)
 		for (unsigned char ch : text)
 		{
 			e.char_code = ch;
-			event(&e);
+			deliver(e);
 		}
 	}
 	else if (c.op == "mouse" && a.size() == 2 && (a[0] == "down" || a[0] == "up"))	// mouse down|up left|right|middle
@@ -240,7 +245,7 @@ void exec_cmd(const Cmd& c)
 		e.mouse_button = a[1] == "left" ? SAPP_MOUSEBUTTON_LEFT : a[1] == "middle" ? SAPP_MOUSEBUTTON_MIDDLE : SAPP_MOUSEBUTTON_RIGHT;
 		e.mouse_x = (float)app.mouseX;
 		e.mouse_y = (float)app.mouseY;
-		event(&e);
+		deliver(e);
 	}
 	else if (c.op == "mouse" && a.size() >= 2 && a[0] == "label")	// mouse label TEXT...: to the centre of the shown item / container label with that text
 	{

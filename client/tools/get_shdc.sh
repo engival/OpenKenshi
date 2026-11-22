@@ -14,6 +14,28 @@ case "$(uname -s)-$(uname -m)" in
 	MINGW*-x86_64|MSYS*-x86_64|UCRT64*-x86_64|CYGWIN*-x86_64) SUB=win32; EXE=.exe ;;	# kenshi-379.31.1
 	*) echo "get_shdc.sh: no prebuilt sokol-shdc for $(uname -s)-$(uname -m)" >&2; exit 1 ;;
 esac
-curl -fsSL "https://github.com/floooh/sokol-tools-bin/raw/${PIN}/bin/${SUB}/sokol-shdc${EXE}" -o "$DIR/sokol-shdc${EXE}"
-chmod +x "$DIR/sokol-shdc${EXE}"
-"$DIR/sokol-shdc${EXE}" --help | head -3
+URL="https://github.com/floooh/sokol-tools-bin/raw/${PIN}/bin/${SUB}/sokol-shdc${EXE}"
+LINK="$DIR/sokol-shdc${EXE}"
+# Shared per-host copy keyed by the pin (kenshi-3dwk): a pin bump is a new filename, the old copy stays. Hosts without
+# $HOME/git/kenshi (CI, Windows, macOS) download straight into client/bin as before.
+SHARED_DIR="$HOME/git/kenshi/bin"
+if [ -n "$HOME" ] && [ -d "$HOME/git/kenshi" ]; then
+	mkdir -p "$SHARED_DIR"
+	SHARED="$SHARED_DIR/sokol-shdc-${PIN}${EXE}"
+	if [ ! -x "$SHARED" ]; then
+		TMP="$(mktemp "$SHARED_DIR/.sokol-shdc-${PIN}.XXXXXX")"
+		trap 'rm -f "$TMP"' EXIT
+		curl -fsSL "$URL" -o "$TMP"
+		chmod +x "$TMP"
+		mv -f "$TMP" "$SHARED"	# atomic: a concurrent configure never sees half a file
+	fi
+	rm -f "$LINK"
+	case "$EXE" in
+		.exe) cp "$SHARED" "$LINK" ;;
+		*) ln -s "$SHARED" "$LINK" ;;
+	esac
+else
+	curl -fsSL "$URL" -o "$LINK"
+	chmod +x "$LINK"
+fi
+"$LINK" --help | head -3

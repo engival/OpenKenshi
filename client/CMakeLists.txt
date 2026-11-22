@@ -51,7 +51,15 @@ if(CMAKE_HOST_WIN32)
 endif()
 set(KENSHI_SHDC "${CMAKE_CURRENT_SOURCE_DIR}/bin/sokol-shdc${KENSHI_SHDC_EXE}" CACHE FILEPATH "sokol-shdc binary (tools/get_shdc.sh)")
 if(NOT EXISTS "${KENSHI_SHDC}")
-	message(FATAL_ERROR "sokol-shdc not found at ${KENSHI_SHDC}; run client/tools/get_shdc.sh")
+	# Fetch it (or link the shared per-host copy, offline) instead of failing at once (kenshi-3dwk).
+	find_program(KENSHI_BASH bash)
+	if(KENSHI_BASH)
+		execute_process(COMMAND "${KENSHI_BASH}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/get_shdc.sh"
+			RESULT_VARIABLE KENSHI_SHDC_RC OUTPUT_VARIABLE KENSHI_SHDC_OUT ERROR_VARIABLE KENSHI_SHDC_ERR)
+	endif()
+	if(NOT EXISTS "${KENSHI_SHDC}")
+		message(FATAL_ERROR "sokol-shdc not found at ${KENSHI_SHDC}; tools/get_shdc.sh failed:\n${KENSHI_SHDC_ERR}")
+	endif()
 endif()
 
 if(KENSHI_GFX STREQUAL "glcore")

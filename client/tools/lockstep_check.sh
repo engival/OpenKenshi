@@ -1,14 +1,15 @@
 #!/bin/bash
 # The merge check for the render thread (kenshi-k16.2.205.12.92; overlap review kenshi-k16.2.205.12.85 A4, C6). Render features keep landing
 # on `client`; the sokol owner assert is dev-only and no other gate runs the logic thread, so a new sg_* call on the logic half breaks
-# render.thread=lockstep silently. Three checks, run it in the merge cycle after building kclient:
+# render.thread=lockstep silently. Four checks, run it in the merge cycle after building kclient:
 #   1. a grep: sg_query_* / sg_isvalid beyond an audited per-file count (they read GL state through the unhooked sokol; kenshi-k16.2.205.12.32)
 #   2. scene_test.sh with render.thread=lockstep against the same baseline: every scene "pass", none "changed", no [sg] error
+#   2b. the same with render.thread=overlap + debug.overlap_scripted=1 (kenshi-9o0t)
 #   3. a new game (server on the `newgame` scenario, --simlink) with render.thread=lockstep --sg-owner-logic: reaches frame 300, 0 [sg][error]
 #      (--sg-owner-logic aborts at the first sg_* call from the logic half, and prints the stack)
 #
 # usage: client/tools/lockstep_check.sh [--skip-scenes] [--port N] [OUT_DIR]
-#   --skip-scenes  run only 1 and 3 (the scene test is the slow part)
+#   --skip-scenes  run only 1 and 3 (skips 2 and 2b) (the scene test is the slow part)
 #   OUT_DIR        logs (default client/build/lockstep-check)
 # Needs client/build/kclient with the dev tools and the scene baseline (scene_test.sh --bless from the base build when missing or stale).
 # Exit 0: all passed; 1: a check failed (the log path is printed); 2: usage / no kclient. Two game runs at most, one after the other.
@@ -94,6 +95,29 @@ then
 		fail "scene_test in lockstep: scenes changed / new / FAIL (above), see $OUT/scenes.log. Compare with an off run before blaming lockstep; a stale baseline is --bless from the base build"
 	fi
 	echo "lockstep_check: ok   scene_test in lockstep: every scene passes against the baseline ($OUT/scenes/summary.txt)"
+fi
+
+# 2b. scene_test in overlap (kenshi-9o0t, review .101 C2): render.thread=overlap + debug.overlap_scripted=1, the same baseline, 0 changed. Overlap is
+# not the default yet; this keeps a logic-side read of render state from breaking it silently.
+if [ "$SCENES" = 1 ]
+then
+	KCLIENT="$KCLIENT" KCLIENT_SCENE_ARGS="--set render.thread=overlap --set debug.overlap_scripted=1" "$HERE/scene_test.sh" "$OUT/scenes_overlap" >"$OUT/scenes_overlap.log" 2>&1
+	RC=$?
+	[ "$RC" = 0 ] || { tail -25 "$OUT/scenes_overlap.log" >&2; fail "scene_test in overlap exited $RC, see $OUT/scenes_overlap.log"; }
+	grep -q 'render.thread=overlap: the logic thread starts' "$OUT/scenes_overlap/run.log" || fail "the overlap scene run never started the logic thread: render.thread=overlap + debug.overlap_scripted=1 did not reach the client (a scripted overlap without the override runs lockstep), see $OUT/scenes_overlap/run.log"
+	! grep -q 'a scripted run runs lockstep' "$OUT/scenes_overlap/run.log" || fail "the overlap scene run fell back to lockstep, see $OUT/scenes_overlap/run.log"
+	# Known overlap-only differences (reported, not failed): debug_light_probes renders darker in a full overlap run, 3 times of 3 (53.08 / 88.44), and
+	# is pass alone in overlap and in a full lockstep run: the eye adaptation steps once per redraw, so the scene before it leaves it at another level
+	# (review .101 A: "a render-clock effect"). Shrink this list when that is fixed; OVERLAP_KNOWN_CHANGED="" makes the leg strict.
+	KNOWN_OVERLAP=${OVERLAP_KNOWN_CHANGED-debug_light_probes}
+	BADSCENES=$(grep -E '^[a-z0-9_.-]+ +(changed|new|FAIL)' "$OUT/scenes_overlap.log" | grep -vE "^(${KNOWN_OVERLAP// /|}) " || true)
+	grep -E '^[a-z0-9_.-]+ +(changed|new|FAIL)' "$OUT/scenes_overlap.log" | grep -E "^(${KNOWN_OVERLAP// /|}) " | sed 's/^/lockstep_check: known overlap difference: /' >&2
+	if [ -n "$BADSCENES" ]
+	then
+		printf '%s\n' "$BADSCENES" >&2
+		fail "scene_test in overlap: scenes changed / new / FAIL (above), see $OUT/scenes_overlap.log. Compare with a lockstep run before blaming overlap"
+	fi
+	echo "lockstep_check: ok   scene_test in overlap (debug.overlap_scripted=1): every scene passes against the baseline ($OUT/scenes_overlap/summary.txt)"
 fi
 
 # 3. a new game in lockstep with the logic half owning no sokol
