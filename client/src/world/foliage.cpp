@@ -13,6 +13,7 @@
 #include "render/framestats.hpp"
 #include "render/renderqueue.hpp"
 #include "world/plants.hpp"
+#include "world/worldbuildings_internal.hpp"
 #include "kworld/coords.hpp"
 #include "kworld/features.hpp"
 #include "kworld/foliage.hpp"
@@ -306,6 +307,7 @@ void Foliage::accept(CellCpu& cpu)
 	c.children = cpu.children;
 	c.lastUsed = frame_;
 	cellGen_++;
+	c.cpu = cpu.data;
 	if (!cpu.data.empty())	// the buffer is a resource job: the render side makes it before the packet's draw (frame lane, like the grass tiles)
 	{
 		const size_t bytes = cpu.data.size() * sizeof(float);
@@ -817,6 +819,121 @@ void Foliage::renderShadow(const FrameData& fd, const ShadowCascade& c)
 		draws += k.subs;
 	}
 	framestats::addFoliage(0, msSince(t0), draws);
+}
+
+// kenshi-l5dx: see foliage.hpp. Broad phase: the cell's column (x/z), then a node's instance-position box grown by its meshes' radius, then each instance's sphere;
+// the narrow phase takes the ray into the instance's frame and runs the part's drawn triangles (WorldBuildings::partRay: BVH, cull, alpha cut-out), as a building's.
+bool Foliage::pickRay(const double origin[3], const double dir[3], double tMin, double tMax, double& t, float box[6]) const
+{
+	if (!ready()) { return false; }
+	constexpr double kColumnMargin = 300.0;	// an instance's mesh reaches past its cell
+	bool hit = false;
+	std::vector<double> radius(ctx_->records.size(), -1.0);	// per record: the farthest a drawn point of its meshes lies from the origin, -1 = not yet known
+	std::vector<char> usable(ctx_->records.size(), 0);
+	const auto recordRadius = [&](int rec) -> double
+	{
+		if (radius[rec] >= 0) { return radius[rec]; }
+		double r = 0;
+		if (rec < (int)recordPartsDone_.size() && recordPartsDone_[rec])
+		{
+			for (const uint32_t pid : recordParts_[rec])
+			{
+				const WorldBuildings::PartRt& rt = wb_->partRt_[pid];
+				if (rt.mesh < 0 || wb_->meshes_[rt.mesh].state != WorldBuildings::Ready) { continue; }
+				const WorldBuildings::MeshEntry& m = wb_->meshes_[rt.mesh];
+				double off[3];
+				wbi::toMesh(wb_->offsetFrame, wb_->data_.parts[pid].offset, off);
+				for (int k = 0; k < 8; k++)
+				{
+					double s = 0;
+					for (int a = 0; a < 3; a++) { const double v = (k >> a & 1 ? m.bmax[a] : m.bmin[a]) + off[a]; s += v * v; }
+					r = std::max(r, std::sqrt(s));
+				}
+				usable[rec] = 1;
+			}
+		}
+		return radius[rec] = r;
+	};
+	for (const auto& [index, cell] : cells_)
+	{
+		if (cell.cpu.empty()) { continue; }
+		const kworld::ZoneCell zc = kworld::zoneCellOfIndex(index);
+		const double ox = kworld::zoneMinX(zc.x), oz = kworld::zoneMinZ(zc.z);
+		double t0 = tMin, t1 = hit ? std::min(tMax, t) : tMax;
+		const double lo2[2] = { ox - kColumnMargin, oz - kColumnMargin }, hi2[2] = { ox + WorldBuildings::kCellSize + kColumnMargin, oz + WorldBuildings::kCellSize + kColumnMargin };
+		for (int a = 0; a < 2 && t0 <= t1; a++)
+		{
+			const int ax = a * 2;
+			if (std::abs(dir[ax]) < 1e-12) { if (origin[ax] < lo2[a] || origin[ax] > hi2[a]) { t1 = -1; } continue; }
+			const double ta = (lo2[a] - origin[ax]) / dir[ax], tb = (hi2[a] - origin[ax]) / dir[ax];
+			t0 = std::max(t0, std::min(ta, tb));
+			t1 = std::min(t1, std::max(ta, tb));
+		}
+		if (t0 > t1) { continue; }
+		for (const Group& g : cell.groups)
+		{
+			const double r = recordRadius(g.record) * g.maxScale;
+			if (!usable[g.record]) { continue; }
+			double n0 = t0, n1 = hit ? std::min(t1, t) : t1;
+			for (int a = 0; a < 3 && n0 <= n1; a++)
+			{
+				const double base = a == 0 ? ox : a == 2 ? oz : 0.0;
+				const double lo = base + g.bmin[a] - r, hi = base + g.bmax[a] + r;
+				if (std::abs(dir[a]) < 1e-12) { if (origin[a] < lo || origin[a] > hi) { n1 = -1; } continue; }
+				const double ta = (lo - origin[a]) / dir[a], tb = (hi - origin[a]) / dir[a];
+				n0 = std::max(n0, std::min(ta, tb));
+				n1 = std::min(n1, std::max(ta, tb));
+			}
+			if (n0 > n1) { continue; }
+			const double meshR = recordRadius(g.record);
+			for (int i = g.first; i < g.first + g.count; i++)
+			{
+				const float* f = &cell.cpu[(size_t)i * kInstanceFloats];
+				const double c[3] = { ox + f[0], (double)f[1], oz + f[2] };
+				const double sr = meshR * f[3];
+				// the instance's sphere along the ray
+				const double rel[3] = { c[0] - origin[0], c[1] - origin[1], c[2] - origin[2] };
+				const double along = rel[0] * dir[0] + rel[1] * dir[1] + rel[2] * dir[2];
+				const double d2 = rel[0] * rel[0] + rel[1] * rel[1] + rel[2] * rel[2] - along * along;
+				const double dd = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
+				if (d2 > sr * sr * dd || (along + sr) / dd < n0 - 1e-9 || (hit && (along - sr) / dd > t)) { continue; }
+				if (std::sqrt(rel[0] * rel[0] + rel[1] * rel[1] + rel[2] * rel[2]) > fadeEnd(g, meshR, f[3])) { continue; }	// faded out: not drawn
+				// the ray in the instance's frame (the conjugate of its quaternion, undone scale and stretch)
+				const float conj[4] = { f[7], -f[4], -f[5], -f[6] };
+				double o[3], d[3];
+				const double rr[3] = { origin[0] - c[0], origin[1] - c[1], origin[2] - c[2] };
+				wbi::rotate(conj, rr, o);
+				wbi::rotate(conj, dir, d);
+				for (int a = 0; a < 3; a++) { o[a] /= f[3] * f[8 + a]; d[a] /= f[3] * f[8 + a]; }
+				for (const uint32_t pid : recordParts_[g.record])
+				{
+					double tt;
+					if (!wb_->partRay(pid, o, d, tt, true, tMin, hit ? std::min(tMax, t) : tMax, 0, true)) { continue; }
+					if (hit && tt >= t) { continue; }
+					t = tt;
+					hit = true;
+					// the instance's world box: its meshes' boxes, scaled, rotated, moved
+					const float q[4] = { f[7], f[4], f[5], f[6] };
+					double mn[3] = { 1e30, 1e30, 1e30 }, mx[3] = { -1e30, -1e30, -1e30 };
+					for (const uint32_t bp : recordParts_[g.record])
+					{
+						const WorldBuildings::PartRt& rt = wb_->partRt_[bp];
+						if (rt.mesh < 0 || wb_->meshes_[rt.mesh].state != WorldBuildings::Ready) { continue; }
+						const WorldBuildings::MeshEntry& m = wb_->meshes_[rt.mesh];
+						for (int k = 0; k < 8; k++)
+						{
+							const double v[3] = { (k & 1 ? m.bmax[0] : m.bmin[0]) * f[3] * f[8], (k & 2 ? m.bmax[1] : m.bmin[1]) * f[3] * f[9], (k & 4 ? m.bmax[2] : m.bmin[2]) * f[3] * f[10] };
+							double w[3];
+							wbi::rotate(q, v, w);
+							for (int a = 0; a < 3; a++) { mn[a] = std::min(mn[a], w[a] + c[a]); mx[a] = std::max(mx[a], w[a] + c[a]); }
+						}
+					}
+					for (int a = 0; a < 3; a++) { box[a] = (float)mn[a]; box[3 + a] = (float)mx[a]; }
+				}
+			}
+		}
+	}
+	return hit;
 }
 
 Foliage::Stats Foliage::stats() const { return stats_; }

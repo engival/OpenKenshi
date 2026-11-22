@@ -584,7 +584,6 @@ const cfg::Bool kInteriorMask{ cfg::Group{ "Interiors" }, "render.interior_mask"
 const cfg::Bool kTitleAtStart{ cfg::Group{ "Screens" }, "ui.title_at_start", true, "Start on the title screen (interactive runs)" };
 const cfg::Text kServerExe{ cfg::Group{ "Single player" }, "session.server", "", "Single player: the OpenKenshi-server to start (empty: the one built with this client, its build dir's cpp/OpenKenshi-server: target ksim_server)" };
 const cfg::Bool kVsync{ cfg::Group{ "Performance" }, "gfx.vsync", true, "Wait for the monitor's refresh before showing a frame. Takes effect after a restart (the driver may override it)" };
-const cfg::Bool kVrr{ cfg::Group{ "Performance" }, "gfx.vrr", false, "For a variable refresh rate (G-Sync / FreeSync) display: with the render thread on, wait up to 33 ms for the next frame instead of showing the last one again, so a late frame is shown once, when it is ready. Leave off on a fixed-refresh display (a late frame then costs a whole refresh). Off: no change" };
 const cfg::Int kFpsCap{ cfg::Group{ "Performance" }, "gfx.fps_cap", 0, 0, 1000, "Frame rate limit, 0 none (applies at once; with vsync on, the refresh rate already limits it)" };
 const cfg::Int kSessionLoadScreen{ cfg::Group{ "Single player" }, "session.loading_screen", 1, 0, 2, "A loading screen until the world round the squad has streamed in (new game, load, connect): 0 off, 1 on (not in scripted runs), 2 always" };
 const cfg::Text kServerArgs{ cfg::Group{ "Single player" }, "session.server_args", "--scenario newgame", "Single player: the server's arguments, split at spaces (e.g. add --navworld DIR, --save-dir DIR)" };
@@ -773,18 +772,25 @@ void hover_cursor()
 void pick_mask_update()
 {
 	if (!app.opt.debug || (!dev::pickmask::on() && !app.hoverThing && !app.hoverChar)) { return; }	// development features need --debug
+	static std::unordered_map<uint64_t, std::array<float, 6>> sceneryBox;	// the scenery subjects seen: id -> world box
 	static const dev::pickmask::Host host{
 		[](double mx, double my) -> uint64_t
 		{
 			double dir[3];
 			mouse_ray(mx, my, dir);
 			const Pick p = pick_at(dir);
+			if (p.kind == Pick::Ground && p.scenery)	// scenery with no sim id (a tree, a rock): the mask's subject is its box's identity (kenshi-l5dx)
+			{
+				sceneryBox[p.scenery] = std::array<float, 6>{ p.sceneryBox[0], p.sceneryBox[1], p.sceneryBox[2], p.sceneryBox[3], p.sceneryBox[4], p.sceneryBox[5] };
+				return p.scenery;
+			}
 			return p.kind == Pick::Item || p.kind == Pick::Door || p.kind == Pick::Container || p.kind == Pick::Producer || p.kind == Pick::Character ? p.id : 0;
 		},
 		[](uint64_t id, float box[4]) -> bool
 		{
 			double lo[3], hi[3];
-			if (!app.buildings.propBox(id, lo, hi))
+			if (const auto sb = sceneryBox.find(id); sb != sceneryBox.end()) { for (int k = 0; k < 3; k++) { lo[k] = sb->second[k]; hi[k] = sb->second[3 + k]; } }
+			else if (!app.buildings.propBox(id, lo, hi))
 			{
 				// a character: the box of its posed pick capsules (their ends, each grown by the radius)
 				const int index = app.sim.charIndex(id);
@@ -825,7 +831,15 @@ void pick_mask_update()
 			for (double d : v) { uint64_t b; std::memcpy(&b, &d, 8); h = (h ^ b) * 1099511628211ull; }
 			return h;
 		} };
-	dev::pickmask::update(host, app.hoverThing ? app.hoverThing : app.hoverChar, app.mouseX, app.mouseY);
+	uint64_t subject = app.hoverThing ? app.hoverThing : app.hoverChar;
+	if (!subject && dev::pickmask::on())	// nothing with an id under the cursor: anonymous scenery (a tree, a rock) is a subject too (kenshi-l5dx)
+	{
+		double dir[3];
+		mouse_ray(app.mouseX, app.mouseY, dir);
+		const Pick p = pick_at(dir);
+		if (p.kind == Pick::Ground && p.scenery) { sceneryBox[p.scenery] = std::array<float, 6>{ p.sceneryBox[0], p.sceneryBox[1], p.sceneryBox[2], p.sceneryBox[3], p.sceneryBox[4], p.sceneryBox[5] }; subject = p.scenery; }
+	}
+	dev::pickmask::update(host, subject, app.mouseX, app.mouseY);
 }
 #endif
 
@@ -2875,21 +2889,12 @@ RenderState& render_state()
 }
 
 
-// Rule 4's "about one refresh" (kenshi-k16.2.205.12.87, review .85 section 1.8): the display's refresh period (RandR, published with the window
-// snapshot; 16.7 ms when unknown), or 1000 / gfx.fps_cap under a cap with vsync off (with vsync on: the longer of the two), clamped to [4, 20] ms. Never sapp's measured interval:
-// with vsync off that is the callback interval, which the no-pass callbacks shorten themselves, so the bound fell below logic's frame.
-// gfx.vrr (kenshi-k16.2.437.3): the wait is one 30 Hz frame, about the bottom of a VRR panel's range; a packet later than that shows the kept frame.
-constexpr double kVrrBoundMs = 33.0;
-static double lockstep_bound_ms()
-{
-	if (kVrr.get()) { return kVrrBoundMs; }
-	const int cap = kFpsCap.get();
-	const bool vsync = sapp_query_desc().swap_interval > 0;	// the swap interval the window was made with (gfx.vsync applies after a restart)
-	const double refresh = view::refreshPeriodLive();
-	const double period = refresh > 0 ? refresh * 1000.0 : 1000.0 / 60.0;
-	const double ms = cap <= 0 ? period : vsync ? std::max(period, 1000.0 / cap) : 1000.0 / cap;	// vsync and a cap under the refresh: the cap's step
-	return std::clamp(ms, 4.0, 20.0);
-}
+// Rule 4's liveness fallback (kenshi-d2v2, user 2026-11-22): the render thread presents when a packet is ready and waits for it; gfx.vsync and
+// gfx.fps_cap are the only pacing. This bound is not a pacing: it is how long frame() may hold the sapp thread with no packet before it gives the
+// window a callback's worth of life (the kept frame, or overlap's redraw), so sokol's event pump runs (the sapp thread drains input only between
+// callbacks), a title-bar close and a minimize are seen, and a load or a stall keeps the window answering. 100 ms is logic's own bound
+// (logicthread.cpp kLogicBound, rule 4's stop-flag check): a quit lands within one such wait, a load screen redraws at 10 Hz at the least.
+constexpr double kLivenessBoundMs = 100.0;
 
 // Overlap's frame limiter (rule 11, kenshi-k16.2.205.12.118): gfx.fps_cap paces the render thread, at its frame start before the flip; one cap step at most, so
 // rule 4's bound holds. A frame more than a step late restarts the schedule.
@@ -2904,9 +2909,9 @@ static void overlap_limiter()
 	else { next = now + step; }
 }
 
-// The render thread's frame once the logic thread runs: wait about one refresh for a packet (lockstep_bound_ms), draw it and keep the composed
-// frame (lastframe.hpp); no packet in time: lockstep shows the kept frame again with no pass, overlap redraws its drawing packet (the draw reads the
-// packet and render-owned state only, so a redraw is legal while logic writes app.).
+// The render thread's frame once the logic thread runs: present when ready. Wait for a packet, draw it and keep the composed frame (lastframe.hpp).
+// Only after kLivenessBoundMs with no packet (a load, a stall): lockstep shows the kept frame again with no pass, overlap redraws its drawing packet
+// (the draw reads the packet and render-owned state only, so a redraw is legal while logic writes app.). Never a frame repeated to hold a rate.
 static void frame_lockstep()
 {
 #ifdef KCLIENT_DEV_TOOLS
@@ -2920,7 +2925,7 @@ static void frame_lockstep()
 	static int redrawN = 0, frameN = 0;
 	if (redrawShots) { frameN++; pointer::set(200.0f + 8.0f * (float)(frameN % 100), 360.0f); }
 #endif
-	const double bound = lockstep_bound_ms();
+	const double bound = kLivenessBoundMs;
 	const bool drew = logicthread::renderFrame(bound);
 	// The frame's frames without a pass and the logic half beside the bound, into the pace log's once-a-second line (kenshi-k16.2.437.1): the
 	// one-frame repeats do not print (logicthread::kMissLogMs), so this is where they are read.

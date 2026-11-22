@@ -548,6 +548,34 @@ bool WorldBuildings::triangleRay(int mesh, const double o[3], const double d[3],
 	return true;
 }
 
+// One part's nearest hit (t0) of a ray already in the part's instance frame: the mesh box's span is the cheap test, the drawn triangles (alpha cut-outs for the pick) decide.
+// Shared by instanceRay and the foliage pick (Foliage::pickRay, kenshi-l5dx). False: a part that does not draw, does not pick, or misses.
+bool WorldBuildings::partRay(uint32_t pid, const double o[3], const double d[3], double& t0, bool drawn, double tMin, double tMax, double minUp, bool pickable) const
+{
+	const BuildingPartDef& def = data_.parts[pid];
+	const int mesh = partRt_[pid].mesh;
+	if (def.kind == 2 || (pickable && !partPickable(def)) || mesh < 0 || meshes_[mesh].state != Ready) { return false; }
+	const MeshEntry& m = meshes_[mesh];
+	double off[3];
+	toMesh(offsetFrame, def.offset, off);
+	double t1 = 1e30;
+	t0 = 0;
+	for (int a = 0; a < 3 && t0 <= t1; a++)
+	{
+		const double lo = m.bmin[a] + off[a] - o[a], hi = m.bmax[a] + off[a] - o[a];
+		if (std::abs(d[a]) < 1e-12) { if (lo > 0 || hi < 0) { t1 = -1; } continue; }
+		const double ta = lo / d[a], tb = hi / d[a];
+		t0 = std::max(t0, std::min(ta, tb));
+		t1 = std::min(t1, std::max(ta, tb));
+	}
+	if (t0 > t1 || t1 < tMin || t0 > tMax) { return false; }	// the box's span along the ray misses the window
+	PickCut cuts[8];
+	int ncuts = 0;
+	if (drawn && pickable) { ncuts = pickCuts(pid, cuts, 8); }
+	if (drawn && !triangleRay(mesh, o, d, off, t0, tMin, tMax, minUp, pickable, pickable && cullsBackFaces(def), ncuts ? cuts : nullptr, ncuts)) { return false; }
+	return true;
+}
+
 bool WorldBuildings::instanceRay(uint32_t index, const double origin[3], const double dir[3], double& t, bool drawn, double tMin, double tMax, bool walkableOnly, WalkHit* who, double minUp, bool pickable) const
 {
 	const BuildingInstance& b = data_.instances[index];
@@ -565,28 +593,13 @@ bool WorldBuildings::instanceRay(uint32_t index, const double origin[3], const d
 		const BuildingPartDef& def = data_.parts[pid];
 		const int mesh = partRt_[pid].mesh;
 		if (def.kind == 2 || (walkableOnly && !def.walkable) || (pickable && !partPickable(def)) || mesh < 0 || meshes_[mesh].state != Ready) { continue; }
-		const MeshEntry& m = meshes_[mesh];
-		double off[3];
-		toMesh(offsetFrame, def.offset, off);
-		double t0 = 0, t1 = 1e30;
-		for (int a = 0; a < 3 && t0 <= t1; a++)
-		{
-			const double lo = m.bmin[a] + off[a] - o[a], hi = m.bmax[a] + off[a] - o[a];
-			if (std::abs(d[a]) < 1e-12) { if (lo > 0 || hi < 0) { t1 = -1; } continue; }
-			const double ta = lo / d[a], tb = hi / d[a];
-			t0 = std::max(t0, std::min(ta, tb));
-			t1 = std::min(t1, std::max(ta, tb));
-		}
-		if (t0 > t1 || t1 < tMin || t0 > tMax) { continue; }	// the box's span along the ray misses the window
-		PickCut cuts[8];
-		int ncuts = 0;
-		if (drawn && pickable) { ncuts = pickCuts(pid, cuts, 8); }
-		if (drawn && !triangleRay(mesh, o, d, off, t0, tMin, tMax, minUp, pickable, pickable && cullsBackFaces(def), ncuts ? cuts : nullptr, ncuts)) { continue; }	// the box is only the cheap test; the drawn triangles decide
+		double t0;
+		if (!partRay(pid, o, d, t0, drawn, tMin, tMax, minUp, pickable)) { continue; }
 		if (!hit || t0 < t)
 		{
 			t = t0;
 			hit = true;
-			if (who) { *who = WalkHit{ index, pid, def.walkable, (int)def.kind, m.path }; }	// the pick report's part (kenshi-k16.2.412.3 rework)
+			if (who) { *who = WalkHit{ index, pid, def.walkable, (int)def.kind, meshes_[mesh].path }; }	// the pick report's part (kenshi-k16.2.412.3 rework)
 		}
 	}
 	return hit;

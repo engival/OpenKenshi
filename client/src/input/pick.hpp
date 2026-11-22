@@ -27,6 +27,8 @@ struct Pick
 	uint64_t id = 0;
 	double hit[3] = {};
 	bool building = false;	// Ground: the hit is a building's shape (the original's hover candidate: no invalidmove there)
+	uint64_t scenery = 0;	// Ground: the anonymous foliage / shape hit's identity (a hash of its world box), 0 = none: debug.pick_mask's subject for scenery with no sim id (kenshi-l5dx)
+	float sceneryBox[6] = {};	// its world box
 };
 
 struct CharAct { const char* cursor = "arrow"; int action = 0; };

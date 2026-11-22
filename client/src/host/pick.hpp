@@ -73,6 +73,7 @@ void note_thing_skip(std::vector<PickSkip>* skipped, const char* kind, const sim
 constexpr double kProducerMatch = 50;	// MINE: a foliage hit within this (XZ, MINE) of a producer's placement picks it (deposit rocks)
 #ifdef KCLIENT_DEV_TOOLS
 // debug.pick_collision: the old collision-shape pick, for parity comparisons (pickcollision.cpp)
+void set_scenery(Pick& p, const float box[6]);	// Ground on anonymous scenery: its identity and box (debug.pick_mask's subject, kenshi-l5dx)
 Pick pick_at_collision(const double dir[3], std::vector<PickSkip>* skipped);
 bool ray_hit_collision(const double origin[3], const double dir[3], double hit[3], bool* building, const double* eye, std::vector<PickSkip>* skipped, float* hitBox);
 bool pick_collision_on();

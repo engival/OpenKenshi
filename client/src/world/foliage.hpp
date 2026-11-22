@@ -110,6 +110,10 @@ public:
 		double contextMs = 0;
 	};
 	Stats stats() const;
+	// kenshi-l5dx (user 2026-11-21, "Same system, all objects"): the click / hover pick's foliage half. The nearest DRAWN triangle of a resident instance (tree, rock,
+	// deposit rock; leaves through the alpha cut-out) with t in [tMin, tMax] along the ray; an instance past its fade end is not drawn and does not pick. box: the hit
+	// instance's world box (the deposit match reads it). Logic thread. False: nothing.
+	bool pickRay(const double origin[3], const double dir[3], double tMin, double tMax, double& t, float box[6]) const;
 	std::string cellReport(const double pos[3]) const;	// instance counts of the cell under pos
 	std::string nearReport(const double pos[3], double radius) const;	// the instances within radius (XZ) of pos, regenerated: record, position, scale, each loaded mesh's world box
 	int radius = 4;
@@ -142,6 +146,7 @@ private:
 		uint64_t lastUsed = 0;
 		rq::Handle<sg_buffer> buf;	// the instance buffer, published by its resource job (valid: hasBuf)
 		bool hasBuf = false;
+		std::vector<float> cpu;	// the instance floats, as uploaded (groups index into it): the pick's drawn-triangle test reads them (pickRay)
 	};
 	void buildShadowList(const double cam[3], int level, ShadowList& list);
 	struct ShadowCache { std::shared_ptr<const ShadowList> list; uint64_t key = 0; bool valid = false; };

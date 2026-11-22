@@ -372,19 +372,14 @@ the nested gamescope's refresh for a headless run.
 
 While `render.thread` runs a logic thread (lockstep or overlap) the line ends with two more sections (kenshi-k16.2.437.1):
 `lockstep repeats N (runs N, longest L frames / M ms, P over 50 ms printed)` and `logic ms L vs bound B`. `repeats` = callbacks that found no packet
-in time and blitted the kept frame back (`cb/s` minus `drew/s` is the same count), `runs` = runs of them, `longest` = the longest run and its wall
+in 100 ms and blitted the kept frame back (`cb/s` minus `drew/s` is the same count), `runs` = runs of them, `longest` = the longest run and its wall
 time (a run still going at the report counts its length so far), `printed` = the runs that printed a `kclient: lockstep: no packet for ...` line.
 Only a run lasting over 50 ms prints, once, when it ends
 (`logicthread::kMissLogMs`; at 144 Hz one frame is 6.9 ms, so a shorter run is one or two repeated frames, which is why the log used to spam).
-`logic ms` is the mean of the world frames' logic half (`FramePacket::logicMs`, published by `logicthread::noteLogicMs`) against the bound the
-render thread waits for a packet (`lockstep_bound_ms`: the refresh period, or the cap's step under `gfx.fps_cap` with vsync off): logic time at or
-over the bound is why a packet arrives late.
-
-**`gfx.vrr`** (Options, Graphics, beside vsync; default off, kenshi-k16.2.437.3): for a G-Sync / FreeSync display. With it on, the render thread waits up
-to 33 ms for the logic thread's packet (`kVrrBoundMs`, one 30 Hz frame, about the bottom of a VRR panel's range) instead of one refresh, so a late
-frame is shown once, when it is ready, and the kept frame is repeated only after a stall over 33 ms. It is a setting because VRR cannot be detected
-reliably at run time. It is off by default because on a fixed-refresh display a packet that lands just late would make FIFO hold a whole refresh.
-Windows VRR also needs vsync off (sync interval 0 + `ALLOW_TEARING`); that is not done. Off: the bound is as above.
+`logic ms` is the mean of the world frames' logic half (`FramePacket::logicMs`, published by `logicthread::noteLogicMs`) against the liveness bound
+(`kLivenessBoundMs`, 100 ms). The render thread presents when a packet is ready; `gfx.vsync` and `gfx.fps_cap` are the only pacing. A repeat is
+a liveness-fallback present only: no packet for 100 ms (a load, a stall), so the kept frame is shown (lockstep) or the drawing packet redrawn (overlap)
+and the window keeps answering. In steady state `repeats` is 0.
 
 **Real fps** (`src/app/realfps.hpp`): sokol's `sapp_frame_duration` is an EMA of the callback interval and counts a repeated frame like a new one. The dev
 HUD's "fps" is now the frames a second that drew a new packet, with the repeat rate after it when non-zero (`58 fps (+2 rep)`); it is right with

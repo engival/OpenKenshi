@@ -9,8 +9,8 @@
 // The histogram is "n/a" when the extension is missing.
 // The lockstep section (kenshi-k16.2.437.1) appears only while the logic thread runs: the callbacks without a pass that repeated the kept frame
 // (logicthread::takeMisses: their count, the runs of them that ended, the longest run in frames and ms, and the runs over 50 ms that printed a
-// line), and the world frame's logic ms (logicthread::lastLogicMs, the packet's) against the wait's bound (main.cpp lockstep_bound_ms, the
-// refresh period or the cap's step): whether logic misses the bound at all, and by how much.
+// line), and the world frame's logic ms (logicthread::lastLogicMs, the packet's) against the wait's bound (main.cpp kLivenessBoundMs, the
+// liveness fallback): a repeat now counts only a fallback present.
 #include "dev/pacelog.hpp"
 
 #include <algorithm>

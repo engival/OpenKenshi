@@ -399,17 +399,16 @@ with its `serial`, a counter that logic increments for each packet it fills.
 3. **The flip is on the render thread.** *[R1 flip]* At the start of each `frame()` and under the mutex, the render
    thread looks for a filled slot. If it finds one, the filled slot becomes drawing, the slot it drew before becomes
    free, and it notifies logic. Logic never flips. It only marks its own slot filled.
-4. **The render thread never waits without a bound, and redraws its current packet.** *[R1 "render thread never
-   waits"]* The render thread is sokol_app's loop thread. If it blocks, X events stop and a quit is never processed.
-   Its wait for a filled slot is bounded at about one refresh: the display's refresh period (X11 RandR on the sapp thread,
-   published with `view`'s window snapshot; 16.7 ms when unknown), or `1000 / gfx.fps_cap` under a cap with vsync off,
-   clamped to [4, 20] ms (`gfx.vrr` on, kenshi-k16.2.437.3: 33 ms, one 30 Hz frame, about the bottom of a VRR panel's range; default off, because on a
-   fixed-refresh display a packet that lands just late then makes FIFO hold a whole refresh; on a VRR display the late packet is shown once, when ready,
-   and only a stall over 33 ms repeats the kept frame. Windows VRR also needs vsync off, sync interval 0 + ALLOW_TEARING: not done). Never a measured interval: with vsync off sapp's frame duration is the callback interval, which
-   the no-packet callbacks shorten themselves (kenshi-k16.2.205.12.87, review .85 section 1.8). When
-   no packet arrives in time, it draws its current drawing slot again. This is P2's acceptance ("a 1.2 s decode stall
-   keeps the window drawing"). Before the first packet, the render thread draws the blank path (black and the load
-   screen, as `frame_blank` does today).
+4. **Present when ready; a bounded wait is the liveness fallback only.** *[R1 "render thread never waits"; kenshi-d2v2, user
+   2026-11-22]* The render thread is sokol_app's loop thread. It waits for a filled slot, draws it and presents it; it never shows
+   the kept frame again, or redraws the drawing packet, to hold a rate. `gfx.vsync` and `gfx.fps_cap` are the only pacing
+   controls (there is no VRR setting: send-when-ready is how a game presents, and vsync is layered on top). The wait is bounded
+   for one reason, liveness: if it blocks, X events stop (the sapp thread drains input only between callbacks) and a quit is
+   never processed. So when no packet arrives in `kLivenessBoundMs` = 100 ms (logic's own bound, `kLogicBound`: a quit lands within one
+   wait, a load screen still animates at 10 Hz at the least), it draws its current drawing slot again (overlap) or shows the kept
+   frame (lockstep), and returns to the callback loop. This is P2's acceptance ("a 1.2 s decode stall keeps the window drawing").
+   Repeats counted by the pace log are fallback presents only: 0 in steady state. Before the first packet, the render thread draws the
+   blank path (black and the load screen, as `frame_blank` does today).
 5. **`render_frame` is legal twice on one packet.** *[R1, consequence of rule 4]* Drawing the same serial again changes
    nothing but the pixels:
    - the per-frame uploads (`chars.upload`, `buildings.upload`, `particles.upload`, `arrows.update`) are NOT skipped on a second draw of a
@@ -534,8 +533,7 @@ with its `serial`, a counter that logic increments for each packet it fills.
     those as before; the 50 ms line reads "frames redrew the last packet (overlap)".
     *Stage 1 (gated overlap, kenshi-k16.2.205.12.96):* the render thread draws each packet once and never redraws, so
     logic still paces: the limiter stays in logic's part A, the render thread's no-packet wait is rule 4's bound
-    (`lockstep_bound_ms`: with vsync on and `gfx.fps_cap` under the refresh, the longer of the refresh period and the
-    cap's step, in both modes), and a frame without a packet blits the kept frame as in lockstep. The limiter's move to
+    (the liveness bound of rule 4, 100 ms), and a frame without a packet blits the kept frame as in lockstep. The limiter's move to
     the render thread comes with stage 2's redraw.
 12. **The gate.** *Stage 2 (kenshi-k16.2.205.12.118): the world frame has no gate: `logicthread::renderIdle()` is gone from `logic_paths`' part B, and the whole
     frame runs while the render thread draws (or redraws) the previous packet. The invariant that replaced the stage-1 one: logic never writes the drawing slot, and

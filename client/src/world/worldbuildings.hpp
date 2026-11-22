@@ -583,6 +583,7 @@ private:
 	void refreshPickBoxes() const;
 	bool partPickable(const BuildingPartDef& def) const { return def.kind != 2 && !def.blackCap && !def.marker && def.materialType != 2; }	// alpha (1), dual (3) and emissive (4) parts pick, an ALPHA part only where its texel passes the cut-out (pickCuts); glass is a submesh material, flagged per triangle
 	bool instanceRay(uint32_t index, const double origin[3], const double dir[3], double& t, bool drawn = false, double tMin = 0, double tMax = 1e30, bool walkableOnly = false, WalkHit* who = nullptr, double minUp = 0, bool pickable = false) const;
+	bool partRay(uint32_t pid, const double o[3], const double d[3], double& t0, bool drawn, double tMin, double tMax, double minUp, bool pickable) const;	// one part's hit of a ray in its instance frame (instanceRay's per-part body, and Foliage::pickRay)
 	struct PickCut { const uint8_t* a = nullptr; int w = 0, h = 0; float cut = 0, tx = 1, ty = 1; };	// one submesh's cut-out: the texture's alpha texels (0..255), the cutoff on them, the uv tile
 	int pickCuts(uint32_t pid, PickCut* out, int cap) const;
 	bool triangleRay(int mesh, const double o[3], const double d[3], const double off[3], double& t, double tMin = 0, double tMax = 1e30, double minUp = 0, bool pickable = false, bool cullBack = false, const PickCut* cuts = nullptr, int ncuts = 0) const;	// cullBack (the pick, kenshi-k16.2.396.5): a back face the part's pipeline culls does not pick (CCW front)

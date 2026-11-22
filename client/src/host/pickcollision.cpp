@@ -72,6 +72,7 @@ Pick pick_at_collision(const double dir[3], std::vector<PickSkip>* skipped)
 	if (ray_hit_collision(from, dir, p.hit, &p.building, app.pos, skipped, worldBox))
 	{
 		p.kind = Pick::Ground;
+		if (worldBox[3] > worldBox[0]) { set_scenery(p, worldBox); }
 		best = std::sqrt(std::pow(p.hit[0] - from[0], 2) + std::pow(p.hit[1] - from[1], 2) + std::pow(p.hit[2] - from[2], 2));
 	}
 	const double world = best;

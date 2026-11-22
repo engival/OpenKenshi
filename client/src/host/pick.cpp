@@ -260,29 +260,63 @@ bool ray_hit(const double origin[3], const double dir[3], double hit[3], bool* b
 	const double reach = std::min(groundT, 20000.0);
 	double drawnT = reach;
 	uint32_t drawnInst = 0;
-	bool drawn = false;
+	bool drawn = false, foliage = false;
+	float foliageBox[6] = {};
 	for (double from = 0; from < reach;)
 	{
-		double t;
-		uint32_t i;
-		if (!app.buildings.drawnPickRay(origin, dir, from, reach, t, i)) { break; }
-		const double at[3] = { origin[0] + dir[0] * t, origin[1] + dir[1] * t, origin[2] + dir[2] * t };
+		// the nearest drawn surface of either set: a building / prop / layout piece, or a foliage instance (tree, rock, deposit rock; kenshi-l5dx). One test, no per-kind rule.
+		double t = 1e30, tf = 1e30;
+		uint32_t i = 0;
+		float fbox[6] = {};
+		const bool b = app.buildings.drawnPickRay(origin, dir, from, reach, t, i);
+#ifdef KCLIENT_DEV_TOOLS
+		const auto fc0 = std::chrono::steady_clock::now();
+#endif
+		const bool f = app.foliageOn && app.foliage.pickRay(origin, dir, from, b ? std::min(reach, t) : reach, tf, fbox);
+#ifdef KCLIENT_DEV_TOOLS
+		if (app.opt.debug)	// the foliage half's cost (kenshi-l5dx): median / p99 over 300 queries, one line each
+		{
+			static std::vector<double> us;
+			us.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - fc0).count());
+			if (us.size() >= 300)
+			{
+				std::sort(us.begin(), us.end());
+				fprintf(stderr, "pickfoliage cost: %zu queries, median %.1f us, p99 %.1f us, max %.1f us\n", us.size(), us[us.size() / 2], us[us.size() * 99 / 100], us.back());
+				us.clear();
+			}
+		}
+#endif
+		if (!b && !f) { break; }
+		const bool isFoliage = f && (!b || tf < t);
+		const double hitT = isFoliage ? tf : t;
+		const double at[3] = { origin[0] + dir[0] * hitT, origin[1] + dir[1] * hitT, origin[2] + dir[2] * hitT };
 		std::string why;
-		if (!see_through(at, 1e30, &why)) { drawnT = t; drawnInst = i; drawn = true; break; }
+		if (!see_through(at, 1e30, &why))
+		{
+			drawnT = hitT;
+			drawnInst = i;
+			drawn = true;
+			foliage = isFoliage;
+			if (isFoliage) { std::copy(fbox, fbox + 6, foliageBox); }
+			break;
+		}
 		if (skipped)
 		{
-			const std::string n = app.buildings.nameOfInstance((int)i);
+			const std::string n = isFoliage ? "foliage / rock" : app.buildings.nameOfInstance((int)i);
 			skipped->push_back({ n.empty() ? "an unnamed drawn instance" : "drawn " + n, { at[0], at[1], at[2] }, why });
 		}
-		from = t + 0.5;
+		from = hitT + 0.5;
 	}
-	const bool shape = ray_shapes(origin, dir, drawnT, hit, building, eye, skipped, hitBox, true);	// foliage shells only
 	app.buildings.levelCuts = prevCuts;
-	if (shape) { return true; }
 	*building = false;
 	if (drawn)
 	{
 		for (int k = 0; k < 3; k++) { hit[k] = origin[k] + dir[k] * drawnT; }
+		if (foliage)
+		{
+			if (hitBox) { std::copy(foliageBox, foliageBox + 6, hitBox); }
+			return true;
+		}
 		const BuildingInstance* bi = app.buildings.instanceAt(drawnInst);
 		*building = !(bi && bi->feature);
 		if (instance) { *instance = (int)drawnInst; }
@@ -290,6 +324,14 @@ bool ray_hit(const double origin[3], const double dir[3], double hit[3], bool* b
 	}
 	if (onTerrain) { std::copy(terrain, terrain + 3, hit); }	// a carved hit nothing else answers: the terrain as before
 	return onTerrain;
+}
+
+void set_scenery(Pick& p, const float box[6])
+{
+	uint64_t h = 1469598103934665603ull;
+	for (int k = 0; k < 6; k++) { uint32_t b; std::memcpy(&b, &box[k], 4); h = (h ^ b) * 1099511628211ull; }
+	p.scenery = h | 1;
+	std::copy(box, box + 6, p.sceneryBox);
 }
 
 // What the mouse ray hits first: Pick, and its doc, are in pick.hpp (kenshi-k16.2.294.2, step 0 of the control-hints design); pick_at below fills it.
@@ -505,6 +547,9 @@ Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped)
 #ifdef KCLIENT_DEV_TOOLS
 	if (pick_collision_on()) { return pick_at_collision(dir, skipped); }
 #endif
+#ifdef KCLIENT_DEV_TOOLS
+	const auto whole0 = std::chrono::steady_clock::now();
+#endif
 	Pick p;
 	double from[3];	// the ray starts at the near clip plane, as the original's does (kenshi-k16.2.259, camera_near)
 	for (int k = 0; k < 3; k++) { from[k] = app.pos[k] + dir[k] * camera_near(); }
@@ -578,6 +623,20 @@ Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped)
 		for (int k = 0; k < 3; k++) { p.hit[k] = from[k] + dir[k] * t; }
 	}
 	app.buildings.levelCuts = prevCuts;
+	if (p.kind == Pick::Ground && inst < 0 && worldBox[3] > worldBox[0]) { set_scenery(p, worldBox); }
+#ifdef KCLIENT_DEV_TOOLS
+	if (app.opt.debug)	// the whole pick's cost (kenshi-l5dx, the hover cost): median / p99 over 300 picks, one line each (pickmem is the evlog line at the BVH loads)
+	{
+		static std::vector<double> us;
+		us.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - whole0).count());
+		if (us.size() >= 300)
+		{
+			std::sort(us.begin(), us.end());
+			fprintf(stderr, "pickat cost: %zu picks, median %.1f us, p99 %.1f us, max %.1f us\n", us.size(), us[us.size() / 2], us[us.size() * 99 / 100], us.back());
+			us.clear();
+		}
+	}
+#endif
 	return p;
 }
 
@@ -926,6 +985,15 @@ std::string pick_owner_report(const Pick& p, double mx, double my, const std::ve
 			const double at[3] = { app.pos[0] + dir[0] * t3, app.pos[1] + dir[1] * t3, app.pos[2] + dir[2] * t3 };
 			if (std::hypot(std::hypot(at[0] - p.hit[0], at[1] - p.hit[1]), at[2] - p.hit[2]) < 1.0) { drawnPrim = "drawn triangles: " + app.buildings.describeInstance((int)di); break; }
 			t0 = t3 + 0.5;
+		}
+		if (drawnPrim.empty() && app.foliageOn)
+		{
+			double tf;
+			float fb[6];
+			if (app.foliage.pickRay(app.pos, dir, 0, 20000, tf, fb) && std::hypot(std::hypot(app.pos[0] + dir[0] * tf - p.hit[0], app.pos[1] + dir[1] * tf - p.hit[1]), app.pos[2] + dir[2] * tf - p.hit[2]) < 1.0)
+			{
+				drawnPrim = fmt("drawn triangles: foliage instance, box %.0f %.0f %.0f - %.0f %.0f %.0f", fb[0], fb[1], fb[2], fb[3], fb[4], fb[5]);
+			}
 		}
 		double from[3] = { app.pos[0], app.pos[1], app.pos[2] }, t2;
 		float box[6];
