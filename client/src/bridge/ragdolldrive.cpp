@@ -28,8 +28,10 @@ constexpr double kLift = 3.0;	// u: the lowest bone's start height over the draw
 // every body, eased in and stopping dead at the target: joints, contacts and gravity still act, so the body drags along the ground rather
 // than flying.
 // A drag that is still short at kSettle (the speed cap and the limbs' weight hold it back: 5-7 u short from 10-18 u starts) holds the
-// target until the root is within kReach of it across the ground, for at most kOvertime more.
-constexpr double kFreeFall = 0.5, kSettle = 1.5, kOvertime = 1.5;
+// target until the root is within kReach of it across the ground, for at most kOvertime more. A body the ground or another body still holds
+// short of it (kolanding: ~1 u short, stalled at 1 u/s) is then glided the rest of the way over kGlide, every body shifted by the same small
+// step each substep (PhysicsWorld::shiftBody), so it lands on the rest point by kSettle + kOvertime + kGlide without a snap.
+constexpr double kFreeFall = 0.5, kSettle = 1.5, kOvertime = 1.0, kGlide = 0.5;
 constexpr double kReach = 0.5;			// u: horizontal
 constexpr double kPullTop = 20.0;		// u/s
 constexpr double kTrack = 0.05;			// s: the root's velocity servo's lag behind the path
@@ -294,7 +296,15 @@ bool Ragdolls::pull(uint64_t id, Live& l, SimView& sim, const kworld::Heightmap*
 		fprintf(stderr, "ragdolls: %llu pull starts %.2f u from the rest point (root %.2f %.2f %.2f)\n", (unsigned long long)id, arc, b.p[0], b.p[1], b.p[2]);
 	}
 	const double across = std::hypot(target[0] - b.p[0], target[2] - b.p[2]);
-	if (l.age >= kSettle && (across <= kReach || l.age >= kSettle + kOvertime))
+	constexpr double kEnd = kSettle + kOvertime + kGlide;
+	if (l.age >= kSettle + kOvertime && across > kReach && l.age < kEnd)
+	{
+		const double f = std::min(1.0, h / (kEnd - l.age + h));
+		const double d[3] = { (target[0] - b.p[0]) * f, 0.0, (target[2] - b.p[2]) * f };
+		for (uint32_t body : bodies) { world_.shiftBody(body, d); }
+		return true;
+	}
+	if (l.age >= kSettle && (across <= kReach || l.age >= kEnd))
 	{
 		world_.setRagdollFriction(l.rag, -1);
 		world_.sleepRagdoll(l.rag);

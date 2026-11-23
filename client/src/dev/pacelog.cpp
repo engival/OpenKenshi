@@ -32,6 +32,8 @@ namespace
 using Clock = std::chrono::steady_clock;
 Clock::time_point gLast{}, gWindow{};
 std::vector<double> gDt;	// ms between callback starts this second
+std::vector<double> gDtAt;	// steady-clock seconds of each (KCLIENT_PACEFILE, kenshi-nbmu)
+FILE* gFile = nullptr;
 long gCb = 0, gDrew = 0, gUniq = 0;
 Clock::time_point gLastUniq{};
 std::vector<double> gUdt;	// ms between unique frames this second (kenshi-k16.2.437.3)
@@ -44,11 +46,18 @@ long gLockCalls = 0, gLockRepeats = 0, gLockRuns = 0, gLockLongest = 0, gLockPri
 double gLockLongestMs = 0, gLockLogicSum = 0, gLockBound = 0;
 }
 
-void init() { gOn = getenv("KCLIENT_PACELOG") != nullptr; }
+void init()
+{
+	gOn = getenv("KCLIENT_PACELOG") != nullptr;
+	// KCLIENT_PACEFILE=path: every callback interval, one `steadySeconds ms` row each, for the per-frame percentiles of a window (kenshi-nbmu)
+	if (const char* f = getenv("KCLIENT_PACEFILE")) { gFile = fopen(f, "w"); gOn = gOn || gFile; }
+}
 
 static void report(Clock::time_point now)
 {
 	const double secs = std::chrono::duration<double>(now - gWindow).count();
+	if (gFile) { for (size_t i = 0; i < gDt.size(); i++) { fprintf(gFile, "%.4f %.3f\n", gDtAt[i], gDt[i]); } fflush(gFile); }
+	gDtAt.clear();
 	std::sort(gDt.begin(), gDt.end());
 	auto pct = [&](double p) { return gDt.empty() ? 0.0 : gDt[std::min(gDt.size() - 1, (size_t)(p * gDt.size()))]; };
 	double sum = 0;
@@ -86,7 +95,7 @@ void beginSlow()
 {
 	const auto now = Clock::now();
 	if (gWindow.time_since_epoch().count() == 0) { gWindow = now; }
-	if (gLast.time_since_epoch().count() != 0) { gDt.push_back(std::chrono::duration<double, std::milli>(now - gLast).count()); }
+	if (gLast.time_since_epoch().count() != 0) { gDt.push_back(std::chrono::duration<double, std::milli>(now - gLast).count()); gDtAt.push_back(std::chrono::duration<double>(now.time_since_epoch()).count()); }
 	gLast = now;
 	long long msc = 0;
 	if (swapinfo::vblankCount(msc))

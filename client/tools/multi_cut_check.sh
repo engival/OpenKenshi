@@ -18,8 +18,8 @@ fail() { echo "multi_cut_check: FAIL ($*)"; exit 1; }
 # The Wanderer's house (A) and the Drifter's (B) in the scenario; the camera looks down at the house of the one NOT selected.
 A_POS=68240,-70797
 B_POS=68445,-70717
-run() {	# run NAME PORT SELECT-LINE PICK-HOUSE-POS
-	local name=$1 port=$2 sel=$3 at=$4
+run() {	# run NAME SELECT-LINE PICK-HOUSE-POS
+	local name=$1 sel=$2 at=$3
 	cat > "$OUT/script-$name.txt" <<EOS
 400 dump chars
 $sel
@@ -49,12 +49,12 @@ EOS
 	grep -E '^(cuts|cut |floor: .* shown|pick)' "$OUT/run-$name.log" > "$OUT/$name.txt" || true
 }
 
-run default "$PORT" "" "$B_POS"
+run default "" "$B_POS"
 WAN=$(sed -n 's/^char \([0-9]*\) "Wanderer".*/\1/p' "$OUT/run-default.log" | head -1)
 DRI=$(sed -n 's/^char \([0-9]*\) "Drifter".*/\1/p' "$OUT/run-default.log" | head -1)
 [ -n "$WAN" ] && [ -n "$DRI" ] || fail "the Wanderer / Drifter are not on the wire (dump chars)"
-run wanderer "$P2" "450 select id=$WAN" "$B_POS"
-run drifter "$P3" "450 select id=$DRI" "$A_POS"
+run wanderer "450 select id=$WAN" "$B_POS"
+run drifter "450 select id=$DRI" "$A_POS"
 
 for n in default wanderer drifter; do
 	echo "== $n"; cat "$OUT/$n.txt"

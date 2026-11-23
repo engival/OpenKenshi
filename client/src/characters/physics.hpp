@@ -69,6 +69,7 @@ public:
 	// A carried animal's anchor body: kinematic, moved to the pose over dt so the joints see its velocity (no teleport); unpinBody makes it dynamic again.
 	bool pinBody(uint32_t bodyId, const double p[3], const float q[4], double dt);
 	bool unpinBody(uint32_t bodyId);
+	bool shiftBody(uint32_t bodyId, const double d[3]);	// moves one body by d (velocity kept): the rest-point pull's last glide, applied to every body of a ragdoll
 	bool ragdollAwake(uint32_t id) const;	// any of its bodies still moving
 	void sleepRagdoll(uint32_t id);	// deactivates every body: the rest-point pull's end, the body frozen where it lies
 	// The rest-point pull drags a ragdoll over the ground: the friction of all its bodies (contacts still hold it up). < 0: the scene default.

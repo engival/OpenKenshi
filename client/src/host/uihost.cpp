@@ -69,6 +69,9 @@
 #include "dev/debughost.hpp"
 #include "dev/devhooks.hpp"
 #ifdef KCLIENT_DEV_TOOLS
+#include "dev/roadedit.hpp"
+#endif
+#ifdef KCLIENT_DEV_TOOLS
 #include "dev/pickmask.hpp"
 #endif
 #include "knobs/lightterms.hpp"
@@ -177,6 +180,41 @@
 #include "host/logicframe.hpp"
 #include "host/uihost.hpp"
 #include "host/panels.hpp"
+
+// Control hints, the key rows (kenshi-eq2z): each HUD widget lists the keys that do its thing, named from the bindings as they are now (an unbound
+// action has no row). The kinds are the guide-coverage keys: each phrase must appear in docs/PLAYER_GUIDE.md section 5.
+HINT_KIND("key_focus", "focus the camera on the selection");
+HINT_KIND("key_next", "select the next character");
+HINT_KIND("key_all", "select all characters");
+HINT_KIND("key_slot", "select this character");
+HINT_KIND("key_pause", "pause the game");
+HINT_KIND("key_speed", "set the game speed");
+HINT_KIND("key_floor", "step the floor");
+HINT_KIND("key_drive", "direct drive on the selection");
+HINT_KIND("key_build", "open the build panel");
+
+static void key_row(std::vector<ui::HintLine>& out, const char* action, const std::string& label)
+{
+	const std::string key = ui::keys::label(action);
+	if (!key.empty()) { out.push_back({ key, label, true, "" }); }
+}
+
+static void fill_key_hints(ui::HudKeyHints& k, size_t members)
+{
+	k = ui::HudKeyHints();
+	key_row(k.portrait, "focus_char", "Focus the camera on the selection");
+	key_row(k.portrait, "character_next", "Select the next character");
+	key_row(k.portrait, "select_all", "Select all characters");
+	k.slot.resize(std::min<size_t>(members, 10));
+	for (size_t i = 0; i < k.slot.size(); i++) { key_row(k.slot[i], ("select_" + std::to_string(i)).c_str(), "Select this character (twice: focus)"); }
+	key_row(k.speed[0], "pause", "Pause the game");
+	for (int i = 1; i < 4; i++) { key_row(k.speed[i], ("speed_" + std::to_string(i)).c_str(), "Set the game speed to " + std::to_string(i)); }
+	key_row(k.floor, "floor_up", "Step the floor up");
+	key_row(k.floor, "floor_down", "Step the floor down");
+	key_row(k.moveSpeed, "camera_drive", "Direct drive on the selection (again: leave it)");
+	key_row(k.build, "toggle_build", "Open the build panel");
+}
+
 
 const cfg::Bool kMinimap{ cfg::Group{ "HUD and labels" }, "ui.minimap", true, "Minimap: a small map window in a corner of the screen, centred on the camera; drag it to move it, the wheel over it zooms (the place and the zoom are remembered). A deliberate addition: the original has none" };
 
@@ -341,6 +379,12 @@ static void init_menus()
 		lpa.solo = [](const std::string& name) { dev::soloLight(name); };
 		lpa.allOn = [] { dev::allLights(); };
 		app.lightsPanel = std::make_unique<ui::LightsPanel>(std::move(lpa));
+		ui::RoadsPanelActions rpa;	// the road editor's panel (kenshi-tqtd): its actions are dev/roadedit's
+		rpa.select = [](int i) { roads_select_suspect(i); };
+		rpa.mark = [](int m) { dev::roadedit::mark(m); };
+		rpa.copy = [] { const std::string c = dev::roadedit::coords(); if (!c.empty()) { sappcmd::setClipboard(c); } };
+		rpa.close = [] { cfg::set("debug.roads=off"); };
+		app.roadsPanel = std::make_unique<ui::RoadsPanel>(std::move(rpa));
 	}
 	// The animation lab's window (ui/dev/animbrowser.hpp): it shows the host's state and reports its clicks; dev/debughost.cpp renders, plays
 	// and measures, and binds the actions.
@@ -399,8 +443,7 @@ void init_ui()
 	act.watch = [](uint64_t id) { app.inspect = id; app.panelProducer = 0; };	// a cast row: the watch (the inspect focus and its CHAR_STATS goal)
 	act.follow = [](uint64_t id)	// a cast row's double click or the FOLLOW / STOP button: 0 stops the camera and keeps the watch
 	{
-		if (!id) { set_follow(false); }
-		else if (set_follow_id(id)) { app.inspect = id; app.panelProducer = 0; }
+		cast_follow(id);
 	};
 	act.toggle = [](ui::HudToggle t, bool value)	// the ticks with a sim toggle (order 10); the others are disabled in HudState
 	{
@@ -428,7 +471,7 @@ void init_ui()
 	act.moveJob = [](uint64_t job, int index) { app.sim.jobMove(app.jobsChar, (uint32_t)job, (uint16_t)index); };
 	act.medic = [] { app.sim.jobAdd(58, 0); };	// the MEDIC button: the Medic job for the selection
 	act.stop = [] { app.sim.stop(false); };
-	act.floor = [](int delta) { app.buildings.stepFloor(delta); };	// as R / F
+	act.floor = [](int delta) { floor_step(delta); };	// as R / F
 	act.moveSpeed = [](int mode) { app.sim.setToggle(5, (uint8_t)mode); };	// the speed diamond: order 10 which 5, the mode for the whole selection
 	act.prospect = [] { shortcut("prospect"); };
 	act.pause = [](bool paused) { app.sim.pause(paused); };
@@ -730,7 +773,7 @@ void update_ui(double dt)
 	if (app.sim.active() && !app.opt.follow.empty())
 	{
 		const uint64_t id = named_character(app.opt.follow);
-		if (id && set_follow_id(id))
+		if (id && set_follow_id(id, true))	// --follow: a dev/test-only route (a non-squad target needs --debug / a script)
 		{
 			app.inspect = id;	// the watch: its CHAR_STATS (order 87) carries the goal for the status panel; spectating stays the wire's call (a session
 								// with a player character is not a spectator's, even while a non-player one is followed)
@@ -884,13 +927,15 @@ void update_ui(double dt)
 		// Order 87: one focus per session, the last clicked thing (k16.19.8.2): a producer's id while the panel shows it, else the character focus, else 0
 		// for the selection. The scripted lines prove the panel's source headless: `focus <id> kind producer|character` once per change, `producer row ...`
 		// when the row (or its version) changes.
-		const uint64_t focusId = app.panelProducer ? app.panelProducer : app.inspect;
-		app.sim.focus(focusId, app.panelProducer != 0);
-		if (app.scripted() && (focusId != app.focusLogged || (app.panelProducer != 0) != app.focusLoggedProducer))
+		const simlink::Interactable* panelThing = app.panelProducer ? app.sim.thing(app.panelProducer) : nullptr;
+		const bool producerFocus = panelThing && panelThing->kind == simlink::Interactable::kProducer;	// a storage's panel has no BUILDING row: order 87 would be bad_target
+		const uint64_t focusId = producerFocus ? app.panelProducer : app.inspect;
+		app.sim.focus(focusId, producerFocus);
+		if (app.scripted() && (focusId != app.focusLogged || producerFocus != app.focusLoggedProducer))
 		{
-			printf("focus %llu kind %s\n", (unsigned long long)focusId, app.panelProducer ? "producer" : "character");
+			printf("focus %llu kind %s\n", (unsigned long long)focusId, producerFocus ? "producer" : "character");
 			app.focusLogged = focusId;
-			app.focusLoggedProducer = app.panelProducer != 0;
+			app.focusLoggedProducer = producerFocus;
 		}
 		if (app.scripted())
 		{
@@ -979,6 +1024,7 @@ void update_ui(double dt)
 			app.stats->update(ss);
 		}
 		if (app.panelProducer) { st.building = machine_panel(); }	// the last clicked producer: its lines replace the character's (k16.19.7.1, k16.19.8.2)
+		fill_key_hints(st.keys, st.squad.size());
 		app.hud->update(st);
 		{	// the hints panel (ui.control_hints): the hovered portrait's list; the world's targets feed it once they migrate (empty for now)
 			ui::HintBlock block;
@@ -1265,6 +1311,12 @@ void update_ui(double dt)
 	debug_tree_frame();
 #endif
 #ifdef KCLIENT_DEV_TOOLS
+	if (app.roadsPanel)	// the road editor's panel follows debug.roads and shows the editor's state (kenshi-tqtd)
+	{
+		const bool want = app.opt.debug && dev::roadedit::on();
+		if (app.roadsPanel->shown() != want) { app.roadsPanel->show(want); }
+		if (want) { app.roadsPanel->update(dev::roadedit::panelState(app.opt.data)); }
+	}
 	if (app.lightsPanel && app.lightsPanel->shown())	// the light debugger's view of the terms, offline too (kenshi-jj3.27.3)
 	{
 		ui::LightsPanelState ls;

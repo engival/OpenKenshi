@@ -8,10 +8,10 @@ namespace ff
 namespace
 {
 constexpr double kOnFlightRises = 1.5;	// "on a flight": within about 1.5 rises of its slope (review section 3)
-// The switch lines (user answers kenshi-k16.2.236.13 Q3, the default): a climb shows the upper floor from kUpLineRises below the top tread, a descent
+// The switch lines (user answer kenshi-k16.2.236.13 Q3, 2026-11-22: "the 4th stair rung" up, "2nd rung" down): a climb shows the upper floor from kUpLineRises below the top tread, a descent
 // shows the lower floor from kDownLineRises below it; a flip back to the origin floor (the fired hotspot re-arming) waits until the feet are kRearmRises past the line.
-constexpr double kUpLineRises = 2.0;
-constexpr double kDownLineRises = 1.0;
+constexpr double kUpLineRises = 4.0;
+constexpr double kDownLineRises = 2.0;
 constexpr double kRearmRises = 2.0;	// a fired hotspot is cold until the feet are about 2 steps past its line (or at the flight's end)
 }
 
@@ -20,7 +20,6 @@ const char* reasonName(Reason r)
 	switch (r)
 	{
 	case Reason::kPlayer: return "player";
-	case Reason::kManual: return "manual";
 	case Reason::kFlight: return "flight";
 	case Reason::kRoof: return "roof";
 	case Reason::kIndoors: return "indoors";
@@ -159,8 +158,7 @@ View FloorFollow::update(const Sample& s)
 	{
 		if (following_ || subject_ != 0)	// the follow ended (or the subject was lost): the player keeps the last shown level
 		{
-			level_ = shown_;	// Q6 default: the follow end keeps the last shown level
-			hasManual_ = false;
+			level_ = shown_;	// the follow end keeps the last shown level (L5)
 		}
 		following_ = false;
 		subject_ = 0;
@@ -172,8 +170,7 @@ View FloorFollow::update(const Sample& s)
 	}
 	if (subject_ != s.subject)
 	{
-		// A subject change: the manual level and the stair latch belong to the character that was followed before.
-		hasManual_ = false;
+		// A subject change: the stair latch belongs to the character that was followed before.
 		pairValid_ = false;
 		settledValid_ = false;
 		resetLatch();
@@ -181,41 +178,25 @@ View FloorFollow::update(const Sample& s)
 	}
 	following_ = true;
 	const Resolved r = resolve(s);
-	// A threshold of any kind (a door, the stair latch, the roof, another building, a teleport) clears the player's manual level.
-	if (pairValid_ && (r.building != pairBuilding_ || r.floor != pairFloor_)) { hasManual_ = false; }	// Q2 default: any crossing ends a manual step
 	pairValid_ = true;
 	pairBuilding_ = r.building;
 	pairFloor_ = r.floor;
-	shown_ = hasManual_ ? manual_ : r.floor;
-	return { shown_, hasManual_ ? Reason::kManual : r.reason, r.building };
+	shown_ = r.floor;
+	return { shown_, r.reason, r.building };
 }
 
 void FloorFollow::step(int dir, int top)
 {
+	// From the floor the player sees, clamped to the building's top (the old stepFloor's rule). A following caller has ended the follow (L4/L5):
+	// the stepped level is the player's, and the next sample, not following, keeps it.
 	top = std::max(top, 0);
-	if (!following_)
-	{
-		level_ = std::clamp(std::min(level_, top) + dir, 0, top);	// from the level the player sees (clamped to the building's top)
-		shown_ = level_;
-		return;
-	}
-	// From the floor the player sees, clamped to the building's top (the old stepFloor's rule).
-	const int base = std::min(shown_, top);
-	manual_ = std::clamp(base + dir, 0, top);
-	hasManual_ = true;	// Q1 default: a step holds, even below the subject (U7 over U6)
-	shown_ = manual_;
-}
-
-void FloorFollow::engage()
-{
-	hasManual_ = false;
+	level_ = std::clamp(std::min(shown_, top) + dir, 0, top);
+	shown_ = level_;
 }
 
 void FloorFollow::load(int level, uint64_t subject)
 {
 	level_ = std::clamp(level, 0, 3);
-	hasManual_ = subject != 0;
-	manual_ = hasManual_ ? level_ : 0;
 	shown_ = level_;
 	subject_ = subject;
 	pairValid_ = false;

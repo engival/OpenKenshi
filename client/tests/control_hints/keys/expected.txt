@@ -1,0 +1,30 @@
+hints shown: Wanderer (portrait): 7 rows
+  Click  "Select Wanderer (the camera follows Wanderer)"
+  Shift+Click  "Add Wanderer to the selection"  disabled
+  Double click  "Select Wanderer and centre the camera on it"
+  Z  "Focus the camera on the selection"
+  Tab  "Select the next character"
+  Grave  "Select all characters"
+  1  "Select this character (twice: focus)"
+hints shown: Pause: 1 rows
+  Space  "Pause the game"
+hints shown: Speed x2: 1 rows
+  F3  "Set the game speed to 2"
+hints shown: Longhouse: 2 rows
+  R  "Step the floor up"
+  F  "Step the floor down"
+hints shown: Run: top speed; the quick leave the slow behind: 1 rows
+  V  "Direct drive on the selection (again: leave it)"
+hints shown: Build: 1 rows
+  B  "Open the build panel"
+hints shown: Speed x2: 1 rows
+  F9  "Set the game speed to 2"
+hints shown: (no title): 0 rows
+hints shown: Wanderer (portrait): 7 rows
+  Click  "Select Wanderer (the camera follows Wanderer)"
+  Shift+Click  "Add Wanderer to the selection"  disabled
+  Double click  "Select Wanderer and centre the camera on it"
+  X  "Focus the camera on the selection"
+  Tab  "Select the next character"
+  Grave  "Select all characters"
+  1  "Select this character (twice: focus)"

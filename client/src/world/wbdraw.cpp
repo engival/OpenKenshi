@@ -1,4 +1,5 @@
 #include "world/worldbuildings.hpp"
+#include "app/cpustage.hpp"
 #include "world/worldbuildings_internal.hpp"
 #include "world/foliagewind.hpp"
 
@@ -108,6 +109,9 @@ inst_vs_params_t instVsParams(const BuildingPartDef& def, int offsetFrame, const
 // A wind-aimed part (function 4, kinspect rotation_function4_wind_aim.md): a new wind starts a turn from where the part faces (at the base
 // rate; the shader adds the instance's 0.95..1.05 factor) to the new wind. The first known wind is faced at once (the exe turns from the
 // authored pose on load; we skip it).
+// The one floor-cut test for a part (see the declaration): the renderer below and the click pick (cutAway) both call it.
+bool WorldBuildings::partCutHidden(int floor, bool sign, int shown) { return floor > shown && !(sign && kSignsIndoors.get()); }
+
 void WorldBuildings::advanceMotion()
 {
 	const double dt = time_ - motionTime_;
@@ -401,12 +405,19 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 	}
 	for (;;)
 	{
-		for (const uint32_t pid : needed_) { ensurePart(pid); }
-		rerank();
-		if (!blocking) { drain(false, streamAll ? -1 : kUploadsPerFrame); break; }
+		{ CPUSTAGE_ACC("+wb.needed"); for (const uint32_t pid : needed_) { ensurePart(pid); } }
+		if (!blocking && !streamAll) { CPUSTAGE_ACC("+wb.precacheStep"); precacheStep(cam); }	// stream.precache=high: the background world precache, after every real need (kenshi-nbmu)
+		{ CPUSTAGE_ACC("+wb.rerank"); rerank(); }
+		if (!blocking) { CPUSTAGE_ACC("+wb.drain"); drain(false, streamAll ? -1 : kUploadsPerFrame); break; }
 		if (outstanding_ == 0) { break; }
 		drain(true, -1);
 	}
+	if (holdPendingAny_ && frame_ - holdFlushFrame_ >= kHoldBatch)
+	{
+		holdPendingAny_ = false; holdFlushFrame_ = frame_; holdGen_++;
+		for (const int mesh : holdPendingMeshes_) { if (meshes_[mesh].holdPending) { meshes_[mesh].holdPending = false; groundDirtyMesh(mesh); } }	// each held mesh's region, so only the things near them re-run their ground ray (kenshi-uxmu)
+		holdPendingMeshes_.clear();
+	}	// the precache's held moves (holdMoved)
 	stats_.pending = (size_t)outstanding_;	// decodes, and the creates queued in the stream lane that promote() has not seen run
 	for (const auto& [isMesh, id] : uploading_) { stats_.pending += (isMesh ? meshes_[id].state : textures_[id].state) == Uploading; }
 
@@ -556,7 +567,7 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 				if (def.sign && !furniture && shown < b.maxFloor && !kSignsIndoors.get()) { continue; }
 				if (rt.openHide && anyOpen) { continue; }	// the black cavity lining behind an opening this switch opened (render.open_windows; draw and shadow)
 				// a part the floor cut hides is not drawn, but keeps casting its shadow (not the cut floor's black cap, not its lights / effects)
-				const bool cutHidden = (furniture ? furnitureFloor : def.floor) > shown && !(def.sign && kSignsIndoors.get());	// a sign on a hidden floor still draws when the option is on (the original's signs ignore the cut)
+				const bool cutHidden = partCutHidden(furniture ? furnitureFloor : def.floor, def.sign, shown);
 				if (cutHidden && (def.blackCap || shadowFar <= 0)) { continue; }
 				if (def.blackCap && def.floor == shown && shown < b.maxFloor) { continue; }	// the cut floor's black cap (BuildingPartDef::blackCap)
 				if (!cutHidden && (furniture || def.kind == 1 || night) && !c.far) { for (uint32_t k = 0; k < def.lightCount; k++) { addLight(b, ii, def, def.firstLight + k, cam, planes, maxDist); } }

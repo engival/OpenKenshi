@@ -4,6 +4,7 @@
 // (kenshi-k16.2.369.9; the slice plan on kenshi-k16.2.369.2). The App state is host/app.hpp's.
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "app/config.hpp"
@@ -39,7 +40,7 @@ extern const cfg::Bool kOccluderGhost;
 extern const cfg::Bool kShadowCache;
 extern const cfg::Float kShadowSoft;
 extern const cfg::Int kShadowStaticBudget;
-extern const cfg::Float kStreamMs;
+extern const cfg::Float kStreamMs, kPrecacheMs;
 extern const cfg::Int kVengeBeamsMax;
 extern const cfg::Bool kVengeBeamsGate;
 extern const cfg::Bool kStreamPriority, kLoadGate;
@@ -60,6 +61,12 @@ void hover_cursor();
 void route_preview_frame();
 void route_preview_order(const double goal[3], uint32_t seq);
 void route_preview_arrived(uint32_t seq);
+// The road editor (dev/roadedit.cpp, kenshi-ix9r; no-ops without KCLIENT_DEV_TOOLS): fly the free camera to the next / previous suspect marker; the `roads dump` line
+void roads_step(int dir);
+void roads_select_suspect(int index);	// the roads panel's row: fly to and select that suspect (kenshi-tqtd)
+bool roads_pointer_to(int road, int marker);	// the script's `roads point`: the pointer onto that marker's handle, false when off screen
+std::string roads_dump();
+std::string roads_list();	// `roads list`: every suspect with its kind
 void live_profile();
 void live_squads();
 void loading_shot();

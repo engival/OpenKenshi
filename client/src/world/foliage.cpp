@@ -76,6 +76,7 @@ struct Foliage::Context
 	kworld::Towns towns;
 	std::vector<kworld::FeatureRecord> records;	// every FOLIAGE_MESH record, resolved
 	std::unordered_map<std::string, int> recordIndex;
+	std::vector<char> pickTarget;	// per record: 1 when an instance is interactable (a deposit), the only foliage the pick hits (kenshi-2wuu)
 	std::vector<float> viewClass;	// per record: draw distance in view-range units, before the `foliage range` multiplier (see viewClassOf)
 	size_t drawable = 0;
 	double loadMs = 0;
@@ -98,7 +99,7 @@ void Foliage::init(WorldBuildings* wb, const std::string& dataDir)
 			kworld::BiomeMap biomes = kworld::BiomeMap::load(dataDir_ + "/newland/land/biomemap.png");
 			kworld::Features features = kworld::Features::join(gd, dataDir_);
 			kworld::Towns towns = kworld::Towns::join(gd, dataDir_);
-			std::unique_ptr<Context> c(new Context{ std::move(gd), std::move(terrain), std::move(biomes), std::move(features), std::move(towns), {}, {}, {}, 0, 0 });
+			std::unique_ptr<Context> c(new Context{ std::move(gd), std::move(terrain), std::move(biomes), std::move(features), std::move(towns), {}, {}, {}, {}, 0, 0 });
 			const std::int32_t type = kworld::itemTypeByName("FOLIAGE_MESH");
 			for (const kdata::Record& r : c->gd.records())
 			{
@@ -106,6 +107,36 @@ void Foliage::init(WorldBuildings* wb, const std::string& dataDir)
 				c->recordIndex.emplace(r.stringID, (int)c->records.size());
 				c->records.push_back(kworld::resolveFeatureRecord(c->gd, r.stringID));
 				c->drawable += !c->records.back().meshes.empty();
+			}
+			// Pick targets (kenshi-2wuu, user 2026-11-22: "trees aren't clickable at all"): a foliage instance is a pick target only when it is interactable. Today that is
+			// a deposit: the record's `building type` names a BUILDING that `is foliage` and whose functionality produces (and consumes nothing) with a `world resource
+			// mining` kind -- the sim's own test for a wild producer (ksim producers.cpp ProducerFoliage). Decided once per record from the data; no name list.
+			c->pickTarget.assign(c->records.size(), 0);
+			{
+				size_t targets = 0, byKind[8] = {};
+				const auto live = [](const kdata::Record& rec, const char* cat) { const kdata::RefCategory* g = rec.findRefs(cat); if (!g) { return false; } for (const auto& e : g->entries) { if (e.v0 != kdata::kReferenceRemoved) { return true; } } return false; };
+				for (size_t i = 0; i < c->records.size(); i++)
+				{
+					const kdata::Record* rec = c->gd.find(c->records[i].recordID);
+					const kdata::RefCategory* bt = rec ? rec->findRefs("building type") : nullptr;
+					if (!bt) { continue; }
+					for (const auto& e : bt->entries)
+					{
+						const kdata::Record* b = e.v0 == kdata::kReferenceRemoved ? nullptr : c->gd.find(e.targetID);
+						const kdata::RefCategory* fn = b ? b->findRefs("functionality") : nullptr;
+						const kdata::Record* f = nullptr;
+						if (fn) { for (const auto& fe : fn->entries) { if (fe.v0 == kdata::kReferenceRemoved) { continue; } f = c->gd.find(fe.targetID); break; } }
+						const int kind = f ? f->intOr("world resource mining", 0) : 0;
+						if (b && b->boolOr("is foliage", false) && f && live(*f, "produces") && !live(*f, "consumes") && kind != 0)
+						{
+							c->pickTarget[i] = 1;
+							targets++;
+							byKind[std::clamp(kind, 0, 7)]++;
+							break;
+						}
+					}
+				}
+				fprintf(stderr, "foliage pick targets: %zu of %zu FOLIAGE_MESH records (mining kinds 1:%zu 2:%zu 3:%zu 4:%zu 5:%zu 6:%zu), %zu with a mesh\n", targets, c->records.size(), byKind[1], byKind[2], byKind[3], byKind[4], byKind[5], byKind[6], c->drawable);
 			}
 			// Draw distance per record (FOLIAGE_SCALE.md section 3): the farthest `visibility range` class of a layer that lists it
 			// (directly or through a parent's `meshes`); wind layers cap the class at FAR. Records in no layer count as FAR.
@@ -872,6 +903,7 @@ bool Foliage::pickRay(const double origin[3], const double dir[3], double tMin, 
 		if (t0 > t1) { continue; }
 		for (const Group& g : cell.groups)
 		{
+			if (!ctx_->pickTarget[g.record]) { continue; }	// a tree or rock is no pick target (kenshi-2wuu): the ray passes through, costing nothing
 			const double r = recordRadius(g.record) * g.maxScale;
 			if (!usable[g.record]) { continue; }
 			double n0 = t0, n1 = hit ? std::min(t1, t) : t1;

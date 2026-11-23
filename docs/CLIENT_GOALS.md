@@ -627,7 +627,10 @@ Today (interim): a lying character snaps to a frozen `crawl idle down` (simview.
   on the down character's record, so a client that loads in late or newly gains interest gets the body where it lies, with no fall.
   A get-up needs no event; the cleared down flag plays `standing up 3` from the ragdoll's final pose.
 - **Settling:** the ragdoll falls freely for about 0.5 s, then a soft pull on the pelvis toward the rest point, reaching it by about
-  1.5 s, then sleep. Collision with terrain, building hulls **and other ragdolls**: bodies stack into piles (user 2026-11-06, PHYSICS
+  1.5 s, then sleep. A drag a snag still holds short at 2.5 s is glided the rest of the way (all bodies shifted by the same small step
+  each substep) by 3.0 s, never a snap. Measured by `client/tests/kolanding/run.sh` (kenshi-ettl, 23 KOs, placements to 11.6 u): 22 of
+  23 settle within 0.13 u across at 1.52 s, the one snagged body within 0.45 u at 3.00 s (before the glide it stopped 1.1-1.3 u short at
+  3.0 s). Collision with terrain, building hulls **and other ragdolls**: bodies stack into piles (user 2026-11-06, PHYSICS
   §2 dabafbf7). Piles may differ per client; loot and pick-up distances never do (the sim measures from its logical rest point).
   Once our ragdolls exist, the sim returns to the original's tight body spacing (its footprint spread is the interim).
 - **Carried bodies:** hang from the carrier's shoulder bone in world space. Step with the game-speed-scaled dt, in substeps of at most

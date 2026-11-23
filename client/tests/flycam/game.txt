@@ -1,0 +1,12 @@
+# flycam game phase (kenshi-2n7o): boxselect.kscen, the free camera in a game. Space pauses and does not lift the camera; R still lifts it.
+100 camera char Charlie
+110 set alt 200
+150 dump clock
+# Space held: the height must not change
+160 key SPACE down
+200 key SPACE up
+210 dump clock
+# R held: the height rises
+260 key R down
+300 key R up
+320 quit

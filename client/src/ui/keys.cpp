@@ -113,9 +113,10 @@ namespace ui::keys
 			{ "debug.free_camera", "Ctrl+F", "Debug: free look camera", Group::kDebug },
 			{ "debug.autorun", "Ctrl+Q", "Debug: autorun while following", Group::kDebug },
 			{ "debug.mouse_look", "Ctrl+Tab", "Debug: mouse look", Group::kDebug },
-			{ "debug.fly_up", "PageUp", "Debug: free camera up (held)", Group::kDebug },
-			{ "debug.fly_down", "PageDown", "Debug: free camera down (held)", Group::kDebug },
-			{ "debug.fly_fast", "LShift", "Debug: free camera fast (held)", Group::kDebug },
+			// The free camera's (--fly, Ctrl+F; kenshi-fdwm): live without --debug, the host routes them only while it flies. The ids stay debug.*.
+			{ "debug.fly_up", "PageUp, R, Space", "Free camera: up (held)", Group::kFreeCamera },
+			{ "debug.fly_down", "PageDown, F, C", "Free camera: down (held)", Group::kFreeCamera },
+			{ "debug.fly_fast", "LShift", "Free camera: fast (held)", Group::kFreeCamera },
 			{ "debug.clock_pause", "Ctrl+P", "Debug: pause the sky clock", Group::kDebug },
 			{ "debug.clock_speed", "Ctrl+T", "Debug: sky clock speed", Group::kDebug },
 			{ "debug.clock_back", "Ctrl+LBracket", "Debug: sky clock back half an hour", Group::kDebug },
@@ -125,6 +126,18 @@ namespace ui::keys
 			{ "debug.weather_prev", "Ctrl+Comma", "Debug: previous weather", Group::kDebug },
 			{ "debug.weather_next", "Ctrl+Period", "Debug: next weather", Group::kDebug },
 			{ "debug.full_map", "Ctrl+M", "Debug: full-screen world map (click teleports)", Group::kDebug },
+			// The road editor (kenshi-k16.2.513): the host acts on the edit keys only while debug.roads is on.
+			{ "debug.roads", "Ctrl+F11", "Debug: road editor overlay on/off", Group::kDebug },
+			{ "debug.road_next", "Ctrl+K", "Debug: road editor next suspect marker", Group::kDebug },
+			{ "debug.road_prev", "Ctrl+J", "Debug: road editor previous suspect marker", Group::kDebug },
+			{ "debug.road_undo", "Ctrl+Z", "Debug: road editor undo", Group::kDebug },
+			{ "debug.road_redo", "Ctrl+Y", "Debug: road editor redo", Group::kDebug },
+			{ "debug.road_save", "Ctrl+S", "Debug: road editor save the fixup table", Group::kDebug },
+			{ "debug.road_insert", "Insert", "Debug: road editor insert a marker after the selected one", Group::kDebug },
+			{ "debug.road_delete", "Delete", "Debug: road editor delete the selected marker", Group::kDebug },
+			{ "debug.road_mark_ok", "Ctrl+1", "Debug: road editor mark ok", Group::kDebug },
+			{ "debug.road_mark_unsure", "Ctrl+2", "Debug: road editor mark unsure", Group::kDebug },
+			{ "debug.road_mark_bad", "Ctrl+3", "Debug: road editor mark bad", Group::kDebug },
 		};
 
 		struct Name { int key; const char* name; };
@@ -247,10 +260,12 @@ namespace ui::keys
 		bool down_[SAPP_MAX_KEYCODES] = {};
 		bool debug_ = false;	// --debug: the kDebug actions are live
 
-		// Two actions that may not share a key: the same group, or a debug key and a game one.
+		// Two actions that may not share a key: the same group, or a debug key and a game one. Build and free camera keys act only in their
+		// mode, so they clash only within their own group.
+		bool modal(Group g) { return g == Group::kBuild || g == Group::kFreeCamera; }
 		bool clash(Group a, Group b)
 		{
-			return a == b || (a != Group::kBuild && b != Group::kBuild);
+			return a == b || (!modal(a) && !modal(b));
 		}
 	}
 
@@ -333,7 +348,8 @@ namespace ui::keys
 	void setDebug(bool on) { debug_ = on; }
 	bool debug() { return debug_; }
 
-	// A kDebug action is live only with the debug gate (--debug); its bindings and conflicts stay, it never fires.
+	// A kDebug action is live only with the debug gate (--debug); its bindings and conflicts stay, it never fires. kFreeCamera ones are
+	// always live (--fly runs without --debug): the host acts on them only while the free camera is on.
 	namespace
 	{
 		bool live(const std::string& action)

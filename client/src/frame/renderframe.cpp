@@ -3,6 +3,7 @@
 #include "frame/renderframe.hpp"
 
 #include "render/arrows.hpp"
+#include "render/roadribbons.hpp"
 #include "characters/characters.hpp"
 #include "app/cpustage.hpp"
 #include "characters/creatorscene.hpp"
@@ -460,6 +461,7 @@ void render_frame(const FramePacket& pk, RenderState& rs)
 	GPU_END(rs.gpu);
 	if (!pk.worldMap) { rs.squads.render(mvp, pk.scene.pos, pk.scene.squads); }
 	if (!pk.worldMap) { rs.arrows.render(mvp); }
+	if (!pk.worldMap && !pk.editor) { roadribbons::render(pk.roads, mvp, pk.scene.pos, (float)pk.height); }	// debug.roads: the strips, depth-tested against everything opaque so far
 	// The water (water.hpp), then the foliage fade band blended over everything opaque (untimed: a section runs once a frame).
 	GPU_BEGIN(rs.gpu, GpuTimer::Water);
 	if (!pk.editor && pk.scene.waterOn && !pk.worldMap)

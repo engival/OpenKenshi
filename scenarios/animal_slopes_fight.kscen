@@ -1,0 +1,30 @@
+# animal_slopes_fight (kenshi-7g8d, kenshi-k16.2.373.4): animal_slopes' steep hillside (herdS of the k16.2.373.2 rounds) with a fight on it: a six-character player squad
+# in Mercenary Plate and katanas (goat_fight's, so the goats' hits do not down it) at the foot of the slope, three hostile Goats above it that chase down the slope
+# at them. The goats come at the squad over the 30-39 degree ground, so the hop shows while they run, and again while they stagger in the fight. Only the player is ever ordered.
+KSCEN 2
+scenario title=A%20goat%20fight%20on%20a%20steep%20slope setup=Six%20armoured%20characters%20stand%20at%20the%20foot%20of%20a%20steep%20hillside%20(about%2030-39%20degrees).%20Three%20hostile%20Goats%20stand%20200%20u%20up%20the%20slope%20and%20charge%20down%20at%20them. look_for=Watch%20the%20Goats%20run%20down%20the%20slope%20and%20fight%3A%20are%20they%20animated%2C%20and%20does%20any%20body%20hop%20or%20jerk%20along%20the%20up%20axis%20on%20the%20steep%20ground%20(the%20outside%20tester's%20goat%20report%2C%202026-11-18)%3F%20Select%20the%20squad%20and%20attack%20a%20Goat%20(right%20click%20it)%20to%20join%20the%20fight. bead=kenshi-k16.2.373.4 metrics=bodies_down,fight_s
+source save=playtest game=1.0.68 radius=0 centre=13700,10700 leader=Wanderer
+clock day=1 hour=12 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=13800 y=835 z=10700 yaw=4.71239 leader=1 player=1 chase=1 ranged=1
+char id=2 squad=1 name=Green template=1533662-rebirth.mod faction=204-gamedata.base x=13794 y=835 z=10700 yaw=4.71239 player=1 chase=1 ranged=1
+char id=3 squad=1 name=Beep template=1533662-rebirth.mod faction=204-gamedata.base x=13800 y=835 z=10694 yaw=4.71239 player=1 chase=1 ranged=1
+char id=4 squad=1 name=Ruka template=1533662-rebirth.mod faction=204-gamedata.base x=13794 y=835 z=10694 yaw=4.71239 player=1 chase=1 ranged=1
+char id=5 squad=1 name=Kang template=1533662-rebirth.mod faction=204-gamedata.base x=13806 y=835 z=10694 yaw=4.71239 player=1 chase=1 ranged=1
+char id=6 squad=1 name=Seta template=1533662-rebirth.mod faction=204-gamedata.base x=13800 y=835 z=10706 yaw=4.71239 player=1 chase=1 ranged=1
+squad id=7 name=Goat faction=3943-gamedata.base hostile=1 player=0
+char id=7 squad=7 name=Goat template=3993-gamedata.base faction=3943-gamedata.base x=13640 y=1024 z=10640 yaw=1.5708 chase=1
+char id=8 squad=7 name=Goat template=3993-gamedata.base faction=3943-gamedata.base x=13648 y=1024 z=10650 yaw=1.5708 chase=1
+char id=9 squad=7 name=Goat template=3993-gamedata.base faction=3943-gamedata.base x=13656 y=1024 z=10660 yaw=1.5708 chase=1
+item char=1 sid=2148-gamedata.base section=shirt
+item char=2 sid=2148-gamedata.base section=shirt
+item char=3 sid=2148-gamedata.base section=shirt
+item char=4 sid=2148-gamedata.base section=shirt
+item char=5 sid=2148-gamedata.base section=shirt
+item char=6 sid=2148-gamedata.base section=shirt
+item char=1 sid=476-gamedata.base section=hip level=40
+item char=2 sid=476-gamedata.base section=hip level=40
+item char=3 sid=476-gamedata.base section=hip level=40
+item char=4 sid=476-gamedata.base section=hip level=40
+item char=5 sid=476-gamedata.base section=hip level=40
+item char=6 sid=476-gamedata.base section=hip level=40

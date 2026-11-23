@@ -89,7 +89,12 @@ namespace ui
 		virtual bool focusable() const { return false; }
 		virtual bool onKey(int, bool) { return false; }
 		virtual std::string tip() const { return tooltip; }	// the tooltip under the pointer (a List answers per row)
-		virtual void hints(std::vector<HintLine>&) const {}	// its inputs for the control hints panel (default: none)
+		// Its inputs for the control hints panel: its own lines (ownHints; default none), then keyHints. Not virtual: a widget lists its own in ownHints.
+		virtual void ownHints(std::vector<HintLine>&) const {}
+		void hints(std::vector<HintLine>& out) const { ownHints(out); out.insert(out.end(), keyHints.begin(), keyHints.end()); }
+		// Host-set key rows (the keys that act on this widget, the input named as the host gives it: "1", "V", "Grave"; kenshi-5npx). The host
+		// sets them each frame from the current bindings (screens take them through their State); the UI never names a key itself.
+		std::vector<HintLine> keyHints;
 		virtual bool onChar(unsigned) { return false; }
 		virtual void onBlur() {}	// lost the keyboard focus
 
@@ -229,7 +234,7 @@ namespace ui
 		Size preferred() const override;
 		void onClick(Btn b) override;
 		void onDoubleClick(Btn b) override;
-		void hints(std::vector<HintLine>& out) const override;
+		void ownHints(std::vector<HintLine>& out) const override;
 
 	protected:
 		void paint() const override;

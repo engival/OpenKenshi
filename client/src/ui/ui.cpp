@@ -218,20 +218,35 @@ namespace ui
 			drawRich(t, f, box.x + pad, box.y + pad, tw);
 		}
 
-		// The block the hints panel shows: the hovered widget's own (the nearest at or above it that lists any), else the host's; empty when off.
+		std::string hintTitle(const Widget* w)
+		{
+			const Button* btn = dynamic_cast<const Button*>(w);
+			return btn && !btn->text.empty() ? btn->text : w->tip().substr(0, w->tip().find('\n'));
+		}
+
+		// The block the hints panel shows: the hovered widget's own lines (the nearest at or above it whose ownHints lists any), else the
+		// host's; then the key rows (keyHints) of the nearest widget at or above the pointer, up to that owner, that has any. Empty when off.
 		HintBlock currentHints()
 		{
 			if (!kControlHints.get()) { return {}; }
-			for (const Widget* w = c_.hover; w; w = w->parent())
+			const Widget* keyed = nullptr;
+			HintBlock b;
+			bool own = false;
+			for (const Widget* w = c_.hover; w && !own; w = w->parent())
 			{
-				HintBlock b;
-				w->hints(b.lines);
+				if (!keyed && !w->keyHints.empty()) { keyed = w; }
+				w->ownHints(b.lines);
 				if (b.lines.empty()) { continue; }
-				const Button* btn = dynamic_cast<const Button*>(w);
-				b.title = btn && !btn->text.empty() ? btn->text : w->tip().substr(0, w->tip().find('\n'));
-				return b;
+				b.title = hintTitle(w);
+				own = true;
 			}
-			return c_.hints.lines.empty() ? HintBlock() : c_.hints;
+			if (!own) { b = c_.hints; }
+			if (keyed)
+			{
+				if (b.lines.empty()) { b.title = hintTitle(keyed); }
+				b.lines.insert(b.lines.end(), keyed->keyHints.begin(), keyed->keyHints.end());
+			}
+			return b.lines.empty() ? HintBlock() : b;
 		}
 
 		// The panel's measures (kenshi-k16.2.294.10.1: a notch under the first cut, Kenshi_StandardFont_MediumSmall, padding 8, column gap 14).

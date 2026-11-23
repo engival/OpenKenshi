@@ -141,6 +141,9 @@ namespace ui
 			{ "BarLayerCrushed", "#33363d", "HUD slats: Crushed (approximate)" },
 			{ "HudBarTrack", "#544743", "HUD building bars: the empty part (approximate: read off the genbuilding capture)" },
 			{ "HudBarText", "#140806", "HUD building bars: the label and right text (the game's Secondary)" },
+			{ "RoadMarkOk", "#8fd18a", "Roads panel: an OK mark in the suspect list (the inset)" },
+			{ "RoadMarkUnsure", "#e0c070", "Roads panel: an UNSURE mark in the suspect list" },
+			{ "RoadMarkBad", "#ee755f", "Roads panel: a BAD mark in the suspect list" },
 			{ "HudBarSlat", "#3b322c", "HUD building panel: the spare rows' empty slats (?)" },
 			{ "HudBarEdge", "#15110e", "HUD building panel: the slats' edge (?)" },
 			{ "ItemStandard", "#e0cccc", "Item names: ungraded items (the game's)" },
@@ -689,7 +692,8 @@ namespace ui
 					{ "ProspectLow", "#59231a" }, { "ProspectMid", "#140806" }, { "ProspectHigh", "#a8b774" }, { "ProspectZone", "#492620" }, { "ProspectEnv", "#afa68b" }, { "BuildingCrafting", "#492620" }, { "HudBuildingName", "#492620" }, { "HudMoney", "#140806" },
 					{ "BuildPicked", "#bdb3a8" }, { "BuildLabel", "#140806" }, { "BuildKey", "#afa68b" },	// Build*: kinspect build.md
 					{ "ResearchName", "#492620" }, { "ResearchMissing", "#59231a" }, { "ResearchDim", "#444444" }, { "ResearchUnlock", "#a8b774" }, { "ResearchGood", "#a8b774" },
-					{ "ResearchBlocked", "#59231a" }, { "QueueText", "#b7a7a7" } };	// Research*: the exe's Title / Bad / Greyed / Good (kenshi-inspect research25_static); QueueText: Kenshi_ItemListItem's
+					{ "ResearchBlocked", "#59231a" }, { "QueueText", "#b7a7a7" },
+					{ "RoadMarkOk", "#3d5a1c" }, { "RoadMarkUnsure", "#6b4a10" }, { "RoadMarkBad", "#8c2a1c" } };	// RoadMark*: ours, darkened for the parchment like StatUp / StatDown	// Research*: the exe's Title / Bad / Greyed / Good (kenshi-inspect research25_static); QueueText: Kenshi_ItemListItem's
 					// SquadFull, TipMarkup, Hud*: the original's ink (kenshi-inspect squads13, prices15, hud_panel16)
 				for (const auto& [n, hex] : kParchment)
 				{

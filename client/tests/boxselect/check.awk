@@ -18,7 +18,7 @@ BEGIN {
 	BOX_KO = "140,430,270,630"		# over KOOne (KO'd)
 	BOX_RMB = "720,260,950,560"		# a right press mid-drag
 	BOX_PAUSED = "325,305,705,555"		# paused
-	BOX_FOLLOW = "400,455,880,650"		# following (V direct drive)
+	BOX_FOLLOW = "870,400,460,560"		# following (V direct drive)
 	BOX_FAR = "500,540,700,250"		# over FarOne at 8000 u from the camera
 	BOX_NEAR = "505,545,705,255"		# over FarOne at 7000 u
 	known[BOX_ABC] = known[BOX_DELTA] = known[BOX_EMPTY] = known[BOX_55] = known[BOX_DEAD] = 1

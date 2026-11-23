@@ -1,0 +1,27 @@
+10 set animate 1
+50 select id=@Wanderer@
+60 camera char Wanderer
+110 set simspeed 6
+120 attack id=@Raider@
+300 dump medical @Wanderer@
+450 dump medical @Wanderer@
+600 dump medical @Wanderer@
+750 dump medical @Wanderer@
+900 dump medical @Wanderer@
+1050 dump medical @Wanderer@
+1200 dump medical @Wanderer@
+1350 dump medical @Wanderer@
+1500 dump medical @Wanderer@
+1650 dump medical @Wanderer@
+1800 dump medical @Wanderer@
+1950 dump medical @Wanderer@
+2100 dump medical @Wanderer@
+2250 dump medical @Wanderer@
+2400 dump medical @Wanderer@
+2550 dump medical @Wanderer@
+2700 dump medical @Wanderer@
+2850 dump medical @Wanderer@
+1500 screenshot OUTDIR/mid.png
+3050 screenshot OUTDIR/end.png
+3100 dump chars
+3200 quit

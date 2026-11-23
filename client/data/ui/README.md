@@ -68,6 +68,7 @@ kind "text" key=value key="a value with spaces"
 - `debug.layout`: the debug window's body (`ui::DebugPanel`, F8): toggles and scenes; commands, the reply, time and weather; the keys.
 - `debugtree.layout`: the DEBUG VIEW tree window's body (`ui::DebugTree`).
 - `trailspanel.layout`: the TRAILS panel's body (`ui::TrailsPanel`).
+- `roadspanel.layout`: the ROADS panel's body (`ui::RoadsPanel`): the filter, the suspect list, the selected marker's info and mark buttons.
 - `lightspanel.layout`: the LIGHTS window's body (`ui::LightsPanel`): ALL ON, the off count, the term rows.
 - `scenarios.layout`: the playtest SCENARIOS window's body (`ui::ScenariosWindow`).
 - `notes.layout`: the playtest NOTES window's body (`ui::NotesWindow`).

@@ -1,0 +1,32 @@
+10 set animate 1
+50 select id=@Wanderer@
+60 camera char Wanderer
+110 set simspeed 6
+120 attack id=@Raider@
+600 dump clock
+600 dump medical @Wanderer@
+600 screenshot OUTDIR/r0_hurt.png
+900 dump clock
+900 dump medical @Wanderer@
+900 screenshot OUTDIR/r1_stun.png
+1300 dump chars
+1310 select id=@Medic@
+1320 interact id=@Wanderer@ 10
+1330 select id=@Wanderer@
+1700 dump clock
+1700 dump medical @Wanderer@
+1700 screenshot OUTDIR/r2_aid.png
+4000 dump clock
+4000 dump medical @Wanderer@
+4000 screenshot OUTDIR/r3_conv1.png
+6300 dump clock
+6300 dump medical @Wanderer@
+6300 screenshot OUTDIR/r4_conv2.png
+8600 dump clock
+8600 dump medical @Wanderer@
+8600 screenshot OUTDIR/r5_conv3.png
+10900 dump clock
+10900 dump medical @Wanderer@
+10900 screenshot OUTDIR/r6_conv4.png
+11000 dump chars
+11050 quit

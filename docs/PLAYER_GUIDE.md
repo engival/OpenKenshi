@@ -167,7 +167,7 @@ Mods) and a group inside it, so related settings sit together. The same grouping
 | Graphics | Draw distance | `render.building_far` |
 | Graphics | Indoor lighting (experimental) | `render.interior_light`, `render.shadow_soft`, `render.sun_smooth`, `render.sun_bounce`, `render.sun_shafts`, `render.dust_motes`, `render.lamp_beams` |
 | Graphics | Interiors | `render.interior_mask`, `render.signs_indoors` |
-| Graphics | Performance | `render.thread`, `render.char_instancing`, `gfx.vsync`, `gfx.fps_cap` |
+| Graphics | Performance | `render.thread`, `render.char_instancing`, `gfx.vsync`, `gfx.fps_cap`, `stream.precache`, `stream.precache_ms` |
 | Graphics | Shadows | `render.shadow_crossfade`, `render.shadow_cache` |
 | Post-processing | Ambient light | `post.indirect`, `post.sky_ambient`, `post.ao`, `post.moonlight` |
 | Post-processing | Colour | `post.vibrance`, `post.warmth`, `post.posterize`, `post.dither` |
@@ -211,6 +211,31 @@ Mods) and a group inside it, so related settings sit together. The same grouping
 | Debug (F8 > Settings) | Trails | `debug.trails`, `debug.trails_seconds`, `debug.trails_dump` |
 | Debug (F8 > Settings) | UI development | `ui.layout_reload` |
 | Debug (F8 > Settings) | kui_demo | `demo.volume`, `demo.gamma`, `demo.subtitles`, `demo.name` |
+
+**Road editor, step 1** (`--debug`, `debug.roads` / `Ctrl+F11`, default off; kenshi-ix9r, parent kenshi-k16.2.513). Draws the original's road network
+(`kworld::RoadNetwork`, the sim's own loader): a ribbon on the terrain (the road width is 100 u for every road until the loader gives the real width, kenshi-k16.6.711),
+darker with distance and faded out toward 12000 u, the parts hidden behind terrain dimmed and dashed (`debug.road_ribbon`, default on; off gives the thin 1-px lines of step 1).
+`debug.road_color` (kenshi-5t9w) picks the colour: `direction` (default) is each segment's compass heading on a colour wheel (the wheel with N / E / S / W is in the
+bottom-left corner), drawn as a half-width strip from the centre line out to the segment's right-hand side (right-hand traffic seen from above), so two roads running opposite
+ways over one stretch fill both sides, a road that overshoots and doubles back shows on one side then the other, and a same-direction duplicate is hatched; `gradient` is
+start junction green to end violet; `distance` is one colour darker with distance. A suspect segment is outlined in red in every mode. A thin yellow stem
+joins a marker to its own data height when that is off the ground. A small cross on each marker and an orange diamond on each road's two junction ends
+(both grow with the ribbon, with an on-screen minimum), and the suspect markers in red. A suspect is a marker whose two legs are over twice the chord of its neighbours and turn back over 140 degrees
+(the rules of `hub_sanity/outliers.py`); they are ranked by the extra path they add. `Ctrl+K` / `Ctrl+J` (`debug.road_next` / `debug.road_prev`, only while the
+overlay is on) fly the free camera to the next / previous suspect, from above at an angle with both neighbours in view; the selection is the yellow boxes.
+The marker under the cursor gets a white box, and the debug text's `roads` line gives the road (its index and junction ids), the marker, its x y z, the ratio,
+the turn and the extra path. Segments are straight; editing and saving come in a later step.
+Step 1b (kenshi-tqtd): while the overlay is on, the ROADS window lists the suspects (Rank, Road, Kind, Marker, Ratio, Turn, Extra, Mark; the Rank, Extra and Mark
+headers sort, the Show and Kind tabs filter). The kinds are `reversal` (a bent marker; listed first), `overlap` (a marker or its neighbour is shared with another
+road, within 1 u: repeated points and stacked roads) and `T-junction` (the marker lies within 1 u of another road's segment); every road through the marker is named
+in the info. A click on a row flies the camera to that suspect and selects it, as `Ctrl+K` / `Ctrl+J`, which also move the selection in the list. A left click on any marker handle in the world
+selects it, suspect or not (the nearest handle within 12 px of the pointer; the hover keeps its white box); a click on empty ground clears the selection, and in
+the editor these clicks are never move orders. The selected marker is a double yellow box with a diamond (small boxes on its neighbours) and is pinned in the window's
+info block: road, marker i of n, position, the neighbours, the suspect numbers, the junction id and road count for a road end, the roads through it, and its mark. OK / UNSURE / BAD / CLEAR in the window,
+or `Ctrl+1` / `Ctrl+2` / `Ctrl+3` (`debug.road_mark_ok|unsure|bad`), mark the selected marker: green, amber or magenta double box in the world, kept in memory per
+(road, marker) until step 2 saves them as the fixup table's mark rows. COPY puts the selected marker's `x y z` on the clipboard. Script ops: `roads on|off|next|prev|dump`
+(dump: the selection, then the marks), `roads select ROAD MARKER`, `roads row N` (the window's Nth shown row, as its click), `roads mark ok|unsure|bad|clear`,
+`roads point ROAD MARKER` (the pointer onto that handle, then `mouse down left` / `mouse up left` clicks it).
 
 **Route preview** (`--debug`, `debug.route_preview`, default off; kenshi-k16.2.331.2). With exactly one character selected, the client plans the route a
 right click at the cursor's ground point would get, with the sim's own planner (`knav::planRoute`, the call the server makes) on the navmesh tiles the
@@ -385,6 +410,12 @@ the left edge under the window; the row's title reopens it, its red X completes 
 Starting a game or a load shows the loading screen while the world round the camera streams in; the game runs paused
 under it and starts when nothing is still loading.
 
+`stream.precache` (Options > Graphics > Performance; `off` by default) set to `high` loads every static building in the world, with its interiors, furniture and features, in the background once the
+loading screen has lifted, so a far town shows no black stand-in when you reach it (a teleport, a long fly). It never delays the loading screen or
+the game: the decodes run on two loader threads, the GPU uploads take only what the nearby and in-view buildings leave of each frame
+(`stream.precache_ms`, 2 ms by default), and a building you are looking at always loads first. It holds a few GB of RAM and video memory (the figure is in `dump precache`), and what it
+loads is never unloaded while it is on. The F8 console's `dump precache` shows how much is left and the time since the lift.
+
 ## 3. In the game: the HUD and the world's UI
 
 The HUD is the fixed screen furniture. `F7` hides the whole interface and shows the world alone (the same key brings it
@@ -426,7 +457,10 @@ the mouse wheel over the bar). A portrait:
 - hovering it opens no tooltip; the name under it turns red while the character is down, and the `F6` control hints name the portrait.
 
 **Following.** The camera follows one of your characters after `Z` (focus), a double click on the character or its portrait, or a double
-number key. There is always exactly one follow target, and the floor view and the camera follow it:
+number key. There is always exactly one follow target, and the floor view and the camera follow it. Camera follow is for your own squad only: a
+double click on a stranger's cast row (or its FOLLOW button) opens the watch on them (inspect), but the camera stays where it was. A spectator session
+(no player faction) has no squad, so there the camera follows the watched character; `--follow NAME` and the script's `follow char` are test routes
+that need `--debug` or a script.
 
 - A plain click on another character's portrait moves the follow to that character, and selects only them.
 - Shift+click on a portrait adds to the selection, and the follow goes to **whoever of the selection comes first in squad order**: the order in the
@@ -487,7 +521,9 @@ Bottom left, for the selected character (or the one you last clicked to inspect)
   Then the name plate with the faction on its right. The game reports the leader, kidnapped, slave, crime and
   bounty states today; War Leader, Diplomatic Status and `[ESCAPED PRISONER]` stay hidden until the server
   models them.
-- `State:`, `Goal:` and `Encumbrance:`, the skill row in use.
+- `State:`, `Goal:` and `Encumbrance:`, the skill row in use. The skill row shows whichever applies: `Stealth:` or
+  `Athletics:` with the level, the skill of the job being done, the melee skill the character has ready, `Accuracy Error: N degrees`
+  (aiming a ranged weapon) or `Swimming: N mph`.
 - The `^` button slides the extended rows up: ATHLETICS XP, STRENGTH XP, TOUGHNESS XP, KO POINT, RUN SPEED, HUNGER RATE.
 - The medical panel: up to nine body parts with their bars and values, the Blood and Hunger rows, the status box
   ("Normal" and the other health states; its tooltip is a health sentence) and the `>` / `<` markers for food being
@@ -500,6 +536,12 @@ Hovering a row shows its explanation in the HUD's tip box when the HUD is set to
 Selecting one of your buildings replaces the status and medical panels with the building's: name and owner, its state
 ("No workers", "Output full"), rows (Town, Workers, Efficiency, ...), buttons (`[UPGRADE]`, Dismantle — a button that
 asks first says so), ticks (Battery, Power) and its bars (Condition, Power, construction materials).
+
+- **A storage** (any container building, yours or not): a left click on it fills the panel with its name, its owner,
+  `Normal`, its contents (or `[EMPTY]`; more than three kinds end in `+N more`), a Condition bar and `Workers: -`.
+  Town and a Condition value the server does not send yet are not shown.
+- **An automatic machine** (one that takes no operators, such as a well or a furnace) never shows the red
+  `No workers`: when it has nothing to do it reads `Idle`. A machine that uses power gets a `Power` slat.
 
 ### 3.6 Camera diamonds
 
@@ -517,12 +559,13 @@ asks first says so), ticks (Battery, Power) and its bars (Condition, Power, cons
   the view always shows the floor the character is on: through a building's doorway it becomes that building's
   floor (the ground floor at the front door), on a roof deck the top floor, outdoors floor 0. On a staircase it
   stays on the floor the character came from until a switch line, then shows the floor it is heading to: walking up the
-  view switches two steps below the top, walking down one step below the top, and turning round on the stairs
+  view switches four steps below the top, walking down two steps below the top, and turning round on the stairs
   switches it back. Stopping on the stairs shows whichever side of the line the feet are on. Where you click never
   changes the level, only the character's own position does. The character you follow is always drawn.
-  `R` / `F` step the level and it stays there until the character's next door, staircase or roof crossing; a double
-  click on the character, or `V` / `Z`, re-follows and puts the view back on its floor. With the camera free
-  the level is yours alone.
+  `R` / `F` (or the floor diamond) step the level and end the follow: the camera stays exactly where it is, in the free
+  camera, and the stepped level is yours alone (a pan key, `W` `A` `S` `D`, ends the follow the same way; rotating and zooming do not).
+  A double click on the character, or `V` / `Z`, follows it again and puts the view back on its floor. In direct drive `R` / `F` and the
+  floor diamond do nothing: they neither step the floor nor end the drive, and the floor follows the character.
 - The **move speed diamond** picks the selection's pace: Walk, Jog, Run, Group (everyone keeps to the slowest member's
   pace, in formation). Its tooltips name the modes.
 
@@ -808,22 +851,37 @@ follows the selection; pin it (the caption's pin) and it stays on the character 
 
 ## 5. Orders, selection and the camera (the mouse)
 
-- **Left click** a character selects it; Shift adds or removes it. Left clicking a character that is not yours
+- **Left click** a character selects it; Shift adds it to the selection. Left clicking a character that is not yours
   inspects it in the status and medical panels instead. Left clicking an item label picks the item up; a container's
-  label opens it; a production building's label opens its window.
+  label opens it (a locked container's label picks the lock); a left click on a container opens its window alone (a locked one picks the lock); a production building's label opens its window. A left click on the ground or on nothing clears the selection (Shift keeps it). Trees and rocks do not catch the cursor or the click: the click passes
+  to the ground, building or character behind them. Ore deposits (the rocks you can mine) still pick.
 - **Right click** acts on what is under the pointer: a character is attacked, talked to or used as the cursor says; an
   item is picked up; a door opens or closes; a bed is slept in; a container opens (someone else's shows the red magnifier; a right click on someone else's container, shop counter or locked safe walks you there and says to hold `Left Alt` to steal items or pick the lock; `Alt` + right click does it. Setting `orders.foreign_walk_to` off: the hint only, no walk); the ground is a move order. Shift
   makes attack, follow and first aid into jobs, and queues the rest.
+- **Doors, beds and machines**: a right click on a mine or deposit sends the selection to mine it; on a machine with operators, to operate it;
+  a machine that needs no operators (a well, a furnace) opens its window instead. A locked door is not opened by a right click (the hold menu has
+  Unlock, Pick Lock and Bash) and a broken door has nothing to open. Shift + right click queues each of these after the current orders. The `F6` hints
+  list the click for each state.
+- **On your own characters** a right click is first aid on a hurt character of yours (Shift: the Medic job), to lift a knocked-out character of yours
+  (a carried one: put a carried character down) or, when it is dead, to loot a body; with
+  someone else selected too it is the *follow* order (Shift: the Stay close job). Shift also turns the attack on a hostile into the
+  Fight enemies job, and queues the rest. A right click on someone else's body is to loot a body. A double right click on one of
+  your own characters is direct drive (below).
+- **Portraits**: Click a portrait selects that character, Shift+click on a portrait adds it, and a double click on the character or its portrait
+  centres the camera on it; a double click on a cast row (spectating) watches that character. The `F6` hints name each of these.
 - **While sneaking**, a right click on a hostile that has not seen your character is the knock-out (**red fist**); a
   hostile that has seen it is attacked as usual (the target menu keeps Stealth KO either way).
 - **Hold right click for a moment on a target** opens its action menu where the button went down; releasing over a row
   picks it. The rows depend on the target: a character (Follow, Bodyguard, Talk / Attack, Loot, First aid, Pick up /
   Put down), an item (Pick up), a door (Open / Close, Unlock, Pick Lock, Bash), a container (Open, Take all, Pick
-  Lock), a production building (Mine, Open).
+  Lock), a production building (Mine or Operate, Open). A machine that needs no operators (a well, a furnace) has no Mine / Operate row,
+  and its right click opens its window.
 - **A prisoner locked in a cage**: the cursor over it is the red **padlock** with the chance of picking the lock (green
   `N%`), and a right click orders nothing. The menu opens on the press as two columns side by side: the prisoner's own
   rows on the left and `Prisoner Cage` on the right with `Pick Lock N%`, `Use Tools` and `Use Strength` (only the ones
   the server says your selected character can try). Picking a row sends your selection to the cage.
+- **Machine cursors**: over a machine that mines a world resource (a mine, a deposit) the cursor is the **pickaxe**; over any other
+  machine it is the **gears**.
 - **Your own buildings** (anything your faction owns, built or still a site) are drawn where the sim puts them. A site starts as a pale dithered blue ghost and fills in from the ground up as the work progresses; a finished building is solid. The cursor over one is the **build** hammer while it is a site, the spanner when it is damaged, else the plain use cursor.
 - **Camera**: right-drag looks around, middle-drag orbits, the wheel zooms (and sets the fly speed of
   the free camera). The keyboard camera keys are in section 7.
@@ -838,9 +896,15 @@ follows the selection; pin it (the caption's pin) and it stays on the character 
   (mouse look) `A` / `D` strafe instead, sideways at half the walk speed with the body keeping its facing, and `W` / `S` + `A` / `D`
   walk the diagonals (the forward walk / run clips play). The mouse looks. Option `drive.facing` (Options, Game: Direct drive; default `camera`): `travel` turns the drawn body to the way it is moving and plays the plain forward walk / run, so strafe, backpedal and the mouse are all camera-relative; where you go on screen is unchanged (only the animation). Any wheel step, `Home` or `End` leaves the drive (the floating camera on the same character, `W` `A` `S` `D` move the camera again) and zooms it that step. The camera never hides the character: a wall or the ground behind it pulls the camera in at once and it eases back
   out slowly; thin props (signs, rails, poles) fade to a see-through dither instead. Leave it with `V`, `Escape`, or a double right click on the character being driven: the camera returns to the
-  floating view centred on it. While driving, the floor and move speed diamonds wear a gold rim.
+  floating view centred on it, and that is a follow on the character (the floor follows it). While driving, the floor and move speed diamonds wear a gold rim.
   A single right click keeps its usual order; on your own character alone in the selection that is no order at all, and
   with someone else selected too it is the *follow* order. A double right click never sends the second order.
+
+- **Keys under the hints panel** (option `ui.control_hints`, `F6`): hovering a HUD control also lists the keys that do the same thing, as
+  they are bound now (a rebind in Options changes the key shown; an unbound action has no row). A portrait lists the keys that
+  focus the camera on the selection, select the next character and select all characters, and its slot key (`1`..`0`) to select this character
+  (twice: focus). The speed buttons list the keys that pause the game and set the game speed. The floor diamond lists the keys that step the
+  floor, the move speed diamond the key for direct drive on the selection, and the BUILD button the key to open the build panel.
 
 A menu or a window takes the mouse and the keys while it is up; the game keys are off until it closes.
 
@@ -968,8 +1032,14 @@ to stdout (`probe: ...` lines; `--debug` only).
   only when the detail maps are loaded).
 - `Ctrl+F3` shadows on/off; `Ctrl+G` walk mode (the camera stays at eye height on the ground) on/off.
 - `Ctrl+C` follows the selection (the follow camera); `Ctrl+F` the free camera; `Ctrl+Q` autorun while following.
-- `Ctrl+Tab` mouse look on/off (the pointer is locked); with the free camera, `PageUp` / `PageDown` move it up and down
-  and hold `Left Shift` for the fast rate. The wheel changes the fly speed.
+- `Ctrl+Tab` mouse look on/off (the pointer is locked). How the free camera (`Ctrl+F`, or `--fly`) moves: `W` and `S`
+  go forward and back along the way you face projected onto the ground plane, so the height stays the same whatever the
+  pitch (look down at a road and walk forward without diving); `A` and `D` strafe level too. `PageUp` or `R` (and `Space` with `--fly`, where there is no game to pause)
+  move it straight up and `PageDown`, `F` or `C` straight down, nothing else changes (while it flies these keys work the
+  camera, not the floor, pause or stats; outside the free camera they keep their game actions). Hold `Left Shift` for
+  the fast rate; the wheel changes the fly speed. The camera never goes below the terrain under it plus 2 units: a move
+  into a hill is not stopped, the camera slides up it. This holds after every move: the keys, the road editor's
+  next/prev, a map teleport and `--at`. (Roofs are not counted yet.) `Home` / `End` zoom along the view as before.
 - `Ctrl+M` toggles the full-screen world map; a left click on it teleports the camera there, keeping the height above
   the ground.
 - `Shift+F7` opens the `LIGHTS` window, the light debugger (a dev build; see-through, drag it by its title): one row per
@@ -1107,14 +1177,21 @@ marked *inert* is bound today but the client does not act on it yet: **not built
 | Debug | `Ctrl+F` | Free camera |
 | Debug | `Ctrl+Q` | Autorun while following |
 | Debug | `Ctrl+Tab` | Mouse look |
-| Debug | `PageUp` / `PageDown` (held) | Free camera up / down |
-| Debug | `Left Shift` (held, free camera) | Fast fly |
+| Free camera | `PageUp`, `R` (held), `Space` (held, `--fly` only) | Up (only while the free camera flies: `Ctrl+F` or `--fly`; then not floor / pause; in a game Space stays pause and does not fly) |
+| Free camera | `PageDown`, `F`, `C` (held) | Down (then not floor / stats) |
+| Free camera | `Left Shift` (held) | Fast fly |
 | Debug | `Ctrl+P` | Pause the sky clock |
 | Debug | `Ctrl+T` | Sky clock speed |
 | Debug | `Ctrl+[` / `Ctrl+]` | Sky clock back / forward half an hour |
 | Debug | `Ctrl+Shift+[` / `Ctrl+Shift+]` | Sky clock back / forward 3 hours |
 | Debug | `Ctrl+,` / `Ctrl+.` | Previous / next weather |
 | Debug | `Ctrl+M` | Full-screen world map (click teleports) |
+| Debug | `Ctrl+F11` | Road editor overlay on/off (kenshi-k16.2.513; the keys below act only while it is on) |
+| Debug | `Ctrl+K` / `Ctrl+J` | Road editor: next / previous suspect marker |
+| Debug | `Ctrl+Z` / `Ctrl+Y` | Road editor: undo / redo |
+| Debug | `Ctrl+S` | Road editor: save the fixup table |
+| Debug | `Insert` / `Delete` | Road editor: insert a marker after the selected one / delete the selected marker |
+| Debug | `Ctrl+1` / `Ctrl+2` / `Ctrl+3` | Road editor: mark ok / unsure / bad |
 | Debug | `Space`, `,` / `.`, `M`, `Escape` | In the animation lab's window only (6.2) |
 
 ## 8. Not built yet

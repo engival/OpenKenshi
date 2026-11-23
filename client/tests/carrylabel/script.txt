@@ -1,0 +1,118 @@
+# carrylabel (kenshi-pgvp): slavers_downed; the Wanderer attacks the Slaver boss, is put down and carried by the caravan. A carried body draws no name tag; the tag is back once it is put down.
+# dump namelabel id= prints carrier (the sim's) and shown (the tag drawn last frame); run.sh checks every line against each other.
+100 set animate 1
+150 camera char Wanderer
+200 attack id=@Slaver boss@
+400 dump namelabel id=@Wanderer@
+400 dump namelabel id=@Slaver boss@
+402 camera char Wanderer
+408 screenshot OUTDIR/s_400.png
+600 dump namelabel id=@Wanderer@
+600 dump namelabel id=@Slaver boss@
+602 camera char Wanderer
+608 screenshot OUTDIR/s_600.png
+800 dump namelabel id=@Wanderer@
+800 dump namelabel id=@Slaver boss@
+802 camera char Wanderer
+808 screenshot OUTDIR/s_800.png
+1000 dump namelabel id=@Wanderer@
+1000 dump namelabel id=@Slaver boss@
+1002 camera char Wanderer
+1008 screenshot OUTDIR/s_1000.png
+1200 dump namelabel id=@Wanderer@
+1200 dump namelabel id=@Slaver boss@
+1202 camera char Wanderer
+1208 screenshot OUTDIR/s_1200.png
+1400 dump namelabel id=@Wanderer@
+1400 dump namelabel id=@Slaver boss@
+1402 camera char Wanderer
+1408 screenshot OUTDIR/s_1400.png
+1600 dump namelabel id=@Wanderer@
+1600 dump namelabel id=@Slaver boss@
+1602 camera char Wanderer
+1608 screenshot OUTDIR/s_1600.png
+1800 dump namelabel id=@Wanderer@
+1800 dump namelabel id=@Slaver boss@
+1802 camera char Wanderer
+1808 screenshot OUTDIR/s_1800.png
+2000 dump namelabel id=@Wanderer@
+2000 dump namelabel id=@Slaver boss@
+2002 camera char Wanderer
+2008 screenshot OUTDIR/s_2000.png
+2200 dump namelabel id=@Wanderer@
+2200 dump namelabel id=@Slaver boss@
+2202 camera char Wanderer
+2208 screenshot OUTDIR/s_2200.png
+2400 dump namelabel id=@Wanderer@
+2400 dump namelabel id=@Slaver boss@
+2402 camera char Wanderer
+2408 screenshot OUTDIR/s_2400.png
+2600 dump namelabel id=@Wanderer@
+2600 dump namelabel id=@Slaver boss@
+2602 camera char Wanderer
+2608 screenshot OUTDIR/s_2600.png
+2800 dump namelabel id=@Wanderer@
+2800 dump namelabel id=@Slaver boss@
+2802 camera char Wanderer
+2808 screenshot OUTDIR/s_2800.png
+3000 dump namelabel id=@Wanderer@
+3000 dump namelabel id=@Slaver boss@
+3002 camera char Wanderer
+3008 screenshot OUTDIR/s_3000.png
+3200 dump namelabel id=@Wanderer@
+3200 dump namelabel id=@Slaver boss@
+3202 camera char Wanderer
+3208 screenshot OUTDIR/s_3200.png
+3400 dump namelabel id=@Wanderer@
+3400 dump namelabel id=@Slaver boss@
+3402 camera char Wanderer
+3408 screenshot OUTDIR/s_3400.png
+3600 dump namelabel id=@Wanderer@
+3600 dump namelabel id=@Slaver boss@
+3602 camera char Wanderer
+3608 screenshot OUTDIR/s_3600.png
+3800 dump namelabel id=@Wanderer@
+3800 dump namelabel id=@Slaver boss@
+3802 camera char Wanderer
+3808 screenshot OUTDIR/s_3800.png
+4000 dump namelabel id=@Wanderer@
+4000 dump namelabel id=@Slaver boss@
+4002 camera char Wanderer
+4008 screenshot OUTDIR/s_4000.png
+4200 dump namelabel id=@Wanderer@
+4200 dump namelabel id=@Slaver boss@
+4202 camera char Wanderer
+4208 screenshot OUTDIR/s_4200.png
+4400 dump namelabel id=@Wanderer@
+4400 dump namelabel id=@Slaver boss@
+4402 camera char Wanderer
+4408 screenshot OUTDIR/s_4400.png
+4600 dump namelabel id=@Wanderer@
+4600 dump namelabel id=@Slaver boss@
+4602 camera char Wanderer
+4608 screenshot OUTDIR/s_4600.png
+4800 dump namelabel id=@Wanderer@
+4800 dump namelabel id=@Slaver boss@
+4802 camera char Wanderer
+4808 screenshot OUTDIR/s_4800.png
+5000 dump namelabel id=@Wanderer@
+5000 dump namelabel id=@Slaver boss@
+5002 camera char Wanderer
+5008 screenshot OUTDIR/s_5000.png
+5200 dump namelabel id=@Wanderer@
+5200 dump namelabel id=@Slaver boss@
+5202 camera char Wanderer
+5208 screenshot OUTDIR/s_5200.png
+5400 dump namelabel id=@Wanderer@
+5400 dump namelabel id=@Slaver boss@
+5402 camera char Wanderer
+5408 screenshot OUTDIR/s_5400.png
+5600 dump namelabel id=@Wanderer@
+5600 dump namelabel id=@Slaver boss@
+5602 camera char Wanderer
+5608 screenshot OUTDIR/s_5600.png
+5800 dump namelabel id=@Wanderer@
+5800 dump namelabel id=@Slaver boss@
+5802 camera char Wanderer
+5808 screenshot OUTDIR/s_5800.png
+6000 quit

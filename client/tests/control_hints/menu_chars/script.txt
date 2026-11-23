@@ -1,0 +1,24 @@
+# the hold menu's rows on characters (chars.kscen). Alpha alone selected; the rows come from the same resolver as the right click
+95 dump medical @Alpha@
+100 hints char Alpha
+110 menuclick menu_follow Alpha
+120 menuclick menu_bodyguard Alpha
+180 charclick Alpha
+190 charclick shift Bravo
+200 hints char Bravo
+210 menuclick menu_follow Bravo
+220 menuclick menu_bodyguard Bravo
+230 hints char KOOne
+240 menuclick menu_loot KOOne
+250 menuclick menu_pick_up KOOne
+260 menuclick menu_first_aid KOOne
+270 hints char DeadOne
+280 menuclick menu_loot DeadOne
+275 hints char Bystander
+290 menuclick menu_talk Bystander
+300 menuclick menu_bodyguard Bystander
+310 menuclick menu_attack Bystander
+320 hints char Raider
+330 menuclick menu_attack Raider
+340 menuclick menu_bodyguard Raider
+350 quit

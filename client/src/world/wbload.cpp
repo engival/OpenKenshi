@@ -1,5 +1,6 @@
 #include "world/worldbuildings.hpp"
 #include "world/worldbuildings_internal.hpp"
+#include "app/config.hpp"
 #include "app/eventlog.hpp"
 
 #include <algorithm>
@@ -282,6 +283,9 @@ void WorldBuildings::shutdown()
 void WorldBuildings::setData(BuildingSet&& data)
 {
 	dataGen_++;
+	setDataGen_++;
+	meshParts_.clear();
+	groundDirtyAll();
 	topBoxGen_++;
 	data_ = std::move(data);
 	for (PartRt& rt : partRt_) { if (rt.openHas) { rq::push("buildings.open-free", [h = rt.openIbuf] { sg_destroy_buffer(h.get()); }, rq::Lane::kFrame); } }
@@ -435,12 +439,14 @@ void WorldBuildings::rerank()
 	{
 		const float s = j.isMesh ? meshes_[j.id].score : textures_[j.id].score;
 		const uint64_t f = j.isMesh ? meshes_[j.id].scoreFrame : textures_[j.id].scoreFrame;
-		j.prio = f == frame_ ? s : s + 1e7f;
+		const bool pin = j.isMesh ? meshes_[j.id].pinned : textures_[j.id].pinned;
+		const float ps = j.isMesh ? meshes_[j.id].pscore : textures_[j.id].pscore;
+		j.prio = f == frame_ ? s : pin ? ps : s + 1e7f;	// a pinned one no part needs now keeps its precache place (past every real score)
 	}
 	for (const auto& [isMesh, id] : uploading_)	// the creates waiting in the stream lane: the same, through their rq::Prio
 	{
-		if (isMesh) { MeshEntry& m = meshes_[id]; if (m.scoreFrame != frame_) { m.prio->want.store(m.score + 1e7f, std::memory_order_relaxed); } }
-		else { TexEntry& t = textures_[id]; if (t.scoreFrame != frame_) { t.prio->want.store(t.score + 1e7f, std::memory_order_relaxed); } }
+		if (isMesh) { MeshEntry& m = meshes_[id]; if (m.scoreFrame != frame_) { m.prio->want.store(m.pinned ? m.pscore : m.score + 1e7f, std::memory_order_relaxed); } }
+		else { TexEntry& t = textures_[id]; if (t.scoreFrame != frame_) { t.prio->want.store(t.pinned ? t.pscore : t.score + 1e7f, std::memory_order_relaxed); } }
 	}
 }
 
@@ -604,12 +610,24 @@ void WorldBuildings::worker()
 	for (;;)
 	{
 		Job job;
+		bool bg = false;
 		{
 			std::unique_lock<std::mutex> lk(mu_);
-			jobCv_.wait(lk, [this] { return quit_ || !jobs_.empty(); });
+			// a background job (the precache) is takeable only while fewer than kBgWorkers run: the other workers keep to the near and in-view jobs
+			auto pick = [this] {
+				auto best = jobs_.end();	// the lowest prio, the earliest of equals (a FIFO while nothing is ranked)
+				for (auto it = jobs_.begin(); it != jobs_.end(); ++it)
+				{
+					if (it->prio >= rq::kBackgroundPrio && bgBusy_ >= kBgWorkers) { continue; }
+					if (best == jobs_.end() || it->prio < best->prio) { best = it; }
+				}
+				return best;
+			};
+			auto best = jobs_.end();
+			jobCv_.wait(lk, [&] { if (quit_) { return true; } best = pick(); return best != jobs_.end(); });
 			if (quit_) { return; }
-			auto best = jobs_.begin();	// the lowest prio, the earliest of equals (a FIFO while nothing is ranked)
-			for (auto it = jobs_.begin(); it != jobs_.end(); ++it) { if (it->prio < best->prio) { best = it; } }
+			bg = best->prio >= rq::kBackgroundPrio;
+			if (bg) { bgBusy_++; }
 			job = std::move(*best);
 			jobs_.erase(best);
 		}
@@ -664,8 +682,10 @@ void WorldBuildings::worker()
 		{
 			std::lock_guard<std::mutex> lk(mu_);
 			results_.push_back(std::move(r));
+			if (bg) { bgBusy_--; }
 		}
 		resCv_.notify_all();
+		if (bg) { jobCv_.notify_one(); }	// a background slot is free: a waiting worker may take the next
 	}
 }
 
@@ -734,7 +754,7 @@ void WorldBuildings::uploadMesh(MeshEntry& m, MeshCpu& cpu, bool blocking)
 	m.radius = std::sqrt((m.bmax[0] - m.bmin[0]) * (m.bmax[0] - m.bmin[0]) + (m.bmax[1] - m.bmin[1]) * (m.bmax[1] - m.bmin[1])
 		+ (m.bmax[2] - m.bmin[2]) * (m.bmax[2] - m.bmin[2])) / 2;
 	m.state = blocking ? Ready : Uploading;
-	holdGen_++;	// the boxes and, blocking, Ready (bedRay's memo)
+	holdMoved(m, !blocking && m.pinned && m.needFrame != frame_);	// the boxes and, blocking, Ready (bedRay's memo)
 }
 
 // A decoded texture: the image and its view in a job, as uploadMesh. A blocking create is Ready at once; if sokol refuses the image the draw binds
@@ -815,6 +835,12 @@ void WorldBuildings::uploadTexture(TexEntry& t, DdsImage&& tex, bool blocking)
 void WorldBuildings::promote()
 {
 	size_t keep = 0;
+	// A created mesh or texture of the background precache (pinned, no real need names it this frame) turns Ready only on every kHoldBatch-th frame
+	// (kenshi-g3e5): each Ready bumps stateGen_ / holdGen_, which re-pack the draws, re-key the sim's ground ray, the pick boxes and the props' item
+	// heights (SimView::thingY moves with the floor that loads), and one bump a frame through the whole precache made every frame 30 % dearer
+	// (Hub: mean 12.9 -> 16.6 ms, props 0.06 -> 1.3 ms). A real need (needFrame == frame_) promotes at once. heldReady_ counts the created ones waiting.
+	const bool batchFrame = frame_ % kHoldBatch == 0;
+	heldReady_ = 0;
 	for (size_t i = 0; i < uploading_.size(); i++)
 	{
 		const auto [isMesh, id] = uploading_[i];
@@ -822,10 +848,12 @@ void WorldBuildings::promote()
 		{
 			MeshEntry& m = meshes_[id];
 			if (!m.gpu.ready()) { uploading_[keep++] = uploading_[i]; continue; }
-			if (m.state == Uploading) { m.state = Ready; stateGen_++; holdGen_++; }
+			if (m.state == Uploading && m.pinned && m.needFrame != frame_ && !batchFrame) { uploading_[keep++] = uploading_[i]; heldReady_++; continue; }
+			if (m.state == Uploading) { m.state = Ready; stateGen_++; holdGen_++; groundDirtyMesh((int)id); }
 		} else {
 			TexEntry& t = textures_[id];
 			if (!t.gpu.ready()) { uploading_[keep++] = uploading_[i]; continue; }
+			if (t.state == Uploading && t.pinned && t.needFrame != frame_ && !batchFrame && t.gpu.get().view.id != SG_INVALID_ID) { uploading_[keep++] = uploading_[i]; heldReady_++; continue; }
 			const bool ok = t.gpu.get().view.id != SG_INVALID_ID;
 			if (t.state == Uploading || !ok) { t.state = ok ? Ready : Failed; stateGen_++; }
 			if (ok && t.lane == rq::Lane::kStream) { stats_.uploadedTextures++; }
@@ -845,6 +873,7 @@ sg_view WorldBuildings::texView(int t, sg_view fallback) const
 void WorldBuildings::drain(bool wait, int maxItems)
 {
 	promote();
+	int bgTaken = 0;
 	for (int n = 0; maxItems < 0 || n < maxItems;)
 	{
 		Result r;
@@ -852,8 +881,17 @@ void WorldBuildings::drain(bool wait, int maxItems)
 			std::unique_lock<std::mutex> lk(mu_);
 			if (wait && results_.empty()) { resCv_.wait(lk, [this] { return !results_.empty() || outstanding_ == 0; }); }
 			if (results_.empty()) { return; }
-			r = std::move(results_.front());
-			results_.pop_front();
+			// a result of the background precache waits behind every other one, and at most kBgDrain of them a frame (kenshi-nbmu)
+			auto it = results_.begin();
+			if (preStarted_ && !wait) { while (it != results_.end() && resultIsBackground(*it)) { ++it; } }
+			if (it == results_.end())
+			{
+				if (bgTaken >= kBgDrain) { return; }
+				it = results_.begin();
+				bgTaken++;
+			}
+			r = std::move(*it);
+			results_.erase(it);
 		}
 		outstanding_--;
 		n++;
@@ -871,7 +909,7 @@ void WorldBuildings::drain(bool wait, int maxItems)
 			}
 #endif
 			if (r.ok) { uploadMesh(m, r.mesh, wait); stats_.uploadedMeshes++; if (!wait) { uploading_.push_back({ true, r.id }); } }
-			else { m.state = Failed; holdGen_++; }
+			else { m.state = Failed; holdMoved(m, m.pinned && m.needFrame != frame_); }
 		} else {
 			TexEntry& t = textures_[r.id];
 #ifdef KCLIENT_DEV_TOOLS
@@ -957,17 +995,25 @@ void WorldBuildings::ensurePart(uint32_t pid)
 	if (rt.mesh == -2)
 	{
 		rt.mesh = def.marker && hideMarkers ? -1 : meshFor(def.mesh);
-		holdGen_++;	// the part has its mesh (instanceHolds reads it: bedRay's memo)
+		if (rt.mesh >= 0)
+		{
+			if (meshParts_.size() < meshes_.size()) { meshParts_.resize(meshes_.size()); }
+			meshParts_[rt.mesh].push_back(pid);
+			holdMoved(rt.mesh, forcePrio_ >= 0);
+		} else { holdGen_++; }	// the part has its mesh (instanceHolds reads it: bedRay's memo)
 	}
 	if (rt.mesh < 0) { return; }
 	MeshEntry& m = meshes_[rt.mesh];
 	m.lastUsed = frame_;
+	if (forcePrio_ < 0 && m.holdPending) { m.holdPending = false; holdGen_++; groundDirtyMesh(rt.mesh); }
+	if (forcePrio_ >= 0) { m.pinned = true; m.pscore = std::min(m.pscore, forcePrio_); }
 	noteScore(m.score, m.scoreFrame, *m.prio, partPrio(pid));
+	if (forcePrio_ < 0) { m.needFrame = frame_; }
 	if (def.kind == 2 || def.stairs) { m.keepHull = true; }	// the mask hull (insideInterior) and a staircase (the floor hotspot reads its treads)
 	if (m.state == Unloaded)
 	{
 		m.state = Loading;
-		holdGen_++;	// every mesh state move bumps it (bedRay's memo, kenshi-k16.2.205.12.111)
+		holdMoved(m, forcePrio_ >= 0);	// every mesh state move bumps it (bedRay's memo, kenshi-k16.2.205.12.111)
 		queue(true, rt.mesh, m.path, partPrio(pid));
 	}
 	if (m.state == Failed) { rt.openDone = true; return; }	// nothing to classify (and the bake's render.open_windows gate must not wait for it)
@@ -1004,13 +1050,16 @@ void WorldBuildings::ensurePart(uint32_t pid)
 		if (t < 0) { continue; }
 		TexEntry& te = textures_[t];
 		te.lastUsed = frame_;
+		if (forcePrio_ >= 0) { te.pinned = true; te.pscore = std::min(te.pscore, forcePrio_); }
 		noteScore(te.score, te.scoreFrame, *te.prio, partPrio(pid));
+		if (forcePrio_ < 0) { te.needFrame = frame_; }
 		if (te.state == Unloaded)
 		{
 			te.state = Loading;
 			queue(false, t, te.file, partPrio(pid));
 		}
 	}
+	if (forcePrio_ >= 0) { return; }	// the precache only loads: the window classification (a frame-lane index buffer) waits for the part's first real need
 	resolveOpenWindows(pid);
 }
 
@@ -1086,8 +1135,9 @@ void WorldBuildings::evict()
 		for (size_t i = 0; i < meshes_.size(); i++)
 		{
 			MeshEntry& m = meshes_[i];
-			if (m.state != Ready || m.lastUsed + 120 > frame_) { continue; }
+			if (m.state != Ready || m.lastUsed + 120 > frame_ || m.pinned) { continue; }
 			stateGen_++;
+			groundDirtyMesh((int)i);	// before the state moves: the box of the Ready mesh is the region the eviction changes
 			// in its create's lane, behind the create; the lanes run a job only on the draw of the packet it was queued for or a later one, so a
 			// packet that still names the mesh (drawn again: §7.1 rule 4) is never drawn after the destroy (renderqueue.hpp)
 			rq::push("buildings.mesh-free", [h = m.gpu] { sg_destroy_buffer(h.get().vbuf); sg_destroy_buffer(h.get().ibuf); }, m.lane);
@@ -1107,7 +1157,7 @@ void WorldBuildings::evict()
 		for (size_t i = 0; i < textures_.size(); i++)
 		{
 			TexEntry& t = textures_[i];
-			if (t.state != Ready || t.lastUsed + 120 > frame_) { continue; }
+			if (t.state != Ready || t.lastUsed + 120 > frame_ || t.pinned) { continue; }
 			stateGen_++;
 			rq::push("buildings.texture-free", [h = t.gpu] { sg_destroy_view(h.get().view); sg_destroy_image(h.get().img); }, t.lane);
 			t.gpu = rq::Handle<TexGpu>();
@@ -1115,3 +1165,165 @@ void WorldBuildings::evict()
 		}
 	}
 }
+
+// ---- the background world precache (kenshi-nbmu) ----
+
+namespace
+{
+const cfg::Text kPrecache{ cfg::Group{ "Performance" }, "stream.precache", "off", { "off", "high" },
+	"Background world precache (kenshi-nbmu): high = once the load screen lifts, every static building in the world (shells, interiors, furniture, features and the parts nested under a building: meshes and textures) is decoded on loader threads and uploaded in what the near and in-view streams leave (stream.precache_ms a frame), so a far town shows no black stand-in; it holds a few GB of RAM and VRAM (see dump precache) and is never evicted. Nothing is delayed for it: the load screen, the sim and the near streams go first. off: buildings stream in as the camera reaches them" };
+
+size_t residentBytes()
+{
+	FILE* f = fopen("/proc/self/statm", "r");
+	if (!f) { return 0; }
+	unsigned long pages = 0, res = 0;
+	const int n = fscanf(f, "%lu %lu", &pages, &res);
+	fclose(f);
+	return n == 2 ? (size_t)res * (size_t)sysconf(_SC_PAGESIZE) : 0;
+}
+
+double wallNow() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+}
+
+bool WorldBuildings::resultIsBackground(const Result& r) const
+{
+	const bool pin = r.isMesh ? meshes_[r.id].pinned : textures_[r.id].pinned;
+	const uint64_t f = r.isMesh ? meshes_[r.id].scoreFrame : textures_[r.id].scoreFrame;
+	return pin && f != frame_;
+}
+
+void WorldBuildings::precacheStop()
+{
+	for (MeshEntry& m : meshes_) { m.pinned = false; m.pscore = 1e30f; }
+	for (TexEntry& t : textures_) { t.pinned = false; t.pscore = 1e30f; }
+	preLive_.clear();
+	preStarted_ = false;
+	preDone_ = false;
+}
+
+// Once a frame from update(), after the frame's own needs were queued: stream.precache=high starts at the first streaming frame (the load screen
+// is down), queues every static building's shell parts nearest the camera first, and keeps at most kPrecacheWindow jobs in flight so the decoded
+// data does not pile up in RAM ahead of the uploads.
+void WorldBuildings::precacheStep(const double cam[3])
+{
+	static uint64_t seen = ~0ull;
+	if (const uint64_t g = cfg::generation(); g != seen) { seen = g; preHigh_ = kPrecache.get() == "high"; }
+	if (!preHigh_)
+	{
+		if (preStarted_) { precacheStop(); }
+		static bool liftLogged = false;
+		if (!liftLogged) { liftLogged = true; fprintf(stderr, "kclient: precache: off, first streaming frame t=%.3f\n", wallNow()); }	// the off run's lift, the same clock as the pace file's rows (kenshi-rild)
+		return;
+	}
+	if (!preStarted_)
+	{
+		preStarted_ = true;
+		preDone_ = false;
+		preT0_ = wallNow();
+		preTDone_ = -1;
+		preLastLog_ = preT0_;
+		preRss0_ = residentBytes();
+		preBytes0_ = rq::stats().streamBytes;
+		std::vector<float> score(data_.parts.size(), 1e30f);
+		for (size_t i = 0; i < staticCount_ && i < data_.instances.size(); i++)
+		{
+			const BuildingInstance& b = data_.instances[i];
+			if (b.prop) { continue; }	// a sim item drawn as an instance is dynamic; every static building, its interiors, furniture and features count
+			const double dx = b.x - cam[0], dy = b.y - cam[1], dz = b.z - cam[2];
+			const float d = (float)std::min(std::sqrt(dx * dx + dy * dy + dz * dz), 9e5);
+			for (uint32_t k = 0; k < b.partCount; k++)
+			{
+				const uint32_t pid = data_.partRefs[b.firstPart + k];
+				if (data_.parts[pid].marker) { continue; }	// every kind: shell, interior, mask, furniture, feature
+				score[pid] = std::min(score[pid], kPrecacheBase + d);
+			}
+		}
+		preLive_.clear();
+		for (uint32_t pid = 0; pid < score.size(); pid++) { if (score[pid] < 1e29f) { preLive_.push_back(pid); } }
+		std::sort(preLive_.begin(), preLive_.end(), [&](uint32_t a, uint32_t b) { return score[a] < score[b]; });
+		preScore_ = std::move(score);
+		preTotalParts_ = preLive_.size();
+		fprintf(stderr, "kclient: precache: start t=%.3f, %zu parts of the world's buildings\n", preT0_, preTotalParts_);
+	}
+	if (preDone_) { return; }
+	size_t inflight;
+	{
+		std::lock_guard<std::mutex> lk(mu_);
+		inflight = jobs_.size() + results_.size() + uploading_.size() - heldReady_;	// a created one waiting for its batch holds no RAM
+	}
+	size_t keep = 0;
+	for (size_t i = 0; i < preLive_.size(); i++)
+	{
+		const uint32_t pid = preLive_[i];
+		const PartRt& rt = partRt_[pid];
+		// past the window only the parts already begun are looked at again (their next texture); a fresh part's first ensure queues its mesh
+		if (inflight >= kPrecacheWindow && rt.mesh == -2) { for (; i < preLive_.size(); i++) { preLive_[keep++] = preLive_[i]; } break; }
+		forcePrio_ = preScore_[pid];
+		ensurePart(pid);
+		forcePrio_ = -1;
+		bool done = rt.mesh == -1;
+		if (rt.mesh >= 0)
+		{
+			const MeshEntry& m = meshes_[rt.mesh];
+			if (m.state == Failed) { done = true; }
+			else if (m.state == Ready && rt.resolved)
+			{
+				done = true;
+				auto pending = [&](int t) { if (t >= 0 && textures_[t].state != Ready && textures_[t].state != Failed) { done = false; } };
+				for (const int t : rt.subTex) { pending(t); }
+				pending(rt.normalTex); pending(rt.tex2Tex); pending(rt.nrm2Tex);
+			}
+			if (!done) { inflight++; }
+		}
+		if (!done) { preLive_[keep++] = pid; }
+	}
+	preLive_.resize(keep);
+	const double now = wallNow();
+	if (preLive_.empty())
+	{
+		preDone_ = true;
+		preTDone_ = now - preT0_;
+		preRssDone_ = residentBytes();
+		preBytesDone_ = rq::stats().streamBytes;
+		fprintf(stderr, "kclient: precache: done t=%.3f in %.2f s since the lift; GPU creates %.0f MB, RSS %+.0f MB\n", preT0_ + preTDone_, preTDone_,
+			(double)(preBytesDone_ - preBytes0_) / 1048576.0, ((double)preRssDone_ - (double)preRss0_) / 1048576.0);
+	}
+	else if (now - preLastLog_ >= 2.0)
+	{
+		preLastLog_ = now;
+		fprintf(stderr, "kclient: precache: %zu of %zu parts left, %.1f s since the lift\n", preLive_.size(), preTotalParts_, now - preT0_);
+	}
+}
+
+#ifdef KCLIENT_DEV_TOOLS
+std::string WorldBuildings::precacheReport() const
+{
+	size_t pm = 0, pmReady = 0, pt = 0, ptReady = 0;
+	for (const MeshEntry& m : meshes_) { if (m.pinned) { pm++; pmReady += m.state == Ready; } }
+	for (const TexEntry& t : textures_) { if (t.pinned) { pt++; ptReady += t.state == Ready; } }
+	char line[512];
+	const double since = preStarted_ ? (preDone_ ? preTDone_ : wallNow() - preT0_) : 0.0;
+	snprintf(line, sizeof line, "precache: %s, %zu of %zu parts left, %.2f s since the lift%s; pinned meshes %zu/%zu ready, textures %zu/%zu ready; GPU creates %.0f MB, RSS %+.0f MB\n",
+		!preHigh_ ? "off" : !preStarted_ ? "waiting for the lift" : preDone_ ? "done" : "running", preLive_.size(), preTotalParts_, since, preDone_ ? " (done)" : "",
+		pmReady, pm, ptReady, pt, preStarted_ ? (double)((preDone_ ? preBytesDone_ : rq::stats().streamBytes) - preBytes0_) / 1048576.0 : 0.0,
+		preStarted_ ? ((double)(preDone_ ? preRssDone_ : residentBytes()) - (double)preRss0_) / 1048576.0 : 0.0);
+	// the parts the precache covers, by kind (0 shell, 1 interior, 2 mask, 3 furniture, other): how many, and how many of them have their mesh ready
+	size_t cnt[5] = {}, rdy[5] = {};
+	for (uint32_t pid = 0; pid < preScore_.size(); pid++)
+	{
+		if (preScore_[pid] >= 1e29f) { continue; }
+		const size_t k = (size_t)std::clamp(data_.parts[pid].kind, 0, 4);
+		cnt[k]++;
+		const int mi = partRt_[pid].mesh;
+		rdy[k] += mi == -1 || (mi >= 0 && meshes_[mi].state == Ready);
+	}
+	char kl[256];
+	snprintf(kl, sizeof kl, "precache kinds (parts ready/total): shell %zu/%zu, interior %zu/%zu, mask %zu/%zu, furniture %zu/%zu, other %zu/%zu\n",
+		rdy[0], cnt[0], rdy[1], cnt[1], rdy[2], cnt[2], rdy[3], cnt[3], rdy[4], cnt[4]);
+	char ml[160];
+	snprintf(ml, sizeof ml, "precache memory (any setting): RSS %.0f MB, stream-lane GPU creates since start %.0f MB\n", (double)residentBytes() / 1048576.0,
+		(double)rq::stats().streamBytes / 1048576.0);
+	return std::string(line) + kl + ml;
+}
+#endif

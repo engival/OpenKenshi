@@ -447,9 +447,18 @@ bool WorldBuildings::inSolidZone(const double p[3])
 	return false;
 }
 
-bool WorldBuildings::cutAway(const double p[3], double bottom, std::string* why)
+// Is p above building bi's floor s: for the drawn part the click hit (part, owned by bi) the renderer's own predicate; for anything else (a collision shape,
+// a prop, a character) the slab by height. kenshi-8fvf: the slab test took a part's hit point or low face as a proxy for the part's floor, and a stair
+// drawn whole from the shown floor (def.floor <= shown) had its upper treads skipped as "above the floor cut" (the user's 2026-11-22 Storm House clicks).
+bool WorldBuildings::cutAbove(uint32_t bi, int s, const double p[3], double bottom, const DrawnPart* part)
 {
-	const auto above = [&](uint32_t bi, int s) { return aboveSlab(bi, s, p, bottom); };
+	if (part && part->instance == bi) { return partCutHidden(part->def->floor, part->def->sign, s); }
+	return aboveSlab(bi, s, p, bottom);
+}
+
+bool WorldBuildings::cutAway(const double p[3], double bottom, std::string* why, const DrawnPart* part)
+{
+	const auto above = [&](uint32_t bi, int s) { return cutAbove(bi, s, p, bottom, part); };
 	const auto nameOf = [&](uint32_t bi) { const uint32_t n = data_.instances[bi].nameId; return n < data_.names.size() ? data_.names[n] : std::string("a building"); };
 	const auto inside = [&](uint32_t bi)	// an occluder: anywhere in its parts' box
 	{
@@ -504,8 +513,8 @@ int WorldBuildings::peekCutFloor(const double p[3], double bottom)
 bool WorldBuildings::stepFloor(int dir)
 {
 	// The floor model steps (kenshi-k16.2.236.14): from the floor the player sees, clamped to the building's (or the sliced ones') top, e.g. 3 on a
-	// one-floor house steps down to 0; nothing sliced or peeked: the global level 0..3 alone (always live, the original's selector). Following, the
-	// step is the player's manual level and holds until the subject's next threshold (a door, the stair latch, a roof, another building).
+	// one-floor house steps down to 0; nothing sliced or peeked: the global level 0..3 alone (always live, the original's selector). A step
+	// while following is the caller's to make (host floor_step): it ends the follow first (kenshi-k16.2.236.13 L4/L5), so the step is the free level.
 	const int top = floor_.valid ? floor_.top : 3;
 	const int base = std::min(visible_, top);
 	view_.step(dir, top);

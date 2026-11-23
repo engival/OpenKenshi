@@ -1,0 +1,41 @@
+# flycam (kenshi-wlql): --fly --debug --at Hub. KCLIENT_FLYLOG prints "flycam: frame N pos X Y Z ground G" each free-camera frame; run.sh checks the phases by frame.
+60 set alt 200
+60 set pitch -60
+# phase A, frames 80-130: W held, pitch -60: the height stays
+70 key W down
+130 key W up
+# phase B, 150-190: R held: only y changes (up)
+140 key R down
+190 key R up
+# phase C, 200-240: F held: only y changes (down)
+195 key F down
+240 key F up
+# phase D, 250-290: Space held: only y changes (up); in a game it must not pause (flykey line: swallowed)
+245 key SPACE down
+290 key SPACE up
+# phase E, 300-: a dive, low, pitch down, F and W held: never under the terrain, and it reaches the clearance
+295 set alt 30
+296 set pitch -80
+300 key F down
+300 key W down
+520 key W up
+520 key F up
+# flying: C, R and Space taps belong to the camera
+530 key C down
+531 key C up
+532 key R down
+533 key R up
+534 key SPACE down
+535 key SPACE up
+# Ctrl+F leaves the free camera (offline: the floating camera): the same keys fire their game actions
+540 key CTRL down
+541 key F down
+542 key F up
+543 key CTRL up
+550 key SPACE down
+551 key SPACE up
+552 key R down
+553 key R up
+554 key C down
+555 key C up
+560 quit

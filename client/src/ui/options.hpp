@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "app/config.hpp"
+#include "ui/keys.hpp"
 #include "ui/layout.hpp"
 #include "ui/widget.hpp"
 
@@ -65,7 +66,7 @@ namespace ui
 	private:
 		struct Tab { std::string section, group, title; Button* button; };	// group "": the whole section
 		struct Hit { size_t tab; std::string key; int score; };
-		struct Row { cfg::Info info; size_t tab; Widget* box; Widget* control; Label* value; Widget* swatch = nullptr; Widget* keys[2] = {}; Button* reset = nullptr; Label* name = nullptr; Label* needs = nullptr; };
+		struct Row { cfg::Info info; size_t tab; Widget* box; Widget* control; Label* value; Widget* swatch = nullptr; Widget* keys[keys::kSlots] = {}; Button* reset = nullptr; Label* name = nullptr; Label* needs = nullptr; };
 		OptionsScope scope_;
 		std::string sectionOf(const cfg::Info& info) const;	// the section it shows in under this scope; "" not shown
 		bool onTab(const cfg::Info& info, size_t t) const;

@@ -329,6 +329,7 @@ set(KC_SRC_PLATFORM
 set(KC_SRC_RENDER
 	src/render/ao.cpp
 	src/render/arrows.cpp
+	src/render/roadribbons.cpp
 	src/render/blooddecals.cpp
 	src/render/camera.cpp
 	src/render/colourmap.cpp
@@ -422,6 +423,7 @@ if(KCLIENT_DEV_TOOLS)
 		src/dev/gaitlog.cpp
 		src/dev/poslog.cpp
 		src/dev/pacelog.cpp
+		src/dev/catchlog.cpp
 		src/dev/playtest.cpp
 		src/dev/beadpost.cpp
 		src/dev/animlab.cpp
@@ -430,6 +432,7 @@ if(KCLIENT_DEV_TOOLS)
 		src/dev/pickboxes.cpp
 		src/dev/pickmask.cpp
 		src/dev/routepreview.cpp
+		src/dev/roadedit.cpp
 		src/dev/driftview.cpp
 		src/dev/scenetest.cpp
 		src/dev/probe.cpp
@@ -489,7 +492,7 @@ add_library(kui STATIC src/ui/xml.cpp src/ui/gfx.cpp src/ui/skin.cpp src/ui/font
 # The dev-only screens (src/ui/dev/, kenshi-k16.2.153.2): the playtest windows, the debug panel, trails panel and animation browser. The debug
 # view's decision tree (debugtree) comes with either option: main.cpp uses it under KCLIENT_DEBUG_VIEW.
 if(KCLIENT_DEV_TOOLS)
-	target_sources(kui PRIVATE src/ui/dev/debugpanel.cpp src/ui/dev/trailspanel.cpp src/ui/dev/lightspanel.cpp src/ui/dev/animbrowser.cpp src/ui/dev/scenarios.cpp src/ui/dev/notes.cpp)
+	target_sources(kui PRIVATE src/ui/dev/debugpanel.cpp src/ui/dev/trailspanel.cpp src/ui/dev/roadspanel.cpp src/ui/dev/lightspanel.cpp src/ui/dev/animbrowser.cpp src/ui/dev/scenarios.cpp src/ui/dev/notes.cpp)
 endif()
 if(KCLIENT_DEV_TOOLS OR KCLIENT_DEBUG_VIEW)
 	target_sources(kui PRIVATE src/ui/dev/debugtree.cpp)
@@ -562,6 +565,11 @@ if(KCLIENT_DEV_TOOLS)
 	add_executable(kfollowparse_test tests/followstream/parse_test.cpp src/dev/followparse.cpp)
 	target_include_directories(kfollowparse_test PRIVATE src)
 	target_compile_options(kfollowparse_test PRIVATE -Wall -Wextra)
+
+	# The inspect focus's skill-in-use row (host/skillrow.hpp): no game.
+	add_executable(kskillrow_test tests/skillrow/skillrow_test.cpp)
+	target_include_directories(kskillrow_test PRIVATE src)
+	target_compile_options(kskillrow_test PRIVATE -Wall -Wextra)
 
 	# SIMLINK decoder test CLI (docs/formats/SIMLINK.md): decodes a recorded server stream, or --selftest.
 	add_executable(ksimlink_dump src/dev/tools/ksimlink_dump.cpp src/net/simlink.cpp)

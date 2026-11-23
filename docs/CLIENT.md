@@ -93,6 +93,35 @@ separately (`docs/STATE.md`, the sim coordinator). Keep this file current.
 
 ## Camera and control modes (user goal)
 
+**Governing rules** (user 2026-11-22, kenshi-k16.2.236.13). The prose below this list describes how
+it is done. Where the prose and the list disagree, the list wins.
+
+- All modes
+  - A1. The client owns presentation: the shown floor, the cut and the camera. It derives them from the
+    wire's positions and building/floor bits, and from the building geometry it loads. The sim sends no
+    presentation hints.
+  - A2. One shown-floor value applies to every sliced building.
+  - A3. Rotation and zoom never change the mode.
+- Free / RTS (floating)
+  - F1. The user owns the view: WASD pans, and R / F / the diamond set the floor.
+  - F2. The shown floor changes only when the user changes it, or when follow is entered.
+- Follow (camera lock-on)
+  - L1. Targets: only a character in the player's squad. The character's own orders (follow an NPC, move)
+    don't matter.
+  - L2. Entering follow (double click, portrait double click, F, V) runs the focus sequence: it centres on
+    the character, sets the shown floor to the character's floor and clears any manual floor choice.
+  - L3. While locked, the shown floor is the character's floor, every frame. That covers doors, roof decks
+    and the stair lines: up at the 4th step below the top, down at the 2nd.
+  - L4. Any manual camera move ends follow: WASD pan, R / F, the diamond, any other move of the focus point.
+    Rotation and zoom don't.
+  - L5. On exit the viewport stays exactly as it is and the user has control (free mode, F1/F2). A floor
+    step that ends follow applies that step.
+- Direct drive (rpg)
+  - D1. Drive is always locked onto the driven character, and the floor follows it as in L3.
+  - D2. R / F and the diamond are ignored in drive: they are not a floor step and they don't end the drive.
+    WASD steers the character.
+  - D3. Leaving drive leaves the camera in follow on that character; L1-L5 apply from then on.
+
 Kenshi is played from an angled top-down view; its free camera never follows a
 character, so the world is mostly seen from above. We keep that and add a
 close-up view of the world (`ARCHITECTURE.md` sim/client rule 4).
@@ -172,8 +201,8 @@ The M1 free fly camera is a debug tool. All input reaches the sim as commands.
    for every sliced building. **The floor view model** (`client/src/floorfollow.{hpp,cpp}`, `ff::FloorFollow`; the fable review kenshi-k16.2.236.9;
    `WorldBuildings::updateFocus` builds one sample of the camera subject per frame and shows the level it returns): one rule, no event fires once
    and is then trusted. While the camera follows a character (the V follow camera, or the RTS camera centred on one with F or a portrait double
-   click: the original's follow, k16.2.236.1) the shown level is `manual` (a level R / F stepped to) if set, else the subject's *auto floor*;
-   with the camera free it is the player's own level alone (h2v.24.6.2; the follow's end keeps the last shown level). The auto floor is resolved
+   click: the original's follow, k16.2.236.1) the shown level is the subject's *auto floor*, every frame (L3);
+   with the camera free it is the player's own level alone (h2v.24.6.2; the follow's end keeps the last shown level). There is no manual level while following: R / F / the diamond end the follow (L4/L5; `floor_step` in host/orders.cpp drops the centring, then `FloorFollow::step` sets the player's level), and in direct drive they are ignored (D2). The auto floor is resolved
    every frame, in this order, from the subject's SIM position (never the drawn, interpolated one; its y is the standing ray's ground since kenshi-k16.2.344): (1) on a flight of stairs: the stair latch's floor, in the
    flight's building whatever the wire says; (2) on a roof deck (the wire's indoors bit clear, `roofBuilding` names a building): that building's top
    floor; (3) indoors on the wire: the wire's floor; (4) outdoors: 0. The wire's bits are the sample at the *render tick* the position is interpolated
@@ -181,12 +210,11 @@ The M1 free fly camera is a debug tool. All input reaches the sim as commands.
    newest floor let a floor the feet had not yet reached settle the stair latch's origin (the climb's 0/1/0/1 flap under load, kenshi-k16.2.236.17).
    "On a flight" = the feet inside the flight's footprint and within 1.5 rises (`kOnFlightRises`) of its slope (the height interpolated from the foot
    tread to the top tread). The stair latch remembers `origin`, the floor the
-   subject boarded from (first seen mid-flight: the wire floor): feet above top - 1 rise (`kDownLineRises`) show the upper floor, below top - 2
-   rises (`kUpLineRises`) the lower, and between the two the floor that is not `origin`, so a climb flips two rises below the top and a descent
-   one rise below it, and turning round mid-flight flips back; a flip holds until the feet are half a rise (`kHoldRises`) past its line. Events:
-   the auto pair (building, floor) changing (a door, the latch, a roof, another building, a teleport), an engage (double click, portrait double
-   click, F, V, Z) and a change of subject clear `manual`; R / F / the diamond set it (held until the next door, stair or roof crossing); a load
-   restores the player's level and, with a restored subject, holds it as `manual`. The old rules (the snap on engage, the auto threshold written once
+   subject boarded from (first seen mid-flight: the wire floor): feet above top - 2 rises (`kDownLineRises`) show the upper floor, below top - 4
+   rises (`kUpLineRises`) the lower (the user's lines, kenshi-k16.2.236.13 Q3: the 4th and the 2nd step below the top), and between the two the floor that is not `origin`, so a climb flips four rises below the top and a descent
+   two rises below it, and turning round mid-flight flips back; a flip holds until the feet are half a rise (`kHoldRises`) past its line. Events:
+   a change of subject resets the latch; R / F / the diamond set the player's level and end the follow; a load
+   restores the player's level, and a followed restored subject shows its own floor. The old rules (the snap on engage, the auto threshold written once
    per crossing, the stair hotspot and its quiet zone) are in `client/retired/floor_threshold_rules.cpp`, not compiled; `client/tests/floor_threshold/run.sh`
    (live, per-frame hidden check) and `kfloor_test` (the model alone) assert on the shown sequence. The diamond shows the player's level and only
    R / F / the diamond write it; a hovered building's peek and a click through it use that level clamped to the building's
@@ -198,8 +226,8 @@ The M1 free fly camera is a debug tool. All input reaches the sim as commands.
    WorldBuildings::cutHides; user 2026-11-05: the guard on the roof at floor 0). One decision for the body, the debug tag and the
    HUD label, `main.cpp char_cut_hidden` (k16.2.264.1): the cut's geometric test AND the character's own wire floor over the
    shown level. The camera subject is the exception (k16.2.236.15): it asks the floor view model, never the wire (the wire's floor lags the
-   model's view mid-flight on a descent), and is hidden only when the model's floor is above the shown level, which needs a manual R / F step
-   above it; a followed subject is otherwise drawn on every frame (dev builds log `floor: subject hidden` per frame it is not; floor_threshold
+   model's view mid-flight on a descent), and is hidden only when the model's floor is above the shown level, which needs a floor step (R / F ends the follow, so the
+   subject is then no longer the followed one: only a free step above it hides it); a followed subject is otherwise drawn on every frame (dev builds log `floor: subject hidden` per frame it is not; floor_threshold
    asserts none). Every other character keeps the wire rule — the client's derived floor table can put a storey's start below the deck the character stands on (the Outpost
    s-IV: floor 1 at local 123.93 under a deck at 139.35), and then the geometric test alone hid the body of a character on a floor
    the renderer draws while its label stayed (`dump cut id=N` prints both). A roof deck keeps the geometric test alone, and only with the
@@ -627,7 +655,7 @@ Features:
   - `set_view` / `set_interest` (done, `SimView::view`, once the camera has gone to the sim's characters): interest radius 2000 round the camera, re-sent after 250 units of travel; set_view after 1000 units (the server quantizes to zones with hysteresis). Their event 9 answers stay off the HUD. MINE: distance triggers rather than the client-side zone check. Still to do: the camera leash.
   - Follow camera and direct drive, first cut (done; `set_follow` / `update_follow` in main.cpp). C follows the first selected character; C again returns to the free camera. The camera sits behind it at 60 units (wheel zoom 10..2000, the original's clamp), pitch -15 deg, mouse look orbits. Its yaw is smoothed (2.5/s, MINE) towards the character's yaw, or towards the first route point 15 units ahead, so waypoint corners don't snap it. On a player character: W / S drive forward / back along the camera, A / D (2 rad/s, MINE) and mouse look steer, Q toggles autorun (UNSURE: the original's key). Order 20 goes out on a change of drive, and on heading changes over 0.01 rad at most at the tick rate. A move or attack click ends autorun (the server clears drive on any ordinary order). Verified live (duel): the server applies the drive (CHAR_DYNAMIC drive 1, heading follows), the character speeds up and moves; event 8 shows "drive blocked" on the HUD. Not yet: client prediction (knav::Walker needs navmesh tiles on the client), smoothing server corrections, a gait toggle.
   - The general picker (SIMLINK §13; the original's rule, measured (docs/reference/CURSORS_LIVE.md): one ray, the nearest hit wins, no layer priority; cursor and RMB default action from one decision). Done so far:
-    - **Drawn-surface pick (kenshi-k16.2.396.5, user 2026-11-21 on ask 396.4: "Item in the world has a 3d mesh, that 3d mesh is what we ray cast against. Same system, all objects.")**: the click and hover pick the nearest DRAWN triangle. `host/pick.cpp` `ray_hit` runs `WorldBuildings::drawnPickRay` (a per-instance box broad phase over every instance: building parts, layout furniture, props, door leaves at their drawn pose, player buildings; then the mesh's triangle BVH, `pickTris_`). A hit the cut / ghost / occluder cone hides (`see_through`) restarts the ray 0.5 u past it. Pickable: parts that are not interior masks, black caps, markers or foliage-shader parts; glass / effect / particle / decal submeshes are flagged per triangle and never pick; alpha cut-outs count as solid (coarse). `pick_at` then names the hit instance (`classify_drawn`): a door leaf -> its door interactable, a prop instance -> the container / item / producer (or player building) it draws (`propsOfInstance`, nearest to the hit when a layout piece draws several), a layout piece -> the bed whose sleeping spot it holds (`bedPiece`, 6 u slack). Collision picks only foliage shells (`ray_shapes(..., foliageOnly)`: trees, rocks, deposit rocks, with the kProducerMatch rule). Characters keep their volumes (`SimView::pick`) and compete by distance with no slop (their capsules: a later step). A thing with no drawn mesh logs `pickmesh` once and cannot be picked (no sphere fallback). `debug.pick_collision` (dev) runs the old pick (`host/pickcollision.cpp`) for parity comparisons. A bed's occupant (the character on its sleeping spot) wins over the bed even when the bed's mesh is nearer (k16.2.224.3), until the character capsules (kenshi-1rnr) replace it. pick_mask's box is the picked thing's drawn mesh box (`propBox`, no slack). The next two bullets describe the OLD pick, now only `debug.pick_collision`.
+    - **Drawn-surface pick (kenshi-k16.2.396.5, user 2026-11-21 on ask 396.4: "Item in the world has a 3d mesh, that 3d mesh is what we ray cast against. Same system, all objects.")**: the click and hover pick the nearest DRAWN triangle. `host/pick.cpp` `ray_hit` runs `WorldBuildings::drawnPickRay` (a per-instance box broad phase over every instance: building parts, layout furniture, props, door leaves at their drawn pose, player buildings; then the mesh's triangle BVH, `pickTris_`). **Foliage picks only when interactable (kenshi-2wuu, user 2026-11-22: "trees aren't clickable at all. Your cursor should pass through them")**: `Foliage::pickRay` tests only records flagged at load (`Context::pickTarget`: the FOLIAGE_MESH `building type` names a BUILDING that `is foliage` with a producing functionality and a `world resource mining` kind, the sim's own wild-deposit test); trees and rocks never block the ray and the hover, click and move point go to what lies behind. A rock's navmesh hole is not snapped by the client: the sim snaps move_to to the closest navmesh point (SIMLINK 7). A hit the cut / ghost / occluder cone hides (`see_through`) restarts the ray 0.5 u past it. Pickable: parts that are not interior masks, black caps, markers or foliage-shader parts; glass / effect / particle / decal submeshes are flagged per triangle and never pick; alpha cut-outs count as solid (coarse). `pick_at` then names the hit instance (`classify_drawn`): a door leaf -> its door interactable, a prop instance -> the container / item / producer (or player building) it draws (`propsOfInstance`, nearest to the hit when a layout piece draws several), a layout piece -> the bed whose sleeping spot it holds (`bedPiece`, 6 u slack). Collision picks only foliage shells (`ray_shapes(..., foliageOnly)`: deposit rocks only, with the kProducerMatch rule). Characters keep their volumes (`SimView::pick`) and compete by distance with no slop (their capsules: a later step). A thing with no drawn mesh logs `pickmesh` once and cannot be picked (no sphere fallback). `debug.pick_collision` (dev) runs the old pick (`host/pickcollision.cpp`) for parity comparisons. A bed's occupant (the character on its sleeping spot) wins over the bed even when the bed's mesh is nearer (k16.2.224.3), until the character capsules (kenshi-1rnr) replace it. pick_mask's box is the picked thing's drawn mesh box (`propBox`, no slack). The next two bullets describe the OLD pick, now only `debug.pick_collision`.
     - Bottom layer: `CollisionPick` (collisionpick.cpp) gathers the building and foliage collision shapes (`kworld::AreaGatherer`, the shapes the navmesh bakes from) for the camera's zone cell and its neighbours, on a worker thread (Hub: 22k shapes, ~170 ms). It skips doorway shapes, culls by AABB, then tests triangles. `ray_hit` takes the nearer of that and the heightmap march. A click on a wall now sends move_to at the wall's foot, not a point inside the building.
     - **The drawn body's y eases off the stair treads** (user 2026-11-19 after kenshi-k16.2.389, kenshi-k16.2.395.1: "Walking up the stairs is a jumpy
       jittery mess, because every new stair rung makes the character teleport to a new height. It needs to interpolate between current height and new

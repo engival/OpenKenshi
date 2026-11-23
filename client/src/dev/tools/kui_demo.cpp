@@ -59,6 +59,7 @@
 #include "ui/advanced.hpp"
 #include "ui/dev/debugtree.hpp"
 #include "ui/dev/trailspanel.hpp"
+#include "ui/dev/roadspanel.hpp"
 #include "ui/dev/lightspanel.hpp"
 #include "ui/dev/animbrowser.hpp"
 #include "ui/dev/notes.hpp"
@@ -228,6 +229,10 @@ struct Demo
 	ui::TrailsPanelState trs;
 	std::string trailsLog;
 	bool showTrails = false;	// --show trails: the TRAILS panel checks (frames 119-120), the screenshot at 125
+	std::unique_ptr<ui::RoadsPanel> roads;
+	ui::RoadsPanelState rds;
+	std::string roadsLog;
+	bool showRoads = false;	// --show roads: the ROADS panel checks (frames 119-120), the screenshot at 125
 	std::unique_ptr<ui::LightsPanel> lights;
 	ui::LightsPanelState ls;
 	std::string lightsLog;
@@ -1264,6 +1269,60 @@ void build()
 			demo.trails = std::make_unique<ui::TrailsPanel>(std::move(ra));
 		}
 		{
+			// The roads panel (kenshi-nken): each action echoes into the state, as the host's next frame would.
+			ui::RoadsPanelActions ra;
+			ra.select = [](int i)
+			{
+				demo.roadsLog += "select " + std::to_string(i) + ";";
+				demo.rds.selected = i;
+				const ui::RoadsSuspect& q = demo.rds.suspects[i];
+				ui::RoadsInfo& in = demo.rds.info;
+				in = {};
+				in.valid = true;
+				in.road = q.road;
+				in.marker = q.marker;
+				in.count = q.count;
+				in.pos = q.pos;
+				in.hasPrev = q.marker > 0;
+				in.hasNext = q.marker + 1 < q.count;
+				in.prev = { q.pos.x - 41.5f, q.pos.y - 0.8f, q.pos.z + 12.0f };
+				in.next = { q.pos.x + 38.0f, q.pos.y + 1.1f, q.pos.z - 9.5f };
+				in.suspect = i;
+				if (!in.hasPrev || !in.hasNext)
+				{
+					in.junction = "J" + std::to_string(300 + i);
+					in.degree = 3;
+				}
+				in.mark = q.mark;
+				in.roads = q.kind == "overlap" ? "road 1886, road 1601 (stacked over 6 markers)" : q.kind == "T-junction" ? "road 837, road 902 (on its segment 4-5)" : q.road;
+			};
+			ra.mark = [](int m)
+			{
+				demo.roadsLog += "mark " + std::to_string(m) + ";";
+				demo.rds.info.mark = m;
+				if (demo.rds.info.suspect >= 0) { demo.rds.suspects[demo.rds.info.suspect].mark = m; }
+			};
+			ra.copy = [] { demo.roadsLog += "copy;"; };
+			ra.close = [] { demo.roadsLog += "close;"; };
+			demo.roads = std::make_unique<ui::RoadsPanel>(std::move(ra));
+			// Stand-in suspects: rank, road (index + junctions), marker / count, position, ratio, turn, extra, mark, kind.
+			struct S { const char* road; int marker, count; float x, y, z, ratio, turn, extra; int mark; const char* kind = "reversal"; };
+			const S rows[] = {
+				{ "#2107 (junctions 4205-4295)", 7, 19, -40211.4f, 1180.2f, 22715.9f, 6.84f, 162.4f, 318.5f, ui::kRoadUnmarked },
+				{ "#97 (junctions 20-23)", 0, 11, -12044.0f, 640.7f, 8150.3f, 5.10f, 171.0f, 204.9f, ui::kRoadBad },
+				{ "#1203 (junctions 402-17)", 33, 40, 18872.6f, 905.1f, -3310.8f, 4.77f, 98.6f, 411.2f, ui::kRoadUnsure },
+				{ "#655 (junctions 230-231)", 4, 9, 2290.3f, 1012.9f, 30551.0f, 3.92f, 140.2f, 96.0f, ui::kRoadOk },
+				{ "#88 (junctions 19-60)", 12, 25, -27760.5f, 1433.6f, -15402.2f, 3.31f, 120.7f, 150.3f, ui::kRoadUnmarked },
+				{ "#310 (junctions 71-72)", 2, 6, 9105.8f, 770.4f, 12893.1f, 2.85f, 88.3f, 61.7f, ui::kRoadUnmarked },
+				{ "#1544 (junctions 513-9)", 18, 22, 35012.7f, 1290.0f, 4120.6f, 2.40f, 76.9f, 255.4f, ui::kRoadBad },
+				{ "#1886 (junctions 640-641)", 9, 31, -8820.4f, 702.3f, 41077.5f, 1.04f, 3.5f, 140.0f, ui::kRoadUnmarked, "overlap" },
+				{ "#837 (junctions 288-290)", 5, 12, 14301.9f, 958.6f, -22410.0f, 1.00f, 90.0f, 95.2f, ui::kRoadUnmarked, "T-junction" },
+			};
+			int rank = 1;
+			for (const S& r : rows) { demo.rds.suspects.push_back({ rank++, r.road, r.marker, r.count, { r.x, r.y, r.z }, r.ratio, r.turn, r.extra, r.mark, r.kind }); }
+			demo.rds.status = "roads: 1820 roads, 24116 markers, 9 suspects (7 reversal, 1 overlap, 1 T-junction)";
+		}
+		{
 			// The light debugger: each action echoes into the state, as the host's next frame would (solo: that term alone; a lamp keeps the lamps switch).
 			ui::LightsPanelActions la;
 			la.set = [](const std::string& n, bool on)
@@ -2213,7 +2272,38 @@ void script()
 		const ui::HintBlock w = ui::shownHints();
 		check(ui::hoveredWidget() == &btn && w.title == "Recruit" && w.lines.size() == 2 && w.lines[0].input == "Click" && w.lines[1].label == "Hire and open the squad",
 			"hints: a hovered button's clickHint / doubleClickHint replace the host's block");
+		btn.keyHints = { { "H", "Hire by key" } };
+		const ui::HintBlock wk = ui::shownHints();
+		check(wk.lines.size() == 3 && wk.lines[1].input == "Double click" && wk.lines[2].input == "H" && wk.lines[2].label == "Hire by key",
+			"hints: a button's host key rows list after its own lines (kenshi-5npx)");
 		ui::root().remove(&btn);
+		// Host key rows on the HUD (HudState::keys, kenshi-5npx): stand-in key names as a host would give them from the bindings.
+		ui::HudKeyHints& keys = demo.hs.keys;
+		keys.portrait = { { "Z", "Focus the camera on the selection" } };
+		keys.slot = { { { "1", "Select this slot, twice: centre" } } };
+		keys.speed[2] = { { "Grave", "Step the game speed" } };
+		demo.hud->update(demo.hs);
+		ui::frame(0);
+		const ui::Rect pr = demo.hud->portrait(0)->screen();
+		send(SAPP_EVENTTYPE_MOUSE_MOVE, pr.x + pr.w / 2, pr.y + pr.h / 2);
+		const ui::HintBlock pk = ui::shownHints();
+		check(pk.title == "Beep" && pk.lines.size() == 7 && pk.lines[0].input == "Click" && pk.lines[5].input == "Z" && pk.lines[6].input == "1",
+			("hints: a portrait's key rows (every portrait, then its slot's) follow the host's block for it (" + std::to_string(pk.lines.size()) + " lines)").c_str());
+		const ui::Rect p1 = demo.hud->portrait(1)->screen();
+		send(SAPP_EVENTTYPE_MOUSE_MOVE, p1.x + p1.w / 2, p1.y + p1.h / 2);
+		check(ui::shownHints().lines.size() == 6 && ui::shownHints().lines[5].input == "Z", "hints: the second portrait: the shared rows only (no slot list for it)");
+		ui::setHints({});
+		const ui::Rect sr = demo.hud->speedButton(2)->screen();
+		send(SAPP_EVENTTYPE_MOUSE_MOVE, sr.x + sr.w / 2, sr.y + sr.h / 2);
+		const ui::HintBlock sk = ui::shownHints();
+		check(ui::hintsShown() && sk.lines.size() == 1 && sk.lines[0].input == "Grave" && sk.title == demo.hud->speedButton(2)->tip().substr(0, demo.hud->speedButton(2)->tip().find('\n')),
+			("hints: a speed button with only key rows shows them under its tip's first line (\"" + sk.title + "\")").c_str());
+		const ui::Rect s1 = demo.hud->speedButton(1)->screen();
+		send(SAPP_EVENTTYPE_MOUSE_MOVE, s1.x + s1.w / 2, s1.y + s1.h / 2);
+		check(!ui::hintsShown() && ui::shownHints().lines.empty(), "hints: a speed button without key rows lists nothing, as before");
+		demo.hs.keys = {};
+		demo.hud->update(demo.hs);
+		ui::setHints(sample);
 		sapp_event e = {};
 		e.type = SAPP_EVENTTYPE_MOUSE_LEAVE;
 		ui::event(e);
@@ -3103,7 +3193,7 @@ void script()
 	{
 		ui::Widget* f0 = demo.opts->keyField("camera_rotate_left", 0);
 		ui::Widget* f1 = demo.opts->keyField("camera_rotate_left", 1);
-		check(f0 && f1 && f0->shown(), "keys: two key boxes per action");
+		check(f0 && f1 && demo.opts->keyField("camera_rotate_left", 2) && f0->shown(), "keys: three key boxes per action");
 		if (f0 && f1)
 		{
 			const ui::KeyField* k0 = static_cast<const ui::KeyField*>(f0);
@@ -3133,6 +3223,15 @@ void script()
 			cfg::setUser("key.debug.walk", "G");
 			check(ui::keys::conflictsWith("debug.walk", { SAPP_KEYCODE_G, 0 }) == std::vector<std::string>{ "toggle_faction" }, "keys: a debug key on a game key is a conflict");
 			check(ui::keys::conflictsWith("pause", { SAPP_KEYCODE_SPACE, 0 }).empty(), "keys: a build key may share a game key");
+			check(ui::keys::bindings("debug.fly_up").size() == 3 && ui::keys::label("debug.fly_up") == "PageUp" && ui::keys::bindings("debug.fly_down").size() == 3
+				&& ui::keys::conflictsWith("floor_up", { SAPP_KEYCODE_R, 0 }).empty() && ui::keys::conflictsWith("toggle_stats", { SAPP_KEYCODE_C, 0 }).empty(),
+				"keys: the free camera's up / down (PageUp, R, Space / PageDown, F, C) share game keys, three slots");
+			ui::keys::setDebug(false);
+			keyEv(SAPP_EVENTTYPE_KEY_DOWN, SAPP_KEYCODE_R);
+			const bool flyLive = ui::keys::held("debug.fly_up") && !ui::keys::held("debug.walk");
+			keyEv(SAPP_EVENTTYPE_KEY_UP, SAPP_KEYCODE_R);
+			ui::keys::setDebug(true);
+			check(flyLive, "keys: free camera keys are live without --debug (--fly)");
 			keyEv(SAPP_EVENTTYPE_KEY_DOWN, SAPP_KEYCODE_W);
 			keyEv(SAPP_EVENTTYPE_KEY_DOWN, SAPP_KEYCODE_LEFT_SHIFT, SAPP_MODIFIER_SHIFT);
 			const bool heldW = ui::keys::held("camera_forward") && ui::keys::held("debug.fly_fast");
@@ -6723,6 +6822,114 @@ void script()
 		t.show(true);
 		sync();
 	}
+	if (demo.frame == 119 && demo.showRoads)
+	{
+		demo.roads->show(true);
+		demo.roads->update(demo.rds);
+	}
+	if (demo.frame == 120 && demo.showRoads)
+	{
+		ui::RoadsPanel& r = *demo.roads;
+		using Sort = ui::RoadsPanel::Sort;
+		auto sync = [&] { r.update(demo.rds); ui::frame(0); };
+		ui::frame(0);	// shown at 119: its first layout
+		check(r.layout().ok() && r.shown() && r.window()->caption().text == "ROADS" && r.statusLabel()->text == demo.rds.status,
+			("roads: from roadspanel.layout, the status line from the state (" + r.layout().error() + ")").c_str());
+		check(r.rows() == 9 && r.rowSuspect(0) == 0 && r.rowSuspect(8) == 8 && r.sort() == Sort::kRank && !r.descending(), "roads: one row per suspect, by rank");
+		// Every cell's text fits its column (kenshi-6t03): the longest road name and kind, the header with a sort arrow.
+		auto roadsCellsFit = [&](const char* when)
+		{
+			std::string bad;
+			auto scan = [&](const ui::Widget* row)
+			{
+				for (const auto& c : row->children())
+				{
+					const auto* l = dynamic_cast<const ui::Label*>(c.get());
+					if (l && l->font && l->font->width(l->text) > l->screen().w + 0.5f) { bad += " '" + l->text + "'"; }
+				}
+			};
+			scan(r.header(Sort::kRank)->parent());
+			for (size_t i = 0; i < r.rows(); i++) { scan(r.row(i)); }
+			check(bad.empty(), ("roads: every cell's text fits its column, " + std::string(when) + " (over:" + bad + ")").c_str());
+		};
+		roadsCellsFit("by rank");
+		check(r.kindTabs()->count() == 4 && r.kindTabs()->tab(0)->text == "ALL" && r.kindTabs()->tab(1)->text == "REVERSAL" && r.kindTabs()->tab(2)->text == "OVERLAP"
+			&& r.kindTabs()->tab(3)->text == "T-JUNCTION" && r.kindTabs()->selected() == 0 && r.kindFilter().empty(),
+			("roads: the kind tabs: ALL, then each kind in the data (" + std::to_string(r.kindTabs()->count()) + ")").c_str());
+		check(ui::roadsTurn(162.4f) == "162\u00b0" && (ui::roadsExtra(318.5f) == "318 u" || ui::roadsExtra(318.5f) == "319 u") && ui::roadsExtra(61.7f) == "62 u",
+			("roads: turn in degrees, extra in world units (" + ui::roadsTurn(162.4f) + ", " + ui::roadsExtra(61.7f) + ")").c_str());
+		check(r.markLabel(1)->text == "BAD" && r.markLabel(1)->colour == ui::roadMarkColour(ui::kRoadBad, true) && r.markLabel(3)->colour == ui::roadMarkColour(ui::kRoadOk, true)
+			&& !(r.markLabel(1)->colour == r.markLabel(3)->colour)
+			&& r.markLabel(0)->text == "-", "roads: the mark column in its colour");
+		check(!r.markButton(ui::kRoadBad)->enabled && !r.copyButton()->enabled && r.infoLabel("road")->text.rfind("Nothing selected", 0) == 0,
+			"roads: nothing selected: the buttons are off, the info says so");
+		demo.roadsLog.clear();
+		check(clickOn(r.row(2)) && demo.roadsLog == "select 2;", ("roads: a row click selects its suspect (" + demo.roadsLog + ")").c_str());
+		sync();
+		check(r.markButton(ui::kRoadBad)->enabled && r.infoLabel("road")->text == demo.rds.suspects[2].road && r.infoLabel("marker")->text == "33 of 40"
+			&& r.infoLabel("pos")->text == "18872.6 905.1 -3310.8" && r.infoLabel("mark")->text == "UNSURE" && r.infoLabel("suspect")->text.rfind("#3 ", 0) == 0,
+			("roads: the info block shows the selection (" + r.infoLabel("marker")->text + ", " + r.infoLabel("pos")->text + ")").c_str());
+		check(r.rows() == 9 && r.row(2) && r.rowSuspect(2) == 2, "roads: a selection keeps the rows");
+		check(r.infoLabel("roads")->text == demo.rds.suspects[2].road && r.infoLabel("suspect")->text.find(" reversal ") != std::string::npos
+			&& r.infoLabel("suspect")->text.find("turn 99\u00b0") != std::string::npos && r.infoLabel("suspect")->text.find("extra 411 u") != std::string::npos,
+			("roads: the Roads line and the suspect line with its kind and units (" + r.infoLabel("suspect")->text + ")").c_str());
+		demo.roadsLog.clear();
+		check(clickOn(r.markButton(ui::kRoadBad)) && clickOn(r.copyButton()) && demo.roadsLog == "mark 3;copy;", ("roads: BAD and COPY ask the host (" + demo.roadsLog + ")").c_str());
+		sync();
+		check(r.markLabel(2)->text == "BAD" && r.infoLabel("mark")->text == "BAD", "roads: the host's mark shows in the row and the info");
+		demo.roadsLog.clear();
+		check(clickOn(r.markButton(ui::kRoadUnmarked)) && demo.roadsLog == "mark 0;" && (sync(), r.markLabel(2)->text == "-"), "roads: CLEAR takes the mark off");
+		check(clickOn(r.header(Sort::kExtra)) && r.sort() == Sort::kExtra && r.descending() && (ui::frame(0), r.rowSuspect(0) == 2 && r.rowSuspect(8) == 5),
+			"roads: the Extra header sorts, largest first");
+		roadsCellsFit("sorted by Extra, largest first");
+		check(clickOn(r.header(Sort::kExtra)) && !r.descending() && (ui::frame(0), r.rowSuspect(0) == 5), "roads: again: the other way");
+		check(clickOn(r.header(Sort::kMark)) && (ui::frame(0), r.rowSuspect(0) == 1 && r.rowSuspect(1) == 6), "roads: the Mark header sorts, BAD first");
+		clickOn(r.header(Sort::kRank));
+		ui::frame(0);
+		check(r.sort() == Sort::kRank && !r.descending() && r.rowSuspect(0) == 0, "roads: back by rank");
+		check(clickOn(r.filterTabs()->tab(4)) && (ui::frame(0), r.rows() == 2 && r.rowSuspect(0) == 1 && r.rowSuspect(1) == 6), "roads: the Bad filter shows the BAD ones");
+		r.filter(ui::RoadsPanel::kUnmarked);
+		ui::frame(0);
+		check(r.rows() == 6 && r.filterTabs()->selected() == 1, ("roads: the Unmarked filter (" + std::to_string(r.rows()) + ")").c_str());
+		check(clickOn(r.kindTabs()->tab(2)) && (ui::frame(0), r.kindFilter() == "overlap" && r.rows() == 1 && r.rowSuspect(0) == 7),
+			("roads: the Overlap tab with Unmarked: the one overlap (" + std::to_string(r.rows()) + ")").c_str());
+		r.filter(ui::RoadsPanel::kBad);
+		ui::frame(0);
+		check(r.rows() == 0 && r.kindFilter() == "overlap", "roads: the two filters together: no BAD overlap");
+		r.filter(ui::RoadsPanel::kAll);
+		r.filterKind("reversal");
+		ui::frame(0);
+		check(r.rows() == 7 && r.kindTabs()->selected() == 1, ("roads: filterKind: the reversals (" + std::to_string(r.rows()) + ")").c_str());
+		r.filterKind("overlap");
+		demo.rds.suspects[7].kind = "reversal";
+		sync();
+		check(r.kindFilter().empty() && r.kindTabs()->selected() == 0 && r.kindTabs()->count() == 3 && r.rows() == 9,
+			"roads: a kind gone from the data: its tab goes, the filter back to ALL");
+		demo.rds.suspects[7].kind = "overlap";
+		sync();
+		check(r.kindTabs()->count() == 4 && r.kindTabs()->tab(2)->text == "OVERLAP", "roads: the kind back: its tab back");
+		// A non-suspect marker at a road end (a world click, the host's).
+		demo.rds.selected = -1;
+		demo.rds.info = { true, "road 77 (J5-J6)", 0, 14, { 512.0f, 820.5f, -77.25f }, false, true, {}, { 540.0f, 822.0f, -60.0f }, -1, "J5", 4, ui::kRoadUnmarked, "road 77, road 78, road 140, road 612" };
+		sync();
+		check(r.infoLabel("roads")->text == "road 77, road 78, road 140, road 612", "roads: the Roads line: every road through the marker, the host's text");
+		check(r.infoLabel("suspect")->text == "not a suspect" && r.infoLabel("junction")->text == "J5, degree 4" && r.infoLabel("prev")->text == "none (road end)",
+			("roads: any marker: not a suspect, its junction (" + r.infoLabel("junction")->text + ")").c_str());
+		demo.roadsLog.clear();
+		ui::focus(r.window());
+		check(key(SAPP_KEYCODE_ESCAPE) && !r.shown() && demo.roadsLog == "close;", ("roads: Escape closes it (" + demo.roadsLog + ")").c_str());
+		check(ui::roadsVec({ 1.25f, -2, 3 }) == "1.2 -2.0 3.0" || ui::roadsVec({ 1.25f, -2, 3 }) == "1.3 -2.0 3.0", "roads: the x y z text");
+		// The shot: the overlap (suspect 7) selected, suspect 2 back to UNSURE, by rank, all shown.
+		demo.rds.suspects[2].mark = ui::kRoadUnsure;
+		demo.rds.selected = -1;
+		demo.roadsLog.clear();
+		r.show(true);
+		sync();
+		clickOn(r.row(7));
+		sync();
+		check(r.infoLabel("roads")->text.rfind("road 1886, road 1601", 0) == 0 && r.infoLabel("suspect")->text.rfind("#8 overlap ", 0) == 0,
+			("roads: the overlap's info (" + r.infoLabel("suspect")->text + ")").c_str());
+	}
 	if (demo.frame == 119 && demo.showLights)
 	{
 		demo.lights->show(true);
@@ -7362,7 +7569,7 @@ void frame()
 	sg_end_pass();
 	sg_commit();
 	demo.frame++;
-	if (shooting && demo.frame == (demo.showTutorial || demo.showToast || demo.showJobs || demo.showProspect || demo.showMinimap || demo.showStatus || demo.showDebug || demo.showDebugSettings || demo.showCharBar || demo.showTree || demo.showTrails || demo.showLights || demo.showHints || demo.showAnim || demo.showScenarios || demo.showNotes || demo.showSpectator || demo.showBuild || demo.showAdvanced || demo.showResearch || demo.showCrafting || demo.showFaction || demo.showBuilding ? 125 : demo.showItems ? 130 : demo.showHudBuilding || demo.showGearBody || demo.showTag ? 127 : demo.showMenu ? 110 : demo.showTrade || demo.showGear ? 88 : demo.showStatsMock ? 135 : 73))	// the tooltip (0.5 s at 30 fps) is up; the gear and trade ones are hovered at 72
+	if (shooting && demo.frame == (demo.showTutorial || demo.showToast || demo.showJobs || demo.showProspect || demo.showMinimap || demo.showStatus || demo.showDebug || demo.showDebugSettings || demo.showCharBar || demo.showTree || demo.showTrails || demo.showRoads || demo.showLights || demo.showHints || demo.showAnim || demo.showScenarios || demo.showNotes || demo.showSpectator || demo.showBuild || demo.showAdvanced || demo.showResearch || demo.showCrafting || demo.showFaction || demo.showBuilding ? 125 : demo.showItems ? 130 : demo.showHudBuilding || demo.showGearBody || demo.showTag ? 127 : demo.showMenu ? 110 : demo.showTrade || demo.showGear ? 88 : demo.showStatsMock ? 135 : 73))	// the tooltip (0.5 s at 30 fps) is up; the gear and trade ones are hovered at 72
 	{
 		save_png(demo.shot);
 		sapp_quit();
@@ -7440,6 +7647,7 @@ sapp_desc sokol_main(int argc, char** argv)
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "debugsettings") { demo.showDebugSettings = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "debugtree") { demo.showTree = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "trails") { demo.showTrails = true; i++; }
+		else if (a == "--show" && more && std::string(argv[i + 1]) == "roads") { demo.showRoads = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "lights") { demo.showLights = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "toast") { demo.showToast = 1; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "toast-text") { demo.showToast = 2; i++; }

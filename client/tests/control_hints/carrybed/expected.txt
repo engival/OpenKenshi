@@ -1,0 +1,12 @@
+hints: bed "Bed": 2 actions
+  Right click  sleep  "Sleep in Bed"
+  Shift+Right click  sleep_queue  "Sleep in Bed (queued after the current orders)"
+click hint: lift
+sim click: character @Sleeper@ lift (8): sent
+hints: bed "Bed": 2 actions
+  Right click  put_in_bed  "Put in Bed"
+  Shift+Right click  put_in_bed_queue  "Put in Bed (queued after the current orders)"
+click hint: put_in_bed
+sim click: put in bed 6285449610646571553: sent
+click hint: put_in_bed_queue
+sim click: put in bed 6285449610646571553 (queued): sent

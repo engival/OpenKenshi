@@ -1,0 +1,12 @@
+# control_hints/owned (kenshi-db9v): the Heft slave shop world (progress_bars' spot) with the player's Wanderer selected, an automatic Ore Drill III (building 2098, maxOperators 0) and a
+# container of ours (879 owner=player, in a player town). The hint cases for a locked door, an automatic producer and an own container read these.
+KSCEN 2
+scenario title=Control%20hints%20drill%20and%20own%20container setup=The%20Wanderer%20beside%20the%20Heft%20slave%20shop%2C%20an%20automatic%20drill%20and%20an%20own%20container. look_for=Hint%20lists. bead=kenshi-db9v metrics=player_downed_s
+source save=playtest game=1.0.68 radius=0 centre=68331.3,-71228.1 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=68331 y=1174.3 z=-71190 yaw=0 leader=1 player=1
+town name=Old%20Village owner=player
+building id=1 sid=2098-gamedata.base x=68300 z=-71232 yaw=0 built=1
+building id=2 sid=4092-TwoStorey.mod x=68322 z=-71160 yaw=0 built=1
+container sid=879-gamedata.base x=68345 z=-71200 owner=player stock=1946-gamedata.base:30

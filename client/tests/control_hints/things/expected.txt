@@ -1,0 +1,47 @@
+hints: item "Grog": 3 actions
+  Hold right  menu_pick_up  "Pick up"  (menu row)
+  Right click  pick_up  "Pick up Grog"
+  Shift+Right click  pick_up_queue  "Pick up Grog (queued after the current orders)"
+hints: item "Grog": 4 actions
+  Hold right  menu_pick_up  "Pick up"  (menu row)
+  Click  pick_up_label  "Pick up Grog"
+  Right click  pick_up  "Pick up Grog"
+  Shift+Right click  pick_up_queue  "Pick up Grog (queued after the current orders)"
+click hint: pick_up_label
+sim click: label: pick up 40820: sent
+click hint: pick_up_label
+sim click: label: pick up 40821 (queued): sent
+sim click: character 0, 2 selected
+click hint: pick_up
+sim click: pick up 40823: sent
+click hint: pick_up_queue
+sim click: pick up 40824 (queued): sent
+hints: bed "Bed": 2 actions
+  Right click  sleep  "Sleep in Bed"
+  Shift+Right click  sleep_queue  "Sleep in Bed (queued after the current orders)"
+click hint: sleep
+sim click: sleep in bed 6285449610646571553: sent
+click hint: sleep_queue
+sim click: sleep in bed 6285449610646571553 (queued): sent
+sim click: character 0, 2 selected
+hints: producer "Copper Resource": 5 actions
+  Hold right  menu_operate  "Mine"  (menu row)
+  Hold right  menu_open  "Open"  (menu row)
+  Click  machine  "Show the machine window of Copper Resource"
+  Right click  use_producer  "Mine Copper Resource"
+  Shift+Right click  producer_queue  "Mine Copper Resource (queued after the current orders)"
+click hint: machine
+sim click: show machine 4611687120040361986
+click hint: use_producer
+sim click: use producer 4611687120040361986: sent
+click hint: producer_queue
+sim click: use producer 4611687120040361986 (queued): sent
+hints: door "Storm House Door A" (open): 3 actions
+  Hold right  menu_close  "Close"  (menu row)
+  Right click  door_close  "Close Storm House Door A"
+  Shift+Right click  door_queue  "Close Storm House Door A (queued after the current orders)"
+click hint: door_close
+sim click: door 1099511627779 close: sent
+click hint: door_queue
+sim click: door 1099511627779 close (queued): sent
+sim click: character 0, 2 selected

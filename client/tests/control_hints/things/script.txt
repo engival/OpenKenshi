@@ -1,0 +1,20 @@
+100 hints thing 40819
+110 hints thing 40819 label
+120 thingclick label 40820
+130 thingclick shift label 40821
+140 thingclick 40822
+150 thingclick right 40823
+160 thingclick shift right 40824
+200 hints thing 6285449610646571553
+210 thingclick right 6285449610646571553
+220 thingclick shift right 6285449610646571553
+230 thingclick 6285449610646571553
+300 hints thing 4611687120040361986
+310 thingclick 4611687120040361986
+320 thingclick right 4611687120040361986
+330 thingclick shift right 4611687120040361986
+400 hints thing 1099511627779
+410 thingclick right 1099511627779
+420 thingclick shift right 1099511627779
+430 thingclick 1099511627779
+500 quit

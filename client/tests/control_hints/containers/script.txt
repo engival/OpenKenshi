@@ -1,0 +1,29 @@
+# kenshi-mxn4 (control hints step 6): containers of the Hub bar (container_body: the Carrier selected). All of them are foreign here; the Safe and the Weapon Cabinet are locked.
+# `hints thing ID [label]` the list, `thingclick [right] [shift] [label] ID` the click; ALT is held with `key ALT down`.
+100 hints thing 1099511627812
+110 hints thing 1099511627812 label
+120 thingclick label 1099511627812
+130 thingclick 1099511627812
+140 thingclick right 1099511627812
+150 thingclick shift right 1099511627812
+160 key ALT down
+170 hints thing 1099511627812
+180 thingclick right 1099511627812
+190 thingclick shift right 1099511627812
+195 key ALT up
+200 hints thing 1099511627821
+210 hints thing 1099511627821 label
+220 thingclick label 1099511627821
+230 thingclick 1099511627821
+240 thingclick right 1099511627821
+250 key ALT down
+260 hints thing 1099511627821
+270 thingclick right 1099511627821
+280 thingclick shift right 1099511627821
+290 key ALT up
+300 hints thing 1099511627813
+310 thingclick right 1099511627813
+320 key ALT down
+330 thingclick right 1099511627813
+340 key ALT up
+500 quit

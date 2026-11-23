@@ -36,12 +36,12 @@ cat > "$OUT/script-shot.txt" <<EOS
 511 set alt 105
 512 set yaw -150.4
 513 set pitch -15.8
-520 key F down
-521 key F up
-522 key F down
-523 key F up
-524 key F down
-525 key F up
+520 key COMMA down
+521 key COMMA up
+522 key COMMA down
+523 key COMMA up
+524 key COMMA down
+525 key COMMA up
 530 dump floor
 540 mouse pos 876 617
 541 dump pick
@@ -51,7 +51,7 @@ cat > "$OUT/script-shot.txt" <<EOS
 600 quit
 EOS
 HEADLESS_TIMEOUT=600 nice -n 10 "$HERE/headless.sh" -W 2560 -H 1385 -- "$HERE/demo.sh" ${PORTARG[@]+"${PORTARG[@]}"} \
-	--scenario-file "$TREE/scenarios/cage_prisoner.kscen" -- --size 2560x1385 --script "$OUT/script-shot.txt" > "$OUT/run-shot.log" 2>&1 || true
+	--scenario-file "$TREE/scenarios/cage_prisoner.kscen" -- --set key.floor_up=Period --set key.floor_down=Comma --size 2560x1385 --script "$OUT/script-shot.txt" > "$OUT/run-shot.log" 2>&1 || true
 grep -E '^(pick|move marker|sim click)' "$OUT/run-shot.log" > "$OUT/shot.picks.txt" || true
 grep -q 'simlink: server: HELLO timeout' "$OUT/run-shot.log" && { echo "pick_drawn_check: FAIL (the shot run's server never said HELLO: kenshi-k16.2.268; rerun when the machine is quiet)"; exit 1; }
 
@@ -62,12 +62,12 @@ cat > "$OUT/script-tank.txt" <<EOS
 511 set alt $TANK_ALT
 512 set yaw -33.2
 513 set pitch -51
-520 key F down
-521 key F up
-522 key F down
-523 key F up
-524 key F down
-525 key F up
+520 key COMMA down
+521 key COMMA up
+522 key COMMA down
+523 key COMMA up
+524 key COMMA down
+525 key COMMA up
 530 dump floor
 540 mouse pos 658 475
 541 dump pick
@@ -75,7 +75,7 @@ cat > "$OUT/script-tank.txt" <<EOS
 600 quit
 EOS
 HEADLESS_TIMEOUT=600 nice -n 10 "$HERE/headless.sh" -W 2560 -H 1385 -- "$HERE/demo.sh" ${PORTARG[@]+"${PORTARG[@]}"} \
-	--scenario-file "$TREE/scenarios/cage_prisoner.kscen" -- --size 2560x1385 --script "$OUT/script-tank.txt" > "$OUT/run-tank.log" 2>&1 || true
+	--scenario-file "$TREE/scenarios/cage_prisoner.kscen" -- --set key.floor_up=Period --set key.floor_down=Comma --size 2560x1385 --script "$OUT/script-tank.txt" > "$OUT/run-tank.log" 2>&1 || true
 grep -E '^pick' "$OUT/run-tank.log" > "$OUT/tank.picks.txt" || true
 
 # C: the occluder ghost. order_sounds' three player characters stand on open ground north-west of the Hub bar (the Storm House at
@@ -118,11 +118,45 @@ if [ -n "$REC" ]; then
 	sed -n '1,/^530 /p' "$OUT/script-shot.txt" > "$OUT/script-replay.txt"
 	printf '%s\n' "540 click replay $REC" "600 quit" >> "$OUT/script-replay.txt"
 	HEADLESS_TIMEOUT=600 nice -n 10 "$HERE/headless.sh" -W 2560 -H 1385 -- "$HERE/demo.sh" ${PORTARG[@]+"${PORTARG[@]}"} \
-		--scenario-file "$TREE/scenarios/cage_prisoner.kscen" -- --size 2560x1385 --script "$OUT/script-replay.txt" > "$OUT/run-replay.log" 2>&1 || true
+		--scenario-file "$TREE/scenarios/cage_prisoner.kscen" -- --set key.floor_up=Period --set key.floor_down=Comma --size 2560x1385 --script "$OUT/script-replay.txt" > "$OUT/run-replay.log" 2>&1 || true
 	grep -E '^click replay' "$OUT/run-replay.log" > "$OUT/replay.picks.txt" || true
 fi
 
-cat "$OUT/shot.picks.txt" "$OUT/tank.picks.txt" "$OUT/ghost.picks.txt"
+# E (kenshi-bvtr; user 2026-11-22, kenshi-k16.2.516): the Hub's Storm House stairs. The Wanderer on floor 0 at the stairs' foot (scenarios/storm_stairs.kscen), the user's
+# right click at 1495,667 replayed from its F12 click record (below, copied as text; the record's own pick was the terrain outside across town). The renderer draws
+# a part the floor cut does not hide by its starting floor, so the staircase is drawn whole; the pick used to cut its treads by their height ("above the floor cut"),
+# skipped the ones the user clicked and ran on to the Defensive Wall IV and terrain 150 u outside. It must now pick the stair inside the house: a building hit, y within
+# the house's two floors, x/z inside its footprint (x -51286..-51071, z 2531..2774).
+# click record: n=19 frame=11413 btn=right shift=0 at=1495.0,667.0 size=2560x1385 bar=0 mode=rts eye=-51217.082,1681.427,2655.279 yaw=412.0999 pitch=-36.1593 dist=115.39
+#   focus=-51143.566,1613.341,2598.048 fovy=45 aspect=1.84838 near=6.20 from=-51212.638,1677.876,2652.821 dir=0.717200,-0.572933,-0.396702 pick=ground id=0 hit=-51025.558,1528.428,2549.342 building=0
+# kenshi-8fvf adds the user's n=24 (rts) and n=26 (follow) records, whose treads the floor cut skipped, and each of the three again from floor 1's view.
+# (the sidecar had no xray words; the lead's cone is its eye -> chest 10.8 u up, radius 40, as logicframe builds it)
+cat > "$OUT/script-stairs.txt" <<EOS
+10 set animate 1
+200 key 1 down
+201 key 1 up
+900 set pos -51166,2581
+901 set alt 68.1
+902 set yaw 52.1
+903 set pitch -36.16
+910 key Z down
+912 key Z up
+960 click replay at=1495.0,667.0 size=2560x1385 eye=-51217.082,1681.427,2655.279 yaw=412.0999 pitch=-36.1593 xray=50.78,-89.93,-73.88,40
+970 click replay at=1691.0,410.0 size=2560x1385 eye=-51204.960,1698.164,2634.485 yaw=418.8321 pitch=-54.9237 xray=53.19,-88.53,-32.18,40
+980 click replay at=1441.0,848.0 size=2560x1385 mode=follow follow=40844 eye=-51182.617,1659.512,2675.943 yaw=46.6740 pitch=-11.8487 xray=56.96,-19.63,-53.72,16
+1000 key R down
+1001 key R up
+1010 dump floor
+1060 click replay at=1495.0,667.0 size=2560x1385 eye=-51217.082,1681.427,2655.279 yaw=412.0999 pitch=-36.1593 xray=50.78,-89.93,-73.88,40
+1070 click replay at=1691.0,410.0 size=2560x1385 eye=-51204.960,1698.164,2634.485 yaw=418.8321 pitch=-54.9237 xray=53.19,-88.53,-32.18,40
+1080 click replay at=1441.0,848.0 size=2560x1385 mode=follow follow=40844 eye=-51182.617,1659.512,2675.943 yaw=46.6740 pitch=-11.8487 xray=56.96,-19.63,-53.72,16
+1200 quit
+EOS
+HEADLESS_TIMEOUT=600 nice -n 10 "$HERE/headless.sh" -W 2560 -H 1385 -- "$HERE/demo.sh" ${PORTARG[@]+"${PORTARG[@]}"} \
+	--scenario-file "$TREE/scenarios/storm_stairs.kscen" -- --size 2560x1385 --script "$OUT/script-stairs.txt" > "$OUT/run-stairs.log" 2>&1 || true
+grep -E '^click replay' "$OUT/run-stairs.log" > "$OUT/stairs.picks.txt" || true
+
+cat "$OUT/shot.picks.txt" "$OUT/tank.picks.txt" "$OUT/ghost.picks.txt" "$OUT/stairs.picks.txt"
 fail() { echo "pick_drawn_check: FAIL ($*)"; exit 1; }
 grep -q 'simlink: server: HELLO timeout' "$OUT/run-tank.log" && fail "the tank run's server never said HELLO (kenshi-k16.2.268); rerun when the machine is quiet"
 grep -q 'simlink: server: HELLO timeout' "$OUT/run-ghost.log" && fail "the ghost run's server never said HELLO (kenshi-k16.2.268); rerun when the machine is quiet"
@@ -171,4 +205,14 @@ grep -q '^clicks: [1-9][0-9]* recorded' "$OUT/shot.txt" || fail "the F12 sidecar
 grep -q '^click record: .*at=876.0,617.0 .* eye=.* yaw=.* pitch=' "$OUT/shot.txt" || fail "the sidecar's click record lacks the camera / pointer words"
 grep -q '^  ghosts: ' "$OUT/shot.record.txt" || fail "the click record has no ghosts line"
 grep -qE '^click replay: .*: MATCH$' "$OUT/replay.picks.txt" || fail "the replay of the click record did not MATCH its recorded pick"
-echo "pick_drawn_check: PASS (camera inside a shape + above-cut floor in an empty building, container above the cut, the occluder glass across the Storm House, the click record and its replay)"
+# E: the stair, not the terrain outside
+grep -q 'simlink: server: HELLO timeout' "$OUT/run-stairs.log" && fail "the stairs run's server never said HELLO (kenshi-k16.2.268); rerun when the machine is quiet"
+# kenshi-8fvf: the six replays (n=19 rts, n=24 rts, n=26 follow; each from floor 0's view and, after R, from floor 1's) all pick a building surface inside the house
+mapfile -t RES < <(sed -n 's/^click replay: at \([0-9.]*,[0-9.]*\) .*: pick ground id 0 hit \(-\{0,1\}[0-9.]*\) \(-\{0,1\}[0-9.]*\) \(-\{0,1\}[0-9.]*\) building 1;.*/\1 \2 \3 \4/p' "$OUT/stairs.picks.txt")
+[ "${#RES[@]}" -eq 6 ] || fail "the stairs run printed ${#RES[@]} in-building picks of 6 replays (the terrain outside, or a missing replay line): $(grep -c . "$OUT/stairs.picks.txt") lines"
+for r in "${RES[@]}"; do
+	set -- $r
+	awk -v x="$2" -v y="$3" -v z="$4" 'BEGIN { exit !(x >= -51286 && x <= -51071 && z >= 2531 && z <= 2774 && y >= 1570 && y <= 1650) }' \
+		|| fail "the stairs click at $1 hit $2 $3 $4, outside the Storm House's footprint / floors"
+done
+echo "pick_drawn_check: PASS (camera inside a shape + above-cut floor in an empty building, container above the cut, the occluder glass across the Storm House, the click record and its replay, the Storm House stairs from floor 0 and floor 1 in rts and follow mode)"

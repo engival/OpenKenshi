@@ -1,0 +1,50 @@
+hints: producer "Ore Drill III (Automated)": 4 actions
+  Hold right  menu_open  "Open"  (menu row)
+  Click  machine  "Show the machine window of Ore Drill III (Automated)"
+  Right click  open_automatic  "Open Ore Drill III (Automated)"
+  Shift+Right click  producer_queue  "Open Ore Drill III (Automated) (queued after the current orders)"
+click hint: machine
+sim click: show machine 4611688217450643456
+click hint: open_automatic
+sim click: open automatic producer 4611688217450643456: sent
+click hint: producer_queue
+sim click: open automatic producer 4611688217450643456 (queued): sent
+hints: container "Secure Wooden Chest": 5 actions
+  Hold right  menu_open  "Open"  (menu row)
+  Hold right  menu_take_all  "Take all"  (menu row)
+  Click  show_container  "Show the window of Secure Wooden Chest"
+  Right click  open_container  "Open Secure Wooden Chest"
+  Shift+Right click  open_container_queue  "Open Secure Wooden Chest (queued after the current orders)"
+hints: container "Secure Wooden Chest": 6 actions
+  Hold right  menu_open  "Open"  (menu row)
+  Hold right  menu_take_all  "Take all"  (menu row)
+  Click  open_label  "Open Secure Wooden Chest"
+  Click  show_container  "Show the window of Secure Wooden Chest"
+  Right click  open_container  "Open Secure Wooden Chest"
+  Shift+Right click  open_container_queue  "Open Secure Wooden Chest (queued after the current orders)"
+click hint: open_label
+sim click: label: open container 1099511627902: sent
+click hint: show_container
+sim click: show container 1099511627902
+click hint: open_container
+sim click: open container 1099511627902: sent
+click hint: open_container_queue
+sim click: open container 1099511627902 (queued): sent
+hints: container "Secure Wooden Chest": 5 actions
+  Hold right  menu_open  "Open"  (menu row)
+  Hold right  menu_take_all  "Take all"  (menu row)
+  Click  show_container  "Show the window of Secure Wooden Chest"
+  Right click  open_container  "Open Secure Wooden Chest"
+  Shift+Right click  open_container_queue  "Open Secure Wooden Chest (queued after the current orders)"
+click hint: open_container
+sim click: open container 1099511627902: sent
+hints: building "Small Shack": 3 actions
+  Right click  move  "Move here"
+  Shift+Right click  move_queue  "Move here (queued after the current orders)"
+  Click  deselect  "Clear the selection (Shift keeps it)"
+click hint: deselect
+sim click: character 0, 1 selected
+click hint: move
+sim click: move_to 68322.0 1193.1 -71160.0 (drawn hit): sent
+click hint: move_queue
+sim click: move_to 68322.0 1193.1 -71160.0 (drawn hit): sent

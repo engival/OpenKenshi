@@ -1,0 +1,7 @@
+# kenshi-hvp9 (control hints step 8): the ground of the Hub, the Carrier selected. Ground at -50600 -1000 (open ground by the bar); the left click clears the selection last.
+100 hints ground -50600 -1000
+110 groundclick right -50600 -1000
+120 groundclick shift right -50600 -1010
+130 groundclick -50600 -1000
+400 hints ground -50600 -1000
+500 quit

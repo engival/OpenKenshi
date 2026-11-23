@@ -38,7 +38,7 @@ const ff::Flight kStairs = {
 
 struct Act
 {
-	enum Kind { kFrame, kStep, kEngage, kLoad } kind = kFrame;
+	enum Kind { kFrame, kStep, kLoad } kind = kFrame;
 	ff::Sample s;
 	int dir = 0, top = 3;
 	int level = 0;			// kLoad
@@ -123,15 +123,6 @@ Act Step(int dir, int top, int expect)
 	return a;
 }
 
-Act Engage(int expect)
-{
-	Act a;
-	a.kind = Act::kEngage;
-	a.expect = expect;
-	a.note = "engage";
-	return a;
-}
-
 Act Load(int level, uint64_t subject, int expect)
 {
 	Act a;
@@ -152,9 +143,9 @@ struct Trace
 std::vector<Trace> traces()
 {
 	std::vector<Trace> t;
-	const ff::Reason kF = ff::Reason::kFlight, kR = ff::Reason::kRoof, kI = ff::Reason::kIndoors, kO = ff::Reason::kOutdoors, kM = ff::Reason::kManual;
+	const ff::Reason kF = ff::Reason::kFlight, kR = ff::Reason::kRoof, kI = ff::Reason::kIndoors, kO = ff::Reason::kOutdoors;
 	// The walk up the Storm House stairs, from the ground floor (0) to the upper floor (1). The points that are on the flight: the
-	// foot (-50585, 1105), two treads up (-50560, 1125.2), 2 rises below the top (-50552, 1134: the switch line), the top tread
+	// foot (-50585, 1105), three treads up (-50565, 1121), 4 rises below the top (-50560, 1125.2: the up line 1124.6; the down line is 2 rises below, 1132.4), the top tread
 	// (-50542.8, 1137.7) and the deck.
 
 	// order_sounds_V / _Z (review section 5): a door, then the latch: 3, 0, 0 (door), 1; ends following.
@@ -162,12 +153,11 @@ std::vector<Trace> traces()
 	{
 		t.push_back({ route, {
 			FreeCam(3, "free camera, the player's level 3"),
-			Engage(3),
 			F(outdoors(), 0, kO, "engage outdoors: the subject's floor 0"),
 			F(on(-50580, 1098.3, -1276), 0, kI, "in through the door, floor 0: the pair moved, the level did not"),
 			F(on(-50585, 1105, -1276), 0, kF, "the foot of the flight: origin 0"),
-			F(on(-50560, 1125.2, -1276), 0, kF, "two treads up: still the origin floor"),
-			F(on(-50552, 1134, -1276), 1, kF, "2 rises below the top: the switch line"),
+			F(on(-50565, 1121, -1276), 0, kF, "five rises below the top: still the origin floor"),
+			F(on(-50560, 1125.2, -1276), 1, kF, "4 rises below the top: the up line"),
 			F(onDeck(-50546, 1140.2, -1260), 1, kR, "the deck: the building's top floor"),
 			FreeCam(1, "the follow ends: the player keeps the last shown level"),
 		} });
@@ -178,19 +168,18 @@ std::vector<Trace> traces()
 	{
 		t.push_back({ route, {
 			FreeCam(3),
-			Engage(3),
 			F(outdoors(), 0, kO, "engage outdoors"),
 			F(on(-50580, 1098.3, -1276), 0, kI, "the door"),
-			F(on(-50560, 1125.2, -1276), 0, kF, "up the flight"),
-			F(on(-50552, 1134, -1276), 1, kF, "over the line"),
+			F(on(-50565, 1121, -1276), 0, kF, "up the flight"),
+			F(on(-50560, 1125.2, -1276), 1, kF, "over the up line"),
 			F(on(-50542.8, 1137.7, -1275.3), 1, kF, "the top tread"),
-			F(on(-50552, 1129.5, -1276), 1, kF, "back down past the line, half a rise: the fired hotspot is consumed, still 1 (k16.2.236.8.4.3)"),
-			F(on(-50556, 1124, -1276), 0, kF, "two rises past the line: re-armed, back to 0"),
+			F(on(-50552, 1131, -1276), 0, kF, "back down: the descent flips at 2 rises below the top"),
+			F(on(-50570, 1116.5, -1276), 0, kF, "further down: still 0"),
 			F(on(-50580, 1098.3, -1276), 0, kI, "back through the door"),
 		} });
 	}
 
-	// snap_{V,Z,double}_{3,0}: engage clears the manual level: a free camera at 3 or 0, then the subject's floor.
+	// snap_{V,Z,double}_{3,0}: following takes the subject's floor at once: a free camera at 3 or 0, then the subject's floor.
 	static std::string snapNames[6];	// stable storage: Trace::name points into these
 	int sn = 0;
 	for (const char* route : { "snap_V", "snap_Z", "snap_double" })
@@ -201,38 +190,34 @@ std::vector<Trace> traces()
 			t.push_back({ snapNames[sn].c_str(), {
 				Load(start, 0, start),
 				FreeCam(start, "free camera"),
-				Engage(start),
-				F(on(-50560, 1140.2, -1276), 1, kI, "the engage takes the subject's floor 1"),
+				F(on(-50560, 1140.2, -1276), 1, kI, "following takes the subject's floor 1"),
 			} });
 			sn++;
 		}
 	}
 
-	// reengage_Z / reengage_double: manual 0 while following, engage clears it: 0 held, then 1.
-	for (const char* route : { "reengage_Z", "reengage_double" })
-	{
-		t.push_back({ route, {
-			F(on(-50560, 1140.2, -1276), 1, kI, "following, the subject on floor 1"),
-			Step(-1, 1, 0),
-			F(on(-50560, 1140.2, -1276), 0, kM, "the stepped level holds"),
-			F(on(-50560, 1140.2, -1276), 0, kM),
-			Engage(0),
-			F(on(-50560, 1140.2, -1276), 1, kI, "the re-engage clears the manual level"),
-		} });
-	}
+	// step_ends_follow (L4/L5): a floor step while following ends the follow; the stepped level is the free one and stays whatever the subject does.
+	// The host drops the camera lock first, so the frame after the step is a free-camera frame.
+	t.push_back({ "step_ends_follow", {
+		F(on(-50560, 1140.2, -1276), 1, kI, "following, the subject on floor 1"),
+		Step(-1, 1, 0),
+		FreeCam(0, "the follow ended with the step: the stepped level is the player's"),
+		FreeCam(0, "the subject moves on; nothing writes"),
+		F(on(-50560, 1140.2, -1276), 1, kI, "a new follow shows the subject's floor again (L2/L3)"),
+	} });
 
-	// start_engage_snap: a start centring is an engage: 3, 0.
+	// start_engage_snap: a start centring follows at once: 3, 0.
 	t.push_back({ "start_engage_snap", {
 		FreeCam(3),
-		F(on(-50580, 1098.3, -1276), 0, kI, "the camera starts centred: the engage sets floor 0"),
+		F(on(-50580, 1098.3, -1276), 0, kI, "the camera starts centred: following sets floor 0"),
 	} });
 
 	// stairs_walk: the latch up; the deck and the stand are off the flight: 0, 1, no further change.
 	t.push_back({ "stairs_walk", {
 		F(on(-50580, 1098.3, -1276), 0, kI, "on the ground floor"),
 		F(on(-50585, 1105, -1276), 0, kF),
-		F(on(-50560, 1125.2, -1276), 0, kF),
-		F(on(-50552, 1134, -1276), 1, kF, "the switch line"),
+		F(on(-50565, 1121, -1276), 0, kF),
+		F(on(-50560, 1125.2, -1276), 1, kF, "the up line"),
 		F(onDeck(-50546, 1140.2, -1260), 1, kR),
 		F(onDeck(-50546, 1140.2, -1260), 1, kR, "a stand on the deck changes nothing"),
 	} });
@@ -281,9 +266,9 @@ std::vector<Trace> traces()
 	// stop_midflight_up: an order whose goal is mid-flight, a stand: one change at most (the lead drawn).
 	t.push_back({ "stop_midflight_up", {
 		F(on(-50580, 1098.3, -1276), 0, kI, "the order starts on floor 0"),
-		F(on(-50558.9, 1125.9, -1273.1), 0, kF, "the captured 203819 stand: below the line"),
-		F(on(-50551, 1135, -1276), 1, kF, "the goal above the line"),
-		F(on(-50551, 1135, -1276), 1, kF, "the stand: one change"),
+		F(on(-50563, 1121, -1276), 0, kF, "a stand below the up line"),
+		F(on(-50560, 1126, -1276), 1, kF, "the goal above the line"),
+		F(on(-50560, 1126, -1276), 1, kF, "the stand: one change"),
 	} });
 
 	// stop_midflight_down: from the upper floor, a goal mid-flight, a stand: one change at most.
@@ -297,37 +282,22 @@ std::vector<Trace> traces()
 	// reverse_midflight: up past the line, then back down: 0, 1, 0.
 	t.push_back({ "reverse_midflight", {
 		F(on(-50580, 1098.3, -1276), 0, kI),
-		F(on(-50551, 1135, -1276), 1, kF, "up past the line"),
-		F(on(-50557, 1129, -1276), 1, kF, "back below it: the fired hotspot is consumed, still 1"),
-		F(on(-50560, 1124, -1276), 0, kF, "two rises past the line: re-armed, 0"),
+		F(on(-50560, 1126, -1276), 1, kF, "up past the line"),
+		F(on(-50561, 1123, -1276), 1, kF, "back below it: the fired hotspot is consumed, still 1"),
+		F(on(-50570, 1116.5, -1276), 0, kF, "two rises past the line: re-armed, 0"),
 	} });
 
-	// manual_hold: following on the deck, F: the view stays 0 while the lead walks the deck; the next stair crossing takes it back.
-	t.push_back({ "manual_hold", {
-		F(onDeck(-50546, 1140.2, -1260), 1, kR),
-		Step(-1, 1, 0),
-		F(onDeck(-50546, 1140.2, -1260), 0, kM, "the deck walk keeps the stepped level"),
-		F(onDeck(-50540, 1140.2, -1240), 0, kM),
-		F(on(-50542.8, 1137.7, -1275.3), 0, kM, "onto the top tread: the manual level holds"),
-		F(on(-50552, 1131.5, -1276), 0, kF, "the down crossing takes the level back: 0"),
-		F(on(-50585, 1105, -1276), 0, kF),
-		F(on(-50545, 1139, -1276), 1, kF, "the climb back up: 1"),
-	} });
-
-	// manual_up_then_climb: R to 1 while the lead is on floor 0, then the climb: never a flip down.
-	t.push_back({ "manual_up_then_climb", {
+	// step_up_ends_follow: R to 1 while the lead is on floor 0: the follow ends and the free camera keeps 1 (no hold under a later follow).
+	t.push_back({ "step_up_ends_follow", {
 		F(on(-50580, 1098.3, -1276), 0, kI),
 		Step(1, 1, 1),
-		F(on(-50585, 1105, -1276), 1, kM, "the lead on floor 0, the view stepped to 1"),
-		F(on(-50560, 1125.2, -1276), 1, kM),
-		F(on(-50552, 1134, -1276), 1, kF, "the climb's own flip to 1: the pair moved, the view did not"),
-		F(onDeck(-50546, 1140.2, -1260), 1, kR),
+		FreeCam(1, "ended: the free level 1"),
+		F(on(-50585, 1105, -1276), 0, kF, "followed again: the subject's own floor, no manual hold"),
 	} });
 
-	// two_subjects: A on the deck, B on the ground; engage B, A, B: 0, 1, 0, with B standing near the stair top (the stairwell).
+	// two_subjects: A on the deck, B on the ground; follow B, A, B: 0, 1, 0, with B standing near the stair top (the stairwell).
 	t.push_back({ "two_subjects", {
 		F([&] { ff::Sample s = on(-50580, 1098.3, -1280); s.subject = kSubjB; return s; }(), 0, kI, "B on the ground"),
-		Engage(0),
 		F(onDeck(-50546, 1140.2, -1260), 1, kR, "A on the deck"),
 		F([&] { ff::Sample s = on(-50580, 1098.3, -1280); s.subject = kSubjB; return s; }(), 0, kI, "back to B: the subject change resets the latch"),
 	} });
@@ -375,12 +345,12 @@ std::vector<Trace> traces()
 		F(on(-50552.16, 1131.39, -1277.86), 0, kF),
 		F(on(-50559.74, 1125.87, -1273.61), 0, kF),
 	} });
-	// 203819: the climb from the foot (the order's goal, before the first tread) to a stand 3.2 rises below the top: the origin floor
+	// 203819: the climb from the foot (the order's goal, before the first tread) to a stand 5 rises below the top: the origin floor
 	// (0) until the line, then 1.
 	t.push_back({ "shot_203819", {
 		F(on(-50594.2, 1098.32, -1281.0), 0, kI, "the order's goal at the foot, 4 u before the first tread"),
-		F(on(-50559.74, 1125.87, -1273.61), 0, kF, "the stand: below the 2-rise line (the old wire floor said 1)"),
-		F(on(-50550, 1135, -1276), 1, kF, "the same climb over the line: 1"),
+		F(on(-50563, 1121, -1276), 0, kF, "the stand: below the 4-rise line (the old wire floor said 1)"),
+		F(on(-50560, 1125.2, -1276), 1, kF, "the same climb over the line: 1"),
 	} });
 
 	// The latch's own checks, outside a trace: a character under the stairwell and one on the deck beside the flight are not on it,
@@ -400,12 +370,12 @@ void directChecks()
 	{
 		ff::FloorFollow m;
 		m.update(on(-50580, 1098.3, -1276));
-		const float x = -50552.0f;	// the up line, top - 2 rises
-		check(m.update(on(x, 1132.5, -1276)).level == 1, "the up line crossed: 1");
-		check(m.update(on(x, 1132.3, -1276)).level == 1, "half a rise of jitter below it: still 1");
-		check(m.update(on(x, 1132.3, -1276)).level == 1, "again: still 1");
-		check(m.update(on(x, 1130.0, -1276)).level == 1, "more than half a rise below it: the fired hotspot is consumed, still 1");
-		check(m.update(on(-50560.0f, 1124.0, -1276)).level == 0, "two rises below the line: re-armed, back to 0");
+		const float x = -50560.0f;	// the up line, top - 4 rises (1124.6)
+		check(m.update(on(x, 1124.7, -1276)).level == 1, "the up line crossed: 1");
+		check(m.update(on(x, 1124.5, -1276)).level == 1, "a tenth of jitter below it: still 1");
+		check(m.update(on(x, 1124.5, -1276)).level == 1, "again: still 1");
+		check(m.update(on(x, 1122.0, -1276)).level == 1, "more than half a rise below it: the fired hotspot is consumed, still 1");
+		check(m.update(on(-50570.0f, 1116.5, -1276)).level == 0, "two rises below the line: re-armed, back to 0");
 	}
 	// The follow ends while on the flight: the player keeps the level, and no later sample writes.
 	{
@@ -426,13 +396,14 @@ void directChecks()
 		lost.known = false;
 		check(m.update(lost).level == 1, "the subject lost: the last shown level");
 	}
-	// A load: the saved level holds while following the restored subject until an engage clears it.
+	// A load: the saved level is the player's; a restored subject that is followed shows its own floor (L3), no manual hold.
 	{
 		ff::FloorFollow m;
 		m.load(0, kSubjA);
-		check(m.update(on(-50560, 1140.2, -1276)).level == 0, "load: the saved level 0 holds under the restored subject");
-		m.engage();
-		check(m.update(on(-50560, 1140.2, -1276)).level == 1, "the engage clears it: the subject's floor");
+		check(m.update(on(-50560, 1140.2, -1276)).level == 1, "load: the followed restored subject shows its floor");
+		ff::FloorFollow n;
+		n.load(0, 0);
+		check(n.update(FreeCam(0).s).level == 0, "load: the free camera keeps the saved level");
 	}
 	// Two treads' slope: under the stairwell the feet are a storey off the slope and the flight is not entered.
 	{
@@ -455,7 +426,6 @@ void run()
 			{
 			case Act::kFrame: v = m.update(a.s); break;
 			case Act::kStep: m.step(a.dir, a.top); v.level = m.shown(); v.reason = a.reason; break;
-			case Act::kEngage: m.engage(); v.level = m.shown(); v.reason = a.reason; break;
 			case Act::kLoad: m.load(a.level, a.subject); v.level = m.shown(); v.reason = a.reason; break;
 			}
 			if (v.level != a.expect)
@@ -477,7 +447,7 @@ void run()
 // Every reason has a name (the log line's `floor: view A -> B (reason)`).
 void reasonNames()
 {
-	for (ff::Reason r : { ff::Reason::kPlayer, ff::Reason::kManual, ff::Reason::kFlight, ff::Reason::kRoof, ff::Reason::kIndoors, ff::Reason::kOutdoors })
+	for (ff::Reason r : { ff::Reason::kPlayer, ff::Reason::kFlight, ff::Reason::kRoof, ff::Reason::kIndoors, ff::Reason::kOutdoors })
 	{
 		check(ff::reasonName(r) && ff::reasonName(r)[0] != '?', "every reason has a name");
 	}

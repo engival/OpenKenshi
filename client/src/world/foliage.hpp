@@ -110,9 +110,11 @@ public:
 		double contextMs = 0;
 	};
 	Stats stats() const;
-	// kenshi-l5dx (user 2026-11-21, "Same system, all objects"): the click / hover pick's foliage half. The nearest DRAWN triangle of a resident instance (tree, rock,
-	// deposit rock; leaves through the alpha cut-out) with t in [tMin, tMax] along the ray; an instance past its fade end is not drawn and does not pick. box: the hit
-	// instance's world box (the deposit match reads it). Logic thread. False: nothing.
+	// kenshi-l5dx / kenshi-2wuu: the click / hover pick's foliage half. A foliage instance is a pick target only when it is interactable (user 2026-11-22: a tree's
+	// cursor "should pass through"; a rock too): a deposit, decided once per record at load from the data (Context::pickTarget: `building type` -> a BUILDING that `is
+	// foliage` with a producing functionality). Trees and rocks are never tested. The nearest DRAWN triangle of a resident target instance with t in [tMin, tMax]
+	// along the ray (alpha cut-out honoured); one past its fade end is not drawn and does not pick. box: the hit instance's world box (the deposit match reads it).
+	// Logic thread. False: nothing.
 	bool pickRay(const double origin[3], const double dir[3], double tMin, double tMax, double& t, float box[6]) const;
 	std::string cellReport(const double pos[3]) const;	// instance counts of the cell under pos
 	std::string nearReport(const double pos[3], double radius) const;	// the instances within radius (XZ) of pos, regenerated: record, position, scale, each loaded mesh's world box

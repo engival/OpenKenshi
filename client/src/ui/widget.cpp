@@ -682,7 +682,7 @@ namespace ui
 		onClick(b);
 	}
 
-	void Button::hints(std::vector<HintLine>& out) const
+	void Button::ownHints(std::vector<HintLine>& out) const
 	{
 		if (!clickHint.empty()) { out.push_back({ "Click", clickHint, enabled, {} }); }
 		if (!doubleClickHint.empty()) { out.push_back({ "Double click", doubleClickHint, enabled, {} }); }

@@ -1,0 +1,7 @@
+# storm_stairs (kenshi-bvtr, k16.2.516): the Wanderer on floor 0 of the Hub's Storm House at the foot of its stairs (the user's 2026-11-22 report), alone.
+KSCEN 2
+scenario title=Storm%20House%20stairs setup=The%20Wanderer%20stands%20on%20floor%200%20of%20the%20Hub%27s%20Storm%20House%20at%20the%20foot%20of%20its%20stairs. look_for=Right%20click%20a%20stair%20going%20up%3A%20the%20move%20goes%20to%20the%20stair%2C%20not%20outside. bead=kenshi-bvtr metrics=bodies_down
+source save=playtest game=1.0.68 radius=0 centre=-51166.3,2581.4 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-51166.3 y=1580.7 z=2581.4 yaw=0 leader=1 player=1

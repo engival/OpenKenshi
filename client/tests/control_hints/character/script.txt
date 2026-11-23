@@ -1,0 +1,46 @@
+95 dump medical @Alpha@
+100 hints char Alpha
+# Alpha selected alone: a plain click selects; right click orders nothing; two right clicks drive, a third (on the driven one) would leave
+110 charclick Alpha
+120 hints char Alpha
+130 charclick right Alpha
+140 charclick shift Alpha
+# the dbl-RMB pair: the first click is the plain one above, the second within kDoubleClick drives
+150 charclick right Alpha
+151 charclick right Alpha
+160 hints char Alpha
+170 charclick right Alpha
+171 charclick right Alpha
+# Alpha + Bravo selected: right click on Bravo follows, Shift+right click is the Stay close job
+180 charclick Alpha
+190 charclick shift Bravo
+200 hints char Bravo
+210 charclick right Bravo
+220 charclick shift right Bravo
+# KO'd own, another selected: lift; dead own: loot
+230 hints char KOOne
+240 charclick right KOOne
+250 hints char DeadOne
+260 charclick right DeadOne
+# a non-hostile NPC: inspect, talk; Ctrl row
+270 hints char Bystander
+280 charclick Bystander
+290 charclick right Bystander
+# a hostile, not sneaking
+300 hints char Raider
+310 charclick right Raider
+320 charclick shift right Raider
+330 charclick Raider
+# Ghost, if healthy, is the follow target of the selected Alpha (right click: the follow order); a hurt one is first aid
+331 charclick Alpha
+332 dump medical @Ghost@
+333 hints char Ghost
+334 charclick right Ghost
+# a sneaker selected: the hostile that has not seen it is the knock-out (red fist); the stealth KO's queue flag is never set
+340 charclick Ghost
+# alone, the sneaker's own right click orders nothing
+342 hints char Ghost
+344 charclick right Ghost
+350 hints char Raider
+360 charclick right Raider
+370 quit

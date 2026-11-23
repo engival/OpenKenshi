@@ -9,6 +9,7 @@
 
 #include "dev/devhooks.hpp"
 #include "host/app.hpp"
+#include "input/controlhints.hpp"
 #include "input/pick.hpp"
 #include "ui/menus.hpp"
 
@@ -29,7 +30,7 @@ constexpr float kLabelHeight = 0.0259f, kLabelPad = 6.0f;	// pad: pixels at 720p
 constexpr double kLabelRange = 707, kLabelLift = 4, kContainerLabelLift = 10, kProducerLabelLift = 20;	// producers: MINE	// containers: MINE (above a crate; the original's container label is not measured)
 
 // The pick chance the hover tag shows: order 99 on the cage key asked once per (cage, acting character); its MENU_ENTRIES carries the chance.
-struct CageHover { uint64_t cage = 0, actor = 0; uint32_t seq = 0; float chance = -1; };
+struct CageHover { uint64_t cage = 0, actor = 0; uint32_t seq = 0; float chance = -1; int entries = -1; };
 
 // The held right-click's menu: the character's answer (bit 0 Talk To) and, on a locked cage's prisoner, the cage's (order 99 on the cage key: bits 16 pick
 // lock, 17 use tools, 18 use strength and the pick chance) are both asked; it opens when everything asked is in or at the deadline.
@@ -59,9 +60,13 @@ extern std::string hoverRule;	// main.cpp
 void order_sent(bool sent);	// main.cpp
 bool open_container(uint64_t id, bool queue);	// main.cpp
 bool use_producer(uint64_t id, bool queue);	// main.cpp
+// kenshi-bi6u, the generic machine rule (data, no per-machine list): a placed producer's BUILDING gives `max operators` (0: automatic, nobody operates it)
+// and its functionality's `world resource mining`. A record the client has no BUILDING for (a wild deposit) is a mine to operate.
+bool producer_automatic(const simlink::Interactable& t);	// main.cpp: max operators 0
+const char* producer_cursor(const simlink::Interactable& t);	// main.cpp: "mine" (pickaxe 18) when mining != 0 or unknown, else "use" (gears 9)
 bool open_body(uint64_t id, bool queue);	// main.cpp
 bool ray_ground(const double origin[3], const double dir[3], double hit[3]);	// main.cpp
-bool see_through(const double p[3], double bottom = 1e30, std::string* why = nullptr);	// main.cpp
+bool see_through(const double p[3], double bottom = 1e30, std::string* why = nullptr, const WorldBuildings::DrawnPart* part = nullptr);	// main.cpp
 // The click ray's world hit: the nearest DRAWN surface (kenshi-k16.2.396.5: WorldBuildings::drawnPickRay), a foliage shell's collision, or the terrain. instance: the drawn
 // instance hit (-1: not a drawn instance); hitBox: the foliage shell's box when it is one.
 bool ray_hit(const double origin[3], const double dir[3], double hit[3], bool* building, const double* eye = nullptr, std::vector<PickSkip>* skipped = nullptr, float* hitBox = nullptr, int* instance = nullptr);
@@ -85,9 +90,10 @@ std::vector<ItemLabel> item_labels(bool all, const float* cam = nullptr);	// cam
 uint64_t label_at(double mx, double my);
 Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped = nullptr);
 Pick pick_screen(double mx, double my, std::vector<PickSkip>* skipped = nullptr);
-std::vector<ui::Menu::Item> menu_items(const Pick& p, int entries = -1);
 void menu_query_frame();
 void rmb_hold_menu();
+bool run_menu_action(const hints::Action& a);	// a picked hold-menu row: run, log `sim menu: <log>: sent`, the order sound
+
 std::string pick_owner_report(const Pick& p, double mx, double my, const std::vector<dev::PickSkip>& skipped);	// the F12 sidecar's owner / primitive / rule lines
 
 extern CageHover cageHover;

@@ -173,6 +173,9 @@
 #include "host/hud.hpp"
 #include "host/script.hpp"
 #include "host/logicframe.hpp"
+#ifdef KCLIENT_DEV_TOOLS
+#include "dev/roadedit.hpp"
+#endif
 #include "host/uihost.hpp"
 #include "host/events.hpp"
 
@@ -240,6 +243,9 @@ void debug_toggle(const std::string& id)
 	if (id == "debug.navmesh") { kNavOverlay.set(!kNavOverlay.get()); }
 	else if (id == "debug.collision") { dev::collisionToggle(); }
 	else if (id == "debug.collision_fill") { dev::collisionFillToggle(); }
+#ifdef KCLIENT_DEV_TOOLS
+	else if (id == "debug.roads") { if (app.opt.debug) { dev::roadedit::toggle(); } }
+#endif
 	else if (id == "debug.trails") { app.trails.toggle(); }
 	else if (id == "debug.navmesh_pruned") { kNavPruned.set(!kNavPruned.get()); }
 	else if (id == "debug.squad_overlay") { app.squads.on = !app.squads.on; }
@@ -291,7 +297,15 @@ static uint64_t squad_at(float x, float y)
 
 static void key_actions(const sapp_event& e)
 {
-	const auto pressed = [&](const std::string& action) { return ui::keys::pressed(e, action); };
+	// While the free camera flies, a press that is one of its fly keys (R / F / Space / C may be game keys too) belongs to the camera alone: no floor
+	// step, pause or stats window (kenshi-wlql). The fly actions themselves are held, read each frame by update_camera.
+	const bool spaceGame = !fly_owns_space() && e.key_code == SAPP_KEYCODE_SPACE;	// a game's Space stays pause
+	const bool flyKey = free_flying() && !spaceGame && (ui::keys::pressed(e, "debug.fly_up") || ui::keys::pressed(e, "debug.fly_down") || ui::keys::pressed(e, "debug.fly_fast"));
+	const auto pressed = [&](const std::string& action) { return ui::keys::pressed(e, action) && (!flyKey || action.starts_with("debug.fly_")); };
+	if (app.scripted())	// tests/flycam: which of the shared game keys the fly keys took (offline there is no sim to pause)
+	{
+		for (const char* a : { "pause", "floor_up", "floor_down", "toggle_stats" }) { if (ui::keys::pressed(e, a)) { printf("flykey: %s %s\n", a, flyKey ? "swallowed" : "fires"); } }
+	}
 	// Follow mode (kenshi-cym.40.2.9): every key that sends an order or changes the selection or the camera is locked with the mouse (dev keys and the F8 panel are not).
 	// A locked press is logged once, so a run shows it was seen and refused.
 	const bool mirror = dev::mirrorLocked();
@@ -304,8 +318,18 @@ static void key_actions(const sapp_event& e)
 #ifdef KCLIENT_DEV_TOOLS
 	if (app.opt.debug && e.type == SAPP_EVENTTYPE_KEY_DOWN && !e.key_repeat && e.key_code == SAPP_KEYCODE_F10 && e.modifiers == SAPP_MODIFIER_CTRL) { dev::heightProbeToggle(); }	// Ctrl+F10: the vertical height probe mode (dev/heightprobe.cpp)
 #endif
+#ifdef KCLIENT_DEV_TOOLS
+	if (app.opt.debug && dev::roadedit::on())	// the road editor's keys act only while its overlay is on (kenshi-ix9r)
+	{
+		if (pressed("debug.road_next")) { roads_step(1); }
+		if (pressed("debug.road_prev")) { roads_step(-1); }
+		if (pressed("debug.road_mark_ok")) { dev::roadedit::mark(ui::kRoadOk); }	// kenshi-tqtd: marks kept in memory per (road, marker)
+		if (pressed("debug.road_mark_unsure")) { dev::roadedit::mark(ui::kRoadUnsure); }
+		if (pressed("debug.road_mark_bad")) { dev::roadedit::mark(ui::kRoadBad); }
+	}
+#endif
 	if (pressed("debug.terrain_view") && app.terrain.hasColour) { app.terrain.viewMode = (app.terrain.viewMode + 1) % (app.terrain.detail.ok ? 4 : 3); }
-	for (const char* id : { "debug.squad_overlay", "debug.navmesh", "debug.collision", "debug.trails", "debug.shadows", "debug.walk", "debug.free_camera", "debug.autorun", "debug.clock_pause" }) { if (pressed(id)) { debug_toggle(id); } }
+	for (const char* id : { "debug.squad_overlay", "debug.navmesh", "debug.collision", "debug.roads", "debug.trails", "debug.shadows", "debug.walk", "debug.free_camera", "debug.autorun", "debug.clock_pause" }) { if (pressed(id)) { debug_toggle(id); } }
 #ifdef KCLIENT_DEV_TOOLS
 	if (pressed("debug.trails_panel")) { dev::toggleTrailsPanel(); }
 	if (pressed("debug.lights_panel") && app.lightsPanel) { app.lightsPanel->show(!app.lightsPanel->shown()); }
@@ -321,8 +345,8 @@ static void key_actions(const sapp_event& e)
 		app.foliage.foliageRange = steps[std::clamp(at + (pressed("debug.foliage_more") ? 1 : -1), 0, 7)];
 	}
 	// Our floor keys are R / F where the original's are PgUp / PgDn: Change_Level on the change (1407210a0 / 1407210f0), as the HUD's floor arrows
-	if (open("floor_up")) { if (app.buildings.stepFloor(1)) { post_event(audio::kChangeLevel, "Change_Level"); } }
-	if (open("floor_down")) { if (app.buildings.stepFloor(-1)) { post_event(audio::kChangeLevel, "Change_Level"); } }
+	if (open("floor_up")) { if (floor_step(1)) { post_event(audio::kChangeLevel, "Change_Level"); } }
+	if (open("floor_down")) { if (floor_step(-1)) { post_event(audio::kChangeLevel, "Change_Level"); } }
 	// the sneak key (X) is the SNEAK toggle: Stealth turning sneak on, General_Click turning it off (140721410)
 	if (open("toggle_sneak") && app.sim.active())
 	{
@@ -539,6 +563,8 @@ void event(const sapp_event* e)
 			}
 			if (e->mouse_button == SAPP_MOUSEBUTTON_MIDDLE) { app.orbit = true; sappcmd::lockMouse(true); }
 #ifdef KCLIENT_DEV_TOOLS
+			if (e->mouse_button == SAPP_MOUSEBUTTON_LEFT && app.opt.debug && dev::roadedit::on()) { dev::roadedit::click(); }	// the road editor: a handle is selected, empty ground clears; never an order (kenshi-tqtd)
+			else
 			if (e->mouse_button == SAPP_MOUSEBUTTON_LEFT && app.opt.debug && dev::heightProbeMode())
 			{
 				const Pick p = pick_screen(e->mouse_x, e->mouse_y);	// the vertical height probe (Ctrl+F10): the click sets the probe, nothing else happens

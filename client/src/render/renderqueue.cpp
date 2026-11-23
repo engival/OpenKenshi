@@ -29,6 +29,7 @@ namespace
 	std::deque<Job> gFrame, gStream;
 	uint64_t gSerial = 0;	// the packet logic is filling
 	size_t gBudget = 8u << 20;
+	double gBgMs = 2.0;	// the background jobs' (Prio >= kBackgroundPrio) share of the lane's time per drain (setBackgroundTimeBudget; stream.precache_ms)
 	double gTimeBudgetMs = 4.0;	// the stream lane's time per drain (setStreamTimeBudget; render.stream_ms)
 	// the predicted cost of a stream job: its bytes at this rate (ms per byte), a running mean of the creates' own (jobs of kRateMinBytes and up:
 	// the small ones are fixed overhead). Start: 0.4 ms per MiB, about a 4096^2 BC3 create's on the Intel test card
@@ -62,7 +63,7 @@ void drain(uint64_t serial)
 {
 	std::vector<Job> run;
 	size_t eligible = 0;	// the stream jobs this drain may take: those queued before it, up to the drawn packet's serial (a job's own pushes wait)
-	double budgetMs = 0, rate = 0;
+	double budgetMs = 0, rate = 0, bgMs = 0;
 	size_t budget = 0;
 	{
 		std::lock_guard<std::mutex> lk(gMu);
@@ -76,6 +77,7 @@ void drain(uint64_t serial)
 		// that logic queued once N+1 stopped naming a resource cannot pull it from under N (on one thread every job is the drawn packet's or older)
 		while (eligible < gStream.size() && gStream[eligible].serial <= serial) { eligible++; }
 		budgetMs = gTimeBudgetMs;
+		bgMs = gBgMs;
 		rate = gMsPerByte;
 		budget = gBudget;
 		gDrainId++;
@@ -130,6 +132,9 @@ void drain(uint64_t serial)
 				if (bytes + f.bytes > budget) { break; }
 				const double spent = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
 				if (budgetMs > 0 && spent + (double)f.bytes * rate > budgetMs) { break; }
+				// a background job (the world precache, kenshi-nbmu) takes only its own slice of the time: the first job of a drain runs whatever it is, so
+				// a drain with nothing nearer to make still makes one, and the lane never starves
+				if (bgMs > 0 && f.prio && f.prio->snap >= kBackgroundPrio && spent + (double)f.bytes * rate > bgMs) { break; }
 			}
 			j = std::move(f);
 			f.taken = true;
@@ -196,6 +201,12 @@ void setStreamBudget(size_t bytesPerFrame)
 {
 	std::lock_guard<std::mutex> lk(gMu);
 	gBudget = bytesPerFrame;
+}
+
+void setBackgroundTimeBudget(double ms)
+{
+	std::lock_guard<std::mutex> lk(gMu);
+	gBgMs = ms;
 }
 
 void setStreamTimeBudget(double ms)

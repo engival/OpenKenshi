@@ -165,6 +165,7 @@
 #include "world/worldmap.hpp"
 #include "host/app.hpp"
 #include "host/pick.hpp"
+#include "host/script.hpp"	// hints_context
 
 namespace host
 {
@@ -187,7 +188,14 @@ bool ray_shapes(const double origin[3], const double dir[3], double far, double 
 	{
 		double at[3];
 		for (int k = 0; k < 3; k++) { at[k] = from[k] + dir[k] * t; }
-		const bool passed = std::equal(box, box + 6, skippedBox) || (foliageOnly && *building);	// foliageOnly (the click pick, kenshi-k16.2.396.5): a building's shape never picks, only foliage shells
+		// kenshi-2wuu: a foliage shell is a pick target only when it is a deposit (the producer's origin lies in its footprint, the same match pick_at makes); a tree's or a
+		// rock's shell is passed, like the drawn pick (Foliage::pickRay)
+		const auto deposit = [&]
+		{
+			for (const auto& [id, th] : app.sim.things()) { if (th.kind == simlink::Interactable::kProducer && th.pos[0] >= box[0] && th.pos[0] <= box[3] && th.pos[2] >= box[2] && th.pos[2] <= box[5]) { return true; } }
+			return false;
+		};
+		const bool passed = std::equal(box, box + 6, skippedBox) || (foliageOnly && (*building || !deposit()));	// foliageOnly (the click pick, kenshi-k16.2.396.5): a building's shape never picks, only foliage shells
 		if (!passed)
 		{
 			std::string why;
@@ -239,7 +247,7 @@ double ground_under(double x, double z, const char** on)
 // The click ray's world hit (SIMLINK 13: the picker's bottom layer). kenshi-k16.2.396.5, the rule (user 2026-11-21, ask 396.4: "Item in the world has a 3d mesh,
 // that 3d mesh is what we ray cast against. Same system, all objects."): the nearest DRAWN surface along the ray wins. WorldBuildings::drawnPickRay tests the drawn
 // triangles of every instance (building parts, layout furniture, props, doors at their drawn pose); a hit the cut, the ghost or the occluder cone hides restarts
-// the ray just past it. Collision picks only foliage shells (trees, rocks, deposit rocks); the terrain is the ground under the carve rule (a hit inside a carved
+// the ray just past it. Collision picks only deposit shells (a tree's or rock's passes); the terrain is the ground under the carve rule (a hit inside a carved
 // interior is the dune the interior mask clips, not drawn: SimView::setTerrainFn's masked). False: nothing.
 // building: the hit is a building's (a drawn instance that is not a hand-placed feature). origin is the near-plane start of the pick ray, eye the camera's position,
 // skipped the report's hidden surfaces. instance: the drawn instance hit (-1 none); hitBox: the foliage shell's box when the hit is one.
@@ -264,11 +272,12 @@ bool ray_hit(const double origin[3], const double dir[3], double hit[3], bool* b
 	float foliageBox[6] = {};
 	for (double from = 0; from < reach;)
 	{
-		// the nearest drawn surface of either set: a building / prop / layout piece, or a foliage instance (tree, rock, deposit rock; kenshi-l5dx). One test, no per-kind rule.
+		// the nearest drawn surface of either set: a building / prop / layout piece, or a foliage instance (tree, rock, deposit rock; kenshi-l5dx). Foliage picks only when interactable (a deposit, from the data: Foliage::pickRay, kenshi-2wuu); trees and rocks pass the ray to what lies behind.
 		double t = 1e30, tf = 1e30;
 		uint32_t i = 0;
 		float fbox[6] = {};
-		const bool b = app.buildings.drawnPickRay(origin, dir, from, reach, t, i);
+		WorldBuildings::WalkHit who;
+		const bool b = app.buildings.drawnPickRay(origin, dir, from, reach, t, i, &who);
 #ifdef KCLIENT_DEV_TOOLS
 		const auto fc0 = std::chrono::steady_clock::now();
 #endif
@@ -291,7 +300,12 @@ bool ray_hit(const double origin[3], const double dir[3], double hit[3], bool* b
 		const double hitT = isFoliage ? tf : t;
 		const double at[3] = { origin[0] + dir[0] * hitT, origin[1] + dir[1] * hitT, origin[2] + dir[2] * hitT };
 		std::string why;
-		if (!see_through(at, 1e30, &why))
+		// kenshi-bvtr / kenshi-8fvf (the user's 2026-11-22 Storm House stairs clicks): the renderer hides a part by its floor (WorldBuildings::partCutHidden), so a
+		// staircase from floor 0 is drawn whole, its upper treads above the floor-1 slab included. The cut once tested the hit point's height and skipped those treads
+		// as "above the floor cut", so the ray ran on to the terrain outside. A building's drawn part is now cut by that same predicate (the part is passed down).
+		WorldBuildings::DrawnPart part{ 0, nullptr };
+		if (!isFoliage && b && who.instance == i) { part.instance = i; part.def = app.buildings.partDef(who); }
+		if (!see_through(at, 1e30, &why, part.def ? &part : nullptr))
 		{
 			drawnT = hitT;
 			drawnInst = i;
@@ -658,105 +672,6 @@ Pick pick_screen(double mx, double my, std::vector<PickSkip>* skipped)
 }
 CageHover cageHover;
 
-// entries: the MENU_ENTRIES bitset the server sent for this target (bit 0 Talk To; kenshi-k16.2.121), -1 when there is none (a non-character
-// pick, or the query's answer did not come): then the rows are offered as before, Talk included.
-std::vector<ui::Menu::Item> menu_items(const Pick& p, int entries)
-{
-	std::vector<ui::Menu::Item> it;
-	const auto order = [](const char* what, uint64_t id, const std::function<bool()>& send)
-	{
-		const bool sent = send();
-		printf("sim menu: %s %llu: %s\n", what, (unsigned long long)id, sent ? "sent" : "not sent");
-		order_sent(sent);
-	};
-	const auto title = [](const std::string& text) { return ui::Menu::Item{ text, nullptr, false, true }; };
-	const uint64_t id = p.id;
-	if (p.kind == Pick::Character)
-	{
-		const auto ch = app.sim.decoder().chars.find(id);
-		const bool down = ch != app.sim.decoder().chars.end() && (ch->second.cur.flags & (simlink::kKO | simlink::kDead));
-		const std::string name = ch != app.sim.decoder().chars.end() ? app.sim.decoder().str(ch->second.look.name) : "";
-		it.push_back(title(name.empty() ? "#" + std::to_string(id) : name));
-		// The original's rows (kinspect ctxmenu.md, ctx18_static.md): ours Trade / Follow / Bodyguard / Pick Up, others Follow / Bodyguard /
-		// Attack (ascending order id). A row whose order cannot be done is left out, never greyed; Trade waits for the server. Bodyguard is
-		// a job (76 type 45, plus its Stay close row: SIMLINK JOBS) for the selection but the target.
-		const ui::Menu::Item bodyguard{ "Bodyguard", [=] { order("bodyguard", id, [=] { return app.sim.jobAdd(45, id); }); } };
-		if (app.sim.isPlayer(id))
-		{
-			it.push_back({ "Follow", [=] { order("follow", id, [=] { return app.sim.follow(id); }); } });
-			if (!down) { it.push_back(bodyguard); }
-		}
-		else
-		{
-			if (!down)
-			{
-				// Talk To only when the server's gate passes (MENU_ENTRIES bit 0, the answer to order 99; SIMLINK MENU_ENTRIES)
-				if (entries < 0 || (entries & 1)) { it.push_back({ "Talk", [=] { order("talk", id, [=] { return app.sim.interact(id, 6); }); } }); }
-				it.push_back(bodyguard);
-			}
-			it.push_back({ "Attack", [=] { order("attack", id, [=] { return app.sim.attack(id); }); } });
-			// Stealth KO stays offered for every living, standing target while a selected character sneaks (user 2026-11-11: the 2_ shot lists
-			// ATTACK TARGET, ATTACK ALL, STEALTH KO 100%; we carry no chance, so no %). The row sends the KO whether or not the target has seen
-			// the actor (the server answers: an aware victim aborts, event 50 result 2), so the menu also reaches a target the red fist would not.
-			if (!down && sneak_actor(app.sim)) { it.push_back({ "Stealth KO", [=] { order("stealth ko", id, [=] { return app.sim.interact(id, 14); }); } }); }
-		}
-		if (down) { it.push_back({ "Loot", [=] { order("loot", id, [=] { return open_body(id, false); }); } }); }
-		// first aid (needs a kit in the medic's inventory; the server answers otherwise): anyone down, and our own when hurt
-		if (down || (app.sim.isPlayer(id) && app.sim.health(id, app.chars) < 1.0f)) { it.push_back({ "First aid", [=] { order("first aid", id, [=] { return app.sim.interact(id, 10); }); } }); }
-		// carrying (order 60 action 8 lifts a KO'd / dead character, 13 puts the carried one down; the server picks the carrier for 13)
-		const bool carried = ch != app.sim.decoder().chars.end() && ch->second.cur.carriedBy != 0;
-		if (carried) { it.push_back({ "Put down", [=] { order("put down", id, [=] { return app.sim.interact(id, 13); }); } }); }
-		else if (down) { it.push_back({ "Pick up", [=] { order("pick up", id, [=] { return app.sim.interact(id, 8); }); } }); }
-		// the carrier's menu puts its load down too (the carried body rides on the carrier, so a click on it picks the carrier)
-		for (const auto& [cid, cc] : app.sim.decoder().chars)
-		{
-			if (cc.cur.carriedBy != id || !app.sim.isPlayer(id)) { continue; }
-			it.push_back({ "Put down", [=] { order("put down", cid, [=] { return app.sim.interact(cid, 13); }); } });
-		}
-	}
-	else if (const simlink::Interactable* t = app.sim.thing(id))
-	{
-		std::string name = app.sim.nameOf(t->record, app.chars);
-		if (t->kind == simlink::Interactable::kItem && t->count > 1) { name += " (" + std::to_string(t->count) + ")"; }
-		if (t->kind == simlink::Interactable::kDoor && t->state == simlink::Interactable::kBroken) { name += " (broken)"; }
-		it.push_back(title(name));
-		if (t->kind == simlink::Interactable::kItem) { it.push_back({ "Pick up", [=] { order("pick up", id, [=] { return app.sim.interact(id, 7); }); } }); }
-		else if (t->kind == simlink::Interactable::kProducer)
-		{
-			it.push_back({ "Mine", [=] { order("use", id, [=] { return use_producer(id, false); }); } });	// MINE wording ("Operate" for a powered one later)
-			it.push_back({ "Open", [=] { order("open", id, [=] { return open_container(id, false); }); } });
-		}
-		else if (t->kind == simlink::Interactable::kContainer)
-		{
-			if (t->state == simlink::Interactable::kLocked)
-			{
-				// a locked box: the pick (order 60 action 3, SIMLINK's kind 3 lock); "Take all" stays so the sim answers the loot itself
-				it.push_back({ "Pick Lock", [=] { order("lockpick", id, [=] { return app.sim.interact(id, 3); }); } });
-				it.push_back({ "Take all", [=] { order("take all", id, [=] { return app.sim.interact(id, 5); }); } });
-			}
-			else
-			{
-				it.push_back({ "Open", [=] { order("open", id, [=] { return open_container(id, false); }); } });
-				it.push_back({ "Take all", [=] { order("take all", id, [=] { return app.sim.interact(id, 5); }); } });
-			}
-		}
-		else
-		{
-			ui::Menu::Item open{ "Open", [=] { order("open", id, [=] { return app.sim.interact(id, 1); }); } };
-			ui::Menu::Item close{ "Close", [=] { order("close", id, [=] { return app.sim.interact(id, 2); }); } };
-			// unlock: the server allows the door's owner faction only; bash: any shut door, until it breaks (state 3)
-			ui::Menu::Item unlock{ "Unlock", [=] { order("unlock", id, [=] { return app.sim.interact(id, 11); }); } };
-			ui::Menu::Item bash{ "Bash", [=] { order("bash", id, [=] { return app.sim.interact(id, 12); }); } };
-			ui::Menu::Item pick{ "Pick Lock", [=] { order("lockpick", id, [=] { return app.sim.interact(id, 3); }); } };
-			if (t->state == simlink::Interactable::kClosed) { it.push_back(open); }
-			if (t->state == simlink::Interactable::kOpen) { it.push_back(close); }
-			if (t->state == simlink::Interactable::kLocked) { it.push_back(unlock); it.push_back(pick); }
-			if (t->state == simlink::Interactable::kLocked || t->state == simlink::Interactable::kClosed) { it.push_back(bash); }
-		}
-	}
-	return it;
-}
-
 // Order 99 menu_query (SIMLINK MENU_ENTRIES, kenshi-k16.2.121): the context menu on a non-player, standing character asks the server which rows
 // its right-click gate allows (bit 0 Talk To) and opens when MENU_ENTRIES (61) answers, at most kMenuQueryWait later. A server too old to know
 // order 99 (the send fails), a refused query and a silence all open the menu as before, Talk offered, and say why on the log.
@@ -765,40 +680,54 @@ PendingMenu menuPending;	// the right-click whose menu is held for its MENU_ENTR
 
 // The prisoner's menus side by side (kenshi-0qr shot 10): the cage's first, at the cursor, the character's beside it on the left (the second menu's
 // right edge is at x). No default order: every row is a choice. A cage with no row to offer opens the character's menu alone.
+// A picked hold-menu row: runs the action, logs it (the "sim menu:" line) and plays the order sound or its refusal
+bool run_menu_action(const hints::Action& a)
+{
+	const bool sent = a.run();
+	printf("sim menu: %s: %s\n", a.log.c_str(), sent ? "sent" : "not sent");
+	order_sent(sent);
+	return sent;
+}
+
 void open_pick_menu(const PendingMenu& pm)
 {
-	std::vector<ui::Menu::Item> items = menu_items(pm.p, pm.entries);
-	std::vector<ui::ContextRow> cageRows;
-	std::vector<uint8_t> cageActions;
-	if (pm.cage)
+	// every row of both columns comes from the control-hints list (steps 2-9): the target's own rows (menu == true), and a locked cage's cage_* rows,
+	// fed this menu's own query answers (MENU_ENTRIES of the character, the cage's entries and pick chance)
+	hints::Context hc = hints_context();
+	hc.entries = pm.entries;
+	if (pm.cage) { hc.cageInfo = [&pm](uint64_t) { return hints::Context::CageInfo{ pm.cageEntries, pm.chance }; }; }
+	const hints::Hover hover = hints::hints_for(pm.p, hc);
+	std::vector<ui::ContextRow> cageRows, rows;
+	std::vector<hints::Action> cageActs, acts;
+	for (const hints::Action& a : hover.actions)
 	{
-		const int e = pm.cageEntries;
-		if (e < 0 || (e & (1 << 16))) { cageRows.push_back({ "Pick Lock", pm.chance >= 0 ? (int)(std::floor(pm.chance * 1000.0f) * 0.1f) : -1 }); cageActions.push_back(18); }	// the original's int(chance x 1000) x 0.1
-		if (e < 0 || (e & (1 << 17))) { cageRows.push_back({ "Use Tools" }); cageActions.push_back(19); }
-		if (e < 0 || (e & (1 << 18))) { cageRows.push_back({ "Use Strength" }); cageActions.push_back(20); }
+		if (!a.menu) { continue; }
+		const bool cage = std::string(a.kind).rfind("cage_", 0) == 0;
+		(cage ? cageRows : rows).push_back({ a.menuText.empty() ? a.label : a.menuText, a.percent });
+		(cage ? cageActs : acts).push_back(a);
 	}
-	if (items.size() < 2 && cageRows.empty()) { return; }	// a title and no rows: no menu (the original opens none without an action)
+	if (rows.empty() && cageRows.empty()) { return; }	// no row: no menu (the original opens none without an action)
 	app.look = false;
 	sappcmd::lockMouse(false);
 	app.mouseX = pm.x;
 	app.mouseY = pm.y;
 	pointer::set((float)pm.x, (float)pm.y);
-	// items[0] is the title row (menu_items); the rest become ContextRows, picked by index after the menu closes
-	std::vector<ui::ContextRow> rows;
-	std::vector<std::function<void()>> acts;
-	for (size_t i = 1; i < items.size(); i++) { rows.push_back({ items[i].text }); acts.push_back(items[i].action); }
 	if (!cageRows.empty())
 	{
-		const uint64_t key = pm.cage;
-		ui::openContextMenu((float)pm.x, (float)pm.y, pm.cageTitle, cageRows, [key, cageActions](int i)
+		ui::openContextMenu((float)pm.x, (float)pm.y, pm.cageTitle, cageRows, [cageActs](int i)
 		{
-			if (i < 0 || i >= (int)cageActions.size()) { return; }
-			const bool sent = app.sim.interact(key, cageActions[i]);
-			printf("sim menu: cage %s %llu: %s\n", cageActions[i] == 18 ? "pick lock" : cageActions[i] == 19 ? "use tools" : "use strength", (unsigned long long)key, sent ? "sent" : "not sent");
-			order_sent(sent);
+			if (i < 0 || i >= (int)cageActs.size()) { return; }
+			run_menu_action(cageActs[i]);
 		});
 	}
-	if (!rows.empty()) { ui::openContextMenu((float)pm.x, (float)pm.y, items[0].text, rows, [acts](int i) { if (i >= 0 && i < (int)acts.size() && acts[i]) { acts[i](); } }, !cageRows.empty()); }	// at the cursor (ctx18_static.md)
+	if (!rows.empty())
+	{
+		ui::openContextMenu((float)pm.x, (float)pm.y, hover.menuTitle, rows, [acts](int i)
+		{
+			if (i < 0 || i >= (int)acts.size()) { return; }
+			run_menu_action(acts[i]);
+		}, !cageRows.empty());
+	}	// at the cursor (ctx18_static.md)
 	printf("sim menu: open at %.0f %.0f%s%s\n", pm.x, pm.y, pm.entries >= 0 ? (pm.entries & 1 ? " with Talk" : " without Talk") : "", cageRows.empty() ? "" : " with the cage's menu");
 }
 
@@ -828,6 +757,7 @@ void menu_query_frame()
 		{
 			cageHover.seq = 0;
 			cageHover.chance = m.pickChance;
+			cageHover.entries = (int)m.entries;
 			printf("menu_entries: cage %llu entries %x chance %.3f (hover)\n", (unsigned long long)m.target, m.entries, m.pickChance);
 			continue;
 		}

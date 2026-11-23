@@ -1,0 +1,12 @@
+# kenshi-mxn4 (control hints step 7): cage_alone, the Wanderer selected, the Prisoner locked in the cage. Before the hover's query the cage's rows are all offered with no
+# chance; after the pointer rests on the prisoner (order 99 on the cage key) the answer's MENU_ENTRIES bits and pick chance fill them in.
+100 select id=@Wanderer@
+110 camera char Prisoner
+200 hints char Prisoner
+210 charclick Prisoner
+220 charclick right Prisoner
+230 charclick shift right Prisoner
+240 mouse char=@Prisoner@ -5
+400 hints char Prisoner
+410 charclick right Prisoner
+500 quit

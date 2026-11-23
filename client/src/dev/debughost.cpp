@@ -399,7 +399,7 @@ namespace
 {
 const struct { const char* key; const char* label; } kCfgToggles[] = {
 	{ "debug.hud_text", "Developer text (fps, timings)" }, { "debug.light_probes", "Light probes" },
-	{ "debug.pick_mask", "Pick mask" }, { "debug.route_preview", "Route preview" },
+	{ "debug.pick_mask", "Pick mask" }, { "debug.route_preview", "Route preview" }, { "debug.roads", "Road editor overlay (Ctrl+F11)" },
 };
 bool cfgOn(const char* key) { for (const cfg::Info& i : cfg::find(key)) { if (i.key == key) { return i.value == "on"; } } return false; }
 std::unique_ptr<ui::Options> debugOptions;	// the DEBUG SETTINGS window (k16.2.419.1), opened from the panel's Settings... button
@@ -742,6 +742,19 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 		printf("clock: tick %llu paused bits %u, %zu open menus\n", (unsigned long long)ck.tick, ck.pauseBits, sim.decoder().menus.size());
 		return true;
 	}
+	if (a.size() == 2 && a[0] == "medical")	// dump medical ID: that character's CHAR_MEDICAL off the wire, one line a part (health, stun, max, bandage, splint) and the blood (stdout; kenshi-1fxq)
+	{
+		const uint64_t id = strtoull(a[1].c_str(), nullptr, 10);
+		const simlink::Medical* m = sim.medical(id);
+		if (!m) { printf("medical %llu: none\n", (unsigned long long)id); return true; }
+		printf("medical %llu tick %llu blood %.2f/%.0f bleed %.3f\n", (unsigned long long)id, (unsigned long long)m->tick, m->blood, m->bloodMax, m->bleed);
+		for (size_t i = 0; i < m->parts.size(); i++)
+		{
+			const auto& p = m->parts[i];
+			printf("medical %llu part %zu id %u name \"%s\" health %.3f stun %.3f max %.3f bandage %.3f splint %.3f limb %u\n", (unsigned long long)id, i, p.part, sim.decoder().str(p.part).c_str(), p.health, p.stun, p.max, p.bandage, p.splint, (unsigned)p.limb);
+		}
+		return true;
+	}
 	if (a.size() == 1 && a[0] == "chars")	// dump chars: every character on the wire (id, name, flags, position, yaw, CHAR_MEDICAL severed part bits, CHAR_STATS goal/strength/encumbrance, the AI tail goal/source/step/target, the stats window tail carry/resist/each skill's bar; stdout)
 	{
 		for (const auto& [id, ch] : sim.decoder().chars)
@@ -902,6 +915,11 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 	if (a.size() == 1 && a[0] == "light_bake")	// dump light_bake: the last building debug.light_probes asked about (stdout)
 	{
 		printf("%s\n", buildings.lightBakeLine().c_str());
+		return true;
+	}
+	if (a.size() == 1 && a[0] == "precache")	// dump precache: the background world precache (stream.precache; kenshi-nbmu; stdout)
+	{
+		printf("%s", buildings.precacheReport().c_str());
 		return true;
 	}
 	if (a.size() == 1 && a[0] == "popin")	// dump popin: the building pop-in timelines and asset costs (kenshi-k16.2.258.2; stdout)

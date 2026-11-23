@@ -70,6 +70,7 @@
 #include "dev/devhooks.hpp"
 #ifdef KCLIENT_DEV_TOOLS
 #include "dev/pickmask.hpp"
+#include "dev/roadedit.hpp"
 #endif
 #include "knobs/lightterms.hpp"
 #include "net/aitask.hpp"
@@ -98,6 +99,7 @@
 #include "ui/ui.hpp"
 #include "ui/gfx.hpp"
 #include "ui/hud.hpp"
+#include "ui/diamond.hpp"
 #include "ui/options.hpp"
 #include "ui/gear.hpp"
 #include "ui/itemwindows.hpp"
@@ -169,6 +171,7 @@
 #include "world/worldmap.hpp"
 #include "host/orders.hpp"
 #include "host/pick.hpp"
+#include "host/logicframe.hpp"
 #include "host/script.hpp"
 #include "host/events.hpp"
 
@@ -179,7 +182,19 @@ namespace host
 // The script commands that only exist for development (--debug): dump / log print the client's internals, debug drives the
 // debug panel, lab the animation lab, physics the Jolt smoke worlds, playtest the playtest store's entry point. The rest of
 // the language drives the game as a player would.
-static bool debug_script_op(const std::string& op) { return op == "debug" || op == "dump" || op == "log" || op == "physics" || op == "lab" || op == "playtest" || op == "trails" || op == "sound" || op == "serverhold" || op == "serverfail" || op == "titlehold" || op == "hints" || op == "light"; }
+// A ground pick at world x z (args from i; "building ID" after them names a player's building): the control-hints cases' pointer-less target
+static Pick ground_pick(const std::vector<std::string>& a, size_t i)
+{
+	Pick p;
+	p.kind = Pick::Ground;
+	p.hit[0] = strtod(a[i].c_str(), nullptr);
+	p.hit[2] = strtod(a[i + 1].c_str(), nullptr);
+	p.hit[1] = app.hm ? app.hm->height(p.hit[0], p.hit[2]) : 0;
+	if (a.size() >= i + 4 && a[i + 2] == "building") { p.building = true; p.id = strtoull(a[i + 3].c_str(), nullptr, 10); }
+	return p;
+}
+
+static bool debug_script_op(const std::string& op) { return op == "debug" || op == "dump" || op == "log" || op == "physics" || op == "lab" || op == "playtest" || op == "trails" || op == "sound" || op == "serverhold" || op == "serverfail" || op == "titlehold" || op == "hints" || op == "roads" || op == "groundclick" || op == "charclick" || op == "thingclick" || op == "menuclick" || op == "light"; }
 
 static void script_needs_debug(const Cmd& c)
 {
@@ -338,7 +353,7 @@ void exec_cmd(const Cmd& c)
 		e.mouse_y = r.y + r.h * 0.5f;
 		event(&e);
 	}
-	else if (c.op == "mouse" && a.size() >= 2 && a[0] == "hud")	// mouse hud pause | speed N (1..3) | portrait N | minimap: onto the centre of that HUD control (then `mouse down|up left` clicks it; kenshi-cym.40.2.10)
+	else if (c.op == "mouse" && a.size() >= 2 && a[0] == "hud")	// mouse hud pause | speed N (1..3) | portrait N | floor | movespeed | build | minimap: onto the centre of that HUD control (then `mouse down|up left` clicks it; kenshi-cym.40.2.10)
 	{
 		const ui::Widget* w = nullptr;
 		const int n = a.size() == 3 ? atoi(a[2].c_str()) : 0;
@@ -346,6 +361,9 @@ void exec_cmd(const Cmd& c)
 		else if (a[1] == "speed" && app.hud) { w = app.hud->speedButton(n); }
 		else if (a[1] == "portrait" && app.hud) { w = app.hud->portrait((size_t)n); }
 		else if (a[1] == "shortcut" && app.hud) { w = app.hud->shortcutButton(n); }	// 0 INV .. 5 (Hud::kShortcuts order)
+		else if (a[1] == "floor" && app.hud) { w = app.hud->floorDiamond(); }
+		else if (a[1] == "movespeed" && app.hud) { w = app.hud->moveSpeedDiamond(); }
+		else if (a[1] == "build" && app.hud) { w = app.hud->buildButton(); }
 		else if (a[1] == "minimap" && app.minimap) { w = app.minimap->window(); }
 		if (!w) { fprintf(stderr, "kclient: script: no hud target\n"); script_error(c); }
 		const ui::Rect r = w->screen();
@@ -444,6 +462,13 @@ void exec_cmd(const Cmd& c)
 	{
 		printf("%s", app.buildings.walkableReport(a[0].substr(10)).c_str());	// dump walkparts=NAME: the walkable-part counts of the placed buildings named so (kenshi-k16.2.414.2)
 	}
+	else if (c.op == "dump" && a.size() == 2 && a[0] == "namelabel" && a[1].starts_with("id="))
+	{
+		// dump namelabel id=N: whether last frame drew the character's name tag, and the carrier the sim gives it (kenshi-pgvp: a carried body draws none)
+		const uint64_t id = strtoull(a[1].c_str() + 3, nullptr, 10);
+		const ui::Rect r = app.nameLabels->placed(id);
+		printf("namelabel id %llu carrier %llu shown %d text \"%s\"\n", (unsigned long long)id, (unsigned long long)app.sim.carrier(id), r.w > 0 ? 1 : 0, app.nameLabels->text(id).c_str());
+	}
 	else if (c.op == "dump" && a.size() == 2 && a[0] == "cut" && a[1].starts_with("id="))
 	{
 		// dump cut id=N: one character's two floor-cut inputs side by side (kenshi-k16.2.264.1): the drawn feet the name tag tests (SimView::placed,
@@ -503,7 +528,7 @@ void exec_cmd(const Cmd& c)
 			script_error(c);
 		}
 		app.inspect = id;	// the watch is the inspect focus: its CHAR_STATS carries the goal
-		if (!set_follow_id(id)) { script_error(c); }
+		if (!set_follow_id(id, true)) { script_error(c); }	// dev/test-only route (a non-squad target is allowed under --debug / scripted)
 	}
 	else if (c.op == "hold" && a.size() == 1 && (a[0] == "on" || a[0] == "off"))	// hold on|off: order 4 for the selection, as the HUD HOLD toggle (off = a plain stop)
 	{
@@ -809,6 +834,34 @@ void exec_cmd(const Cmd& c)
 		if (!inv || n >= inv->items.size() || !app.sim.transferEntry(oc->user, oc->id, inv->version, (uint16_t)n, inv->items[n].count, false, 255, 0, 0)) { script_error(c); }
 	}
 	else if (c.op == "machine" && dev::machineOp(dev_context(), a)) {}	// machine id=N: N's machine window opens (dev/debughost.cpp)
+#ifdef KCLIENT_DEV_TOOLS
+	else if (c.op == "roads" && a.size() == 3 && (a[0] == "select" || a[0] == "point"))	// roads select ROAD MARKER: select it; roads point ROAD MARKER: the pointer onto its handle (then mouse down|up left clicks it)
+	{
+		const int r = atoi(a[1].c_str()), k = atoi(a[2].c_str());
+		if (a[0] == "select") { if (!dev::roadedit::selectMarker(r, k, app.opt.data)) { script_error(c); } else { printf("%s\n", roads_dump().c_str()); fflush(stdout); } }
+		else if (!roads_pointer_to(r, k)) { script_error(c); }
+	}
+	else if (c.op == "roads" && a.size() == 2 && a[0] == "row")	// roads row N: the panel's Nth shown row, as its click
+	{
+		const int row = atoi(a[1].c_str());
+		const int s = app.roadsPanel && row >= 0 ? app.roadsPanel->rowSuspect((size_t)row) : -1;
+		if (s < 0) { script_error(c); } else { roads_select_suspect(s); }
+	}
+	else if (c.op == "roads" && a.size() == 2 && a[0] == "mark")	// roads mark ok|unsure|bad|clear: the selection's mark
+	{
+		const int m = a[1] == "ok" ? ui::kRoadOk : a[1] == "unsure" ? ui::kRoadUnsure : a[1] == "bad" ? ui::kRoadBad : a[1] == "clear" ? ui::kRoadUnmarked : -1;
+		if (!dev::roadedit::mark(m)) { script_error(c); }
+	}
+#endif
+	else if (c.op == "roads" && a.size() == 1)	// roads on|off|next|prev|dump: the road editor (dev/roadedit.cpp, kenshi-ix9r); dump prints the selected suspect
+	{
+		if (a[0] == "on" || a[0] == "off") { cfg::set(std::string("debug.roads=") + a[0]); }
+		else if (a[0] == "next") { roads_step(1); }
+		else if (a[0] == "prev") { roads_step(-1); }
+		else if (a[0] == "list") { printf("%s", roads_list().c_str()); fflush(stdout); }
+		else if (a[0] == "dump") { printf("%s\n", roads_dump().c_str()); fflush(stdout); }
+		else { script_error(c); }
+	}
 	else if (c.op == "hints" && dev::hintsOp(dev_context(), a)) {}	// hints at X Y | hints kinds: the control-hints list at a screen point, or the kind registry (dev/hintsop.cpp)
 	else if (c.op == "inspect" && a.size() == 1 && a[0].starts_with("id="))	// inspect id=N: N becomes the inspect focus (order 87, its CHAR_STATS), as a click on an NPC
 	{
@@ -830,11 +883,12 @@ void exec_cmd(const Cmd& c)
 		const SimView::Click click{ "script" };
 		if (!app.sim.moveTo(at, false, true, &click)) { script_error(c); }
 	}
-	else if (c.op == "interact" && a.size() == 2 && a[0].starts_with("id="))	// interact id=N ACTION: order 60 for the selection on N (6 talk: a moving target, without aiming the pointer; 5 loot opens the body as the UI does)
+	else if (c.op == "interact" && (a.size() == 2 || a.size() == 3) && a[0].starts_with("id="))	// interact id=N ACTION [FLAGS]: order 60 for the selection on N (6 talk: a moving target, without aiming the pointer; 5 loot opens the body as the UI does; FLAGS as simview interact: 2 on a close (2) = lock the door)
 	{
 		const uint64_t id = strtoull(a[0].c_str() + 3, nullptr, 10);
 		const int action = atoi(a[1].c_str());
-		if (!(action == 5 ? open_body(id, false) : app.sim.interact(id, (uint8_t)action))) { script_error(c); }
+		const uint8_t flags = a.size() == 3 ? (uint8_t)atoi(a[2].c_str()) : 0;
+		if (!(action == 5 ? open_body(id, false) : app.sim.interact(id, (uint8_t)action, false, flags))) { script_error(c); }
 	}
 	else if (c.op == "portrait" && !a.empty())	// portrait [add] NAME... | id=N: a click (add: Shift) on that character's bar portrait, the HUD's own path (a follow moves to the selection's first in squad order)
 	{
@@ -845,6 +899,18 @@ void exec_cmd(const Cmd& c)
 		if (!id || !app.sim.isPlayer(id)) { script_error(c); }
 		portrait_gesture(id, dbl ? hints::Gesture::kDoubleClick : add ? hints::Gesture::kShiftClick : hints::Gesture::kClick);
 	}
+	else if (c.op == "cast" && a.size() == 2 && (a[0] == "focus" || a[0] == "follow") && a[1].starts_with("id="))	// cast focus|follow id=N: the cast row's double click (portrait_focus) / FOLLOW button (cast_follow) on any character
+	{
+		const uint64_t id = std::strtoull(a[1].c_str() + 3, nullptr, 10);
+		if (!app.sim.decoder().chars.count(id)) { script_error(c); }
+		if (a[0] == "focus") { portrait_focus(id); } else { cast_follow(id); }
+	}
+	else if (c.op == "hints" && a.size() == 1 && a[0] == "shown")	// hints shown: the control-hints panel as the pointer's widget shows it now (ui.control_hints on), one `  input  label` row each
+	{
+		const ui::HintBlock hb = ui::shownHints();
+		printf("hints shown: %s: %zu rows\n", hb.title.empty() ? "(no title)" : hb.title.c_str(), hb.lines.size());
+		for (const ui::HintLine& l : hb.lines) { printf("  %s  \"%s\"%s\n", l.input.c_str(), l.label.c_str(), l.enabled ? "" : "  disabled"); }
+	}
 	else if (c.op == "hints" && a.size() > 1 && a[0] == "portrait")	// hints portrait NAME...: the list a portrait offers now (the same text as `hints at`)
 	{
 		std::string text;
@@ -853,6 +919,84 @@ void exec_cmd(const Cmd& c)
 		if (!id) { script_error(c); }
 		else { fputs(hints::format_hover(hints::hints_for_portrait(id, hints_context())).c_str(), stdout); }
 	}
+	else if (c.op == "hints" && a.size() > 1 && a[0] == "char")	// hints char NAME... | id=N: the list a character in the world offers now (the same text as `hints at` over it)
+	{
+		std::string text;
+		for (size_t i = 1; i < a.size(); i++) { text += (text.empty() ? "" : " ") + a[i]; }
+		const uint64_t id = named_character(text);
+		if (!id) { script_error(c); }
+		else { Pick p; p.kind = Pick::Character; p.id = id; fputs(hints::format_hover(hints::hints_for(p, hints_context())).c_str(), stdout); }
+	}
+	else if (c.op == "hints" && a.size() == 2 && a[0] == "thing")	// hints thing ID [label]: the list an item, bed, producer or door offers now
+	{
+		const simlink::Interactable* t = app.sim.thing(strtoull(a[1].c_str(), nullptr, 10));
+		if (!t) { script_error(c); }
+		else
+		{
+			Pick p; p.id = t->id;
+			p.kind = t->kind == simlink::Interactable::kDoor ? Pick::Door : t->kind == simlink::Interactable::kBed ? Pick::Bed : t->kind == simlink::Interactable::kProducer ? Pick::Producer : t->kind == simlink::Interactable::kContainer ? Pick::Container : Pick::Item;
+			fputs(hints::format_hover(hints::hints_for(p, hints_context())).c_str(), stdout);
+		}
+	}
+	else if (c.op == "hints" && a.size() == 3 && a[0] == "thing" && a[2] == "label")	// hints thing ID label: the same, with the pointer on its label
+	{
+		const simlink::Interactable* t = app.sim.thing(strtoull(a[1].c_str(), nullptr, 10));
+		if (!t) { script_error(c); }
+		else { Pick p; p.id = t->id; p.kind = t->kind == simlink::Interactable::kContainer ? Pick::Container : Pick::Item; hints::Context cx = hints_context(); cx.labelId = t->id; fputs(hints::format_hover(hints::hints_for(p, cx)).c_str(), stdout); }
+	}
+	else if (c.op == "hints" && a.size() >= 3 && a[0] == "ground")	// hints ground X Z [building ID]: the list the ground at world x z (a player's building when its id follows) offers now
+	{
+		Pick p = ground_pick(a, 1);
+		fputs(hints::format_hover(hints::hints_for(p, hints_context())).c_str(), stdout);
+	}
+#ifdef KCLIENT_DEV_TOOLS
+	else if (c.op == "groundclick" && a.size() >= 2)	// groundclick [right] [shift] X Z [building ID]: sim_click on the ground at world x z (the control-hints cases; `click hint:` + `sim click` lines)
+	{
+		bool right = false, shift = false;
+		size_t i = 0;
+		for (; i < a.size() && (a[i] == "right" || a[i] == "shift"); i++) { (a[i] == "right" ? right : shift) = true; }
+		if (a.size() < i + 2) { script_error(c); }
+		else { g_forcePickGround = ground_pick(a, i); sim_click(app.mouseX, app.mouseY, right, shift); g_forcePickGround = Pick{}; }
+	}
+	else if (c.op == "thingclick" && a.size() >= 1)	// thingclick [right] [shift] [label] ID: sim_click on that thing wherever the pointer is (`click hint:` + `sim click` lines)
+	{
+		bool right = false, shift = false;
+		size_t i = 0;
+		bool label = false;
+		for (; i + 1 < a.size() && (a[i] == "right" || a[i] == "shift" || a[i] == "label"); i++) { (a[i] == "right" ? right : a[i] == "shift" ? shift : label) = true; }
+		const uint64_t id = strtoull(a[i].c_str(), nullptr, 10);
+		if (!id || !app.sim.thing(id)) { script_error(c); }
+		else { g_forcePickThing = id; g_forcePickLabel = label; sim_click(app.mouseX, app.mouseY, right, shift); g_forcePickThing = 0; g_forcePickLabel = false; }
+	}
+	else if (c.op == "charclick" && !a.empty())	// charclick [right] [shift] [ctrl] NAME... | id=N: sim_click on that character wherever the pointer is (the control-hints cases: the click and its `click hint:` line)
+	{
+		bool right = false, shift = false;
+		size_t i = 0;
+		for (; i < a.size() && (a[i] == "right" || a[i] == "shift"); i++) { (a[i] == "right" ? right : shift) = true; }
+		std::string text;
+		for (; i < a.size(); i++) { text += (text.empty() ? "" : " ") + a[i]; }
+		const uint64_t id = named_character(text);
+		if (!id) { script_error(c); }
+		else { g_forcePickChar = id; sim_click(app.mouseX, app.mouseY, right, shift); g_forcePickChar = 0; }
+	}
+	else if (c.op == "menuclick" && a.size() >= 2)	// menuclick KIND ID | id=N | NAME...: the hold menu's row of that kind on a character or thing (`click hint:` + `sim menu:` lines; the control-hints cases)
+	{
+		std::string text;
+		for (size_t i = 1; i < a.size(); i++) { text += (text.empty() ? "" : " ") + a[i]; }
+		Pick p;
+		const uint64_t num = strtoull(text.c_str(), nullptr, 10);
+		const simlink::Interactable* th = num ? app.sim.thing(num) : nullptr;
+		if (th) { p.id = num; p.kind = th->kind == simlink::Interactable::kContainer ? Pick::Container : th->kind == simlink::Interactable::kProducer ? Pick::Producer : th->kind == simlink::Interactable::kDoor ? Pick::Door : th->kind == simlink::Interactable::kBed ? Pick::Bed : Pick::Item; }
+		else if (const uint64_t id = named_character(text)) { p.id = id; p.kind = Pick::Character; }
+		const hints::Context ctx = hints_context();
+		const hints::Action* row = nullptr;
+		hints::Hover h;
+		if (p.id) { h = hints::hints_for(p, ctx); }
+		for (const hints::Action& x : h.actions) { if (x.menu && a[0] == x.kind) { row = &x; break; } }
+		if (!row) { printf("menuclick: no %s row\n", a[0].c_str()); script_error(c); }
+		else { printf("click hint: %s\n", row->kind); run_menu_action(*row); }
+	}
+#endif
 	else if (c.op == "squadfirst" && !a.empty())	// squadfirst NAME... | id=N: the squads window's drag to first place: the character leads its squad (order SQUAD_MOVE, index 0)
 	{
 		std::string text;

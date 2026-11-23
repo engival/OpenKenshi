@@ -9,16 +9,16 @@
 // events arrive as calls (R / F, engage, load) or as transitions of the samples (a subject change, the auto pair moving, the follow
 // ending).
 //
-// Shown level while following = `manual` (a level the player stepped to) if set, else the subject's resolved floor. Not following:
-// the player's level alone. No rule fires once and is then trusted: a wrong frame of input is corrected by the next one.
+// Shown level while following = the subject's resolved floor, every frame (L3). Not following: the player's level alone (F2: it changes
+// only when the player steps it). No rule fires once and is then trusted: a wrong frame of input is corrected by the next one.
+// There is no manual level while following (user 2026-11-22, kenshi-k16.2.236.13 L4/L5): a floor step ends the follow, so the caller
+// (host floor_step) drops the camera lock first and step() sets the player's level; the next sample is not following.
 //
-// Events (review section 3):
-//   auto pair changes (door, stair latch, roof, another building, teleport)  clear manual
-//   R / F / the diamond                                                     manual = the stepped level
-//   engage, by any route                                                    clear manual
-//   subject changes                                                         clear manual, reset the stair latch
+// Events:
+//   R / F / the diamond                                                     player's level = the stepped level (the caller has ended follow)
+//   subject changes                                                         reset the stair latch
 //   follow ends or the subject is lost                                      player's level = the last shown level; no write after
-//   load                                                                    player's level = saved; a restored subject: manual = saved
+//   load                                                                    player's level = saved
 //
 // The auto floor (the subject's building and floor), in a fixed order, from the subject's sim position only:
 //   1. on a flight of the sample's building: the stair latch (the building is that one, whatever the wire says)
@@ -75,13 +75,12 @@ namespace ff
 	enum class Reason : uint8_t
 	{
 		kPlayer,	// not following: the player's level
-		kManual,	// following, the player stepped the level
 		kFlight,	// following, on a staircase: the stair latch
 		kRoof,		// following, on a roof deck
 		kIndoors,	// following, indoors on the wire
 		kOutdoors,	// following, outdoors
 	};
-	const char* reasonName(Reason r);	// "player", "manual", "flight", "roof", "indoors", "outdoors"
+	const char* reasonName(Reason r);	// "player", "flight", "roof", "indoors", "outdoors"
 
 	struct View
 	{
@@ -95,20 +94,16 @@ namespace ff
 	public:
 		// One frame: the shown level and why. Subject changes, the auto pair moving and the follow ending are read from the samples.
 		View update(const Sample& s);
-		// R / F / the diamond: manual = the level stepped from the shown one, clamped to [0, top] (the caller's FloorStatus::top, 3
-		// when nothing is sliced or peeked). Not following: the player's own level.
+		// R / F / the diamond: the player's level = the shown one stepped, clamped to [0, top] (the caller's FloorStatus::top, 3 when
+		// nothing is sliced or peeked). While following, the caller ends the follow with it: the next update is the free level.
 		void step(int dir, int top);
-		// An explicit engage (double click, portrait double click, F, V, Z): drop the manual level, so the next update is the subject's.
-		void engage();
-		// A save load or a scene reset: the saved level becomes the player's; a restored subject holds it as manual until a follow is engaged.
+		// A save load or a scene reset: the saved level becomes the player's; a restored subject is followed again from the next sample.
 		void load(int level, uint64_t subject);
 
 		int shown() const { return shown_; }			// the last level update returned
 		int playerLevel() const { return level_; }		// the player's own level (what the view keeps when the follow ends)
-		bool hasManual() const { return hasManual_; }
-		int manual() const { return manual_; }
 		int autoFloor() const { return following_ && pairValid_ ? pairFloor_ : -1; }	// the subject's resolved floor (-1: not following)
-		uint64_t subject() const { return subject_; }	// the subject the manual level and the latch belong to (0: none)
+		uint64_t subject() const { return subject_; }	// the subject the latch belongs to (0: none)
 		int latchBuilding() const { return latch_.building; }	// the building whose flight the subject is on, -1 none (the next sample's frame)
 
 		// The latch as of the last update, for the trace and the F12 sidecar's floor line (kenshi-k16.2.236.8.4.3).
@@ -134,8 +129,6 @@ namespace ff
 
 		int level_ = 3;			// the player's level (visible_'s start)
 		int shown_ = 3;			// the last level returned
-		bool hasManual_ = false;
-		int manual_ = 0;
 		bool following_ = false;			// the last sample followed
 		uint64_t subject_ = 0;				// the last followed subject
 		bool pairValid_ = false;			// pair{,_Building,_Floor} holds the last frame's auto pair

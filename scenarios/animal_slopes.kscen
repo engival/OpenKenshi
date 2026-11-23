@@ -1,0 +1,49 @@
+# animal_slopes (kenshi-7g8d, kenshi-k16.2.373.4): a viewing fixture for the outside tester's goat hop on steep terrain. The herds are the k16.2.373.2 headless rounds' herdS (steep slope, x 13590-13606, z 10640-10776, ground 1013 down to 890) and rD1 (rocky, x 13150-13166, z 9700-9876). Only the player is ever ordered. The animals are hostile (non-hostile ones just stand idle: no roaming in the sim, checked 2026-11-23): they chase the Wanderer by their own AI, which keeps them moving as long as he runs across the slope; Mercenary Plate and a katana (goat_fight) keep him up longer.
+KSCEN 2
+scenario title=Animals%20on%20a%20steep%20slope%20and%20rocky%20ground setup=A%20mixed%20wildlife%20herd%20(Goats%2C%20Bonedogs%2C%20Beak%20Things%2C%20Raptors%2C%20Wild%20Bulls)%20stands%20on%20a%20steep%20hillside%20of%20about%2030-39%20degrees%2C%20up%20the%20slope%20west%20of%20the%20Wanderer%3B%20a%20second%20herd%20(Skin%20Spiders%2C%20Pack%20Beasts%2C%20Skimmers%2C%20Beak%20Things%2C%20Goats)%20is%20on%20rocky%20broken%20ground%20about%20650%20u%20south-west.%20The%20animals%20are%20hostile%20and%20chase%20the%20Wanderer%2C%20in%20Mercenary%20Plate%20with%20a%20katana. look_for=Watch%20the%20Goats%20and%20the%20others%20walk%20and%20run%20over%20the%20slope%3A%20are%20the%20legs%20animated%20while%20they%20move%2C%20and%20does%20any%20body%20hop%20or%20jerk%20along%20the%20up%20axis%20on%20the%20steep%20ground%3F%20Zoom%20in%20on%20the%20Goats%20(tester%20report%202026-11-18%3A%20'goats%20moved%20up%20fine%20but%20would%20jump%20along%20the%20up-axis%20as%20they%20moved%20on%20the%20steep%20terrain').%20Fly%20the%20camera%20to%20x%2013250%2C%20z%209800%20for%20the%20rocky%20herd.%20The%20herd%20runs%20at%20the%20Wanderer%20by%20its%20own%20AI%3B%20keep%20running%20him%20(right%20click%20the%20ground)%20across%20the%20slope%20so%20they%20keep%20chasing%2C%20only%20the%20Wanderer%20is%20ever%20ordered. bead=kenshi-k16.2.373.4 metrics=player_downed_s
+source save=playtest game=1.0.68 radius=0 centre=13700,10700 leader=Wanderer
+clock day=1 hour=12 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=13800 y=835.642815 z=10700 yaw=1.5708 leader=1 player=1 chase=1 ranged=1
+squad id=2 name=Goat faction=3943-gamedata.base hostile=1 player=0
+char id=2 squad=2 name=Goat template=3993-gamedata.base faction=3943-gamedata.base x=13590 y=1012.807067 z=10640 yaw=1.5708 chase=1
+char id=3 squad=2 name=Goat template=3993-gamedata.base faction=3943-gamedata.base x=13598 y=1010.798452 z=10648 yaw=1.5708 chase=1
+char id=4 squad=2 name=Goat template=3993-gamedata.base faction=3943-gamedata.base x=13606 y=1008.553529 z=10656 yaw=1.5708 chase=1
+squad id=3 name=Bonedog faction=3943-gamedata.base hostile=1 player=0
+char id=5 squad=3 name=Bonedog template=3979-gamedata.base faction=3943-gamedata.base x=13590 y=1013.637836 z=10670 yaw=1.5708 chase=1
+char id=6 squad=3 name=Bonedog template=3979-gamedata.base faction=3943-gamedata.base x=13598 y=1009.539375 z=10678 yaw=1.5708 chase=1
+char id=7 squad=3 name=Bonedog template=3979-gamedata.base faction=3943-gamedata.base x=13606 y=1004.266762 z=10686 yaw=1.5708 chase=1
+squad id=4 name=BeakThing faction=3943-gamedata.base hostile=1 player=0
+char id=8 squad=4 name=BeakThing template=2859-gamedata.base faction=3943-gamedata.base x=13590 y=1004.665531 z=10700 yaw=1.5708 chase=1
+char id=9 squad=4 name=BeakThing template=2859-gamedata.base faction=3943-gamedata.base x=13598 y=992.968304 z=10708 yaw=1.5708 chase=1
+char id=10 squad=4 name=BeakThing template=2859-gamedata.base faction=3943-gamedata.base x=13606 y=973.306771 z=10716 yaw=1.5708 chase=1
+squad id=5 name=Raptor faction=3943-gamedata.base hostile=1 player=0
+char id=11 squad=5 name=Raptor template=44911-rebirth.mod faction=3943-gamedata.base x=13590 y=955.583700 z=10730 yaw=1.5708 chase=1
+char id=12 squad=5 name=Raptor template=44911-rebirth.mod faction=3943-gamedata.base x=13598 y=930.387400 z=10738 yaw=1.5708 chase=1
+char id=13 squad=5 name=Raptor template=44911-rebirth.mod faction=3943-gamedata.base x=13606 y=907.199715 z=10746 yaw=1.5708 chase=1
+squad id=6 name=WildBull faction=3943-gamedata.base hostile=1 player=0
+char id=14 squad=6 name=WildBull template=3986-gamedata.base faction=3943-gamedata.base x=13590 y=899.589871 z=10760 yaw=1.5708 chase=1
+char id=15 squad=6 name=WildBull template=3986-gamedata.base faction=3943-gamedata.base x=13598 y=893.283412 z=10768 yaw=1.5708 chase=1
+char id=16 squad=6 name=WildBull template=3986-gamedata.base faction=3943-gamedata.base x=13606 y=891.924643 z=10776 yaw=1.5708 chase=1
+squad id=12 name=SkinSpider faction=3943-gamedata.base hostile=1 player=0
+char id=22 squad=12 name=SkinSpider template=43877-rebirth.mod faction=3943-gamedata.base x=13150 y=1085.419967 z=9700 yaw=1.5708 chase=1
+char id=23 squad=12 name=SkinSpider template=43877-rebirth.mod faction=3943-gamedata.base x=13158 y=1088.240889 z=9708 yaw=1.5708 chase=1
+char id=24 squad=12 name=SkinSpider template=43877-rebirth.mod faction=3943-gamedata.base x=13166 y=1089.200889 z=9716 yaw=1.5708 chase=1
+squad id=13 name=PackBeast faction=3943-gamedata.base hostile=1 player=0
+char id=25 squad=13 name=PackBeast template=3999-gamedata.base faction=3943-gamedata.base x=13150 y=1088.067351 z=9740 yaw=1.5708 chase=1
+char id=26 squad=13 name=PackBeast template=3999-gamedata.base faction=3943-gamedata.base x=13158 y=1089.071658 z=9748 yaw=1.5708 chase=1
+char id=27 squad=13 name=PackBeast template=3999-gamedata.base faction=3943-gamedata.base x=13166 y=1089.603350 z=9756 yaw=1.5708 chase=1
+squad id=14 name=Skimmer faction=3943-gamedata.base hostile=1 player=0
+char id=28 squad=14 name=Skimmer template=56087-rebirth.mod faction=3943-gamedata.base x=13150 y=1085.914736 z=9780 yaw=1.5708 chase=1
+char id=29 squad=14 name=Skimmer template=56087-rebirth.mod faction=3943-gamedata.base x=13158 y=1085.515967 z=9788 yaw=1.5708 chase=1
+char id=30 squad=14 name=Skimmer template=56087-rebirth.mod faction=3943-gamedata.base x=13166 y=1084.629813 z=9796 yaw=1.5708 chase=1
+squad id=15 name=BeakThing faction=3943-gamedata.base hostile=1 player=0
+char id=31 squad=15 name=BeakThing template=2859-gamedata.base faction=3943-gamedata.base x=13150 y=1080.546122 z=9820 yaw=1.5708 chase=1
+char id=32 squad=15 name=BeakThing template=2859-gamedata.base faction=3943-gamedata.base x=13158 y=1079.069200 z=9828 yaw=1.5708 chase=1
+char id=33 squad=15 name=BeakThing template=2859-gamedata.base faction=3943-gamedata.base x=13166 y=1077.267354 z=9836 yaw=1.5708 chase=1
+squad id=16 name=Goat faction=3943-gamedata.base hostile=1 player=0
+char id=34 squad=16 name=Goat template=3993-gamedata.base faction=3943-gamedata.base x=13150 y=1072.219971 z=9860 yaw=1.5708 chase=1
+char id=35 squad=16 name=Goat template=3993-gamedata.base faction=3943-gamedata.base x=13158 y=1069.997203 z=9868 yaw=1.5708 chase=1
+char id=36 squad=16 name=Goat template=3993-gamedata.base faction=3943-gamedata.base x=13166 y=1067.914742 z=9876 yaw=1.5708 chase=1
+item char=1 sid=2148-gamedata.base section=shirt
+item char=1 sid=476-gamedata.base section=hip level=40

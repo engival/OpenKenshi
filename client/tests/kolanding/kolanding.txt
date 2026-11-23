@@ -1,0 +1,11 @@
+# kolanding (kenshi-ettl): spectator on scenarios/kolanding.kscen; the sim runs at SIMSPEED x so the fight yields KOs quickly. The camera is a free camera
+# over the fight; the ragdoll log lines (ragdolls: <id> pull starts / settled) are the measurement (run.sh tabulates them).
+10 set animate 1
+20 set framedt real
+30 set simspeed @SPEED@
+40 set pos -50655,-1108
+50 set alt 110
+60 set yaw 0
+70 set pitch -75
+@SHOTS@
+1800 quit

@@ -1,0 +1,45 @@
+hints: item "Grog": 3 actions
+  Hold right  menu_pick_up  "Pick up"  (menu row)
+  Right click  pick_up  "Pick up Grog"
+  Shift+Right click  pick_up_queue  "Pick up Grog (queued after the current orders)"
+click hint: menu_pick_up
+sim menu: pick up 40819: sent
+hints: producer "Copper Resource": 5 actions
+  Hold right  menu_operate  "Mine"  (menu row)
+  Hold right  menu_open  "Open"  (menu row)
+  Click  machine  "Show the machine window of Copper Resource"
+  Right click  use_producer  "Mine Copper Resource"
+  Shift+Right click  producer_queue  "Mine Copper Resource (queued after the current orders)"
+click hint: menu_operate
+sim menu: use 4611687120040361986: sent
+click hint: menu_open
+sim menu: open 4611687120040361986: sent
+hints: door "Storm House Door A" (closed): 4 actions
+  Hold right  menu_open  "Open"  (menu row)
+  Hold right  menu_bash  "Bash"  (menu row)
+  Right click  door_open  "Open Storm House Door A"
+  Shift+Right click  door_queue  "Open Storm House Door A (queued after the current orders)"
+click hint: menu_open
+sim menu: open 1099511627779: sent
+click hint: menu_bash
+sim menu: bash 1099511627779: sent
+hints: container "Shop Counter" (foreign): 5 actions
+  Hold right  menu_open  "Open"  (menu row)
+  Hold right  menu_take_all  "Take all"  (menu row)
+  Click  show_container  "Show the window of Shop Counter"
+  Right click  foreign_walk  "Walk to Shop Counter (hold ALT to steal)"
+  Shift+Right click  foreign_walk_queue  "Walk to Shop Counter (hold ALT to steal) (queued after the current orders)"
+click hint: menu_open
+sim menu: open 1099511627812: sent
+click hint: menu_take_all
+sim menu: take all 1099511627812: sent
+hints: container "Safe" (foreign, locked): 5 actions
+  Hold right  menu_lockpick  "Pick Lock"  (menu row)
+  Hold right  menu_take_all  "Take all"  (menu row)
+  Click  lockpick  "Pick the lock of Safe"
+  Right click  foreign_walk  "Walk to Safe (hold ALT to pick the lock)"
+  Shift+Right click  foreign_walk_queue  "Walk to Safe (hold ALT to pick the lock) (queued after the current orders)"
+click hint: menu_lockpick
+sim menu: lockpick 1099511627821: sent
+click hint: menu_take_all
+sim menu: take all 1099511627821: sent

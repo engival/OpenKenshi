@@ -60,9 +60,9 @@ gh release upload "$tag" "$zip" --repo "$GITHUB_REPOSITORY" --clobber
 # 3. The tag follows the commit this asset was built from (a lightweight tag, so the ref is simply repointed).
 gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" -f sha="$GITHUB_SHA" -F force=true >/dev/null
 
-# 4. The notes, last, so as long as this step has not run the platform's line still names the asset that is actually there. Drop this platform's line
+# 4. The notes, last, so as long as this step has not run the platform's line still names the asset that is actually there. Drop empty lines (GitHub adds them on read-back) and this platform's line
 # (a literal prefix match: `index`, not a regex), keep every other platform's line verbatim, append the new one.
-awk -v p="$platform" 'index($0, p ": ") != 1' "$body" >"$notes"
+awk -v p="$platform" 'NF && index($0, p ": ") != 1' "$body" >"$notes"
 printf '%s\n' "$line" >>"$notes"
 gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --prerelease --title "$title" --notes-file "$notes"
 

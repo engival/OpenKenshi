@@ -177,7 +177,7 @@ namespace simlink
 		struct Bounty { uint32_t faction = 0; int32_t amount = 0; };
 		struct SkillProgress { uint8_t skill = 0; float progress = 0; };
 		uint64_t tick = 0;
-		uint8_t state = 0, lockLevel = 0, extraKind = 0, extraSkill = 0xFF, weaponClass = 0;	// extraKind 1 Stealth, 2 Athletics, 3-6 job/ranged/melee/swimming (not drawn yet); extraSkill 0xFF = none; weaponClass 0 martial arts, 1 attack + defence, 2 crossbows
+		uint8_t state = 0, lockLevel = 0, extraKind = 0, extraSkill = 0xFF, weaponClass = 0;	// extraKind 1 Stealth, 2 Athletics, 3 job skill, 4 ranged accuracy error, 5 combat-ready melee, 6 swimming (all drawn, host/panels.cpp); extraSkill 0xFF = none; weaponClass 0 martial arts, 1 attack + defence, 2 crossbows
 		uint32_t goal = 0;
 		float encumbrance = 0, extra = 0;
 		std::vector<SkillRow> skills;

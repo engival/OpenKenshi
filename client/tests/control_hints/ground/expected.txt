@@ -1,0 +1,14 @@
+hints: Ground: 3 actions
+  Right click  move  "Move here"
+  Shift+Right click  move_queue  "Move here (queued after the current orders)"
+  Click  deselect  "Clear the selection (Shift keeps it)"
+click hint: move
+sim click: move_to -50600.0 1098.7 -1000.0 (navmesh point): sent
+click hint: move_queue
+sim click: move_to -50600.0 1097.4 -1010.0 (navmesh point): sent
+click hint: deselect
+sim click: character 0, 2 selected
+hints: Ground: 3 actions
+  Right click  move  "Move here"
+  Shift+Right click  move_queue  "Move here (queued after the current orders)"
+  Click  deselect  "Clear the selection (Shift keeps it)"

@@ -1,0 +1,70 @@
+hints: container "Shop Counter" (foreign): 5 actions
+  Hold right  menu_open  "Open"  (menu row)
+  Hold right  menu_take_all  "Take all"  (menu row)
+  Click  show_container  "Show the window of Shop Counter"
+  Right click  foreign_walk  "Walk to Shop Counter (hold ALT to steal)"
+  Shift+Right click  foreign_walk_queue  "Walk to Shop Counter (hold ALT to steal) (queued after the current orders)"
+hints: container "Shop Counter" (foreign): 6 actions
+  Hold right  menu_open  "Open"  (menu row)
+  Hold right  menu_take_all  "Take all"  (menu row)
+  Click  open_label  "Open Shop Counter"
+  Click  show_container  "Show the window of Shop Counter"
+  Right click  foreign_walk  "Walk to Shop Counter (hold ALT to steal)"
+  Shift+Right click  foreign_walk_queue  "Walk to Shop Counter (hold ALT to steal) (queued after the current orders)"
+click hint: open_label
+sim click: label: open container 1099511627812: sent
+click hint: show_container
+sim click: show container 1099511627812
+click hint: foreign_walk
+sim click: foreign container 1099511627812, no ALT: hint + walk, no steal/lockpick: sent
+click hint: foreign_walk_queue
+sim click: foreign container 1099511627812 (queued), no ALT: hint + walk, no steal/lockpick: sent
+hints: container "Shop Counter" (foreign): 5 actions
+  Hold right  menu_open  "Open"  (menu row)
+  Hold right  menu_take_all  "Take all"  (menu row)
+  Click  show_container  "Show the window of Shop Counter"
+  Right click  open_container  "Open Shop Counter"
+  Shift+Right click  open_container_queue  "Open Shop Counter (queued after the current orders)"
+click hint: open_container
+sim click: open container 1099511627812: sent
+click hint: open_container_queue
+sim click: open container 1099511627812 (queued): sent
+hints: container "Safe" (foreign, locked): 5 actions
+  Hold right  menu_lockpick  "Pick Lock"  (menu row)
+  Hold right  menu_take_all  "Take all"  (menu row)
+  Click  lockpick  "Pick the lock of Safe"
+  Right click  foreign_walk  "Walk to Safe (hold ALT to pick the lock)"
+  Shift+Right click  foreign_walk_queue  "Walk to Safe (hold ALT to pick the lock) (queued after the current orders)"
+hints: container "Safe" (foreign, locked): 6 actions
+  Hold right  menu_lockpick  "Pick Lock"  (menu row)
+  Hold right  menu_take_all  "Take all"  (menu row)
+  Click  lockpick_label  "Pick the lock of Safe"
+  Click  lockpick  "Pick the lock of Safe"
+  Right click  foreign_walk  "Walk to Safe (hold ALT to pick the lock)"
+  Shift+Right click  foreign_walk_queue  "Walk to Safe (hold ALT to pick the lock) (queued after the current orders)"
+click hint: lockpick_label
+sim click: label: lockpick 1099511627821: sent
+click hint: lockpick
+sim click: lockpick 1099511627821: sent
+click hint: foreign_walk
+sim click: foreign locked container 1099511627821, no ALT: hint + walk, no steal/lockpick: sent
+hints: container "Safe" (foreign, locked): 5 actions
+  Hold right  menu_lockpick  "Pick Lock"  (menu row)
+  Hold right  menu_take_all  "Take all"  (menu row)
+  Click  lockpick  "Pick the lock of Safe"
+  Right click  lockpick  "Pick the lock of Safe"
+  Shift+Right click  lockpick_queue  "Pick the lock of Safe (queued after the current orders)"
+click hint: lockpick
+sim click: lockpick 1099511627821: sent
+click hint: lockpick_queue
+sim click: lockpick 1099511627821 (queued): sent
+hints: container "Weapon Cabinet" (foreign, locked): 5 actions
+  Hold right  menu_lockpick  "Pick Lock"  (menu row)
+  Hold right  menu_take_all  "Take all"  (menu row)
+  Click  lockpick  "Pick the lock of Weapon Cabinet"
+  Right click  foreign_walk  "Walk to Weapon Cabinet (hold ALT to pick the lock)"
+  Shift+Right click  foreign_walk_queue  "Walk to Weapon Cabinet (hold ALT to pick the lock) (queued after the current orders)"
+click hint: foreign_walk
+sim click: foreign locked container 1099511627813, no ALT: hint + walk, no steal/lockpick: sent
+click hint: lockpick
+sim click: lockpick 1099511627813: sent

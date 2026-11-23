@@ -70,6 +70,7 @@
 #include "dev/devhooks.hpp"
 #ifdef KCLIENT_DEV_TOOLS
 #include "dev/pickmask.hpp"
+#include "dev/roadedit.hpp"
 #include "dev/routepreview.hpp"
 #endif
 #include "knobs/lightterms.hpp"
@@ -221,7 +222,44 @@ void route_preview_arrived(uint32_t seq)
 		if (app.sim.pose(id, now, yaw, rt) && rt && rt->clientSeq == seq && !rt->points.empty()) { dev::routepreview::onServerRoute(app.nav, seq, rt->points, rt->flags, now, app.sim.tick()); return; }
 	}
 }
+static void roads_fly(const dev::roadedit::Pose& p)
+{
+	free_camera();	// the editor flies the free camera
+	std::copy(p.eye, p.eye + 3, app.pos);
+	app.yaw = p.yaw;
+	app.pitch = p.pitch;
+	clamp_free_camera();
+}
+void roads_step(int dir)
+{
+	if (!app.opt.debug || !app.hm) { return; }
+	dev::roadedit::Pose p;
+	if (!dev::roadedit::step(dir, app.opt.data, *app.hm, p)) { fprintf(stderr, "roads: no suspects (the network did not load or has none)\n"); return; }
+	roads_fly(p);
+}
+void roads_select_suspect(int index)	// a list row (kenshi-tqtd): the same as next / prev, flying to that suspect
+{
+	if (!app.opt.debug || !app.hm) { return; }
+	dev::roadedit::Pose p;
+	if (!dev::roadedit::selectSuspect(index, app.opt.data, *app.hm, p)) { fprintf(stderr, "roads: no suspect %d\n", index); return; }
+	roads_fly(p);
+}
+bool roads_pointer_to(int road, int marker)	// moves the pointer onto the marker's handle (scripted clicks)
+{
+	double x, y;
+	if (!dev::roadedit::screenOf(road, marker, x, y)) { return false; }
+	app.mouseX = x;
+	app.mouseY = y;
+	return true;
+}
+std::string roads_list() { return app.opt.debug ? dev::roadedit::list() : std::string(); }
+std::string roads_dump() { return app.opt.debug ? dev::roadedit::dump() + "\n" + dev::roadedit::marksDump() : std::string(); }
 #else
+void roads_step(int) {}
+void roads_select_suspect(int) {}
+bool roads_pointer_to(int, int) { return false; }
+std::string roads_dump() { return {}; }
+std::string roads_list() { return {}; }
 void route_preview_frame() {}
 void route_preview_order(const double[3], uint32_t) {}
 void route_preview_arrived(uint32_t) {}
@@ -478,7 +516,7 @@ static void logic_paths(FramePacket& pk)
 		{
 			// A new game / scenario start's centring is an engage: it focuses the first selected character and the floor view snaps to its floor like a
 			// double click (user 2026-11-15; kenshi-k16.2.236.5). One that already engaged (a script's or player's click first) is never demoted by it.
-			if (!camera_subject()) { app.centerId = app.sim.selected()[0]; app.buildings.engage(); }
+			if (!camera_subject()) { app.centerId = app.sim.selected()[0]; }
 			app.centerOnStart = false;
 		}
 		if (!editor)	// game mode only: the creator owns the pointer and picks nothing of the world (kenshi-k16.2.472.3)
@@ -646,7 +684,8 @@ static void logic_paths(FramePacket& pk)
 		const uint32_t buildSerial = app.sim.decoder().buildingsSerial;	// the player buildings' records (BUILDING 47)
 		const uint64_t cutSig = app.buildings.cutSig();
 		double thingYSig = 0;	// the drawn y of the items and containers (SimView::thingY): a building mesh that loads moves it without a new thing version (k16.2.412.4)
-		for (const auto& [id, th] : app.sim.things()) { if (th.kind == simlink::Interactable::kItem || th.kind == simlink::Interactable::kContainer) { thingYSig += app.sim.thingY(id, th); } }
+		{ CPUSTAGE_ACC("+props.thingY");
+		for (const auto& [id, th] : app.sim.things()) { if (th.kind == simlink::Interactable::kItem || th.kind == simlink::Interactable::kContainer) { thingYSig += app.sim.thingY(id, th); } } }
 		const bool dirty = !app.propsValid || thingYSig != app.propsThingY || thingsSerial != app.propsSerial || buildSerial != app.propsBuildSerial || cutSig != app.propsCut
 			|| app.propsLive || app.scriptBuild >= 0;
 		if (dirty && !ablate::on("noprops"))	// KCLIENT_ABL: noprops keeps the list empty (an upper-bound measurement)
@@ -706,10 +745,10 @@ static void logic_paths(FramePacket& pk)
 			app.propsCut = cutSig;
 			app.propsThingY = thingYSig;
 			app.propsLive = live;
-			app.buildings.setProps(props);
+			{ CPUSTAGE_ACC("+props.set"); app.buildings.setProps(props); }
 		}
 		// the editor platform is one of the props (WorldBuildings::setProps adds it while setEditor is on): the list is rebuilt for it, the doors and the floor model wait for the game mode (kenshi-k16.2.472.3)
-		if (!editor) { update_doors(dt); }
+		if (!editor) { CPUSTAGE_ACC("+props.doors"); update_doors(dt); }
 		CPUSTAGE("props");
 		if (!editor)
 		{
@@ -1112,6 +1151,7 @@ void logic_frame(FramePacket& pk)
 		// pipelines behind the title or the load screen): the lockstep log counts that window as the load's (kenshi-k16.2.437.4.4)
 		logicthread::setLoadScreen(gate || (!app.sessionShown && session_load_expected()));
 		rq::setStreamTimeBudget(gate ? kLoadStreamMs.get() : kStreamMs.get());
+		rq::setBackgroundTimeBudget(kPrecacheMs.get());
 		rq::setStreamBudget(gate ? (size_t)256 << 20 : (size_t)8 << 20);
 		app.buildings.streamAll = gate;
 		app.buildings.streamPriority = kStreamPriority.get();
@@ -1184,6 +1224,9 @@ void logic_frame(FramePacket& pk)
 	}
 	// the detection arrows' marks (sitting 7): the sim view's DETECTED_BY entries at their drawn feet; none off the world path or on the full map
 	if (pk.path == FramePath::kWorld && !app.wmap.full) { pk.arrows = stealth_arrow_marks(); } else { pk.arrows.clear(); }
+#ifdef KCLIENT_DEV_TOOLS
+	pk.roads = (app.opt.debug && app.hm && pk.path == FramePath::kWorld && !app.wmap.full) ? dev::roadedit::ribbons(app.opt.data, *app.hm) : roadribbons::Frame{};	// debug.roads (kenshi-qjzb)
+#endif
 	record_early(pk);	// sitting 12: the early paths' block
 	record_overlay(pk);	// sitting 11: the overlay's debug views, sim markers and map / HUD, after the overlay block's flags
 	// the portrait jobs' poses and frame data (kenshi-k16.2.205.12.67): in the logic half beside prepare_chars, after every change of the frame
@@ -1267,6 +1310,9 @@ static void record_debug_views(const FramePacket& pk, ovl::List& out, ovl::List&
 			ovl::end();
 		}
 	}
+#ifdef KCLIENT_DEV_TOOLS
+	if (app.opt.debug && app.hm) { dev::roadedit::draw(app.opt.data, *app.hm, mvp, cam.pos, view::widthf(), view::heightf(), app.mouseX, app.mouseY); }	// debug.roads (dev/roadedit.cpp)
+#endif
 	dev::heightProbeDraw(mvp, cam.pos, view::widthf(), view::heightf());	// the vertical height probe's line and ticks (--debug, dev/heightprobe.cpp)
 	trailsOn = app.trails.on() && app.sim.active();	// the debug trails over the scene (kenshi-k16.2.73)
 	if (trailsOn)

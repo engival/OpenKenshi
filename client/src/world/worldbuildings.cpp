@@ -148,6 +148,14 @@ bool WorldBuildings::drawnPickRay(const double origin[3], const double dir[3], d
 	return hit;
 }
 
+const BuildingPartDef* WorldBuildings::partDef(const WalkHit& w) const
+{
+	if (w.instance >= data_.instances.size()) { return nullptr; }
+	const BuildingInstance& b = data_.instances[w.instance];
+	for (uint32_t k = 0; k < b.partCount; k++) { if (data_.partRefs[b.firstPart + k] == w.part) { return &data_.parts[w.part]; } }
+	return nullptr;
+}
+
 void WorldBuildings::propsOfInstance(uint32_t instance, std::vector<uint64_t>& out) const
 {
 	for (const auto& [id, inst] : propMeshes_) { if (inst == instance) { out.push_back(id); } }
@@ -324,6 +332,62 @@ std::string WorldBuildings::walkableReport(const std::string& name) const
 		out += line;
 	}
 	return out.empty() ? "no placed building named " + name + "\n" : out;
+}
+
+void WorldBuildings::groundDirtyAll()
+{
+	groundLog_.push_back({ ++groundSeq_, true, { 0, 0 }, { 0, 0 } });
+}
+
+// A mesh moved (Ready, evicted, found by a part): log the world rectangle of every static instance that draws it, grown by the loading test's 80 u and, when a box is known, by that box.
+void WorldBuildings::groundDirtyMesh(int mesh)
+{
+	constexpr double kPendingR = 80.0;
+	if (partInstGen_ != setDataGen_)
+	{
+		partInst_.assign(data_.parts.size(), {});
+		for (uint32_t i = 0; i < staticCount_ && i < data_.instances.size(); i++)
+		{
+			const BuildingInstance& b = data_.instances[i];
+			for (uint32_t k = 0; k < b.partCount; k++) { partInst_[data_.partRefs[b.firstPart + k]].push_back(i); }
+		}
+		partInstGen_ = setDataGen_;
+	}
+	if (mesh < 0) { groundDirtyAll(); return; }
+	if ((size_t)mesh >= meshParts_.size()) { return; }	// no part resolved to it: groundDrawn cannot see it
+	const uint64_t seq = ++groundSeq_;
+	for (const uint32_t pid : meshParts_[mesh])
+	{
+		if (pid >= partInst_.size()) { continue; }	// a part added after setData (addPart) is on no static instance
+		for (const uint32_t i : partInst_[pid])
+		{
+			const BuildingInstance& b = data_.instances[i];
+			GroundDirty e = { seq, false, { b.x - kPendingR, b.z - kPendingR }, { b.x + kPendingR, b.z + kPendingR } };
+			double lo[3], hi[3];
+			uint32_t k = 0;
+			while (k < b.partCount && data_.partRefs[b.firstPart + k] != pid) { k++; }
+			if (k < b.partCount && partWorldBox(b, k, lo, hi)) { e.lo[0] = std::min(e.lo[0], lo[0]); e.lo[1] = std::min(e.lo[1], lo[2]); e.hi[0] = std::max(e.hi[0], hi[0]); e.hi[1] = std::max(e.hi[1], hi[2]); }
+			groundLog_.push_back(e);
+		}
+	}
+	if (groundLog_.size() > 8192)
+	{
+		const size_t cut = groundLog_.size() / 2;
+		groundLogBase_ = groundLog_[cut - 1].seq;
+		groundLog_.erase(groundLog_.begin(), groundLog_.begin() + (std::ptrdiff_t)cut);
+	}
+}
+
+bool WorldBuildings::groundDirtySince(uint64_t seq, double x, double z) const
+{
+	if (seq < groundLogBase_) { return true; }
+	for (size_t i = groundLog_.size(); i-- > 0;)
+	{
+		const GroundDirty& e = groundLog_[i];
+		if (e.seq <= seq) { break; }
+		if (e.all || (x >= e.lo[0] && x <= e.hi[0] && z >= e.lo[1] && z <= e.hi[1])) { return true; }
+	}
+	return false;
 }
 
 const void* WorldBuildings::groundDrawnGen() const
@@ -686,7 +750,7 @@ std::string WorldBuildings::nameOfInstance(int index) const
 int WorldBuildings::bedPiece(const double at[3], double kBedSlack) const
 {
 	constexpr double kBedSearch = 14;
-	double bestD = 1e30;
+	double bestD = 1e30, bestVol = 1e30;
 	int found = -1;
 	for (int dx = -3; dx <= 3; dx++)
 	{
@@ -698,13 +762,45 @@ int WorldBuildings::bedPiece(const double at[3], double kBedSlack) const
 			{
 				const BuildingInstance& b = data_.instances[i];
 				const double d = std::hypot(b.x - at[0], b.z - at[2]);
-				if (d > kBedSearch || d >= bestD || !instanceHolds(i, at, kBedSlack)) { continue; }
+				if (d > kBedSearch || !instanceHolds(i, at, kBedSlack)) { continue; }
+				// the smallest piece box holds the bed: a shade tent over three beds (tent3, a 38 x 78 u box) holds all their spots and its origin can be the
+				// nearer, which took the middle Storm House roof bed from its own bed1 mesh (kenshi-89l0, k16.2.519). Distance orders pieces of one size.
+				double lo[3] = { 1e30, 1e30, 1e30 }, hi[3] = { -1e30, -1e30, -1e30 };
+				for (uint32_t k = 0; k < b.partCount; k++)
+				{
+					double plo[3], phi[3];
+					if (!partWorldBox(b, k, plo, phi)) { continue; }
+					for (int a = 0; a < 3; a++) { lo[a] = std::min(lo[a], plo[a]); hi[a] = std::max(hi[a], phi[a]); }
+				}
+				const double vol = lo[0] > hi[0] ? 1e29 : std::max(1.0, hi[0] - lo[0]) * std::max(1.0, hi[1] - lo[1]) * std::max(1.0, hi[2] - lo[2]);
+				if (found >= 0 && (vol > bestVol * 1.5 || (vol > bestVol / 1.5 && d >= bestD))) { continue; }
 				bestD = d;
+				bestVol = vol;
 				found = (int)i;
 			}
 		}
 	}
 	return found;
+}
+
+bool WorldBuildings::bedBox(const double spot[3], double lo[3], double hi[3]) const
+{
+	const int piece = bedPiece(spot, 6);
+	if (piece < 0) { return false; }
+	const BuildingInstance& b = data_.instances[(size_t)piece];
+	bool any = false;
+	for (uint32_t k = 0; k < b.partCount; k++)
+	{
+		double plo[3], phi[3];
+		if (!partWorldBox(b, k, plo, phi)) { continue; }
+		for (int a = 0; a < 3; a++)
+		{
+			lo[a] = any ? std::min(lo[a], plo[a]) : plo[a];
+			hi[a] = any ? std::max(hi[a], phi[a]) : phi[a];
+		}
+		any = true;
+	}
+	return any;
 }
 
 // One line on an instance for the F12 shot: its BUILDING name, placement, parent, kind and the part mesh files with the union of their loaded boxes

@@ -129,7 +129,9 @@ void update(const Host& host, uint64_t hovered, double mx, double my)
 	if (g.level >= kLevels)
 	{
 		g.working = false;
-		printf("pickmask thing %llu: %d x %d cells of %d px, %u real picks, %.2f ms over %d frame(s) (slices of %.0f ms)\n", (unsigned long long)g.id, g.nx, g.ny, kCell, g.picks, g.ms, g.frames, kSliceMs);
+		unsigned masked = 0;	// the cells the mask draws (a subject whose pick never returns its id draws none: kenshi-89l0, the bed)
+		for (const uint8_t v : g.shown) { masked += v; }
+		printf("pickmask thing %llu: %d x %d cells of %d px, %u real picks, %u cells masked, %.2f ms over %d frame(s) (slices of %.0f ms)\n", (unsigned long long)g.id, g.nx, g.ny, kCell, g.picks, masked, g.ms, g.frames, kSliceMs);
 		fflush(stdout);
 	}
 }

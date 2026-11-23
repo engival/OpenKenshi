@@ -974,8 +974,18 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 				{
 					const double walk = std::max(kCatchMin, kCatch * std::hypot(wvx, wvz)) * dtSim_;	// the furthest the drawn walks a correction in one frame
 					bool snapped = false;
-					// a base jump: keep the drawn where it was and let the offset hold the whole error, then ease it
-					if (std::hypot(baseX - sl.basePrev[0], baseZ - sl.basePrev[1]) > walk) { sl.off[0] = sl.pos[0] - baseX; sl.off[1] = sl.pos[2] - baseZ; }
+					// a base jump: keep the drawn where it was and let the offset hold the whole error, then ease it. The base's step less what the sim's own velocity
+					// carries over the clock's step this frame (kenshi-6q7f): the clock settling a few tenths of a tick ahead is time passing faster, not a jump; the trace
+					// of the far walk found every catch-up there (a runner's 1.75x settle frame moved the base past the flat 100 u/s test and the drawn stopped, then chased)
+					if (std::hypot(baseX - sl.basePrev[0] - wvx * dtAnim_, baseZ - sl.basePrev[1] - wvz * dtAnim_) > walk)
+					{
+						sl.off[0] = sl.pos[0] - baseX; sl.off[1] = sl.pos[2] - baseZ;
+#ifdef KCLIENT_DEV_TOOLS
+						if (catchTrace) { catchTrace({ id, tick_, (double)dec_.lastCompleteTick, dtSim_, dtAnim_ * kTickRate, std::hypot(baseX - sl.basePrev[0], baseZ - sl.basePrev[1]), std::hypot(sl.off[0], sl.off[1]),
+							std::hypot(wvx, wvz), sl.prevWv, baseX, baseZ, sl.pos[0], sl.pos[2], ia->tick, ib->tick, iz ? iz->tick : 0, sl.prevIa, sl.prevIb, c.route.version, sl.routeSeen, clockSnapped_, clockEasing_ }); }
+						sl.routeSeen = c.route.version;
+#endif
+					}
 					double on = std::hypot(sl.off[0], sl.off[1]);
 					if (on >= kTeleport)
 					{
@@ -1137,6 +1147,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		if (ylog) { fprintf(stderr, "YLOG %llu %.0f %.2f %.2f %.2f %.2f %.2f %d %.2f %.2f\n", (unsigned long long)id, tick_, p[0], p[2], simY, terrain, p[1], ylogRes, ylogAlt ? ylogAlt(p[0], p[2]) : 0.0, standTargetY); }
 #endif
 		sl.catchV[0] = catchV[0]; sl.catchV[1] = catchV[1];
+		sl.prevIa = ia->tick; sl.prevIb = ib->tick; sl.prevWv = std::hypot(wvx, wvz);
 		sl.basePrev[0] = baseX; sl.basePrev[1] = baseZ;	// the next frame's base-jump test
 		sl.sim[0] = baseX; sl.sim[1] = (ib->flags & kYValid) ? simY : standTargetY; sl.sim[2] = baseZ;	// gameplay reads the sim, never the display offset: its y is the wire's, not the stand ray's (the floor latch saw a standing character jump 2.8 u up the flight onto the top tread, k16.2.236.8.4.3), and never the eased drawn y (k16.2.395.1: standTargetY is the stand y before the ease)
 		// the legs take the sim's own velocity, in the body frame (forward (sin, cos), lateral (cos, -sin), as the sim's), plus the catch-up's (user:
@@ -2459,15 +2470,20 @@ uint64_t SimView::pickItem(const double origin[3], const double dir[3], double* 
 double SimView::thingY(uint64_t id, const Interactable& t) const
 {
 	const void* gen = groundGen_ ? groundGen_() : nullptr;
+	const uint64_t seq = groundSeq_ ? groundSeq_() : 0;
 	ThingY& c = thingY_[id];
-	if (!c.set || c.x != t.pos[0] || c.y != t.pos[1] || c.z != t.pos[2] || c.gen != gen)
+	const bool same = c.set && c.x == t.pos[0] && c.y == t.pos[1] && c.z == t.pos[2];
+	// the ground moved: with the region key only a thing near a changed mesh re-runs its ray (kenshi-uxmu); the others adopt the new stamp
+	const bool stale = groundSeq_ ? c.seq != seq && (!groundDirty_ || groundDirty_(c.seq, t.pos[0], t.pos[2])) : c.gen != gen;
+	if (same && !stale) { c.seq = seq; c.gen = gen; }
+	if (!same || stale)
 	{
 		double y;
 		// An item's pos y is not always a navmesh point: one on a table, shelf or upper ledge sits 10-47 u over the floor or terrain the solver finds, and the solver would sink it there
 		// (measured on sunshafts_bar's bar items). So only the buried case is converted: the drawn ground ABOVE the pos y, within the coarse navmesh's own error (12-33 u under the hill
 		// east of the Storm House); a point the ground is under keeps its y.
 		c.drawn = groundAt(t.pos[0], t.pos[2], t.pos[1], y) >= 1 && y > t.pos[1] && y - t.pos[1] <= kBuriedMax ? y : t.pos[1];
-		c.x = t.pos[0]; c.y = t.pos[1]; c.z = t.pos[2]; c.gen = gen; c.set = true;
+		c.x = t.pos[0]; c.y = t.pos[1]; c.z = t.pos[2]; c.gen = gen; c.seq = seq; c.set = true;
 	}
 	return c.drawn;
 }

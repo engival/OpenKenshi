@@ -34,6 +34,7 @@
 #include <chrono>
 
 #include "render/arrows.hpp"
+#include "render/roadribbons.hpp"
 #include "render/camera.hpp"
 #include "characters/characters.hpp"
 #include "render/drawlist.hpp"
@@ -181,6 +182,8 @@ struct FramePacket
 	// view's decoder and drawn feet), taken at the end of logic_frame; empty off the world path and on the full world map. worldSetup writes them
 	// into the arrows' instance buffer (Arrows::update, outside every pass), renderframe.cpp draws them.
 	std::vector<Arrows::Mark> arrows;
+	// The road overlay's ribbons (kenshi-qjzb; debug.roads, dev builds): the cached strip mesh by pointer and its look; empty (null mesh) when off. Drawn in the scene pass.
+	roadribbons::Frame roads;
 	// The portraits to draw this frame (kenshi-k16.2.205.12.56): PortraitTable::send at the fill (kWorld with a live sim; one, all queued in a
 	// scripted run), each with its atlas cell, its pose's camera and frame data (Portraits::pose, logic, kenshi-k16.2.205.12.67). worldSetup's
 	// Portraits::update uploads and draws them and posts the results that logic takes at its next frame.

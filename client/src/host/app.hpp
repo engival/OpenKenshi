@@ -76,6 +76,7 @@
 #include "ui/creator.hpp"
 #include "ui/dev/debugtree.hpp"
 #include "ui/dev/lightspanel.hpp"
+#include "ui/dev/roadspanel.hpp"
 #include "ui/dialogue.hpp"
 #include "ui/faction.hpp"
 #include "ui/hud.hpp"
@@ -358,6 +359,7 @@ struct App
 	std::unique_ptr<ui::Crafting> crafting;	// the CRAFTING page: empty until the sim has crafting benches
 	std::unique_ptr<ui::Build> build;	// toggle_build (B): the build window; its lists wait on which BUILDING records the original offers (kinspect asked), placement on the sim
 #ifdef KCLIENT_DEV_TOOLS
+	std::unique_ptr<ui::RoadsPanel> roadsPanel;	// the road editor's panel, shown while debug.roads is on (kenshi-tqtd)
 	std::unique_ptr<ui::LightsPanel> lightsPanel;	// debug.lights_panel (Shift+F7): the light debugger, one row per dev::lightTerms term (kenshi-jj3.27.3)
 #endif
 	std::unique_ptr<ui::Tutorials> tutorials;	// HLP / toggle_help: the TUTORIALS browser. The original's are hard-coded in its exe (no records); ours: "Controls"

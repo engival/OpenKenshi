@@ -28,7 +28,7 @@ run_live()
 	local d=$1 scen=${2:-order_sounds} pid i port
 	start_server_on_free_port "$d/server.log" "$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:@PORT@ --scenario-file "$tree/scenarios/$scen.kscen" --debug-view	# a fresh port per start (kenshi-k16.2.358)
 	pid=$SERVER_PID; port=$SERVER_PORT
-	(cd "$tree" && timeout 580 nice -n 10 client/tools/headless.sh -- stdbuf -oL "$build/kclient" --simlink 127.0.0.1:$port --debug --script "$d/script.txt" > "$d/client.log" 2>&1)
+	(cd "$tree" && timeout 580 nice -n 10 client/tools/headless.sh -- stdbuf -oL "$build/kclient" --simlink 127.0.0.1:$port --debug --set key.floor_up=Period --set key.floor_down=Comma --script "$d/script.txt" > "$d/client.log" 2>&1)
 	kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
 }
 # The wire id of a scenario's character (the sim's instance counter: it shifts with whatever the world load creates first, kenshi-k16.2.257), read once
@@ -47,7 +47,7 @@ idof()
 views() { { echo 3; grep -o "floor: view [0-9] -> [0-9]" "$1/client.log" | sed 's/.*-> //'; } | tr '\n' ' ' | sed 's/ $//'; }
 # the number of cut dump lines that say a character is hidden (label or body), and how many dumps there were
 hiddenCount() { grep -E "^  (label feet|body \(Characters pos\))" "$1/client.log" | grep -c "hidden 1$"; }
-# the frames the followed subject was not drawn (WorldBuildings' per-frame line "floor: subject hidden", kenshi-k16.2.236.15): zero outside a manual step
+# the frames the followed subject was not drawn (WorldBuildings' per-frame line "floor: subject hidden", kenshi-k16.2.236.15): zero outside a floor step (which ends the follow)
 frameHidden() { grep -c "^floor: subject hidden" "$1/client.log"; }
 cutDumps() { grep -c "^cut id " "$1/client.log"; }
 lastFloor() { grep -o "floor: [A-Z][A-Za-z ]* shown .*" "$1/client.log" | tail -1; }	# any named building (the Small Shack too, kenshi-k16.2.355); the '- shown' no-lead default never matches
@@ -72,6 +72,7 @@ finish()
 dumps() { local a=$1 b=$2 step=$3 id=$4 f; for f in $(seq "$a" "$step" "$b"); do echo "$f dump floor"; if [ -n "$id" ]; then echo "$((f+1)) dump cut id=$id"; fi; done; }
 # the shared opening: the first character selected and centred, followed ($1: the follow line), walked in the front door (125, 400); climb: up the stairs (700)
 open() { echo "10 set animate 1"; echo "100 key 1 down"; echo "101 key 1 up"; echo "110 ${1:-follow char Wanderer}"; echo "125 move -50616 -1130"; echo "400 move -50616 -1200"; }
+openZ() { open "key Z down"; echo "112 key Z up"; }	# the RTS camera centred on the lead (the follow of L1-L5; `follow char` is direct drive, where a step is ignored, D2)
 climb() { echo "700 move -50590 -1230"; }
 
 # ONLY="case ..." runs just those cases (a rerun of a subset); unset, every case runs
@@ -129,7 +130,7 @@ run_snap()
 		echo "400 move -50616 -1200"
 		echo "700 move -50590 -1230"
 		local t=1192 k
-		for k in $keys; do echo "$t key F down"; echo "$((t+1)) key F up"; t=$((t+3)); done
+		for k in $keys; do echo "$t key COMMA down"; echo "$((t+1)) key COMMA up"; t=$((t+3)); done
 		echo "$t dump floor"
 		echo "$engage" | sed "s#ID#$lead#g; s#T0#$((t+10))#g; s#T1#$((t+11))#g; s#T2#$((t+12))#g; s#T3#$((t+13))#g"
 		echo "$((t+30)) dump floor"
@@ -153,13 +154,13 @@ T3 key 1 up" "105 camera char ID" "(not following)" '^3 0 1$'
 done
 # kenshi-k16.2.236.5: the session start's centring is an engage (no camera op: the scenario start centres on the selected lead and follows it), and a later
 # explicit engage of that same, already-centred lead snaps too (the playtest bug: a double click on the start-centred character did nothing). The lead is
-# walked up to floor 1, the view stepped down (F) to 0 (following, the player's own step: held), then Z / the double 1 re-engages it: 3, 0 (start), 1, 0 (F), 1.
+# walked up to floor 1, the view stepped down (Comma = floor_down) to 0 (the step ends the follow, L4/L5: the free level 0), then Z / the double 1 re-engages it: 3, 0 (start), 1, 0 (step), 1.
 run_snap reengage_Z Wanderer "a" "T0 key Z down
-T1 key Z up" "" "(following)" '^3 0 1 0 1$'
+T1 key Z up" "" "(not following)" '^3 0 1 0 1$'
 run_snap reengage_double Wanderer "a" "T0 key 1 down
 T1 key 1 up
 T2 key 1 down
-T3 key 1 up" "" "(following)" '^3 0 1 0 1$'
+T3 key 1 up" "" "(not following)" '^3 0 1 0 1$'
 # the start's own snap: the start centring engages, so the level 3 snaps to the lead's outdoor floor 0 (the first change in the sequence)
 if ! want_case reengage_Z; then :
 elif [[ "$(views "$out/reengage_Z")" == "3 0 "* ]]; then echo "PASS start_engage_snap: $(views "$out/reengage_Z")"; else echo "FAIL start_engage_snap: $(views "$out/reengage_Z")"; fail=1; fi
@@ -204,7 +205,7 @@ run_stairs_click()
 		echo "1530 dump floor"
 		echo "1540 follow char Wanderer"	# the free camera back on the character: its walk to the click arrives on the top tread
 		dumps 1560 2400 60 "$id"
-		echo "2440 move -50553 -1275"	# on down the flight to its foot
+		echo "2440 move -50558 -1275"	# on down the flight to its foot
 		dumps 2500 3200 60 "$id"
 		echo "3260 quit"
 	} > "$d/script.txt"
@@ -222,7 +223,7 @@ run_stairs_down()
 		open; climb
 		echo "1480 move -50578 -1246"
 		dumps 1560 1860 60 "$id"
-		echo "1900 move -50553 -1275"	# down the flight to its foot
+		echo "1900 move -50558 -1275"	# down the flight to its foot
 		dumps 1960 2100 60 "$id"
 		for f in 1960 2040 2120 2200; do echo "$f screenshot $d/walkdown-$f.png"; done	# the descent: the flip frame
 		dumps 2200 3000 60 "$id"	# standing at the foot: the view stays on 0
@@ -230,6 +231,23 @@ run_stairs_down()
 	} > "$d/script.txt"
 	run_live "$d"
 	finish stairs_down "$d" '^3 0 1 0$' '*level 0'
+}
+# stairs_shots (kenshi-7f72): a shot sweep through the up flip (the climb) and the down flip (the descent); each shot's sidecar carries the floor latch row (y against up_line / low_line).
+run_stairs_shots()
+{
+	local d=$out/stairs_shots id f
+	id=$(idof order_sounds Wanderer); mkdir -p "$d"
+	{
+		open; climb
+		for f in $(seq 800 8 1100); do echo "$f screenshot $d/climb-$f.png"; done
+		echo "1480 move -50578 -1246"
+		echo "1900 move -50558 -1275"
+		for f in $(seq 1960 8 2260); do echo "$f screenshot $d/descent-$f.png"; done
+		echo "2290 dump floor"
+		echo "2300 quit"
+	} > "$d/script.txt"
+	run_live "$d"
+	finish stairs_shots "$d" '^3 0 1 0$' '*level 0' "" 1
 }
 # deck_edge (kenshi-k16.2.236.8.4.1, .8.3): the lead rests on the deck at the stair top, then walks the length of the flight's edge right beside it (its
 # sim path dips into the zone rect's east side at deck height). Nothing changes: the view stays 1 and the lead stays drawn. (On the base the same walk
@@ -326,42 +344,43 @@ run_reverse_midflight()
 	run_live "$d"
 	finish reverse_midflight "$d" '^3 0 1 0$' '*(following)*'
 }
-# manual_hold: following, on the deck (1), F steps to 0 (the player's own step; it holds, the lead is hidden by it, so no cut dump after the step): the view
-# stays 0 while the lead walks the deck; the next stair crossing (down to the foot and up again) takes it to the lead's floor: 0, 1, 0 (F), 0, 1.
-run_manual_hold()
+# step_ends_follow (L4/L5; was manual_hold, the model's manual level is gone): following, on the deck (1), a floor step to 0 ends the follow: the level is the free
+# one (F2), so it stays 0 while the lead walks the deck, down the flight to its foot and back up (the follow's thresholds no longer take it back): 3, 0, 1, 0.
+run_step_ends_follow()
 {
-	local d=$out/manual_hold id f
+	local d=$out/step_ends_follow id f
 	id=$(idof order_sounds Wanderer); mkdir -p "$d"
 	{
-		open; climb
+		openZ; climb
 		dumps 900 1200 60 "$id"	# the invariant before the step
-		echo "1260 key F down"; echo "1261 key F up"
+		echo "1260 key COMMA down"; echo "1261 key COMMA up"
 		echo "1300 dump floor"
 		echo "1320 move -50578 -1246"	# a walk across the deck: the level stays 0
 		for f in $(seq 1380 60 1800); do echo "$f dump floor"; done
-		echo "1860 move -50553 -1275"	# down the flight to its foot, then back up to the deck
+		echo "1860 move -50558 -1275"	# down the flight to its foot, then back up to the deck
 		for f in $(seq 1920 60 2300); do echo "$f dump floor"; done
 		echo "2400 move -50590 -1230"
 		for f in $(seq 2460 60 3200); do echo "$f dump floor"; done
 		echo "3260 quit"
 	} > "$d/script.txt"
 	run_live "$d"
-	finish manual_hold "$d" '^3 0 1 0( 1)?$' '*level 1' "" 1
+	finish step_ends_follow "$d" '^3 0 1 0$' '*(not following)*level 0' "" 1
 }
-# manual_up_then_climb: R steps the view to 1 while the lead is still on floor 0 (inside), then the lead climbs: never a flip down. 3, 0, 1 (R), nothing else.
-run_manual_up_then_climb()
+# step_up_ends_follow: Period steps the view to 1 while the lead is still on floor 0 (inside): the follow ends, and the free level 1 stays while the lead
+# climbs. 3, 0, 1 (the step), nothing else.
+run_step_up_ends_follow()
 {
-	local d=$out/manual_up_then_climb id
+	local d=$out/step_up_ends_follow id
 	id=$(idof order_sounds Wanderer); mkdir -p "$d"
 	{
-		open
-		echo "650 key R down"; echo "651 key R up"
+		openZ
+		echo "650 key PERIOD down"; echo "651 key PERIOD up"
 		climb
 		dumps 900 1800 60 "$id"
 		echo "1860 quit"
 	} > "$d/script.txt"
 	run_live "$d"
-	finish manual_up_then_climb "$d" '^3 0 1$' '*shown 1/1*(following)*level 1'
+	finish step_up_ends_follow "$d" '^3 0 1$' '*shown 1/1*(not following)*level 1'
 }
 # two_subjects: Wanderer climbs to the deck, Beep stays on the ground outside. Engage Beep, Wanderer, Beep: 3, 0 (start), 1 (the climb), 0, 1, 0.
 run_two_subjects()
@@ -392,7 +411,7 @@ run_follow_lost()
 		open; climb
 		dumps 900 1200 60 "$id"
 		echo "1260 camera char Wanderer"
-		echo "1320 move -50553 -1275"
+		echo "1320 move -50558 -1275"
 		for f in $(seq 1380 60 2400); do echo "$f dump floor"; done
 		echo "2460 quit"
 	} > "$d/script.txt"
@@ -415,21 +434,21 @@ run_start_indoors()
 }
 # other_building (review section 5; kenshi-k16.2.236.14): out of one floorable building and into a second. order_sounds' Storm House stands alone
 # (the nearest other building with floors, the Hub's, is ~4000 u north), so this case plays in the Hub (journey_walk: the Wanderer alone at the
-# new-game start): into the Bar (a Storm House, -51181 2639), R steps the view up to 1 while the lead is on its floor 0 (the player's own step,
-# held), out of the Bar (the door ends the step: 0) and into the Small Shack 926 u north (-51271 3561, maxFloor 1; floor 0, the view stays 0).
+# new-game start): into the Bar (a Storm House, -51181 2639), the step key (Period) takes the view up to 1 while the lead is on its floor 0 (the step ends the
+# follow: the free level 1 stays), out of the Bar and into the Small Shack 926 u north (-51271 3561, maxFloor 1; floor 0, the view stays 0).
 # The Storm House 550 u north of the Bar (-51192 3192) is a RUIN on this data (destroyed meshes, no interior, maxFloor 0): the client cuts nothing
 # there and the floor line is the empty default, so it is no fixture (kenshi-k16.2.355; `dump floorables X Z R` lists the floorable buildings near a point).
 # The shack is further, so the walk's dump window runs to 2800 (~926 u at walking pace after the Bar's door at ~1060).
-# 3, 0 (start), 1 (R), 0 (out of the door); the wire names the second building at the end, and the lead is never hidden.
+# 3, 0 (start), 1 (the step); the wire names the second building at the end, and the lead is never hidden.
 run_other_building()
 {
 	local d=$out/other_building id a b
 	id=$(idof journey_walk Wanderer); mkdir -p "$d"
 	{
-		echo "10 set animate 1"; echo "100 key 1 down"; echo "101 key 1 up"; echo "110 follow char Wanderer"
+		echo "10 set animate 1"; echo "100 key 1 down"; echo "101 key 1 up"; echo "110 key Z down"; echo "112 key Z up"
 		echo "125 move -51200 2640"	# into the Bar
 		dumps 400 880 60 "$id"
-		echo "900 key R down"; echo "901 key R up"
+		echo "900 key PERIOD down"; echo "901 key PERIOD up"
 		dumps 940 1000 60 "$id"
 		echo "1020 move -51271 3550"	# out of the Bar and into the Small Shack
 		dumps 1080 2800 60 "$id"
@@ -439,7 +458,7 @@ run_other_building()
 	a=$(grep -o "floortrace .* building [0-9]* floor" "$d/client.log" | grep -v ' building 0 ' | head -1 | grep -o 'building [0-9]*')
 	b=$(grep -o "floortrace .* building [0-9]* floor" "$d/client.log" | tail -1 | grep -o 'building [0-9]*')
 	if [ -z "$a" ] || [ -z "$b" ] || [ "$a" = "$b" ] || [ "$b" = "building 0" ]; then echo "FAIL other_building: the fixture is not the case (want the wire in one building, then another): first '$a', last '$b'"; fail=1; return; fi
-	finish other_building "$d" '^3 0 1 0$' '*shown 0/*(following)*level 0'
+	finish other_building "$d" '^3 0 1$' '*shown 1/*(not following)*level 1'
 }
 # stairs_stop_click (kenshi-k16.2.236.8.4.3; the user's 236.8.4.2 FAIL): the lead rests on the deck at the stair top, then is ordered to the user's seq 29 pick
 # (sim goal -50548.6 1134.76 -1276.2, a tread in and about 1.5 u under the descent line) and stands there. A flip of the view down and back is the flicker: a
@@ -460,13 +479,13 @@ run_stairs_stop_click()
 	run_live "$d"
 	finish stairs_stop_click "$d" '^3 0 1$' '*shown 1/1*(following)*level 1'	# base: 3 0 1 0 1 (the flicker; findings/kenshi-k16.2.236.8.4.3/before)
 }
-for c in stairs_walk stairs_down stairs_click stairs_stop_click deck_click deck_edge stop_midflight_up stop_midflight_down reverse_midflight manual_hold manual_up_then_climb two_subjects follow_lost start_indoors other_building; do
+for c in stairs_walk stairs_shots stairs_down stairs_click stairs_stop_click deck_click deck_edge stop_midflight_up stop_midflight_down reverse_midflight step_ends_follow step_up_ends_follow two_subjects follow_lost start_indoors other_building; do
 	if want_case "$c"; then run_$c; fi
 done
 
 # kenshi-k16.2.284 (roof guard, k16.2.274): the roof cut needs a collision shape under the feet. The Wanderer stands on open ground (terrain, wire indoors bit
 # clear, floor 0) inside the box roofBuilding tests for the dune-sunk Longhouse beside it (68394 1230.8 -71032, the spot id 1159 was hidden at for 74 frames in
-# k16.2.274's walk4). The floor selector is stepped down to the ground floor (F twice: 0/2), so the cut hides everything above floor 0 (cutHides 1) and the
+# k16.2.274's walk4). The floor selector is stepped down to the ground floor (Comma twice, the floor_down key here: 0/2), so the cut hides everything above floor 0 (cutHides 1) and the
 # roof branch is the only thing that could hide the character: shown (hidden 0) with the fix, hidden 1 without it (2709e082 reverted).
 # The other side of that rule (a guard standing on a roof deck at wire floor 0 with the indoors bit clear is hidden, user 2026-11-05) has no case here: the sim
 # snaps a scenario character to the navmesh, where the wire's indoors bit is set (measured on the Longhouse roof, 6 placements), so it needs a walk onto a roof.
@@ -482,10 +501,10 @@ run_roof_open_ground()
 		echo "20 set pos 68394,-71032"
 		echo "21 set alt 1300"
 		echo "22 set pitch -60"
-		echo "300 key F down"
-		echo "301 key F up"
-		echo "304 key F down"
-		echo "305 key F up"
+		echo "300 key COMMA down"
+		echo "301 key COMMA up"
+		echo "304 key COMMA down"
+		echo "305 key COMMA up"
 		echo "310 dump chars"
 		echo "320 dump cut id=$lead"
 		echo "330 dump floor"

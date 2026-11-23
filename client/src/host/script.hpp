@@ -42,6 +42,7 @@ uint64_t camera_subject();
 dev::Context& dev_context();
 hints::Context hints_context();
 void portrait_gesture(uint64_t id, hints::Gesture g);
+void portrait_focus(uint64_t id);	// a cast row / portrait double click (main.cpp)
 App::OpenCont* cont_scripted(bool trade);
 bool title_shown();
 enum class Mode { kTitle, kCreator, kGame };

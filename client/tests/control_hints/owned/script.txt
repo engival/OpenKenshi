@@ -1,0 +1,21 @@
+# kenshi-db9v: an automatic producer (the Ore Drill III the scenario places: RMB = open_automatic, no use row) and a container of ours (the scenario's own Secure Wooden Chest: no steal, lockpick or foreign-walk rows).
+100 hints thing 4611688217450643456
+110 thingclick 4611688217450643456
+120 thingclick right 4611688217450643456
+130 thingclick shift right 4611688217450643456
+200 hints thing 1099511627902
+210 hints thing 1099511627902 label
+220 thingclick label 1099511627902
+230 thingclick 1099511627902
+240 thingclick right 1099511627902
+250 thingclick shift right 1099511627902
+260 key ALT down
+270 hints thing 1099511627902
+280 thingclick right 1099511627902
+290 key ALT up
+# the player building the scenario places (TwoStorey, built, ours): the cursor rows over it, as `hints ground X Z building ID`
+300 hints ground 68322 -71160 building 40846
+310 groundclick 68322 -71160 building 40846
+320 groundclick right 68322 -71160 building 40846
+330 groundclick shift right 68322 -71160 building 40846
+500 quit

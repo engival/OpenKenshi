@@ -1,0 +1,80 @@
+hints: Alpha (yours): 8 actions
+  Click  char_select  "Select Alpha"
+  Shift+Click  char_add  "Add Alpha to the selection"  disabled: already selected
+  Hold right  menu_follow  "Follow"  (menu row)
+  Hold right  menu_bodyguard  "Bodyguard"  (menu row)
+  Hold right  menu_first_aid  "First aid"  (menu row)
+  Right click  first_aid  "First aid on Alpha"
+  Shift+Right click  medic_job  "Medic job on Alpha"
+  Double right click  drive  "Direct drive on Alpha"
+click hint: menu_follow
+sim menu: follow @Alpha@: sent
+click hint: menu_bodyguard
+sim menu: bodyguard @Alpha@: sent
+click hint: char_select
+sim click: character @Alpha@, 1 selected
+click hint: char_add
+sim click: character @Bravo@, 2 selected
+hints: Bravo (yours): 8 actions
+  Click  char_select  "Select Bravo"
+  Shift+Click  char_add  "Add Bravo to the selection"  disabled: already selected
+  Hold right  menu_follow  "Follow"  (menu row)
+  Hold right  menu_bodyguard  "Bodyguard"  (menu row)
+  Hold right  menu_first_aid  "First aid"  (menu row)
+  Right click  first_aid  "First aid on Bravo"
+  Shift+Right click  medic_job  "Medic job on Bravo"
+  Double right click  drive  "Direct drive on Bravo"
+click hint: menu_follow
+sim menu: follow @Bravo@: sent
+click hint: menu_bodyguard
+sim menu: bodyguard @Bravo@: sent
+hints: KOOne (yours): 8 actions
+  Click  char_select  "Select KOOne"
+  Shift+Click  char_add  "Add KOOne to the selection"
+  Hold right  menu_follow  "Follow"  (menu row)
+  Hold right  menu_loot  "Loot"  (menu row)
+  Hold right  menu_first_aid  "First aid"  (menu row)
+  Hold right  menu_pick_up  "Pick up"  (menu row)
+  Right click  lift  "Pick up KOOne (carry)"
+  Double right click  drive  "Direct drive on KOOne"
+click hint: menu_loot
+sim menu: loot @KOOne@: sent
+click hint: menu_pick_up
+sim menu: pick up @KOOne@: sent
+click hint: menu_first_aid
+sim menu: first aid @KOOne@: sent
+hints: DeadOne (yours): 8 actions
+  Click  char_select  "Select DeadOne"
+  Shift+Click  char_add  "Add DeadOne to the selection"
+  Hold right  menu_follow  "Follow"  (menu row)
+  Hold right  menu_loot  "Loot"  (menu row)
+  Hold right  menu_first_aid  "First aid"  (menu row)
+  Hold right  menu_pick_up  "Pick up"  (menu row)
+  Right click  loot  "Loot DeadOne"
+  Double right click  drive  "Direct drive on DeadOne"
+hints: Bystander (not yours): 6 actions
+  Click  inspect  "Inspect Bystander (the selection stays)"
+  Hold right  menu_talk  "Talk"  (menu row)
+  Hold right  menu_bodyguard  "Bodyguard"  (menu row)
+  Hold right  menu_attack  "Attack"  (menu row)
+  Right click  talk  "Talk to Bystander"
+  Ctrl+Right click  attack  "Attack Bystander"
+click hint: menu_loot
+sim menu: loot @DeadOne@: sent
+click hint: menu_talk
+sim menu: talk @Bystander@: sent
+click hint: menu_bodyguard
+sim menu: bodyguard @Bystander@: sent
+click hint: menu_attack
+sim menu: attack @Bystander@: sent
+hints: Raider (not yours): 6 actions
+  Click  inspect  "Inspect Raider (the selection stays)"
+  Hold right  menu_talk  "Talk"  (menu row)
+  Hold right  menu_bodyguard  "Bodyguard"  (menu row)
+  Hold right  menu_attack  "Attack"  (menu row)
+  Right click  attack  "Attack Raider"
+  Shift+Right click  fight_job  "Fight enemies (job)"
+click hint: menu_attack
+sim menu: attack @Raider@: sent
+click hint: menu_bodyguard
+sim menu: bodyguard @Raider@: sent

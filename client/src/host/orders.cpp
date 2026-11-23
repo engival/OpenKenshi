@@ -18,7 +18,9 @@
 #include "host/orders.hpp"
 #include "dev/devhooks.hpp"
 #include "host/pick.hpp"
+#include "input/controlhints.hpp"
 #include "input/pick.hpp"
+#include "host/script.hpp"
 #include "ui/ui.hpp"
 
 namespace host
@@ -34,9 +36,13 @@ const cfg::Bool kForeignWalkTo{ cfg::Group{ "Orders" }, "orders.foreign_walk_to"
 const cfg::Float kFollowPivotTau{ cfg::Group{ "Look" }, "look.follow_pivot_tau", 0.12, 0.0, 1.0, "The follow camera's vertical smoothing: the boom pivot's height eases toward the drawn body's with this time constant (s), so a stair tread or a drop does not step the eye; horizontal follow and the look-around stay immediate. 0 = off (the pivot sits on the drawn body)" };
 
 #ifdef KCLIENT_DEV_TOOLS
+Pick g_forcePickGround;	// script `groundclick`: the click in progress picks this ground point (a player's building when its id is set)
+uint64_t g_forcePickChar = 0;	// script `charclick`: the click in progress picks character ID wherever the pointer is
+bool g_forcePickLabel = false;	// script `thingclick label`: the forced thing's label is under the click
 uint64_t g_forcePickThing = 0;	// script `mouse force ID`: the next clicks pick thing ID wherever the pointer is (a test of the order dispatch past the pick's geometry)
 #else
 constexpr uint64_t g_forcePickThing = 0;
+constexpr bool g_forcePickLabel = false;
 #endif
 
 // The per-click record (kenshi-k16.2.259.3, user 2026-11-17: "the EXACT camera pose, x/y click location, and click projection results"): each click at its own
@@ -192,168 +198,42 @@ bool click_replay(const std::vector<std::string>& words)
 	return true;
 }
 
+bool foreign_walk_on() { return kForeignWalkTo.get(); }
+
+bool foreign_container_walk(uint64_t id, bool queue)
+{
+	const simlink::Interactable* t = app.sim.thing(id);
+	if (!t) { return false; }
+	// the HUD message box (kenshi-rwh.161: the original posts both on the RMB press edge; the lock text ends in a full stop, the steal one does not)
+	ui::message(container_locked(app.sim, id) ? "Hold down the ALT key to pick the lock." : "Hold down the ALT key to steal items");
+	if (!kForeignWalkTo.get()) { return false; }
+	const double at[3] = { t->use[0], t->use[1], t->use[2] };
+	return app.sim.moveTo(at, queue);
+}
+
 void sim_click(double mx, double my, bool right, bool shift)
 {
 	std::vector<PickSkip> clickSkipped;
 	Pick p = pick_screen(mx, my, &clickSkipped);
 	if (g_forcePickThing)
 	{
-		if (const simlink::Interactable* ft = app.sim.thing(g_forcePickThing)) { p = Pick{}; p.kind = ft->kind == simlink::Interactable::kContainer ? Pick::Container : Pick::Item; p.id = g_forcePickThing; }
+		if (const simlink::Interactable* ft = app.sim.thing(g_forcePickThing)) { p = Pick{}; p.id = g_forcePickThing; p.kind = ft->kind == simlink::Interactable::kContainer ? Pick::Container : ft->kind == simlink::Interactable::kDoor ? Pick::Door : ft->kind == simlink::Interactable::kBed ? Pick::Bed : ft->kind == simlink::Interactable::kProducer ? Pick::Producer : Pick::Item; }
 	}
+#ifdef KCLIENT_DEV_TOOLS
+	if (g_forcePickChar) { p = Pick{}; p.kind = Pick::Character; p.id = g_forcePickChar; }
+	if (g_forcePickGround.kind == Pick::Ground) { p = g_forcePickGround; }
+#endif
 	ClickRec* const rec = click_begin(mx, my, right, shift, p, std::move(clickSkipped));	// kenshi-k16.2.259.3: the click's own record; printed when this click is done
 	struct ClickPrint { ClickRec* r; ~ClickPrint() { fputs(click_text(*r).c_str(), stdout); } } clickPrint{ rec };
 	const uint64_t id = p.kind == Pick::Character ? p.id : 0;
-	if (!right && p.kind == Pick::Container && label_at(mx, my) == p.id)
-	{
-		if (container_locked(app.sim, p.id))
-		{
-			const bool sent = app.sim.interact(p.id, 3, shift);
-			printf("sim click (%.0f, %.0f): label: lockpick %llu: %s\n", mx, my, (unsigned long long)p.id, sent ? "sent" : "not sent");
-			order_sent(sent);
-			return;
-		}
-		const bool sent = open_container(p.id, shift);
-		printf("sim click (%.0f, %.0f): label: open container %llu: %s\n", mx, my, (unsigned long long)p.id, sent ? "sent" : "not sent");
-		order_sent(sent);
-		return;
-	}
-	if (!right && p.kind == Pick::Item && label_at(mx, my) == p.id)
-	{
-		const bool sent = app.sim.interact(p.id, 7, shift);
-		printf("sim click (%.0f, %.0f): label: pick up %llu%s: %s\n", mx, my, (unsigned long long)p.id, shift ? " (queued)" : "", sent ? "sent" : "not sent");
-		order_sent(sent);
-		return;
-	}
-	if (!right && p.kind == Pick::Producer)	// LMB: the generic machine window, from anywhere, the selection kept (user 2026-11-02, as the original)
-	{
-		app.machine = p.id;
-		app.panelProducer = p.id;	// the panel follows the last clicked thing (k16.19.8.2): the producer
-		printf("sim click (%.0f, %.0f): show machine %llu\n", mx, my, (unsigned long long)p.id);
-		return;
-	}
-	if (!right && p.kind == Pick::Container)	// LMB: its window alone, from anywhere, the selection kept (user 2026-11-02, as the original)
-	{
-		if (container_locked(app.sim, p.id))
-		{
-			const bool sent = app.sim.interact(p.id, 3, shift);
-			printf("sim click (%.0f, %.0f): lockpick %llu: %s\n", mx, my, (unsigned long long)p.id, sent ? "sent" : "not sent");
-			order_sent(sent);
-			return;
-		}
-		if (!cont_find(p.id)) { App::OpenCont oc; oc.id = p.id; oc.view = true; cont_add(oc); }	// already open: the click leaves it be
-		printf("sim click (%.0f, %.0f): show container %llu\n", mx, my, (unsigned long long)p.id);
-		return;
-	}
-	if (!right)
-	{
-		if (id && !app.sim.isPlayer(id))
-		{
-			app.inspect = id;
-			app.panelProducer = 0;	// a character click moves the panel back to the character; the machine window stays (k16.19.8.2)
-			printf("sim click (%.0f, %.0f): inspect %llu\n", mx, my, (unsigned long long)id);
-			return;
-		}
-		if (id) { app.inspect = 0; }
-		app.panelProducer = 0;
-		app.sim.select(id, shift);
-		printf("sim click (%.0f, %.0f): character %llu, %zu selected\n", mx, my, (unsigned long long)id, app.sim.selected().size());
-		return;
-	}
-	// A double right click on one of your own characters enters direct drive on it as select + V, instead of a second order (k16.2.238.1,
-	// user: "double left click already focused on a single character to follow. double right to direct drive?"). On the character being driven
-	// it leaves. The first click keeps its normal order (below); an NPC or the ground never drives, so their two clicks order as they always did.
-	if (id && app.sim.isPlayer(id) && !locked_cage(app.sim, id))
-	{
-		const double now = ui::now();
-		const bool twice = app.lastRmbChar == id && now - app.lastRmbCharAt < kDoubleClick;
-		app.lastRmbChar = twice ? 0 : id;	// a third click starts a new pair
-		app.lastRmbCharAt = twice ? -1 : now;
-		if (twice)
-		{
-			if (app.follow && app.followId == id)
-			{
-				printf("sim click (%.0f, %.0f): double right click, character %llu: leave the drive\n", mx, my, (unsigned long long)id);
-				leave_follow();
-			}
-			else
-			{
-				app.inspect = 0;	// as a left click's select: the panel goes with the character
-				app.panelProducer = 0;
-				app.sim.select(id, false);
-				set_follow_id(id);
-				printf("sim click (%.0f, %.0f): double right click, character %llu: direct drive on\n", mx, my, (unsigned long long)id);
-			}
-			return;
-		}
-	}
-	else { app.lastRmbChar = 0; app.lastRmbCharAt = -1; }
-	bool sent = false;
-	if (id && locked_cage(app.sim, id))	// a caged prisoner has no default order: the menus (opened on the press) are the choices (kenshi-k16.2.105.1)
-	{
-		printf("sim click (%.0f, %.0f): caged character %llu: no default order\n", mx, my, (unsigned long long)id);
-		return;
-	}
-	if (id)
-	{
-		const CharAct a = char_act(app.sim, app.chars, id, ctrl_held());
-		// Shift: the original's jobs (order 76): attack -> 4 (Fight enemies), follow -> 31 (Stay close), first aid -> 25 (Medic); the rest queue
-		const uint16_t job = !shift ? 0 : a.action == kAttack ? 4 : a.action == kFollow ? 31 : a.action == 10 ? 25 : 0;
-		if (job) { sent = app.sim.jobAdd(job, job == 31 ? id : 0); }
-		else { sent = a.action == kAttack ? app.sim.attack(id) : a.action == kFollow ? app.sim.follow(id) : a.action == 5 ? open_body(id, shift) : a.action > 0 && app.sim.interact(id, (uint8_t)a.action, shift && a.action != 14); }	// stealth KO: queue 1 is bad_value
-		printf("sim click (%.0f, %.0f): character %llu %s (%d)%s: %s\n", mx, my, (unsigned long long)id, a.cursor, a.action, job ? " as a job" : "", sent ? "sent" : "not sent");
-	}
-	else if (p.kind == Pick::Item)
-	{
-		sent = app.sim.interact(p.id, 7, shift);
-		printf("sim click (%.0f, %.0f): pick up %llu%s: %s\n", mx, my, (unsigned long long)p.id, shift ? " (queued)" : "", sent ? "sent" : "not sent");
-	}
-	else if (p.kind == Pick::Bed)	// sleep (order 60 action 9); event 10 occupied / not_allowed come back as refusals
-	{
-		sent = app.sim.interact(p.id, 9, shift);
-		printf("sim click (%.0f, %.0f): sleep in bed %llu%s: %s\n", mx, my, (unsigned long long)p.id, shift ? " (queued)" : "", sent ? "sent" : "not sent");
-	}
-	else if (p.kind == Pick::Producer)
-	{
-		app.panelProducer = p.id;	// the last clicked thing is the producer here too (k16.19.8.2): a mine order shows its panel
-		sent = use_producer(p.id, shift);
-		printf("sim click (%.0f, %.0f): use producer %llu%s: %s\n", mx, my, (unsigned long long)p.id, shift ? " (queued)" : "", sent ? "sent" : "not sent");
-	}
-	else if (p.kind == Pick::Container)
-	{
-		const simlink::Interactable* t = app.sim.thing(p.id);
-		const bool locked = container_locked(app.sim, p.id);
-		if (t && app.sim.foreign(p.id) && !app.keys[SAPP_KEYCODE_LEFT_ALT] && !app.keys[SAPP_KEYCODE_RIGHT_ALT])
-		{
-			// a foreign container's RMB without ALT (CURSORS_LIVE B4b storage / shop counter, B6 locked): the original's hint, and (orders.foreign_walk_to) the move
-			// order to it at the same instant; no loot, no lockpick (ALT does those; user 2026-11-14, ask kenshi-k16.2.240.2: "Match it")
-			ui::message(locked ? "Hold down the ALT key to pick the lock." : "Hold down the ALT key to steal items");	// the HUD message box (kenshi-rwh.161: the original posts both on the RMB press edge; the lock text ends in a full stop, the steal one does not)
-			if (kForeignWalkTo.get())
-			{
-				const double at[3] = { t->use[0], t->use[1], t->use[2] };
-				sent = app.sim.moveTo(at, shift);
-			}
-			printf("sim click (%.0f, %.0f): foreign %s %llu%s, no ALT: hint%s: %s\n", mx, my, locked ? "locked container" : "container", (unsigned long long)p.id, shift ? " (queued)" : "",
-				kForeignWalkTo.get() ? " + walk, no steal/lockpick" : " only", sent ? "sent" : "not sent");
-		}
-		else if (locked)
-		{
-			sent = app.sim.interact(p.id, 3, shift);
-			printf("sim click (%.0f, %.0f): lockpick %llu%s: %s\n", mx, my, (unsigned long long)p.id, shift ? " (queued)" : "", sent ? "sent" : "not sent");
-		}
-		else
-		{
-			sent = open_container(p.id, shift);
-			printf("sim click (%.0f, %.0f): open container %llu%s: %s\n", mx, my, (unsigned long long)p.id, shift ? " (queued)" : "", sent ? "sent" : "not sent");
-		}
-	}
-	else if (const simlink::Interactable* d = p.kind == Pick::Door ? app.sim.thing(p.id) : nullptr)
-	{
-		// locked: the click does nothing; the hold menu has Pick Lock (order 60 action 3, on the server since kenshi-h2v.15.1), unlock and bash. Broken: nothing to do
-		const uint8_t action = d->state == simlink::Interactable::kOpen ? 2 : d->state == simlink::Interactable::kClosed ? 1 : 0;
-		sent = action && app.sim.interact(p.id, action, shift);
-		printf("sim click (%.0f, %.0f): door %llu %s%s: %s\n", mx, my, (unsigned long long)p.id, action == 2 ? "close" : action == 1 ? "open" : d->state == simlink::Interactable::kBroken ? "broken" : "locked", shift ? " (queued)" : "", sent ? "sent" : "not sent");
-	}
-	else if (p.kind == Pick::Ground)
+	// Characters in the world go through the control-hints list (controlhints.cpp, kenshi-86qh): the row for this gesture runs the same code the hint shows.
+	hints::Context hctx = hints_context();
+	hctx.shift = shift;	// the modifiers at the click, not as the keys sit now (a scripted click passes its own)
+	hctx.ctrl = ctrl_held();
+	hctx.labelId = g_forcePickThing ? (g_forcePickLabel ? g_forcePickThing : 0) : label_at(mx, my);	// the label under this click, not the one under the pointer now
+	const bool thing = p.kind == Pick::Item || p.kind == Pick::Bed || p.kind == Pick::Producer || p.kind == Pick::Door || p.kind == Pick::Container;	// steps 4, 5 and 6: things resolve through the list too
+	// the ground's own move (step 8): the drawn hit snapped to the navmesh, the sim's moveTo, the route marker and the click record; the row's log is its whole line
+	hctx.groundMove = [&](bool queue, std::string& text)
 	{
 		// kenshi-k16.2.231.1: the shot's route sidecar records which building and floor a ground click meant (a floor/deck hit is a building shape)
 		SimView::Click click;
@@ -374,8 +254,10 @@ void sim_click(double mx, double my, bool right, bool shift)
 		double snapped[3];
 		const bool onMesh = app.nav.snap(p.hit, snapped) == ClientNav::Reach::kYes;
 		if (onMesh) { std::copy(snapped, snapped + 3, p.hit); }
-		sent = app.sim.moveTo(p.hit, shift, true, &click);
-		printf("sim click (%.0f, %.0f): move_to %.1f %.1f %.1f (%s): %s\n", mx, my, p.hit[0], p.hit[1], p.hit[2], onMesh ? "navmesh point" : "drawn hit", sent ? "sent" : "not sent");
+		const bool sent = app.sim.moveTo(p.hit, queue, true, &click);
+		char b[160];
+		snprintf(b, sizeof b, "move_to %.1f %.1f %.1f (%s): %s", p.hit[0], p.hit[1], p.hit[2], onMesh ? "navmesh point" : "drawn hit", sent ? "sent" : "not sent");
+		text = b;
 		if (sent)
 		{
 			memcpy(app.orderAt, p.hit, sizeof p.hit);
@@ -383,8 +265,90 @@ void sim_click(double mx, double my, bool right, bool shift)
 			app.orderRejected = false;
 			rec->seq = app.sim.lastSentSeq();
 			route_preview_order(p.hit, app.sim.lastSentSeq());
-			app.orderSeq = app.sim.lastSentSeq();	// the marker moves to this order's route end when the sim answers (k16.2.259)
+			app.orderSeq = app.sim.lastSentSeq();	// the marker moves to this order's route end when the sim answers (k16.2)
 			app.orderRouted = false;
+		}
+		return sent;
+	};
+	const hints::Hover hover = hints::hints_for(p, hctx);
+	const auto announce = [&](const hints::Action& a, bool sent)
+	{
+		const std::string text = a.after ? a.after(sent) : a.log + (a.logSent ? std::string(": ") + (sent ? "sent" : "not sent") : std::string());
+		printf("click hint: %s\n", a.kind);
+		printf("sim click (%.0f, %.0f): %s\n", mx, my, text.c_str());
+	};
+	if (!right && thing)
+	{
+		// an item's label (pick up) and a producer (its machine window, the selection kept: user 2026-11-02) have a left click; a bed or door has none and falls on
+		// the selection clear below, as the ground does
+		if (const hints::Action* a = hints::match(hover, shift ? hints::Gesture::kShiftClick : hints::Gesture::kClick, hctx))
+		{
+			const bool sent = a->run();
+			announce(*a, sent);
+			if (a->logSent) { order_sent(sent); }
+			return;
+		}
+	}
+	if (!right)
+	{
+		app.panelProducer = 0;
+		if (id)
+		{
+			if (const hints::Action* a = hints::match(hover, shift ? hints::Gesture::kShiftClick : hints::Gesture::kClick, hctx)) { announce(*a, a->run()); }
+			return;
+		}
+		// the ground has a left click row of its own; anything else with none (a bed, a door, nothing) clears the selection the same way
+		const hints::Action* g = p.kind == Pick::Ground ? hints::match(hover, hints::Gesture::kClick, hctx) : nullptr;
+		const hints::Action fallback = g ? hints::Action{} : hints::deselect_action(hctx);
+		const hints::Action& d = g ? *g : fallback;
+		const bool sent = d.run();
+		if (g) { announce(d, sent); }
+		else { printf("sim click (%.0f, %.0f): %s\n", mx, my, d.after(sent).c_str()); }
+		return;
+	}
+	// A double right click on one of your own characters enters direct drive on it as select + V, instead of a second order (k16.2.238.1,
+	// user: "double left click already focused on a single character to follow. double right to direct drive?"). On the character being driven
+	// it leaves. The first click keeps its normal order (below); an NPC or the ground never drives, so their two clicks order as they always did.
+	// The pair is the dispatcher's state; the character offers the kDoubleRightClick row only when it is yours and not a caged prisoner.
+	if (const hints::Action* dbl = hints::match(hover, hints::Gesture::kDoubleRightClick, hctx); dbl && dbl->gesture == hints::Gesture::kDoubleRightClick)
+	{
+		const double now = ui::now();
+		const bool twice = app.lastRmbChar == id && now - app.lastRmbCharAt < kDoubleClick;
+		app.lastRmbChar = twice ? 0 : id;	// a third click starts a new pair
+		app.lastRmbCharAt = twice ? -1 : now;
+		if (twice)
+		{
+			announce(*dbl, dbl->run());
+			return;
+		}
+	}
+	else { app.lastRmbChar = 0; app.lastRmbCharAt = -1; }
+	bool sent = false;
+	if (id)
+	{
+		// Shift: the original's jobs (order 76), the Shift+right click rows; the rest queue (a row with no Shift variant runs with the click's Shift)
+		if (const hints::Action* a = hints::match(hover, shift ? hints::Gesture::kShiftRightClick : hints::Gesture::kRightClick, hctx))
+		{
+			sent = a->run();
+			announce(*a, sent);
+		}
+		else { printf("sim click (%.0f, %.0f): character %llu %s (0): not sent\n", mx, my, (unsigned long long)id, "arrow"); }
+	}
+	else if (thing)
+	{
+		if (const hints::Action* a = hints::match(hover, shift ? hints::Gesture::kShiftRightClick : hints::Gesture::kRightClick, hctx))
+		{
+			sent = a->run();
+			announce(*a, sent);
+		}
+		else { printf("sim click (%.0f, %.0f): %s: no action\n", mx, my, hover.target.c_str()); }
+	}
+	else if (p.kind == Pick::Ground)
+	{
+		if (const hints::Action* a = hints::match(hover, shift ? hints::Gesture::kShiftRightClick : hints::Gesture::kRightClick, hctx))
+		{
+			sent = a->run();
+			announce(*a, sent);
 		}
 	}
 	// The order click (Right_Click, the order dispatcher 1407f9e20): once per issued order, after the whole selection got it, never one per
@@ -404,15 +368,17 @@ constexpr double kFollowDist = 100.0, kFollowPitch = -15 * M_PI / 180.0;	// unit
 // The follow camera on any drawn character (a spectator's NPC): the selection is not needed, and the drive keys stay the player's (update_follow).
 // Every entry starts at the default close camera behind the character, whatever the RTS zoom was, and a leave + re-enter the same (k16.2.237 part 5,
 // user: "v - reengaging direct drive, it didn't restore to a 'default close' camera").
-bool set_follow_id(uint64_t id)
+bool set_follow_id(uint64_t id, bool devRoute)
 {
 	double pos[3], yaw;
 	const simlink::Route* route;
 	if (!id || !app.sim.pose(id, pos, yaw, route)) { return false; }
+	// Q4: only the player's own squad. The spectator exception (no player faction, app.spectating: its watch is what the camera follows) and the
+	// dev/test routes (--follow, script `follow char`) are the only ways to a non-squad character.
+	if (!app.sim.isPlayer(id) && !app.spectating && !(devRoute && (app.opt.debug || app.scripted()))) { return false; }
 	const double fromRts = app.rts ? app.rtsDist : 0.0;	// the zoom it was at, for the scripted log: it does not carry over
 	app.follow = true;
 	app.followId = id;
-	app.buildings.engage();
 	app.followBase = M_PI - yaw;
 	app.followOffset = 0;
 	app.yaw = app.followBase;
@@ -424,6 +390,13 @@ bool set_follow_id(uint64_t id)
 	app.driveSent = 0; app.strafeSent = 0;
 	if (app.scripted()) { printf("follow %llu: camera mode follow dist %.1f pitch %.1f (from rts dist %.1f)\n", (unsigned long long)id, app.followDist, app.pitch * 180.0 / M_PI, fromRts); }
 	return true;
+}
+
+void cast_follow(uint64_t id)
+{
+	if (!id) { set_follow(false); return; }
+	app.inspect = id; app.panelProducer = 0;
+	set_follow_id(id);
 }
 
 constexpr double kGroundClear = 2.0;	// u: the eye's least height over the ground (the boom's terrain march, the drive camera's ride)
@@ -742,6 +715,15 @@ void update_follow(double dt)
 
 // Leaving direct drive (V, Esc, or a double right click on the driven character; k16.2.238.1): back to the floating camera, auto-centred on the
 // character (the camera stays where the drive left it, as V's own toggle does).
+// R / F / the diamond (kenshi-k16.2.236.13). Direct drive ignores them (D2: not a step, and the drive stays); a follow (the auto-centre on a character)
+// ends with the step (L4, L5): the camera stays where it is, in the floating mode, and the stepped level is the free one (F1, F2).
+bool floor_step(int dir)
+{
+	if (app.follow) { return false; }
+	if (camera_subject()) { app.centerId = 0; }
+	return app.buildings.stepFloor(dir);
+}
+
 void leave_follow()
 {
 	const uint64_t was = app.followId;

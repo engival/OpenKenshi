@@ -743,6 +743,7 @@ namespace ui
 			const keys::Action* a = keys::find(kShortcuts[i]);
 			const std::string key = keys::label(kShortcuts[i]);
 			shortcut_[i]->tooltip = (a ? a->title : kShortcuts[i]) + (key.empty() ? "" : " (" + key + ")");
+			shortcut_[i]->keyHints = s.keys.shortcut[i];
 		}
 		if (notesBtn_)
 		{
@@ -763,7 +764,11 @@ namespace ui
 		{
 			speed_[i]->checked = s.clockValid && i == cur;
 			speed_[i]->enabled = s.clockValid;
+			speed_[i]->keyHints = s.keys.speed[i];
 		}
+		floor_->keyHints = s.keys.floor;
+		moveSpeed_->keyHints = s.keys.moveSpeed;
+		build_->keyHints = s.keys.build;
 		floor_->visible = s.floorValid;
 		const bool target = s.floorUp || s.floorDown || !s.floorName.empty();	// none: the host keeps the diamond up with both arrows off
 		floor_->text = target ? "Floor " + std::to_string(s.floor) : "Floor";
@@ -854,6 +859,8 @@ namespace ui
 			p.frame->enabled = true;
 			p.name->colour = m.down ? res::colour("BadBright") : res::colour("Main");
 			p.bar->fraction = m.health;
+			p.frame->keyHints = s.keys.portrait;
+			if (i < s.keys.slot.size()) { p.frame->keyHints.insert(p.frame->keyHints.end(), s.keys.slot[i].begin(), s.keys.slot[i].end()); }
 			if (!m.selected) { continue; }
 			nSel++;
 			for (int t = 0; t < kHudToggles; t++) { all[t] = all[t] && m.toggles[t]; }

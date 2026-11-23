@@ -90,8 +90,9 @@ the first member the click point exactly and offsets the rest (findings/msmove).
 
 The agent speaks our sim ids only, never the original's handles. The map is the server's import report
 (`--import-report`, IMPORT_REPORT.md format 1: squads pool -> id, members (pool, serial) -> id). The live character
-hand's id ints at hand+0xc..+0x18 are the save handle's C, CS, I, S (SAVE_FORMAT.md section 3); the agent maps (C, S) to
-our id and drops anything absent. The exact order in the live hand is asserted on the first live run.
+hand's id ints at hand+0xc..+0x18 are the save handle's C, CS, I, S (SAVE_FORMAT.md section 3); the agent maps (C, I) to
+our id (hand ints 0 and 2: the report's pool and serial) and drops anything absent. The live side-by-side run matched
+(C, I) on 88 of 88 characters and (C, S) on none (kenshi-rwh.264, findings kenshi-inspect/findings/kenshi-rwh.264/README.md).
 
 Launch contract: the agent chooses the report path; kclient passes `--import-save <dir>` and `--import-report <path>`
 through to its local server child.

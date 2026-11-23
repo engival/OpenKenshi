@@ -1,0 +1,23 @@
+# kolanding (kenshi-ettl): no player, two mutually hostile squads of 8 starting 24 u apart on the open ground past the Hub's Bar, so the fight starts at once and several KOs / deaths follow. client/tests/kolanding/run.sh measures where each ragdoll lands.
+KSCEN 2
+scenario title=KO%20landing setup=Two%20hostile%20squads%20of%20eight%2C%2024%20u%20apart. look_for=Do%20knocked%20out%20bodies%20land%20where%20the%20sim%20put%20them. bead=kenshi-ettl metrics=bodies_down
+source save=playtest game=1.0.68 radius=0 centre=-50622,-908 leader=Dust%20bandit
+clock day=1 hour=14 minute=0
+squad id=1 name=Blood%20raider%20patrol faction=16860-gamedata.base template=16865-gamedata.base package=16846-gamedata.base player=0
+char id=1 squad=1 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50640 y=1100 z=-1110 yaw=0 leader=1 chase=1
+char id=2 squad=1 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50635 y=1100 z=-1110 yaw=0 chase=1
+char id=3 squad=1 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50630 y=1100 z=-1110 yaw=0 chase=1
+char id=4 squad=1 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50625 y=1100 z=-1110 yaw=0 chase=1
+char id=5 squad=1 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50620 y=1100 z=-1110 yaw=0 chase=1
+char id=6 squad=1 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50615 y=1100 z=-1110 yaw=0 chase=1
+char id=7 squad=1 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50610 y=1100 z=-1110 yaw=0 chase=1
+char id=8 squad=1 name=Blood%20raider template=16863-gamedata.base faction=16860-gamedata.base x=-50605 y=1100 z=-1110 yaw=0 chase=1
+squad id=2 name=Berserker%20patrol faction=42257-rebirth.mod template=42258-rebirth.mod package=3949-gamedata.base player=0
+char id=9 squad=2 name=Berserker template=42259-rebirth.mod faction=42257-rebirth.mod x=-50640 y=1100 z=-1086 yaw=3.14159 leader=1 chase=1
+char id=10 squad=2 name=Berserker template=42259-rebirth.mod faction=42257-rebirth.mod x=-50635 y=1100 z=-1086 yaw=3.14159 chase=1
+char id=11 squad=2 name=Berserker template=42259-rebirth.mod faction=42257-rebirth.mod x=-50630 y=1100 z=-1086 yaw=3.14159 chase=1
+char id=12 squad=2 name=Berserker template=42259-rebirth.mod faction=42257-rebirth.mod x=-50625 y=1100 z=-1086 yaw=3.14159 chase=1
+char id=13 squad=2 name=Berserker template=42259-rebirth.mod faction=42257-rebirth.mod x=-50620 y=1100 z=-1086 yaw=3.14159 chase=1
+char id=14 squad=2 name=Berserker template=42259-rebirth.mod faction=42257-rebirth.mod x=-50615 y=1100 z=-1086 yaw=3.14159 chase=1
+char id=15 squad=2 name=Berserker template=42259-rebirth.mod faction=42257-rebirth.mod x=-50610 y=1100 z=-1086 yaw=3.14159 chase=1
+char id=16 squad=2 name=Berserker template=42259-rebirth.mod faction=42257-rebirth.mod x=-50605 y=1100 z=-1086 yaw=3.14159 chase=1

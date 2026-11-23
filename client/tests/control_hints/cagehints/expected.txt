@@ -1,0 +1,24 @@
+hints: Prisoner (yours) (caged): 8 actions
+  Click  char_select  "Select Prisoner"
+  Shift+Click  char_add  "Add Prisoner to the selection"
+  Hold right  menu_follow  "Follow"  (menu row)
+  Hold right  menu_bodyguard  "Bodyguard"  (menu row)
+  Right click  caged  "Caged: hold right click for Pick Lock, Use Tools or Use Strength"  disabled: the menu opens on the press
+  Hold right  cage_pick_lock  "Pick Lock"  (menu row)
+  Hold right  cage_tools  "Use Tools"  (menu row)
+  Hold right  cage_strength  "Use Strength"  (menu row)
+click hint: char_select
+sim click: character @Prisoner@, 1 selected
+click hint: caged
+sim click: caged character @Prisoner@: no default order
+click hint: caged
+sim click: caged character @Prisoner@: no default order
+hints: Prisoner (yours) (caged): 6 actions
+  Click  char_select  "Select Prisoner"
+  Shift+Click  char_add  "Add Prisoner to the selection"  disabled: already selected
+  Hold right  menu_follow  "Follow"  (menu row)
+  Hold right  menu_bodyguard  "Bodyguard"  (menu row)
+  Right click  caged  "Caged: hold right click for Pick Lock, Use Tools or Use Strength"  disabled: the menu opens on the press
+  Hold right  cage_pick_lock  "Pick Lock 1%"  (menu row)
+click hint: caged
+sim click: caged character @Prisoner@: no default order

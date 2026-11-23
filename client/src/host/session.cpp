@@ -68,6 +68,7 @@
 #include "characters/portraits.hpp"
 #include "world/doorpose.hpp"
 #include "dev/debughost.hpp"
+#include "dev/catchlog.hpp"
 #include "dev/devhooks.hpp"
 #ifdef KCLIENT_DEV_TOOLS
 #include "dev/pickmask.hpp"
@@ -827,6 +828,8 @@ void sim_opened()
 	logicthread::renderIdle();	// overlap (rule 12): the new game's link, collision and the buildings' callbacks change under no draw
 	app.collide.start(app.opt.data, &*app.hm);
 #ifdef KCLIENT_DEV_TOOLS
+	catchlog::init();
+	if (catchlog::gOn) { app.sim.catchTrace = catchlog::noteSlow; }
 	app.sim.ylogAlt = [](double x, double z) { return app.hm->height(x, z); };	// KYLOG: the bilinear height() beside the drawn-triangle terrainHeight()
 #endif
 	app.sim.setDepenetrate([](double x, double z, double y, double r, double cap, double out[2], std::string* why) { return app.collide.depenetrate(x, z, y, r, cap, out, why); });
@@ -840,6 +843,7 @@ void sim_opened()
 				const int r = app.buildings.groundDrawn(x, z, wy, up, std::max(down, SimView::kDrawnDown), y);
 				return r == 1 ? 2 : r; },
 			[]() -> const void* { return app.buildings.groundDrawnGen(); });
+		app.sim.setGroundDirty([]() { return app.buildings.groundSeq(); }, [](uint64_t since, double x, double z) { return app.buildings.groundDirtySince(since, x, z); });
 	}
 	// kenshi-k16.2.414.2: the ground solver's terrain (the drawn terrain triangles) and its sunk-dune rule: inside an interior mask whose BUILDING has `interior terrain` 0 the terrain is not ground
 	app.sim.setTerrainFn([](double x, double z) { return app.hm->terrainHeight(x, z); },

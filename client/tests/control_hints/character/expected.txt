@@ -1,0 +1,135 @@
+hints: Alpha (yours): 8 actions
+  Click  char_select  "Select Alpha"
+  Shift+Click  char_add  "Add Alpha to the selection"  disabled: already selected
+  Hold right  menu_follow  "Follow"  (menu row)
+  Hold right  menu_bodyguard  "Bodyguard"  (menu row)
+  Hold right  menu_first_aid  "First aid"  (menu row)
+  Right click  first_aid  "First aid on Alpha"
+  Shift+Right click  medic_job  "Medic job on Alpha"
+  Double right click  drive  "Direct drive on Alpha"
+click hint: char_select
+sim click: character @Alpha@, 1 selected
+hints: Alpha (yours): 8 actions
+  Click  char_select  "Select Alpha"
+  Shift+Click  char_add  "Add Alpha to the selection"  disabled: already selected
+  Hold right  menu_follow  "Follow"  (menu row)
+  Hold right  menu_bodyguard  "Bodyguard"  (menu row)
+  Hold right  menu_first_aid  "First aid"  (menu row)
+  Right click  first_aid  "First aid on Alpha"
+  Shift+Right click  medic_job  "Medic job on Alpha"
+  Double right click  drive  "Direct drive on Alpha"
+click hint: first_aid
+sim click: character @Alpha@ med (10): sent
+click hint: char_add
+sim click: character @Alpha@, 1 selected
+click hint: first_aid
+sim click: character @Alpha@ med (10): sent
+click hint: drive
+sim click: double right click, character @Alpha@: direct drive on
+hints: Alpha (yours): 8 actions
+  Click  char_select  "Select Alpha"
+  Shift+Click  char_add  "Add Alpha to the selection"  disabled: already selected
+  Hold right  menu_follow  "Follow"  (menu row)
+  Hold right  menu_bodyguard  "Bodyguard"  (menu row)
+  Hold right  menu_first_aid  "First aid"  (menu row)
+  Right click  first_aid  "First aid on Alpha"
+  Shift+Right click  medic_job  "Medic job on Alpha"
+  Double right click  leave_drive  "Leave direct drive on Alpha"
+click hint: first_aid
+sim click: character @Alpha@ med (10): sent
+click hint: leave_drive
+sim click: double right click, character @Alpha@: leave the drive
+click hint: char_select
+sim click: character @Alpha@, 1 selected
+click hint: char_add
+sim click: character @Bravo@, 2 selected
+hints: Bravo (yours): 8 actions
+  Click  char_select  "Select Bravo"
+  Shift+Click  char_add  "Add Bravo to the selection"  disabled: already selected
+  Hold right  menu_follow  "Follow"  (menu row)
+  Hold right  menu_bodyguard  "Bodyguard"  (menu row)
+  Hold right  menu_first_aid  "First aid"  (menu row)
+  Right click  first_aid  "First aid on Bravo"
+  Shift+Right click  medic_job  "Medic job on Bravo"
+  Double right click  drive  "Direct drive on Bravo"
+click hint: first_aid
+sim click: character @Bravo@ med (10): sent
+click hint: medic_job
+sim click: character @Bravo@ med (10) as a job: sent
+hints: KOOne (yours): 8 actions
+  Click  char_select  "Select KOOne"
+  Shift+Click  char_add  "Add KOOne to the selection"
+  Hold right  menu_follow  "Follow"  (menu row)
+  Hold right  menu_loot  "Loot"  (menu row)
+  Hold right  menu_first_aid  "First aid"  (menu row)
+  Hold right  menu_pick_up  "Pick up"  (menu row)
+  Right click  lift  "Pick up KOOne (carry)"
+  Double right click  drive  "Direct drive on KOOne"
+click hint: lift
+sim click: character @KOOne@ lift (8): sent
+hints: DeadOne (yours): 8 actions
+  Click  char_select  "Select DeadOne"
+  Shift+Click  char_add  "Add DeadOne to the selection"
+  Hold right  menu_follow  "Follow"  (menu row)
+  Hold right  menu_loot  "Loot"  (menu row)
+  Hold right  menu_first_aid  "First aid"  (menu row)
+  Hold right  menu_pick_up  "Pick up"  (menu row)
+  Right click  loot  "Loot DeadOne"
+  Double right click  drive  "Direct drive on DeadOne"
+click hint: loot
+sim click: character @DeadOne@ search (5): sent
+hints: Bystander (not yours): 6 actions
+  Click  inspect  "Inspect Bystander (the selection stays)"
+  Hold right  menu_talk  "Talk"  (menu row)
+  Hold right  menu_bodyguard  "Bodyguard"  (menu row)
+  Hold right  menu_attack  "Attack"  (menu row)
+  Right click  talk  "Talk to Bystander"
+  Ctrl+Right click  attack  "Attack Bystander"
+click hint: inspect
+sim click: inspect @Bystander@
+click hint: talk
+sim click: character @Bystander@ talk (6): sent
+hints: Raider (not yours): 6 actions
+  Click  inspect  "Inspect Raider (the selection stays)"
+  Hold right  menu_talk  "Talk"  (menu row)
+  Hold right  menu_bodyguard  "Bodyguard"  (menu row)
+  Hold right  menu_attack  "Attack"  (menu row)
+  Right click  attack  "Attack Raider"
+  Shift+Right click  fight_job  "Fight enemies (job)"
+click hint: attack
+sim click: character @Raider@ attk (-1): sent
+click hint: fight_job
+sim click: character @Raider@ attk (-1) as a job: sent
+click hint: inspect
+sim click: inspect @Raider@
+click hint: char_select
+sim click: character @Alpha@, 1 selected
+hints: Ghost (yours): 7 actions
+  Click  char_select  "Select Ghost"
+  Shift+Click  char_add  "Add Ghost to the selection"
+  Hold right  menu_follow  "Follow"  (menu row)
+  Hold right  menu_bodyguard  "Bodyguard"  (menu row)
+  Right click  follow_order  "Follow Ghost"
+  Shift+Right click  stay_close  "Stay close to Ghost (job)"
+  Double right click  drive  "Direct drive on Ghost"
+click hint: follow_order
+sim click: character @Ghost@ green (-2): sent
+click hint: char_select
+sim click: character @Ghost@, 1 selected
+hints: Ghost (yours): 5 actions
+  Click  char_select  "Select Ghost"
+  Shift+Click  char_add  "Add Ghost to the selection"  disabled: already selected
+  Hold right  menu_follow  "Follow"  (menu row)
+  Hold right  menu_bodyguard  "Bodyguard"  (menu row)
+  Double right click  drive  "Direct drive on Ghost"
+sim click: character @Ghost@ arrow (0): not sent
+hints: Raider (not yours): 7 actions
+  Click  inspect  "Inspect Raider (the selection stays)"
+  Hold right  menu_talk  "Talk"  (menu row)
+  Hold right  menu_bodyguard  "Bodyguard"  (menu row)
+  Hold right  menu_attack  "Attack"  (menu row)
+  Hold right  menu_stealth_ko  "Stealth KO"  (menu row)
+  Right click  knock_out  "Knock Raider out (stealth)"
+  Ctrl+Right click  attack  "Attack Raider"
+click hint: knock_out
+sim click: character @Raider@ knockout (14): sent

@@ -1,0 +1,10 @@
+# kenshi-01b4 (rwh.311): container_body, the Carrier selected, the Sleeper KO'd on the floor. The Hub bar's bed (id as in things/) reads Sleep in Bed before the lift; the Carrier
+# lifts the Sleeper (right click on the body, order 60 action 8) and, once it carries, the same bed reads Put in Bed (right click and Shift queue send order 60 action 9, the
+# sim's carried put-in).
+100 select id=@Carrier@
+110 hints thing 6285449610646571553
+120 charclick right Sleeper
+600 hints thing 6285449610646571553
+620 thingclick right 6285449610646571553
+630 thingclick shift right 6285449610646571553
+700 quit

@@ -6,12 +6,13 @@
 #include "sokol_app.h"
 #include "ui/widget.hpp"
 
-// Key bindings (docs/UI.md "Keys"): every action is a cfg Text option `key.<action>` holding its keys, "S, Down" (at most two; "" = unbound),
+// Key bindings (docs/UI.md "Keys"): every action is a cfg Text option `key.<action>` holding its keys, "S, Down" (at most three; "" = unbound),
 // so they live in kclient.cfg and the Options window shows them as its Keys tab. Action names are the original's controls.cfg ones
 // (toggle_inventory, speed_1, ...); defaults are the install's controls.cfg. `key.debug.*` are the client's development keys. A key is
 // "[Ctrl+][Alt+][Shift+]Name" (keys::name lists the names). The host asks keys::pressed(e, "toggle_stats") in its event callback after
-// ui::event, and keys::held("camera_forward") per frame. Two actions on one key in the same group (or a debug key on a game key) are a
-// conflict: reported at start and shown in red in the Options, never resolved for the player.
+// ui::event, and keys::held("camera_forward") per frame. Two actions on one key in the same group (or a debug key on a game key; build
+// and free camera keys clash only in their own group) are a conflict: reported at start and shown in red in the Options, never resolved
+// for the player.
 namespace ui::keys
 {
 	struct Chord
@@ -21,7 +22,9 @@ namespace ui::keys
 		bool operator==(const Chord&) const = default;
 	};
 
-	enum class Group { kGame, kBuild, kDebug };	// build keys apply in build mode only, so they may share game keys
+	// Build keys apply in build mode only and free camera keys while the free camera is on (--fly, the debug free camera), so either may
+	// share game keys. Free camera keys are live without --debug (--fly runs without it); the host routes them only in the free camera.
+	enum class Group { kGame, kBuild, kDebug, kFreeCamera };
 
 	struct Action
 	{
@@ -30,7 +33,7 @@ namespace ui::keys
 		Group group;
 	};
 
-	static constexpr int kSlots = 2;	// keys per action
+	static constexpr int kSlots = 3;	// keys per action
 
 	std::string name(const Chord& c);	// "Ctrl+Shift+F11"; "" for none
 	bool parse(const std::string& text, Chord& c);	// case-insensitive; false on an unknown name

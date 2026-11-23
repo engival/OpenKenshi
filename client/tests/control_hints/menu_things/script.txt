@@ -1,0 +1,16 @@
+# the hold menu's rows on the Hub bar's things: an item, a producer, a door, a foreign container and a locked one (see ../things and ../containers for their clicks)
+100 hints thing 40819
+110 menuclick menu_pick_up 40819
+120 hints thing 4611687120040361986
+130 menuclick menu_operate 4611687120040361986
+140 menuclick menu_open 4611687120040361986
+150 hints thing 1099511627779
+160 menuclick menu_open 1099511627779
+170 menuclick menu_bash 1099511627779
+180 hints thing 1099511627812
+190 menuclick menu_open 1099511627812
+200 menuclick menu_take_all 1099511627812
+210 hints thing 1099511627821
+220 menuclick menu_lockpick 1099511627821
+230 menuclick menu_take_all 1099511627821
+300 quit

@@ -284,6 +284,7 @@ public:
 	};
 	PopIn popin;
 	std::string popinReport() const;	// `dump popin`: the timelines, the asset costs, the per-name precache table
+	std::string precacheReport() const;	// `dump precache`: the background world precache (stream.precache): parts, meshes, textures left, seconds since the lift, memory held
 	void popinMark(uint32_t ii, const BuildingInstance& b);	// in range: the instance entered a load cell this frame
 	void popinLift() { if (popin.on) { popin.liftAt = popin.now; } }	// the load screen lifted: the pop-in after it is what a player sees
 	void popinDrawn(uint32_t ii);							// first drawn / fully textured (the cull pass's any)
@@ -407,11 +408,7 @@ public:
 	// (levelCuts, clamped to each building's top).
 	bool stepFloor(int dir);
 	int level() const { return visible_; }	// the global level 0..3 (the original's pi+0x1e4)
-	// An explicit engage (double click, portrait double click, F, V, Z, the session start's centring: main.cpp set_rts / set_follow_id): the player's
-	// stepped level is dropped, so the next updateFocus shows the subject's floor even when it is the one already centred (kenshi-k16.2.236.5). The one
-	// place the routes call.
-	void engage() { view_.engage(); }
-	// A save load's own view (camera sidecar): the saved level; the subject the load centres on (0: none) holds it until its next threshold.
+	// A save load's own view (camera sidecar): the saved level, the player's; a subject the load centres on shows its own floor from the next frame (L3).
 	void restoreView(int level, uint64_t subject) { view_.load(level, subject); visible_ = view_.shown(); }
 	void resetFloors() { view_.load(3, 0); visible_ = view_.shown(); }
 	// A world point on the roof deck of a floorable building: xz inside its parts' box, feet at or over the top floor's slab and not far above the box.
@@ -430,7 +427,13 @@ public:
 	// test then takes the shape whole by where it starts, as the renderer hides a part by its floor (a staircase rising past the slab stays drawn).
 	// why (the F12 pick report, kenshi-k16.2.259): why it is not drawn there ("an occluder faded to glass", "above the floor cut of Longhouse"); empty drawn.
 	bool inSolidZone(const double p[3]);	// kenshi-k16.2.412.3
-	bool cutAway(const double p[3], double bottom = 1e30, std::string* why = nullptr);
+	// part (kenshi-8fvf): the drawn building part p was hit on; a cut whose building owns it hides it by the renderer's own predicate (partCutHidden), not by
+	// where the hit point is, so what the frame drew is what the click can hit.
+	struct DrawnPart { uint32_t instance; const BuildingPartDef* def; };
+	bool cutAway(const double p[3], double bottom = 1e30, std::string* why = nullptr, const DrawnPart* part = nullptr);
+	// THE floor-cut test for a building's part (render in wbdraw, the click pick through cutAway): a part on a floor above the shown one is hidden; a sign
+	// keeps drawing when render.signs_indoors is on. floor: the part's own floor (furniture: its floor).
+	static bool partCutHidden(int floor, bool sign, int shown);
 	// p is on a floor the cut hides (a sliced building, at or above the slab over the shown floor): its characters and items go. bottom: the solid
 	// shape p stands on, by its low face (the click pick's staircase rule), so a character climbing a stair keeps the stair's starting floor.
 	bool cutHides(const double p[3], double bottom = 1e30);
@@ -558,14 +561,20 @@ public:
 	// collision. The nearest of the first drawn triangle hit going down and going up. 1: a drawn surface at y in the window; 0: none in the window but one within 12 u of the wire (a building covers x, z); 3: nothing
 	// drawn within 12 u (open ground); -1: none in the window but a building near x, z has a mesh still loading (kenshi-k16.2.382.2: the stand ray's only building source, collision meshes left it).
 	int groundDrawn(double x, double z, double wireY, double up, double down, double& y) const;
+	// kenshi-uxmu: what moved the ground, by region. groundSeq() grows with every mesh state move that groundDrawn can see (a Ready, an eviction, a part finding its mesh) and with setData;
+	// groundDirtySince(seq, x, z): a move since `seq` whose building reaches x, z (its instances' boxes, and the 80 u the loading test looks at). The sim's thing-y cache uses it.
+	uint64_t groundSeq() const { return groundSeq_; }
+	bool groundDirtySince(uint64_t seq, double x, double z) const;
 	const void* groundDrawnGen() const;	// changes with the instance set and the Ready meshes (what groundDrawn reads): the per-character ray cache's key
 	// The world box of everything a prop draws (its parts' mesh boxes, this frame), grown by `grow`; false: no such prop or nothing drawn yet.
 	// pick_at: a click whose world hit point is on the prop's own drawn box is that prop (its collision proxy may sit just outside it)
 	bool propBox(uint64_t id, double lo[3], double hi[3], double grow = 0) const;
+	bool bedBox(const double spot[3], double lo[3], double hi[3]) const;	// the world box of the layout piece holding a bed's sleeping spot (bedPiece): debug.pick_mask's bed box (kenshi-89l0)
 	// kenshi-k16.2.396.5: the click / hover pick's one world query. The nearest DRAWN triangle along the ray with t in [tMin, tMax] over every instance
 	// (building shells, layout furniture, props, doors at their drawn pose, player buildings): a per-instance box is only the broad phase. A part of the
 	// glass / foliage / marker kind and a glass or effect submesh never pick; a triangle the renderer's alpha test discards at the hit's texel never picks (pickCuts, kenshi-sagp). instance: the hit's instance.
 	bool drawnPickRay(const double origin[3], const double dir[3], double tMin, double tMax, double& t, uint32_t& instance, WalkHit* who = nullptr) const;
+	const BuildingPartDef* partDef(const WalkHit& w) const;	// the definition of the part a drawnPickRay hit; null: not found
 	// The props (sim things) an instance draws: its ids (a layout piece draws several containers, a placed mine one producer); appended to out.
 	void propsOfInstance(uint32_t instance, std::vector<uint64_t>& out) const;
 	uint64_t pickGen() const { return (dataGen_ << 32) ^ holdGen_; }	// changes with the instance set and the Ready meshes (the pick's caches)
@@ -628,11 +637,13 @@ private:
 	{
 		std::string path;
 		State state = Unloaded;
+		bool holdPending = false;	// a state move held back from holdGen_ (the background precache's, kenshi-g3e5): the next real need of this mesh bumps it
 		rq::Handle<MeshGpu> gpu;	// a fresh one per load; the create's job publishes it, an evict's destroy job holds the old one
 		rq::Lane lane = rq::Lane::kStream;	// the lane of its create: its destroy goes there too
 		rq::PrioPtr prio = std::make_shared<rq::Prio>();	// the stream lane's order of its create (kenshi-k16.2.258.3); logic rewrites it each frame
 		float score = 1e30f;	// the lowest score of a part needing it this frame (scoreFrame): 0 in view and near, 1e5 in view and far, 2e5 + out of view; + distance
 		uint64_t scoreFrame = 0;
+		uint64_t needFrame = 0;	// the last frame a REAL need (not the precache's ensurePart) named it (kenshi-g3e5)
 		std::vector<Sub> subs;
 		std::vector<uint32_t> indices;	// the CPU index list, kept for a part's render.open_windows patch (eviction keeps it)
 		float bmin[3] = {}, bmax[3] = {}, center[3] = {}, radius = 0;
@@ -641,6 +652,8 @@ private:
 		std::vector<float> hullPos;	// xyz per vertex, mesh units
 		std::vector<uint32_t> hullIdx;	// triangle list, indices into hullPos
 		uint64_t lastUsed = 0;
+		bool pinned = false;	// the world precache holds it (kenshi-nbmu): evict() leaves it
+		float pscore = 1e30f;	// its precache score: the queue order while no part needs it this frame
 	};
 	struct TexEntry
 	{
@@ -651,10 +664,13 @@ private:
 		rq::PrioPtr prio = std::make_shared<rq::Prio>();	// as MeshEntry::prio
 		float score = 1e30f;
 		uint64_t scoreFrame = 0;
+		uint64_t needFrame = 0;	// the last frame a REAL need (not the precache's ensurePart) named it (kenshi-g3e5)
 		std::vector<uint8_t> alpha;	// the alpha channel of the same <= 128 px mip as thumb (tw x th), empty when every texel is opaque: the pick's cut-out test (kenshi-sagp)
 		std::vector<uint8_t> thumb;	// render.open_windows: the albedo's luma at <= 128 px (openwindows::Texel), from the decode
 		int tw = 0, th = 0;
 		uint64_t lastUsed = 0;
+		bool pinned = false;	// the world precache holds it (kenshi-nbmu): evict() leaves it
+		float pscore = 1e30f;	// its precache score: the queue order while no part needs it this frame
 	};
 	// A turning part's motion, advanced once per update(): rotation function 3's spin angle (its rate follows the wind speed) and the wind aim's
 	// turn (function 4 and its nested parts): the wind it turns from and to, and when the turn began.
@@ -811,6 +827,7 @@ private:
 	void updateFocus();
 	int shownOf(uint32_t building) const;
 	bool aboveSlab(uint32_t building, int floor, const double p[3], double bottom);
+	bool cutAbove(uint32_t building, int floor, const double p[3], double bottom, const DrawnPart* part);	// part of this building: partCutHidden; else aboveSlab
 	void findOccluders(const double cam[3], std::string* report = nullptr);	// report: a line per building the segment crosses, and why it is not one
 	int floorOfInstance(const BuildingInstance& b);
 	static bool decodeMesh(const std::string& path, MeshCpu& out);
@@ -825,7 +842,26 @@ private:
 	float streamScore(const BuildingInstance& b, const double cam[3], const float mvp[16]) const;
 	static constexpr double kNearView = 6000.0;	// in view and nearer than this: the first class
 	void rerank();	// the queued decodes' priorities from the entries' scores (update, once a frame)
-	float partPrio(uint32_t pid) const { return partStamp_[pid] == (uint32_t)frame_ ? partScore_[pid] : 3e5f; }
+	float partPrio(uint32_t pid) const { return forcePrio_ >= 0 ? forcePrio_ : partStamp_[pid] == (uint32_t)frame_ ? partScore_[pid] : 3e5f; }
+
+	// The background world precache (kenshi-nbmu, stream.precache=high): after the load screen lifts, every static building's shell parts (meshes, then
+	// their textures) are queued behind the near and in-view streams at score kPrecacheBase + distance, decoded on at most kBgWorkers workers,
+	// uploaded at most kBgDrain a frame and within stream.precache_ms of the render queue's lane, and pinned against evict().
+	static constexpr float kPrecacheBase = 5e6f;	// past every real score (< 3e5) and past rq::kBackgroundPrio
+	static constexpr int kBgWorkers = 2, kBgDrain = 2;
+	static constexpr size_t kPrecacheWindow = 48;	// decodes + results + creates in flight at once, whoever asked: the precache queues more only below it
+	float forcePrio_ = -1;	// >= 0 while precacheStep calls ensurePart: the part's queue score; the entries are pinned
+	std::vector<uint32_t> preLive_;	// the parts the precache has not finished, nearest first
+	std::vector<float> preScore_;	// by part: its precache score
+	size_t preTotalParts_ = 0;
+	bool preStarted_ = false, preDone_ = false;
+	double preT0_ = 0, preTDone_ = -1, preLastLog_ = 0;	// wall seconds: the lift, the end, the last progress line
+	size_t preRss0_ = 0, preRssDone_ = 0;	// the resident set (bytes) at the lift and at the end
+	uint64_t preBytes0_ = 0, preBytesDone_ = 0;	// the render queue's stream bytes run at the lift and at the end (what the creates put on the GPU)
+	bool preHigh_ = false;	// stream.precache == high, read in update()
+	void precacheStep(const double cam[3]);	// update(): start at the lift, then queue the next of the live parts under the window
+	void precacheStop();	// stream.precache off: the pins go
+	bool resultIsBackground(const Result& r) const;	// a decoded result of a pinned entry no part needs this frame
 	std::vector<MeshEntry> meshes_;
 	std::vector<TexEntry> textures_;
 	std::unordered_map<std::string, int> meshIds_, texIds_;
@@ -915,6 +951,29 @@ private:
 	bool standFading_ = false;	// this pack has a switch under way: the next frame repacks (the cover moves with the clock)
 	int standMode_ = 0;			// render.loading_standin: 0 silhouette, 1 double (black too), 2 off
 	uint64_t stateGen_ = 0;		// a mesh or texture became ready, failed or was evicted
+	// A mesh state move of the background precache (a pinned mesh no real need names this frame) does not bump holdGen_ at once: that stamp keys the sim's
+	// ground ray, the pick boxes, bedRay's memo and the doors' rebuild, and a bump every frame of a precache (202 of 300 frames, Hub) made them redo their work
+	// on every frame (kenshi-g3e5: props 0.05 -> 1.3 ms, sim.update 0.4 -> 0.7, +30 % frame time). The move is held on the mesh (holdPending) and bumps when
+	// a real need names the mesh, and every kHoldBatch frames for everything else.
+	void holdMoved(MeshEntry& m, bool background) { holdMoved((int)(&m - meshes_.data()), background); }
+	void holdMoved(int mesh, bool background)
+	{
+		MeshEntry& m = meshes_[mesh];
+		if (background) { if (!m.holdPending) { holdPendingMeshes_.push_back(mesh); } m.holdPending = true; holdPendingAny_ = true; } else { holdGen_++; groundDirtyMesh(mesh); }
+	}
+	struct GroundDirty { uint64_t seq; bool all; double lo[2], hi[2]; };
+	mutable std::vector<GroundDirty> groundLog_;	// the regions groundSeq_ moved for, oldest first; trimmed (an older query answers dirty)
+	uint64_t groundSeq_ = 0, groundLogBase_ = 0;
+	std::vector<int> holdPendingMeshes_;			// the meshes holdPending is set on, for the batch flush
+	std::vector<std::vector<uint32_t>> meshParts_;	// per mesh: the parts that resolved to it (ensurePart)
+	std::vector<std::vector<uint32_t>> partInst_;	// per part: the static instances that list it; rebuilt when setData replaces them
+	uint64_t partInstGen_ = ~0ull, setDataGen_ = 0;
+	void groundDirtyMesh(int mesh);
+	void groundDirtyAll();
+	static constexpr uint64_t kHoldBatch = 20;
+	bool holdPendingAny_ = false;
+	size_t heldReady_ = 0;	// created background meshes and textures waiting in uploading_ for their batch frame (promote)
+	uint64_t holdFlushFrame_ = 0;
 	uint64_t holdGen_ = 0;		// a mesh's state moved or a part found its mesh: what instanceHolds sees changed (bedRay's memo, kenshi-k16.2.205.12.111). Logic thread
 	void addLight(const BuildingInstance& b, uint32_t ii, const BuildingPartDef& def, uint32_t li, const double cam[3], const float planes[4][4], double maxDist);
 	void addOwnLight(const BuildingInstance& b, uint32_t ii, uint32_t li, const double cam[3], const float planes[4][4], double maxDist);
@@ -1006,6 +1065,7 @@ private:
 	std::deque<Result> results_;
 	std::atomic<int> outstanding_{ 0 };
 	bool quit_ = false;
+	int bgBusy_ = 0;	// background decodes running on the workers (prio >= rq::kBackgroundPrio), at most kBgWorkers: the precache never takes every core (mu_)
 
 	struct MaskGroup	// a mask part's submesh and its instances (12 floats each), packed into frameData_ after the drawn groups
 	{

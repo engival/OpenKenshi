@@ -39,6 +39,8 @@ namespace rq
 		uint64_t stamp = 0;			// render side: the drain that took snap
 	};
 	using PrioPtr = std::shared_ptr<Prio>;
+	// A Prio at or past this is background work (the world precache, kenshi-nbmu): it runs behind every nearer job and only within setBackgroundTimeBudget.
+	constexpr float kBackgroundPrio = 4e6f;
 
 	// Logic side (any thread but the render thread's draw; on one thread, anywhere). tag: a static string for the stats and the dev log.
 	void push(const char* tag, std::function<void()> job, Lane lane = Lane::kFrame, size_t bytes = 0, PrioPtr prio = nullptr);
@@ -55,6 +57,8 @@ namespace rq
 	// The stream lane's time per drain, ms (default 4; 0 = bytes only, the old lane): a job whose predicted cost (its bytes at the measured create
 	// rate) would take the lane past it waits for the next drain; the first job of a drain always runs (kenshi-k16.2.205.12.74)
 	void setStreamTimeBudget(double ms);
+	// The time of a drain the background jobs may use, ms (stream.precache_ms; 0 = no separate cap): the first job of a drain still runs.
+	void setBackgroundTimeBudget(double ms);
 	size_t pendingStreamBytes();	// the bytes of the stream jobs queued now
 
 	struct Stats

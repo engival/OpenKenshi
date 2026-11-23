@@ -68,6 +68,7 @@
 #ifdef KCLIENT_DEV_TOOLS
 #include "dev/pickmask.hpp"
 #include "dev/driftview.hpp"
+#include "dev/roadedit.hpp"
 #include "dev/routepreview.hpp"
 #endif
 #include "knobs/lightterms.hpp"
@@ -780,6 +781,9 @@ std::vector<HudLine> hud_lines()
 		out.push_back({ "building", line, 1.0f, 0.85f, 0.6f });
 	}
 	if (std::string collision; dev::collisionLegend(collision)) { out.push_back({ "collision", collision, 0.75f, 1.0f, 0.75f }); }	// debug.collision's counts (dev/colloverlay.cpp)
+#ifdef KCLIENT_DEV_TOOLS
+	if (std::string roads; app.opt.debug && dev::roadedit::legend(roads)) { out.push_back({ "roads", roads, 1.0f, 0.8f, 0.5f }); }	// debug.roads (dev/roadedit.cpp)
+#endif
 	if (app.sim.active()) { out.push_back({ "sim", app.sim.status(), 0.6f, 1.0f, 0.9f }); }
 #if KCLIENT_PROFILE
 	sim_profile_lines(out);

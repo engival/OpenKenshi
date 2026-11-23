@@ -1,0 +1,38 @@
+# roadedit (kenshi-ix9r, kenshi-tqtd): the road editor. --fly --debug --at Hub: overlay on, fly to the top suspect, dump it, shoot it; the panel's rows, clicks and marks.
+60 roads on
+100 roads next
+110 roads dump
+130 screenshot OUTDIR/roads_spike.png
+140 roads next
+150 roads dump
+170 screenshot OUTDIR/roads_second.png
+180 roads prev
+190 roads dump
+# step 1b: the Hub spike by its list row (row 0 is the top reversal in the panel's view), marked bad
+200 roads row 0
+210 roads dump
+220 roads mark bad
+230 roads dump
+# a non-suspect marker by a scripted click on its handle: the spike's neighbour on road 1542 (the data's 424-Newwworld)
+240 roads point 1542 2
+250 mouse down left
+255 mouse up left
+260 roads dump
+270 roads mark unsure
+280 roads dump
+# the item 8 kinds: the first overlap and T-junction rows, by select (index 1022 = 1886-Newwworld #3, index 1932 = 837-Newwworld #5)
+300 roads select 1022 3
+310 roads dump
+320 roads select 1932 5
+330 roads dump
+# the panel with the Hub spike selected and marked, shot
+340 roads row 0
+360 screenshot OUTDIR/roads_panel.png
+# a click on empty ground clears the selection
+370 mouse pos 20 20
+380 mouse down left
+385 mouse up left
+390 roads dump
+400 set debug.roads off
+430 screenshot OUTDIR/roads_off.png
+440 quit

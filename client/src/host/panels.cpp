@@ -27,6 +27,7 @@
 #include <string>
 #include <vector>
 
+#include "host/skillrow.hpp"
 #include "render/interiorclip.hpp"
 #include "sokol_app.h"
 #include "sokol_gfx.h"
@@ -295,7 +296,7 @@ void stats_info(const simlink::CharStats& cs, ui::HudInfo& info, bool playerFact
 	const std::string goal = cs.goal ? app.sim.decoder().str(cs.goal) : "";
 	info.state.push_back({ "Goal:", goal.empty() ? "Aimless" : goal, "", "What this character is currently trying to do." });
 	info.state.push_back({ "Encumbrance:", std::to_string((int)std::lround(cs.encumbrance)) + "%" });
-	if (cs.extraKind == 1 || cs.extraKind == 2) { info.state.push_back({ cs.extraKind == 1 ? "Stealth:" : "Athletics:", std::to_string((int)std::lround(cs.extra)) }); }
+	skill_in_use_row(cs, info);
 	const auto row = [&](uint8_t skill, const char* label)
 	{
 		for (const CS::SkillRow& k : cs.skills)
@@ -512,18 +513,6 @@ void stats_window(uint64_t id, ui::StatsState& s)
 		if (row(a.name, a.skill, r)) { s.attributes.push_back(std::move(r)); }
 	}
 	// The original's order within each group (kui_demo demoStats); ids 19-32 are the wire's 2026-11-11 table (SIMLINK "CHAR_STATS" row 8)
-	static const struct { uint8_t skill; const char* name, *group; int column; } kSkills[] = {
-		{ 7, "Katanas", "Weapons", 0 }, { 8, "Sabres", "Weapons", 0 }, { 9, "Hackers", "Weapons", 0 },
-		{ 11, "Heavy weapons", "Weapons", 0 }, { 10, "Blunt", "Weapons", 0 }, { 13, "Polearms", "Weapons", 0 },
-		{ CS::kAttack, "Melee attack", "Combat", 1 }, { CS::kDefence, "Melee defence", "Combat", 1 },
-		{ CS::kDodge, "Dodge", "Combat", 1 }, { CS::kMartialArts, "Martial arts", "Combat", 1 },
-		{ 21, "Turrets", "Ranged", 1 }, { 20, "Crossbows", "Ranged", 1 }, { 32, "Precision shooting", "Ranged", 1 },
-		{ CS::kStealth, "Stealth", "Thievery", 2 }, { 15, "Lockpicking", "Thievery", 2 },	// 15: lockpicking
-		{ 22, "Thievery", "Thievery", 2 }, { 23, "Assassination", "Thievery", 2 },
-		{ CS::kAthletics, "Athletics", "Athletics", 2 }, { 25, "Swimming", "Athletics", 2 },
-		{ 14, "Field medic", "Sciences", 3 }, { 19, "Engineer", "Sciences", 3 }, { 26, "Robotics", "Sciences", 3 }, { 17, "Science", "Sciences", 3 },
-		{ 27, "Weapon smith", "Trades", 3 }, { 28, "Armour smith", "Trades", 3 }, { 29, "Crossbow smith", "Trades", 3 },
-		{ 18, "Labouring", "Trades", 3 }, { 30, "Farming", "Trades", 3 }, { 31, "Cooking", "Trades", 3 } };
 	ui::StatGroup* group = nullptr;
 	for (const auto& k : kSkills)
 	{
@@ -1271,11 +1260,46 @@ ui::HudBuildingInfo machine_panel()
 {
 	ui::HudBuildingInfo b;
 	const simlink::Interactable* t = app.panelProducer ? app.sim.thing(app.panelProducer) : nullptr;
-	if (!t || t->kind != simlink::Interactable::kProducer) { return b; }
+	if (!t || (t->kind != simlink::Interactable::kProducer && t->kind != simlink::Interactable::kContainer)) { return b; }
 	b.valid = true;
 	b.id = app.panelProducer;
 	b.name = app.sim.nameOf(t->record, app.chars);
 	if (t->hasOwner && t->owner) { b.faction = app.chars.nameOf(app.sim.decoder().str(t->owner)); }
+	if (t->kind == simlink::Interactable::kContainer)
+	{
+		// kenshi-bi6u: a storage building's panel (s8l2: "Normal", the contents, Condition, Workers "-"). The wire has no BUILDING row for a container (order 87 answers
+		// bad_target), so what it sends fills it: the thing's health, the INVENTORY. Missing on the wire: Town, and a condition on a container that sends no health.
+		b.status = "Normal";
+		if (const simlink::Inventory* inv = app.sim.inventory(app.panelProducer))
+		{
+			std::vector<std::pair<uint32_t, uint32_t>> sums;	// item strid, count
+			for (const simlink::Inventory::Entry& e : inv->items)
+			{
+				const auto s = std::find_if(sums.begin(), sums.end(), [&](const auto& p) { return p.first == e.item; });
+				if (s != sums.end()) { s->second += std::max<uint32_t>(1, e.count); } else { sums.push_back({ e.item, std::max<uint32_t>(1, e.count) }); }
+			}
+			ui::HudBuildingButton line;
+			line.tag = true;
+			if (sums.empty()) { line.id = "contents"; line.text = "[EMPTY]"; b.buttons.push_back(line); }
+			for (size_t i = 0; i < sums.size() && i < 3; i++)
+			{
+				line.id = "contents";
+				line.text = app.sim.nameOf(sums[i].first, app.chars) + " x" + std::to_string(sums[i].second);
+				b.buttons.push_back(line);
+			}
+			if (sums.size() > 3) { line.text = "+" + std::to_string(sums.size() - 3) + " more"; b.buttons.push_back(line); }
+		}
+		if (t->maxHealth > 0)
+		{
+			ui::HudBuildingBar bar;
+			bar.label = "Condition";
+			bar.value = std::to_string((int)t->health);
+			bar.fraction = std::clamp(t->health / t->maxHealth, 0.0f, 1.0f);
+			b.bars.push_back(bar);
+		}
+		b.stats.push_back({ "Workers:", "-" });
+		return b;
+	}
 	// Everything else is the producer's BUILDING row (order 87's focus row, k16.19.8.2): a value the row has not brought yet is "-", never derived.
 	const simlink::SimLinkDecoder::Building* rec = app.sim.focusBuilding();
 	// HealthText (hud_building.md): section 7's status, the producer row's three being 0 Working, 5 Output full and 6 No workers
@@ -1289,7 +1313,9 @@ ui::HudBuildingInfo machine_panel()
 		case 3: b.status = "Needs materials"; break;
 		case 4: b.status = "Paused"; break;
 		case 5: b.status = "Output full"; b.statusColour = "HudBad"; break;
-		case 6: b.status = "No workers"; b.statusColour = "HudBad"; break;
+		case 6:	// an automatic machine (max operators 0) has no workers to miss: idle, not the red "No workers" (kenshi-bi6u)
+			if (producer_automatic(*t)) { b.status = "Idle"; } else { b.status = "No workers"; b.statusColour = "HudBad"; }
+			break;
 		default: break;
 		}
 	}
@@ -1326,6 +1352,15 @@ ui::HudBuildingInfo machine_panel()
 			bar.label = "Condition";
 			bar.value = std::to_string((int)rec->hp);
 			bar.fraction = std::clamp(rec->hp / rec->maxHp, 0.0f, 1.0f);
+			b.bars.push_back(bar);
+		}
+		// the Power slat when the building draws power (s8l2: "Power 23" / "Inactive 0"); the wire's power fields are 0 for producers today
+		if (rec->powerDemand > 0)
+		{
+			ui::HudBuildingBar bar;
+			bar.label = "Power";
+			bar.value = std::to_string((int)rec->powerSupplied);
+			bar.fraction = std::clamp(rec->powerSupplied / rec->powerDemand, 0.0f, 1.0f);
 			b.bars.push_back(bar);
 		}
 	}

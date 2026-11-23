@@ -705,6 +705,15 @@ bool PhysicsWorld::pinBody(uint32_t bodyId, const double p[3], const float q[4],
 	return true;
 }
 
+bool PhysicsWorld::shiftBody(uint32_t bodyId, const double d[3])
+{
+	if (!impl || bodyId == 0 || bodyId > impl->bodies.size() || !impl->bodies[bodyId - 1].valid) { return false; }
+	JPH::BodyInterface& bi = impl->system.GetBodyInterface();
+	const JPH::BodyID id = impl->bodies[bodyId - 1].id;
+	bi.SetPosition(id, bi.GetPosition(id) + JPH::RVec3((float)d[0], (float)d[1], (float)d[2]), JPH::EActivation::Activate);
+	return true;
+}
+
 bool PhysicsWorld::unpinBody(uint32_t bodyId)
 {
 	if (!impl || bodyId == 0 || bodyId > impl->bodies.size() || !impl->bodies[bodyId - 1].valid) { return false; }

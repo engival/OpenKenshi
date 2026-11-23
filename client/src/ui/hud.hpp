@@ -168,6 +168,19 @@ namespace ui
 		bool operator==(const HudWatch&) const = default;
 	};
 
+	// The control hints panel's key rows on the HUD's widgets (Widget::keyHints, docs/UI.md "Control hints panel", kenshi-5npx): listed after
+	// the widget's own lines. The host fills them each frame from the current key bindings (the input as it names the key: "1", "V", "Grave");
+	// empty: none. The UI copies them as given and names no key itself.
+	struct HudKeyHints
+	{
+		std::vector<HintLine> portrait;	// every portrait (Z focus, Tab next character, select_all)
+		std::vector<std::vector<HintLine>> slot;	// by HudState::squad index, after portrait (the slot's 1..0 key); shorter: none
+		std::vector<HintLine> speed[4];	// by Hud::speedButton order: 0 pause, 1..3 kSpeeds
+		std::vector<HintLine> floor, moveSpeed;	// the diamonds (V drive on the move speed one, say)
+		std::vector<HintLine> build;	// the BuildPanel's button
+		std::vector<HintLine> shortcut[6];	// the ShortcutsPanel's buttons, kShortcuts order
+	};
+
 	struct HudState
 	{
 		bool clockValid = false;
@@ -211,6 +224,7 @@ namespace ui
 		std::vector<HudCastRow> cast;	// the CAST window's rows, any order (it sorts by name)
 		// A playtest run is on: the NOTES button (left of the ShortcutsPanel, at the screen's foot) shows, checked while notesOpen.
 		bool playtestRun = false, notesOpen = false;
+		HudKeyHints keys;
 	};
 
 	struct HudActions

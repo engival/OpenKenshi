@@ -1,0 +1,51 @@
+# The roads panel's body (ui::RoadsPanel in client/src/ui/dev/roadspanel.cpp). The code fills the "filter" tabs (All, Unmarked, Ok,
+# Unsure, Bad), the "kind" tabs (All, then each kind in the data), the "head" slot (the column headers; Rank, Extra and Mark sort) and "rows" (one row per suspect), the info labels
+# and the status line, and says what the buttons do. Format: README.md here.
+
+col gap=8 pad=10
+	row size=32 gap=8
+		label "Show" size=auto colour=Main alpha=0.7
+		tabs id=filter size=fill
+	row size=32 gap=8
+		label "Kind" size=auto colour=Main alpha=0.7
+		tabs id=kind size=fill
+	slot id=head size=22
+	panel look=inset size=fill
+		scroll id=rows x=4 y=4 w=4 h=4
+	label "SELECTED MARKER" font=Kenshi_PaintedTextFont_Medium colour=DebugHeading size=auto
+	col size=auto gap=2
+		row size=20 gap=8
+			label "Road" size=84 colour=Main alpha=0.6
+			label id=road size=fill colour=Main
+		row size=20 gap=8
+			label "Roads" size=84 colour=Main alpha=0.6
+			label id=roads size=fill colour=Main
+		row size=20 gap=8
+			label "Marker" size=84 colour=Main alpha=0.6
+			label id=marker size=fill colour=Main
+		row size=20 gap=8
+			label "Position" size=84 colour=Main alpha=0.6
+			label id=pos size=fill colour=Main
+		row size=20 gap=8
+			label "Previous" size=84 colour=Main alpha=0.6
+			label id=prev size=fill colour=Main alpha=0.8
+		row size=20 gap=8
+			label "Next" size=84 colour=Main alpha=0.6
+			label id=next size=fill colour=Main alpha=0.8
+		row size=20 gap=8
+			label "Suspect" size=84 colour=Main alpha=0.6
+			label id=suspect size=fill colour=Main
+		row size=20 gap=8
+			label "Junction" size=84 colour=Main alpha=0.6
+			label id=junction size=fill colour=Main
+		row size=20 gap=8
+			label "Mark" size=84 colour=Main alpha=0.6
+			label id=mark size=fill colour=Main
+	row size=30 gap=6
+		button "OK" id=markok size=auto tip="Mark the selected marker as fine"
+		button "UNSURE" id=markunsure size=auto tip="Mark the selected marker for a second look"
+		button "BAD" id=markbad size=auto tip="Mark the selected marker as wrong"
+		button "CLEAR" id=markclear size=auto tip="Take the mark off the selected marker"
+		spacer size=fill
+		button "COPY" id=copy size=auto tip="Put the selected marker's x y z on the clipboard"
+	label id=status size=auto colour=Main alpha=0.8 wrap=on

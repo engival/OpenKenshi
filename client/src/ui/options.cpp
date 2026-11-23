@@ -566,7 +566,7 @@ namespace ui
 		line.halign = A::kStretch;
 		line.rect.h = kRowH;
 		const keys::Action* action = keyRow(info) ? keys::find(info.key.substr(4)) : nullptr;
-		Label& name = line.add<Label>(FlexItem{ action ? 330.0f : 230.0f }, label(info));
+		Label& name = line.add<Label>(FlexItem{ action ? 300.0f : 230.0f }, label(info));
 		name.fit = false;
 		name.valign = A::kStretch;
 		auto fills = [&line](Widget& w, float max = 1e9f) { line.set(w, { .fill = 1, .min = 120, .max = max }); w.valign = A::kCenter; w.rect.h = kRowH; };
@@ -577,7 +577,7 @@ namespace ui
 		{
 			for (int slot = 0; slot < keys::kSlots; slot++)
 			{
-				KeyField& f = line.add<KeyField>(FlexItem{ 150 }, action->name, slot);
+				KeyField& f = line.add<KeyField>(FlexItem{ 130 }, action->name, slot);	// three slots fit the 960 window
 				f.rect.h = kRowH;
 				r.keys[slot] = &f;
 			}

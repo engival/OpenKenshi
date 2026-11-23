@@ -1,7 +1,7 @@
 # boxselect (kenshi-k16.2.230.1; the original's rules, kenshi-k16.2.230.3). 1280x720, the free camera on Charlie (150). The points below are the
 # characters' position points, i.e. their feet (the wire position; the box's test, kenshi-rwh.134), not the click box's middle ~130 px higher. On
 # the free camera they are Alpha 413,438 Bravo 518,436 Charlie 640,360 Delta 770,364 Echo 898,296 DeadOne 1040,255 KOOne 212,570 (the terrain
-# puts each one at its own height); behind Charlie (follow) Alpha 853,629 Bravo 743,573 Charlie 640,544 Delta 535,502 Echo 417,481. The two NPC
+# puts each one at its own height); behind Charlie (follow, 100 u boom) Echo ~495,425 Delta ~570,445 Charlie ~645,470 Bravo ~715,490 Alpha ~775,525. The two NPC
 # Bystanders are never selected. check.awk reads the `box select frame=` lines and says whether each release did what the original does.
 100 set animate 1
 150 camera char Charlie
@@ -76,15 +76,15 @@
 772 key SPACE up
 775 dump clock
 790 screenshot OUTDIR/camera_before_v.png
-# following (V direct drive): the camera goes behind the selection (Charlie); the box works there too (the row's feet on screen y ~544)
+# following (V direct drive): the camera goes behind the selection (Charlie); the box works there too (the row's feet at x ~495..775, y ~425..525 on the 100 u default boom (k16.2.353.4; the old 60 u boom had them at y ~544); the press is open ground right of Alpha, clear of KOOne)
 795 select id=@Charlie@
 800 key V down
 802 key V up
 860 screenshot OUTDIR/camera_after_v.png
-880 mouse pos 400 455
+880 mouse pos 870 400
 882 mouse down left
-884 mouse pos 600 550
-886 mouse pos 880 650
+884 mouse pos 700 480
+886 mouse pos 460 560
 890 screenshot OUTDIR/follow_box.png
 900 mouse up left
 910 screenshot OUTDIR/follow_after.png

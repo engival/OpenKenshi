@@ -309,7 +309,7 @@ void name_labels_frame()
 		{
 			double pos[3];
 			float hull[3];
-			if (!(ch.cur.flags & simlink::kPlayer) || (ch.cur.flags & simlink::kDead) || app.sim.speech().count(id) || !app.sim.placed(id, pos, hull)) { continue; }	// a speaker's tag hides while it talks (speech_bubble.md 1)
+			if (!(ch.cur.flags & simlink::kPlayer) || (ch.cur.flags & simlink::kDead) || app.sim.speech().count(id) || app.sim.carrier(id) || !app.sim.placed(id, pos, hull)) { continue; }	// a carried body draws no tag: it hangs on the carrier's shoulder (kenshi-pgvp, k16.2.517)	// a speaker's tag hides while it talks (speech_bubble.md 1)
 			if (std::hypot(pos[0] - app.pos[0], pos[1] - app.pos[1], pos[2] - app.pos[2]) > 10950) { continue; }
 			if (char_cut_hidden(id, pos)) { continue; }	// the character is not drawn (a floor the cut hides): no label over nothing (kenshi-k16.2.264.1)
 			pos[1] += hull[1] + 5;
@@ -420,7 +420,7 @@ bool ray_ground(const double origin[3], const double dir[3], double hit[3])
 
 // Not drawn where it is: inside the occluder fade's cone (mesh.glsl, where most of it is dithered away) or on a floor cut away (WorldBuildings::cutAway;
 // bottom: the hit shape's low face, so a shape counts by the floor it starts on). why (kenshi-k16.2.259): the reason, for the F12 pick report; "" drawn.
-bool see_through(const double p[3], double bottom, std::string* why)
+bool see_through(const double p[3], double bottom, std::string* why, const WorldBuildings::DrawnPart* part)
 {
 	const float* x = app.buildings.xray;
 	if (x[3] > 0)	// not exempted for the click ray (kenshi-k16.2.405.1): the cut-open building's near wall shape is not drawn there, and the click must pass it as before
@@ -436,7 +436,7 @@ bool see_through(const double p[3], double bottom, std::string* why)
 			return true;
 		}
 	}
-	return app.buildings.cutAway(p, bottom, why);
+	return app.buildings.cutAway(p, bottom, why, part);
 }
 
 // A character's or prop's floor for the cut (Characters::culled, its name tag, WorldBuildings::Prop::cut, item labels): on a staircase it counts
@@ -557,6 +557,7 @@ const cfg::Int kVengeBeamsMax{ cfg::Group{ "Performance" }, "render.venge_beams_
 #ifdef KCLIENT_DEV_TOOLS
 const cfg::Bool kVengeBeamsGate{ cfg::Group{ "Performance" }, "debug.venge_beams_gate", true, "Debug (kenshi-k16.2.409.3): the original's loaded-cell gate on the Venge beam draw set (rwh.211, weather gate 140100ba0: a beam's own zone cell must be loaded). Off = every bursting beam can be drawn, the pre-409.3 look, for the before shot" };
 #endif
+const cfg::Float kPrecacheMs{cfg::Group{ "Performance" }, "stream.precache_ms", 2.0, 0.0, 50.0, "The time of a frame the background world precache (stream.precache=high) may spend creating its meshes and textures on the render thread, ms, behind everything the near and in-view streams need; a create always runs when nothing else did. 0: the whole render.stream_ms" };
 const cfg::Float kStreamMs{cfg::Group{ "Performance" }, "render.stream_ms", 4.0, 0.0, 50.0, "The time a frame gives the streamed resource creates (buildings, characters: the render queue's stream lane; kenshi-k16.2.205.12.74), ms. A create that would run past it waits for the next frame; one always runs. 0: no time budget (the 8 MB per frame byte cap only)" };
 const cfg::Int kStreamSliceMb{ cfg::Group{ "Performance" }, "render.stream_slice_mb", 4, 0, 64, "A streamed texture over twice this size (MiB) is created in slices of this size, one per render queue job, over several frames (kenshi-k16.2.205.12.74); it shows once whole. 0: one create per texture" };
 const cfg::Bool kLampOcclusion{ cfg::Group{ "Indoor lighting (experimental)" }, "render.lamp_occlusion", false, "Experimental (kenshi-jj3.9.1): the lamps of a building stop at its walls and floors: a baked per-probe visibility of each lamp (one ray per probe per lamp through the building's triangles) multiplies the lamp's light, so it does not light the floor above or the room next door through the slab or wall. Soft (probe spacing), not the shadow of a chair. Works without render.interior_light" };
@@ -604,6 +605,42 @@ hints::Context hints_context()
 	c.squadLeader = [](const std::vector<uint64_t>& sel) { return squad_leader(sel); };
 	c.select = [](uint64_t id, bool add) { portrait_click(id, add); };
 	c.focus = [](uint64_t id) { portrait_focus(id); };
+	// A character in the world (steps 2 and 3): a left click selects an own one (the panel goes with it) or inspects anyone else's; the orders are the old
+	// sim_click's own calls (Shift queues, except the stealth KO whose queue flag is bad_value).
+	c.worldSelect = [](uint64_t id, bool add)
+	{
+		if (app.sim.isPlayer(id)) { app.inspect = 0; app.panelProducer = 0; app.sim.select(id, add); }
+		else { app.inspect = id; app.panelProducer = 0; }	// the panel moves back to the character; the machine window stays (k16.19.8.2)
+	};
+	c.charOrder = [](uint64_t id, int action, bool queue) -> bool
+	{
+		return action == kAttack ? app.sim.attack(id) : action == kFollow ? app.sim.follow(id) : action == 5 ? open_body(id, queue)
+			: action > 0 && app.sim.interact(id, (uint8_t)action, queue && action != 14);
+	};
+	c.charJob = [](uint16_t job, uint64_t target) { return app.sim.jobAdd(job, target); };
+	c.drive = [](uint64_t id) { app.inspect = 0; app.panelProducer = 0; app.sim.select(id, false); set_follow_id(id); return true; };
+	c.leaveDrive = [] { leave_follow(); return true; };
+	// Items, beds, producers and doors (steps 4 and 5): the old sim_click's own calls
+	c.thingOrder = [](uint64_t id, int action, bool queue) { return app.sim.interact(id, (uint8_t)action, queue); };
+	c.showMachine = [](uint64_t id) { app.machine = id; app.panelProducer = id; };	// the panel follows the last clicked thing (k16.19.8.2)
+	c.producerOpen = [](uint64_t id, bool queue) { app.panelProducer = id; return open_container(id, queue); };
+	c.producerUse = [](uint64_t id, bool queue) { app.panelProducer = id; return use_producer(id, queue); };
+	c.producerAutomatic = [](uint64_t id) { const simlink::Interactable* t = app.sim.thing(id); return t && producer_automatic(*t); };
+	c.producerCursor = [](uint64_t id) { const simlink::Interactable* t = app.sim.thing(id); return t ? std::string(producer_cursor(*t)) : std::string("mine"); };
+	// Containers (step 6) and a locked cage's prisoner (step 7)
+	c.containerOpen = [](uint64_t id, bool queue) { return open_container(id, queue); };
+	c.containerShow = [](uint64_t id)
+	{
+		app.panelProducer = id;	// the panel follows the click: a storage fills it too (kenshi-bi6u)
+		if (!cont_find(id)) { App::OpenCont oc; oc.id = id; oc.view = true; cont_add(oc); }	// already open: the click leaves it be
+	};
+	c.foreignWalk = [](uint64_t id, bool queue) { return foreign_container_walk(id, queue); };
+	c.foreignWalking = foreign_walk_on();
+	c.cageInfo = [](uint64_t cage) { return cageHover.cage == cage ? hints::Context::CageInfo{ cageHover.entries, cageHover.chance } : hints::Context::CageInfo{}; };
+	c.cageOrder = [](uint64_t cage, int action) { return app.sim.interact(cage, (uint8_t)action); };
+	// Ground and buildings (step 8)
+	c.walkable = [](const double* at) { return (int)app.nav.walkable(at); };
+	c.clearSelect = [](bool shift) { app.sim.select(0, shift); };
 	const auto down = [](int k) { return app.keys[k]; };
 	c.alt = down(SAPP_KEYCODE_LEFT_ALT) || down(SAPP_KEYCODE_RIGHT_ALT);
 	c.ctrl = down(SAPP_KEYCODE_LEFT_CONTROL) || down(SAPP_KEYCODE_RIGHT_CONTROL);
@@ -620,7 +657,8 @@ hints::Context hints_context()
 std::string hint_report(double mx, double my)
 {
 	const Pick p = pick_screen(mx, my);
-	const hints::Context ctx = hints_context();
+	hints::Context ctx = hints_context();
+	ctx.labelId = label_at(mx, my);
 	return hints::format_hover(hints::hints_for(p, ctx));
 }
 
@@ -727,41 +765,22 @@ void hover_cursor()
 	hoverCage = 0;
 	if (const simlink::SimLinkDecoder::Cage* cg = p.kind == Pick::Character ? locked_cage(app.sim, p.id) : nullptr)
 	{
-		// the red padlock with the pick chance (the original's cage hover, kenshi-0qr shot 9); a click orders nothing
-		name = "lock";
-		hoverRule = "character in a locked cage -> lock (padlock, pick chance; a click orders nothing)";
+		// the hover's state for the padlock's pick chance tag (the original's cage hover, kenshi-0qr shot 9); the cursor and rule come from the character's rows below
 		hoverCage = cg->cage;
 		const auto& sel = app.sim.selected();
 		const uint64_t actor = sel.empty() ? 0 : sel.front();
 		if (actor && (cageHover.cage != cg->cage || cageHover.actor != actor)) { cageHover = { cg->cage, actor, app.sim.menuQuery(cg->cage), -1 }; }
 	}
-	else if (p.kind == Pick::Character) { name = char_act(app.sim, app.chars, p.id, ctrl_held()).cursor; hoverRule = "character -> char_act: " + name; }
-	else if (p.kind == Pick::Item) { name = "pick_item"; hoverRule = "ground item -> pick_item"; }
-	else if (p.kind == Pick::Container)
+	if (p.kind == Pick::Character || p.kind == Pick::Item || p.kind == Pick::Bed || p.kind == Pick::Producer || p.kind == Pick::Door || p.kind == Pick::Container || p.kind == Pick::Ground)
 	{
-		// a locked box picks (kind 3 state 2, SIMLINK's container lock; CURSORS_LIVE B6's foreign locked part = 0xf lockpick); else a foreign one is the red
-		// 0x18 scavenge (CURSORS_LIVE B4b: foreign storage and a foreign Shop Counter, the red magnifier; kenshi-dx8.1), ours 2 search
-		const simlink::Interactable* t = app.sim.thing(p.id);
-		name = t && t->state == simlink::Interactable::kLocked ? "lockpick" : app.sim.foreign(p.id) ? "scavenge" : "search";
-		hoverRule = std::string("container -> ") + (name == "lockpick" ? "locked: lockpick" : name == "scavenge" ? "foreign (not ours): scavenge" : "ours: search");
+		// the resolver's primary right click (controlhints.cpp), the same row the click runs: characters (steps 2, 3, 7), things (4 to 6; a container's cursor is a locked
+		// box's lockpick, a foreign one's scavenge, ours search, CURSORS_LIVE B4b / B6) and the ground and a player's building (step 8)
+		const hints::Context ctx = hints_context();
+		const hints::Hover h = hints::hints_for(p, ctx);
+		const hints::Action* a = hints::match(h, hints::Gesture::kRightClick, ctx);
+		if (a && a->gesture == hints::Gesture::kRightClick && !a->cursor.empty()) { name = a->cursor; }
+		hoverRule = h.rule;
 	}
-	else if (p.kind == Pick::Producer) { name = "mine"; hoverRule = "producer (mine / deposit) -> mine"; }	// kinspect item 59 (CURSORS.md 0x12; a built mine: same class, M)
-	else if (p.kind == Pick::Bed) { name = "use"; hoverRule = "bed -> use (no sleep cursor in CURSORS.md: the building fallback)"; }	// UNSURE: CURSORS.md has no sleep cursor; a building's own cursor falls back to use (9)
-	else if (const simlink::Interactable* d = p.kind == Pick::Door ? app.sim.thing(p.id) : nullptr)
-	{
-		name = d->state == simlink::Interactable::kLocked ? "lock" : d->health < d->maxHealth ? "spanner" : "door";
-		hoverRule = std::string("door -> ") + (name == "lock" ? "locked: lock" : name == "spanner" ? "damaged: spanner (RMB still opens)" : "intact: door");
-	}
-	else if (const simlink::SimLinkDecoder::Building* pb = p.kind == Pick::Ground && p.building && p.id ? app.sim.building(p.id) : nullptr)
-	{
-		// a player's building (CURSORS.md "Building hover", 1407fc6e0): build while it is not built, spanner when damaged (UNSURE there), else the class's
-		// own cursor, which the wire does not carry: the fallback use (9)
-		name = !(pb->flags & simlink::SimLinkDecoder::Building::kBuilt) ? "build" : pb->hp < pb->maxHp ? "spanner" : "use";
-		hoverRule = std::string("player's building -> ") + (name == "build" ? "not built: build" : name == "spanner" ? "damaged: spanner" : "built, class cursor unknown: use");
-	}
-	else if (p.kind == Pick::Ground && !p.building && app.nav.walkable(p.hit) == ClientNav::Reach::kNo) { name = "invalidmove"; hoverRule = "terrain / foliage with no navmesh under it (walkable = no) -> invalidmove"; }
-	else if (p.kind == Pick::Ground && p.building) { hoverRule = "building shape -> arrow (a foreign building sets no cursor: the original's hover candidate)"; }
-	else if (p.kind == Pick::Ground) { hoverRule = std::string("ground, walkable ") + (app.nav.walkable(p.hit) == ClientNav::Reach::kYes ? "yes" : "unknown") + " -> arrow (a right click moves there)"; }
 	else if (p.kind == Pick::None) { hoverRule = "nothing under the pointer (letterbox bar or sky) -> arrow"; }
 	if (app.scripted() && name != app.cursors.current()) { printf("cursor: %s at %.0f %.0f (frame %llu)\n", name.c_str(), app.mouseX, app.mouseY, (unsigned long long)app.frames); }
 	app.cursors.set(name);
@@ -784,12 +803,17 @@ void pick_mask_update()
 				sceneryBox[p.scenery] = std::array<float, 6>{ p.sceneryBox[0], p.sceneryBox[1], p.sceneryBox[2], p.sceneryBox[3], p.sceneryBox[4], p.sceneryBox[5] };
 				return p.scenery;
 			}
-			return p.kind == Pick::Item || p.kind == Pick::Door || p.kind == Pick::Container || p.kind == Pick::Producer || p.kind == Pick::Character ? p.id : 0;
+			return p.kind == Pick::Item || p.kind == Pick::Door || p.kind == Pick::Container || p.kind == Pick::Producer || p.kind == Pick::Bed || p.kind == Pick::Character ? p.id : 0;
 		},
 		[](uint64_t id, float box[4]) -> bool
 		{
 			double lo[3], hi[3];
 			if (const auto sb = sceneryBox.find(id); sb != sceneryBox.end()) { for (int k = 0; k < 3; k++) { lo[k] = sb->second[k]; hi[k] = sb->second[3 + k]; } }
+			else if (const simlink::Interactable* bed = app.sim.thing(id); bed && bed->kind == simlink::Interactable::kBed)	// a bed: the layout piece holding its sleeping spot (kenshi-89l0)
+			{
+				const double spot[3] = { bed->pos[0], bed->pos[1], bed->pos[2] };
+				if (!app.buildings.bedBox(spot, lo, hi)) { return false; }
+			}
 			else if (!app.buildings.propBox(id, lo, hi))
 			{
 				// a character: the box of its posed pick capsules (their ends, each grown by the radius)
@@ -832,11 +856,12 @@ void pick_mask_update()
 			return h;
 		} };
 	uint64_t subject = app.hoverThing ? app.hoverThing : app.hoverChar;
-	if (!subject && dev::pickmask::on())	// nothing with an id under the cursor: anonymous scenery (a tree, a rock) is a subject too (kenshi-l5dx)
+	if (!subject && dev::pickmask::on())	// nothing with an id under the cursor: a bed (hoverThing leaves it out) or anonymous scenery (a tree, a rock) is a subject too (kenshi-l5dx, kenshi-89l0)
 	{
 		double dir[3];
 		mouse_ray(app.mouseX, app.mouseY, dir);
 		const Pick p = pick_at(dir);
+		if (p.kind == Pick::Bed) { subject = p.id; }
 		if (p.kind == Pick::Ground && p.scenery) { sceneryBox[p.scenery] = std::array<float, 6>{ p.sceneryBox[0], p.sceneryBox[1], p.sceneryBox[2], p.sceneryBox[3], p.sceneryBox[4], p.sceneryBox[5] }; subject = p.scenery; }
 	}
 	dev::pickmask::update(host, subject, app.mouseX, app.mouseY);
@@ -920,6 +945,16 @@ bool open_container(uint64_t id, bool queue)
 	return true;
 }
 
+bool producer_automatic(const simlink::Interactable& t)
+{
+	return app.buildRecs.count(app.sim.decoder().str(t.record)) && t.maxOperators == 0;
+}
+const char* producer_cursor(const simlink::Interactable& t)
+{
+	const auto it = app.buildRecs.find(app.sim.decoder().str(t.record));
+	return it != app.buildRecs.end() && it->second.mining == 0 ? "use" : "mine";
+}
+
 // Work a producer (a deposit, a mine; MINE_SELL_SLICE 3.1): order 60 action 4, the server walks the selection there and they operate it until it is
 // full or another order. An order only: no window opens (user 2026-11-02: the original opens nothing on RMB; LMB shows the output).
 bool use_producer(uint64_t id, bool queue)
@@ -972,32 +1007,50 @@ Camera current_camera(float nearZ, float farZ)
 
 void build_mvp(float mvp[16], float nearZ, float farZ) { current_camera(nearZ, farZ).mvp(mvp); }
 
+// The free camera flies: no follow, no RTS boom, no walk (kenshi-wlql). Only then do the fly keys (R/F/Space/C share game keys) steer the camera.
+bool free_flying() { return !app.follow && !app.rts && !app.walk; }
+
+// Space is a fly key only where it is free: in a game (a sim connected) it stays pause (kenshi-2n7o); --fly has no sim.
+bool fly_owns_space() { return !app.sim.active(); }
+
+// The free camera's least height over the terrain (u); the move is never stopped, only lifted, so a slope is slid up.
+static constexpr double kFlyClear = 2.0;
+
+void clamp_free_camera()
+{
+	if (!app.hm || !free_flying()) { return; }
+	app.pos[1] = std::fmax(app.pos[1], app.hm->height(app.pos[0], app.pos[2]) + kFlyClear);
+}
+
 void update_camera(double dt)
 {
-	double f[3];
+	double f[3], lv[3];
 	forward_vec(app.yaw, app.pitch, f);
+	forward_vec(app.yaw, 0, lv);	// the level heading: W/S keep the height whatever the pitch (kenshi-wlql)
 	double move[3] = {};
 	const double rx = -f[2], rz = f[0];	// right, unnormalised in the horizontal plane
 	const double rl = std::sqrt(rx * rx + rz * rz);
-	auto add = [&](double sf, double sr, double su)
+	auto add = [&](double sf, double sr, double su, bool alongView = false)
 	{
-		double fx = f[0], fy = f[1], fz = f[2];
-		if (app.walk)	// walking stays in the horizontal plane
-		{
-			const double l = std::sqrt(fx * fx + fz * fz);
-			fx /= l; fy = 0; fz /= l;
-		}
-		move[0] += sf * fx + sr * rx / rl;
-		move[1] += sf * fy + su;
-		move[2] += sf * fz + sr * rz / rl;
+		const double* d = alongView && !app.walk ? f : lv;	// walking stays in the horizontal plane
+		move[0] += sf * d[0] + sr * rx / rl;
+		move[1] += sf * d[1] + su;
+		move[2] += sf * d[2] + sr * rz / rl;
 	};
 	if (held("camera_forward")) { add(1, 0, 0); }
 	if (held("camera_back")) { add(-1, 0, 0); }
 	if (held("camera_right")) { add(0, 1, 0); }
 	if (held("camera_left")) { add(0, -1, 0); }
-	if (held("camera_zoom_in")) { add(1, 0, 0); }	// the free camera has no focus: zoom moves along the view (MINE)
-	if (held("camera_zoom_out")) { add(-1, 0, 0); }
-	if (held("debug.fly_up")) { add(0, 0, 1); }
+	if (held("camera_zoom_in")) { add(1, 0, 0, true); }	// the free camera has no focus: zoom moves along the view (MINE)
+	if (held("camera_zoom_out")) { add(-1, 0, 0, true); }
+	// in a game Space (pause) does not lift the camera: PageUp / R still do
+	bool up = held("debug.fly_up");
+	if (up && !fly_owns_space() && app.keys[SAPP_KEYCODE_SPACE])
+	{
+		up = false;
+		for (const auto& c : ui::keys::bindings("debug.fly_up")) { if (c.key != SAPP_KEYCODE_SPACE && c.key > 0 && c.key < SAPP_MAX_KEYCODES && app.keys[c.key]) { up = true; } }
+	}
+	if (up) { add(0, 0, 1); }
 	if (held("debug.fly_down")) { add(0, 0, -1); }
 	double speed = (app.walk ? kWalkSpeed : kFlySpeed * app.speedScale) * dt;
 	if (held("debug.fly_fast")) { speed *= kFastFactor; }
@@ -1009,6 +1062,9 @@ void update_camera(double dt)
 	app.pos[0] = std::fmax(-lim, std::fmin(lim, app.pos[0]));
 	app.pos[2] = std::fmax(-lim, std::fmin(lim, app.pos[2]));
 	if (app.walk) { app.pos[1] = app.hm->height(app.pos[0], app.pos[2]) + kEyeHeight; }
+	else { clamp_free_camera(); }
+	if (static const bool log = std::getenv("KCLIENT_FLYLOG") != nullptr; log && app.scripted())
+	{ printf("flycam: frame %llu pos %.3f %.3f %.3f ground %.3f\n", (unsigned long long)app.frames, app.pos[0], app.pos[1], app.pos[2], app.hm->height(app.pos[0], app.pos[2])); }
 }
 
 // The primary selection's move speed, the speed diamond's mode (0 walk, 1 jog, 2 run, 3 group): CHAR_DYNAMIC flag bits 17-18 (sim da83315e)
@@ -1071,7 +1127,6 @@ void set_rts(uint64_t center)
 	}
 	app.rtsEase = 1e9; app.rtsRide = 0;	// a new orbit: the direction window's length and ride height start here (kenshi-k16.2.353.4)
 	app.centerId = center;
-	if (center) { app.buildings.engage(); }
 }
 
 void free_camera()
@@ -1114,7 +1169,7 @@ void portrait_click(uint64_t id, bool add)
 void portrait_focus(uint64_t id)
 {
 	if (app.sim.isPlayer(id)) { app.inspect = 0; app.panelProducer = 0; app.sim.select(id, false); set_rts(id); }
-	else { app.inspect = id; set_follow_id(id); }
+	else { app.inspect = id; set_follow_id(id); }	// the watch always; the camera follow only in a spectator session (set_follow_id refuses a non-squad id otherwise)
 }
 
 // A portrait gesture, resolved through the control-hints list (kenshi-k16.2.294.4): the HUD's closures and the script's `portrait` run the action the
@@ -1424,6 +1479,7 @@ void teleport(double x, double z)
 	app.pos[0] = x;
 	app.pos[2] = z;
 	app.pos[1] = app.hm->height(x, z) + above;
+	clamp_free_camera();
 }
 
 std::string lower(std::string v)
@@ -1606,7 +1662,12 @@ static std::string keys_held()
 }
 
 // The control-hints block for a pick the sidecar already made (the `hints:` lines; the same text `hints at X Y` prints for that point).
-static std::string hints_for_pick(const Pick& p) { return hints::format_hover(hints::hints_for(p, hints_context())); }
+static std::string hints_for_pick(const Pick& p)
+{
+	hints::Context ctx = hints_context();
+	if (p.kind == Pick::Item || p.kind == Pick::Container) { ctx.labelId = label_at(app.mouseX, app.mouseY); }
+	return hints::format_hover(hints::hints_for(p, ctx));
+}
 
 
 // The shared context of the dev debug ops (dev/debughost.hpp): the subsystems they read, filled once here, the host side.
@@ -2998,7 +3059,7 @@ void frame()
 static std::vector<ui::Tutorial> tutorials()
 {
 	ui::Tutorial keys{ "controls", "Controls", {} };
-	for (const auto& [group, heading] : { std::pair{ ui::keys::Group::kGame, "Game keys" }, std::pair{ ui::keys::Group::kBuild, "Build mode keys" } })
+	for (const auto& [group, heading] : { std::pair{ ui::keys::Group::kGame, "Game keys" }, std::pair{ ui::keys::Group::kBuild, "Build mode keys" }, std::pair{ ui::keys::Group::kFreeCamera, "Free camera keys" } })
 	{
 		std::string text = heading + std::string("\n");
 		for (const ui::keys::Action& a : ui::keys::actions()) { if (a.group == group) { text += (a.title.starts_with("Build: ") ? a.title.substr(7) : a.title) + "\t" + ui::keys::label(a.name) + "\n"; } }
