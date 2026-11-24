@@ -2,6 +2,7 @@
 
 #include "kdata/format.hpp"
 
+#include <limits>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -35,10 +36,12 @@ const std::vector<TaskInfo> kTasks = {
 	{32, "Self preservation", TaskUse::Owned, "combat"},
 	{34, "Law enforcer", TaskUse::Owned, "crime"},
 	{36, "PATROL_TOWN", TaskUse::Modelled, "T3b"},
-	{37, "WANDER_TOWN", TaskUse::Never, "never"},
+	{37, "WANDER_TOWN", TaskUse::Modelled, "native"}, // kenshi-k16.6.12.8: a general node of the home building (rwh.55)
 	{38, "STAND_AT_GUARD_NODE_HOMEBUILDING", TaskUse::Modelled, "T3b"},
 	{41, "ATTACK_ENEMIES_OF_MY_SLAVEMASTER", TaskUse::Owned, "combat"}, // task raid-goals: combat's join scan, dt24_41
 	{43, "STAY_IN_HOME", TaskUse::Modelled, "T3b"},
+	{47, "STAND_AT_GENERAL_NODE", TaskUse::Modelled, "native"}, // kenshi-k16.6.12.8: finder 14099f280
+	{51, "STAND_AT_NODE", TaskUse::Modelled, "native"}, // kenshi-k16.6.12.8: Task_StandAtNode (reserve, face, release)
 	{53, "TRAVEL_TO_TARGET_TOWN", TaskUse::Modelled, "native"}, // dt27 section 5
 	{58, "Medic", TaskUse::Owned, "jobs"},
 	{86, "OPEN_UP_SHOP_DOORS", TaskUse::Modelled, "T3c"},
@@ -594,6 +597,8 @@ SiteKind classifyPiece(const kdata::GameData& data, const kdata::Record& buildin
 {
 	if (building.boolOr("is node", false) && building.intOr("node type", kNodeGeneral) == kNodeGuardpost)
 		return SiteKind::GuardNode;
+	if (building.boolOr("is node", false) && building.intOr("node type", kNodeGeneral) == kNodeGeneral && building.findRefs("functionality") == nullptr)
+		return SiteKind::GeneralNode; // rwh.55 section 2: the factory makes a LocationNode of any `is node` record that is not type 4
 	const kdata::RefCategory* functionality = building.findRefs("functionality");
 	if (functionality == nullptr)
 		return SiteKind::None;
@@ -613,12 +618,29 @@ SiteKind classifyPiece(const kdata::GameData& data, const kdata::Record& buildin
 		case kFunctionTable:
 			return SiteKind::Table;
 		case kFunctionThrone:
-			return SiteKind::Throne;
+			if (functionInMask(kMaskGoal255, kFunctionThrone))
+				return SiteKind::Throne;
+			break;
 		default:
 			break;
 		}
 	}
 	return SiteKind::None;
+}
+
+std::int32_t machineFunction(const kdata::GameData& data, const kdata::Record& building)
+{
+	const kdata::RefCategory* functionality = building.findRefs("functionality");
+	if (functionality == nullptr)
+		return 0;
+	for (const kdata::RefEntry& entry : functionality->entries)
+	{
+		const kdata::Record* record = data.find(entry.targetID);
+		const std::int32_t function = record != nullptr ? record->intOr("function", 0) : 0;
+		if (function > 0 && functionInMask(kMaskMachine, function))
+			return function;
+	}
+	return 0;
 }
 
 bool isShopkeeperNode(const kdata::Record& building)
@@ -725,8 +747,15 @@ std::vector<Piece> classifyLayout(const kdata::GameData& data, const Layout& lay
 		if (record == nullptr)
 			continue;
 		const SiteKind kind = isShopkeeperNode(*record) ? SiteKind::ShopkeeperNode : classifyPiece(data, *record);
-		if (kind != SiteKind::None)
+		if (kind == SiteKind::GeneralNode)
+		{
+			// The node faces its orientation x NEGATIVE_UNIT_X (rwh.55 section 3, +0xc0), in the layout frame.
+			const std::array<double, 3> face = rotate({piece.qw, piece.qx, piece.qy, piece.qz}, {-1.0, 0.0, 0.0});
+			const double length = std::hypot(face[0], face[2]);
+			out.push_back({kind, piece.x, piece.z, piece.y, length > 0.0 ? face[0] / length : 0.0, length > 0.0 ? face[2] / length : 1.0});
+		} else if (kind != SiteKind::None) {
 			out.push_back({kind, piece.x, piece.z, piece.y});
+		}
 	}
 	return out;
 }
@@ -819,12 +848,20 @@ std::vector<Piece> bedPieces(const kdata::GameData& data, const Layout& layout)
 			double nodeY; // the node's own height in the layout frame (the body lies on it, above the floor)
 		};
 		std::vector<Spot> spots;
+		std::vector<BedNode> nodes;
 		for (const UseNode& node : useNodePoses(data, *record))
+		{
 			spots.push_back({pieceToLayout(*piece, node.at), node.q, piece->y + rotate(pieceQ, node.at)[1]});
+			const std::array<double, 3> nodeFace = rotate(pieceQ, rotate(node.q, {-1.0, 0.0, 0.0}));
+			const double nodeLength = std::hypot(nodeFace[0], nodeFace[2]);
+			nodes.push_back({spots.back().at[0], spots.back().at[1], spots.back().nodeY, nodeLength > 0.0 ? nodeFace[0] / nodeLength : 0.0,
+				nodeLength > 0.0 ? nodeFace[2] / nodeLength : 1.0});
+		}
 		std::stable_sort(spots.begin(), spots.end(), [](const Spot& a, const Spot& b)
 		{
 			return std::hypot(a.at[0], a.at[1]) < std::hypot(b.at[0], b.at[1]);
 		});
+		bool placed = false;
 		for (const Spot& spot : spots)
 		{
 			const double own = std::hypot(spot.at[0] - piece->x, spot.at[1] - piece->z);
@@ -840,15 +877,37 @@ std::vector<Piece> bedPieces(const kdata::GameData& data, const Layout& layout)
 				at = spot.at;
 				nodeY = spot.nodeY;
 				face = rotate(pieceQ, rotate(spot.q, {-1.0, 0.0, 0.0}));
+				placed = true;
 				break;
 			}
+		}
+		if (!placed && !spots.empty())
+		{
+			// Every node is a neighbour's or taken: the nearest one all the same, never the origin (a body there lies across the furniture).
+			at = spots.front().at;
+			nodeY = spots.front().nodeY;
+			face = rotate(pieceQ, rotate(spots.front().q, {-1.0, 0.0, 0.0}));
 		}
 		taken.push_back({at[0], at[1], piece->y});
 		const double length = std::hypot(face[0], face[2]);
 		out.push_back({SiteKind::Bed, at[0], at[1], piece->y, length > 0.0 ? face[0] / length : 0.0, length > 0.0 ? face[2] / length : 1.0,
-			functionClip(data, *record, kClipSleepInBed), record->stringID, nodeY});
+			functionClip(data, *record, kClipSleepInBed), record->stringID, nodeY, std::move(nodes)});
 	}
 	return out;
+}
+
+BedNode bedNodeNear(const SiteEntry& bed, double x, double z) noexcept
+{
+	// The exe's rule (object_node_rundown.md 3): the node nearest the character, no hysteresis; the site's own point only for a bed with no node list.
+	BedNode best{bed.x, bed.z, bed.hasNodeY ? bed.nodeY : bed.y, bed.faceX, bed.faceZ};
+	double nearest = bed.nodes.empty() ? 0.0 : std::numeric_limits<double>::infinity();
+	for (const BedNode& node : bed.nodes)
+		if (const double d = std::hypot(node.x - x, node.z - z); d < nearest)
+		{
+			nearest = d;
+			best = node;
+		}
+	return best;
 }
 
 std::uint64_t SiteIndex::nextRevision() noexcept
@@ -886,12 +945,18 @@ void SiteIndex::add(const BuildingSpec& spec)
 			site.inZ = spec.cz - spec.yawSin * piece->inX + spec.yawCos * piece->inZ;
 			site.hasNodeY = kind == SiteKind::Bed && spec.hasHeight;
 			site.nodeY = spec.originY + piece->nodeY;
+			for (const BedNode& node : piece->nodes)
+				site.nodes.push_back({spec.cx + spec.yawCos * node.x + spec.yawSin * node.z, spec.cz - spec.yawSin * node.x + spec.yawCos * node.z,
+					spec.originY + node.y, spec.yawCos * node.faceX + spec.yawSin * node.faceZ, -spec.yawSin * node.faceX + spec.yawCos * node.faceZ});
+			for (BedNode& node : site.nodes)
+				if (std::hypot(node.x - x, node.z - z) < 0.01)
+					node = {x, z, site.nodeY, site.faceX, site.faceZ}; // the site's own point is one of them, bit for bit
 		}
 		entry.sites.push_back(std::move(site));
 	};
 
 	// Real pieces first: they win their kind. Cages are real only: a building with no cage layout has none (T3e2).
-	for (const SiteKind kind : {SiteKind::GuardNode, SiteKind::TownNode, SiteKind::Bed, SiteKind::Table, SiteKind::Counter, SiteKind::Throne, SiteKind::Cage, SiteKind::Seat, SiteKind::ShopkeeperNode})
+	for (const SiteKind kind : {SiteKind::GuardNode, SiteKind::TownNode, SiteKind::Bed, SiteKind::Table, SiteKind::Counter, SiteKind::Throne, SiteKind::Cage, SiteKind::Seat, SiteKind::Machine, SiteKind::ShopkeeperNode, SiteKind::GeneralNode})
 		for (const Piece& piece : spec.pieces)
 			if (piece.kind == kind)
 				push(kind, spec.cx + spec.yawCos * piece.x + spec.yawSin * piece.z, spec.cz - spec.yawSin * piece.x + spec.yawCos * piece.z, false,

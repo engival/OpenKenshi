@@ -1387,6 +1387,8 @@ struct DoorStep
 	double waited = 0.0; // seconds spent waiting (phase 4)
 	std::vector<RoutePoint> route; // the walk to resume (empty for an interact order that stands at its door)
 	std::uint32_t routeNext = 0;
+	std::vector<RoutePortal> portals; // the stashed corridor (save v128)
+	std::uint32_t portalNext = 0;
 	std::uint32_t routeSeq = 0;
 	bool routeApproach = false;
 	bool toggled = false; // phases 1 and 3: the door has crossed openness 0.6 (its state changed); the step runs on to 1.0
@@ -1402,6 +1404,11 @@ struct DoorStep
 		ar(self.waited);
 		ar(self.route);
 		ar(self.routeNext);
+		if (ar.version >= 128)
+		{
+			ar(self.portals);
+			ar(self.portalNext);
+		}
 		ar(self.routeSeq);
 		ar(self.routeApproach);
 		ar(self.toggled);
@@ -1875,6 +1882,10 @@ struct WorldOptions
 	double chanceOfDeath = kChanceOfDeathDefault; // cod: x the bleed rate and the wound degeneration
 	double damageScale = kDamageScaleDefault; // gdm: x every damage component (CombatSettings::damageScale)
 	double hungerTime = kHungerTimeDefault; // ht: x `starvation time` (CombatSettings::hungerTime)
+	// The exe's two global option bytes (DAT_142134690+0x114 Feed Animals, +0x115 Share Food; rwh.203): default OFF, the options checkboxes the only
+	// writer. An animal eats from a squadmate's backpack only with both on. Saved, v120.
+	bool feedAnimals = false;
+	bool shareFood = false;
 
 	template <typename Archive, typename Self>
 	static void fields(Archive& ar, Self& self)
@@ -1882,6 +1893,11 @@ struct WorldOptions
 		ar(self.chanceOfDeath);
 		ar(self.damageScale);
 		ar(self.hungerTime);
+		if (ar.version >= 131)
+		{
+			ar(self.feedAnimals);
+			ar(self.shareFood);
+		}
 	}
 };
 
@@ -2348,7 +2364,7 @@ struct ArrestStates
 	}
 };
 
-// The animals' and investigators' run state (Simulation::limbCooldown_, limbPlay_, alarms_, alarmDwell_, save v110, kenshi-k16.6.202): a singleton like
+// The animals' and investigators' run state (Simulation::limbPlay_, alarms_, alarmDwell_, save v110, kenshi-k16.6.202): a singleton like
 // ArrestStates, written just before a save is encoded and read back (then removed) at a load; absent with all four empty. Members and buildings are
 // Id values; `finder` is a clock tick; an alarm's `town` is the environment's town index and `life` its seconds left.
 struct RunStates
@@ -2432,6 +2448,7 @@ struct RunStates
 		double x = 0.0;
 		double y = 0.0;
 		double z = 0.0;
+		double width = 0.0; // the road's width, v129 (rwh.268); 0 = unknown
 
 		template <typename Archive, typename Self>
 		static void fields(Archive& ar, Self& self)
@@ -2439,6 +2456,8 @@ struct RunStates
 			ar(self.x);
 			ar(self.y);
 			ar(self.z);
+			if (ar.version >= 129)
+				ar(self.width);
 		}
 	};
 	struct FarOrder
@@ -2451,6 +2470,8 @@ struct RunStates
 		bool hasGoalY = false;
 		std::vector<FarMarker> markers;
 		std::uint32_t next = 0;
+		std::uint32_t cur = 0; // v129: the marker the walker's leg ends at while onMarker
+		bool onMarker = false;
 		bool done = false;
 		bool blocked = false;
 		std::uint64_t blockedUntil = 0;
@@ -2468,6 +2489,11 @@ struct RunStates
 			ar(self.hasGoalY);
 			ar(self.markers);
 			ar(self.next);
+			if (ar.version >= 129)
+			{
+				ar(self.cur);
+				ar(self.onMarker);
+			}
 			ar(self.done);
 			ar(self.blocked);
 			ar(self.blockedUntil);
@@ -2476,6 +2502,33 @@ struct RunStates
 		}
 	};
 	std::vector<FarOrder> farOrders;
+
+	// v126 (k16.6.614): the region promotion's work in flight, so a save taken mid-spread continues as the straight run: the resident squads a
+	// pass chose and has not built (squad Id, world squad or resident), the zones the streaming mesh holds and has furnished, the regions whose
+	// hull trees are built, and the travel heading the prefetch reads. `streaming` false = nothing saved (the load rebuilds it all at once).
+	struct Promotion
+	{
+		std::uint64_t squad = 0;
+		bool world = false;
+
+		template <typename Archive, typename Self>
+		static void fields(Archive& ar, Self& self)
+		{
+			ar(self.squad);
+			ar(self.world);
+		}
+	};
+	std::vector<Promotion> promotions;
+	bool streaming = false;
+	std::vector<std::uint32_t> navZones;
+	std::vector<std::uint32_t> navFurnished;
+	bool hasLos = false;
+	std::vector<std::uint32_t> losRegions;
+	bool travelKnown = false;
+	double travelX = 0.0;
+	double travelZ = 0.0;
+	double headX = 0.0;
+	double headZ = 0.0;
 
 	template <typename Archive, typename Self>
 	static void fields(Archive& ar, Self& self)
@@ -2487,6 +2540,20 @@ struct RunStates
 		ar(self.dwells);
 		if (ar.version >= 116)
 			ar(self.farOrders);
+		if (ar.version >= 126)
+		{
+			ar(self.promotions);
+			ar(self.streaming);
+			ar(self.navZones);
+			ar(self.navFurnished);
+			ar(self.hasLos);
+			ar(self.losRegions);
+			ar(self.travelKnown);
+			ar(self.travelX);
+			ar(self.travelZ);
+			ar(self.headX);
+			ar(self.headZ);
+		}
 	}
 };
 

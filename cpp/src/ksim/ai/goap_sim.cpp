@@ -108,7 +108,7 @@ goap::Plan Simulation::planSlaveChain(std::uint64_t actor, std::uint16_t goal, s
 		case goap::Sym::HasTools: return carriesKit(actor, 9); // ITEM function 9 TOOL (UNSURE: the exe's evaluator is not decoded)
 		case goap::Sym::LockSkillOk:
 			return self->cageBuilding != 0 && sufficientLockSkill(cageLockLevel(self->cageBuilding), self->skills.lockpicking, true);
-		case goap::Sym::ShackleSkillOk: return sufficientLockSkill(20.0, self->skills.lockpicking, false); // lock_tasks.cpp kShackleLockLevel
+		case goap::Sym::ShackleSkillOk: return sufficientLockSkill(shackleLockLevel(body != 0 ? body : actor), self->skills.lockpicking, false);
 		case goap::Sym::ShacklesLocked: return shacklesLocked(body != 0 ? body : actor);
 		case goap::Sym::TargetIsConscious: return dude != nullptr && !dude->dead && !dude->unconscious;
 		case goap::Sym::MachineHasFreeOperatorSlot: return cageFree; // 107: the picked cage is empty (the resolver's freeSlot)
@@ -379,6 +379,7 @@ goap::Plan Simulation::planTownGoal(std::uint64_t actor, std::uint16_t goal, boo
 		case goap::Sym::HasWeaponEquipped: return weapon;
 		case goap::Sym::IsCrouchingOrLying: return crouched;
 		case goap::Sym::StrangersInHouse: return strangers;
+		case goap::Sym::IsMovementAllowed: return !self->down && !self->unconscious; // the walk row (67) that provides isAtLocation, e.g. 51's node
 		// OURS (UNSURE, dt24_43 / dt24_155): isAtHome is the node's own walk to the home slot, and the 155 / 197 split is the package's
 		// (the data lists the one that applies), so 155 reads "inside" and 197 "outside" as holding; the goal states are the node's own run.
 		case goap::Sym::AtHome: return true;
@@ -628,7 +629,7 @@ goap::Plan Simulation::planHomebase(std::uint64_t actor, std::uint16_t goal, dou
 }
 
 // Task CG (dt24_58.md): the medic's chain. 58 JOB_MEDIC is Task_Blank - its row is needsFirstAid = 0 - and 25 FIRST_AID_ORDER is the
-// only task that clears it, so a patient that still needs aid plans [25, 58] and one that does not plans [58] alone (the goal already
+// only task that clears it, so a patient that still needs aid plans [25, 58] ([7, 25, 58] with a weapon drawn: 25's pre list, rwh250) and one that does not plans [58] alone (the goal already
 // holds; the selector scores it 0). One symbol is live: whether the injury the medic's kits reach is still left on the patient.
 goap::Plan Simulation::planMedicChain(std::uint64_t actor, std::uint64_t patient) const
 {
@@ -638,11 +639,14 @@ goap::Plan Simulation::planMedicChain(std::uint64_t actor, std::uint64_t patient
 		return {};
 	const worldres::Kits kits = worldres::kitsOf(actor, *self,
 		[this](std::uint64_t id, std::int32_t function) { return carriesKit(id, function); });
-	const bool needsAid = worldres::needsAid(*body, kits, worldres::bothCategories(*self));
+	// Only the categories the carried kits reach: counting both would own an aid the interact cannot give (a flesh kit, a robotic limb), and
+	// it would end at once and be started again every pass (kenshi-k16.6.373).
+	const bool needsAid = worldres::needsAid(*body, kits, false);
+	const bool weapon = weaponInHands(actor);
 	FnWorld world;
 	world.eval = [&](goap::Sym sym, std::uint64_t, double, double) -> bool
 	{
-		return sym == goap::Sym::NeedsFirstAid && needsAid; // the one symbol the medic rows read
+		return sym == goap::Sym::NeedsFirstAid ? needsAid : sym == goap::Sym::HasWeaponEquipped && weapon; // the symbols the medic rows read
 	};
 	return goap::plan(world, routines::task::FirstAid, patient, body->x, body->z);
 }
@@ -657,7 +661,9 @@ goap::Plan Simulation::planSelfAid(std::uint64_t actor) const
 		return {};
 	const worldres::Kits kits = worldres::kitsOf(actor, *self,
 		[this](std::uint64_t id, std::int32_t function) { return carriesKit(id, function); });
-	if (!kits.any() || !worldres::needsAid(*self, kits, worldres::bothCategories(*self))) // haveFirstAidKit is its precondition
+	// haveFirstAidKit is its precondition; only what the kit reaches counts: a flesh kit on a robotic limb is no aid, and stepSelfAid would
+	// restart it every tick (k16.6.373; rwh.226: a down NPC on the ground is kit-gated per category).
+	if (!kits.any() || !worldres::needsAid(*self, kits, false))
 		return {};
 	FnWorld world;
 	world.eval = [](goap::Sym sym, std::uint64_t, double, double) -> bool { return sym == goap::Sym::NeedsFirstAid; };

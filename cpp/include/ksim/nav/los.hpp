@@ -68,6 +68,14 @@ public:
 	void clear();
 	bool loaded(std::int32_t region) const { return regions_.count(region) != 0; }
 	std::size_t loadedRegions() const noexcept { return regions_.size(); }
+	// The regions whose trees are built, ascending (a save keeps them: a spread build may be part way).
+	std::vector<std::int32_t> loadedRegionList() const
+	{
+		std::vector<std::int32_t> list;
+		for (const auto& [region, tree] : regions_)
+			list.push_back(region);
+		return list;
+	}
 	std::size_t memoryBytes() const noexcept; // hull triangles + BVH nodes (the placements and the terrain are not counted)
 	std::size_t triangles(std::int32_t region) const;
 	// The region's tree (null when not loaded): for tests and the physics work later.

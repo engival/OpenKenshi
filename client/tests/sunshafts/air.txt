@@ -1,0 +1,28 @@
+# sunshafts_air (kenshi-rlbr): the Hub bar (bar_lure), roof cut, noon, the camera inside the bar at the doorway column where the noon sun comes in (-50625,-1170, yaw 180 = looking +z).
+# Each air term is shown alone (`light <term> solo`: every other light term off, the lit scene black) so people and animation cannot change the picture: the shaft (sun_shafts) and
+# the motes (dust_motes). Two attempts per shot, run.sh keeps the one whose sidecar says 12:00 (the sim clock overwrites `set time` a few frames later).
+# render.sun_shafts / render.dust_motes / render.thread come from run.sh (--set).
+100 set animate 1
+100 set timescale 0
+150 camera char Wanderer
+310 move -50544 -1231
+850 camera char Wanderer
+852 key F down
+854 key F up
+856 key F down
+858 key F up
+1262 set pos -50625,-1170
+1263 set alt 12
+1264 set pitch -5
+1265 set yaw 180
+1266 light sun_shafts solo
+1270 set time 12
+1272 screenshot OUTDIR/sun0.png
+1276 set time 12
+1278 screenshot OUTDIR/sun1.png
+1280 light dust_motes solo
+1282 set time 12
+1284 screenshot OUTDIR/dust0.png
+1288 set time 12
+1290 screenshot OUTDIR/dust1.png
+1300 quit

@@ -450,6 +450,42 @@ int main(int argc, char** argv)
 				<< " u; control ran " << runnerMoved << " u\n";
 		}
 
+		// ---- 11. Goal 15 is gated like the original's (rwh.179 / rwh.189 s3, kenshi-k16.6.601): the attacker must be within 150 u of the ALLY (a
+		// far attacker that has only picked its target pulls nobody in), and a factionless wild fight is no ally's: a player-squad member never
+		// takes goal 15 for one ----
+		{
+			Rig rig(gd, data, nav);
+			const std::uint64_t ally = rig.add(0, 0.0, 0.0, true, 7);
+			const std::uint64_t dog = rig.add(0, 0.0, 100.0, true, 7);
+			const std::uint64_t far = rig.add(1, 0.0, 260.0, false, 9);
+			const std::uint64_t wildA = rig.add(1, 400.0, 0.0, false, 11);
+			const std::uint64_t wildB = rig.add(1, 430.0, 0.0, false, 12);
+			for (const std::uint64_t id : {ally, dog, far, wildA, wildB})
+				rig.fighter(id)->ranged = state::FighterRanged{};
+			rig.fighter(wildA)->faction = rig.fighter(wildB)->faction = rig.fighter(dog)->faction = 0;
+			rig.tick(2);
+			rig.sim->enqueue(Command::fighterAttack(state::Id{far}, state::Id{ally}));
+			rig.sim->enqueue(Command::fighterAttack(state::Id{wildA}, state::Id{wildB}));
+			bool early = false, wildJoin = false, late = false;
+			for (int i = 0; i < 600; ++i)
+			{
+				rig.tick();
+				const state::Fighter* d = rig.fighter(dog);
+				const state::Fighter* a = rig.fighter(far);
+				const double gap = std::hypot(a->x - rig.fighter(ally)->x, a->z - rig.fighter(ally)->z);
+				if (d->combatGoal == 15 && d->target == far)
+				{
+					early = early || gap > 150.0;
+					late = true;
+				}
+				wildJoin = wildJoin || (d->combatGoal == 15 && (d->target == wildA || d->target == wildB));
+			}
+			test::require(!early, "the dog took goal 15 on an attacker more than 150 u from the ally");
+			test::require(!wildJoin, "the dog took goal 15 for a fight between factionless wild fighters");
+			test::require(late, "the dog never joined once the attacker was within 150 u of the ally (control)");
+			std::cout << "goal 15 gates: no join beyond 150 u, no join for a wild fight, joined when close\n";
+		}
+
 		std::cout << "ksim_sneak_break: all checks passed\n";
 		return 0;
 	} catch (const std::exception& e)

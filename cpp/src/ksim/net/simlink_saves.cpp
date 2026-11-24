@@ -378,6 +378,7 @@ void Session::runSaveControl(std::uint16_t kind, std::uint32_t seq, const std::s
 			return;
 		}
 		// The world is the save's now: nothing this session sent before is true, the clock jumped.
+		ctx_.cameraStart.reset(); // a save of our own format replaces the import
 		resetKnown();
 		ctx_.scenario.active = false; // the run belonged to the world that was replaced
 		ackApplied(out, seq, sim_.clockTick());
@@ -417,6 +418,7 @@ void Session::runNewWorld(std::uint32_t seq, RecordWriter& out)
 	}
 	// Nothing this server knew of the scenario's characters is true: their looks go, the client's world is cleared by the event.
 	ctx_.looks.clear();
+	ctx_.cameraStart.reset(); // the world is no longer the import
 	resetKnown();
 	ctx_.scenario.active = false; // the run belonged to the world that was replaced
 	startsDue_ = true;

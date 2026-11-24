@@ -284,9 +284,10 @@ void testLiberatePrisoners(Game& game, FinderGate gate)
 
 // 270: on the passing-town-assault package the squad breaks the locked gate of the town it stands in. With no door system (--no-doors;
 // kenshi-k16.6.66) there is no lock to read, but every gate is still a fortification: the member takes the goal.
-void testAssaultGate(Game& game, bool doors = true)
+void testAssaultGate(Game& game, bool doors = true, int idle = 0)
 {
 	Simulation& sim = game.sim;
+	sim.run(idle); // a phase shift: the walk, the sense and the door passes land on other ticks; the outcome (the gate bashed) must not change
 	const std::uint64_t gateKey = game.gate->key;
 	const double gateX = game.gate->x;
 	const double gateZ = game.gate->z;
@@ -340,7 +341,7 @@ void testAssaultGate(Game& game, bool doors = true)
 			if (const state::Routine* routine = entity.get<state::Routine>(); routine != nullptr && routine->goal == routines::task::AssaultFortifications)
 				taken = true;
 	}
-	test::require(taken, doors ? "270: no member took ASSAULT_FORTIFICATIONS_PREFER_GATES" : "270 without a door system: no member took the goal");
+	test::require(taken, doors ? "270: no member took ASSAULT_FORTIFICATIONS_PREFER_GATES (idle " + std::to_string(idle) + ")" : "270 without a door system: no member took the goal");
 	if (!doors)
 		return;
 	test::require(gateState() == 3, "270: the locked gate was not bashed down");
@@ -368,6 +369,11 @@ int main(int argc, char** argv)
 			testLiberatePrisoners(allied, FinderGate::Relation);
 		}
 		testAssaultGate(game);
+		for (const int idle : {1, 3, 7, 11})
+		{
+			Game shifted(argv[1]);
+			testAssaultGate(shifted, true, idle);
+		}
 		Game bare(argv[1], false);
 		test::require(bare.sim.ai()->doorSystem() == nullptr || !bare.sim.ai()->doorSystem()->tuning().enabled, "the no-doors game has live doors");
 		testAssaultGate(bare, false);

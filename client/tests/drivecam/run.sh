@@ -6,6 +6,7 @@
 #   walk  W held 4 s ("boom:" per frame); SCEN=other.kscen puts the character elsewhere / facing elsewhere
 # The followed character is the Wanderer: the script names it @Wanderer@ and a probe run (charids.sh) fills its id in (exit 4 when the scenario has none).
 set -u
+export KCLIENT_FRAMELOG=boom	# the "boom" log lines this test parses are opt-in (kenshi-jvhw)
 . "$(dirname "${BASH_SOURCE[0]}")/../need_data.sh"
 . "$(dirname "${BASH_SOURCE[0]}")/../charids.sh"
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

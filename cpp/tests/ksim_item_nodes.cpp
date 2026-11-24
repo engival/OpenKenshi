@@ -2,7 +2,7 @@
 // interior layouts on the Hub navmesh.
 //   - spawnMeshItemNodes makes one node per layout instance on the mesh, each with an owned GroundItem from its group's lists, at
 //     the node, inside its building's footprint; a second call makes none;
-//   - a taken item is timed at the next hour and refills within [min, max] hours of its group, a new pick;
+//   - a taken item is timed at now + randint(min, max) hours of its group and refills then, a new pick;
 //   - a save keeps the nodes, the timer and the item.
 // argv[1]: the Hub navmesh cache (`knav_bake`, ctest fixture knav_cache).
 

@@ -23,6 +23,7 @@ struct ServerConfig
 	std::optional<bool> turretManning; // --turret-manning on|off: Simulation::setTurretManning, over a scenario header's
 	bool offscreenMedical = false; // --offscreen-medical on|off: Simulation::setOffscreenMedical (COMBAT_OPTIONS.md 8)
 	bool offscreenFights = false; // --offscreen-fights on|off: Simulation::setOffscreenFights (COMBAT_OPTIONS.md 9)
+	int idleStride = 2; // --idle-stride N: CombatSettings::idleStride (arena strides: 1 = every member every step, kenshi-k16.6.636)
 	std::optional<double> retargetHold; // --combat-retarget-hold S: CombatSettings::retargetHold, over a scenario header's
 	std::string scenarios; // --scenarios: the playtest scenario directory; the constructor sets the repository default (dev builds; empty otherwise)
 	double stealth = -1.0; // --stealth: CombatSettings::newGameStealth

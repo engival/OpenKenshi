@@ -139,12 +139,16 @@ void Simulation::putInBed(std::uint64_t carrierId, std::uint64_t bodyId, const r
 	const state::Fighter* carrier = combat_->find(carrierId);
 	const double carrierY = carrier != nullptr ? carrier->y : 0.0;
 	const double carrierYaw = carrier != nullptr ? carrier->yaw : 0.0;
+	const double carrierX = carrier != nullptr ? carrier->x : bed.x;
+	const double carrierZ = carrier != nullptr ? carrier->z : bed.z;
 	dropCarried(carrierId);
 	if (state::Fighter* put = combat_->find(bodyId))
 	{
-		put->x = bed.x;
+		// The nearest use node to the carrier (bed_seat_pose.md 2); the pose tail re-reads it from this position.
+		const routines::BedNode node = routines::bedNodeNear(bed, carrierX, carrierZ);
+		put->x = node.x;
 		put->y = bed.hasY ? bed.y : carrierY;
-		put->z = bed.z;
+		put->z = node.z;
 		put->yaw = carrierYaw;
 		put->velX = 0.0;
 		put->velZ = 0.0;
@@ -609,11 +613,9 @@ void Simulation::stepCarry()
 				carried->forwardSpeed = 0.0;
 				carried->lateralSpeed = 0.0;
 				combat_->dropTarget(step.target);
-				// rwh.162: law enforcement is not kidnapping. The exe writes the captive flag (CharStatus+0xe9) only in Task_Kidnapping (order 246); ours
-				// keeps it on a plain lift (the user's rule, ARCHITECTURE "Guards notice what you carry") but never on an owner's or guard's carry-out of
-				// a criminal (the 223 -> 240 -> 224 take-out) or an arrest lift. A slave is judged by its slave state instead.
-				const bool lawCarry = actor.has<state::TakeOut>() || (arrestOrder != arrestOrders_.end() && arrestOrder->second.lift != goap::kKidnapOrder);
-				carried->captive = !lawCarry && carried->slaveState != 1 && carried->slaveState != 2;
+				// rwh.162: the exe writes the captive flag (CharStatus+0xe9) only in Task_Kidnapping (order 246); a plain lift, a take-out and an arrest
+				// lift set nothing (parked future fix: kenshi-w2k.5). A slave is judged by its slave state instead.
+				carried->captive = arrestOrder != arrestOrders_.end() && arrestOrder->second.lift == goap::kKidnapOrder && carried->slaveState != 1 && carried->slaveState != 2;
 				f.carrying = step.target;
 			}
 			if (step.elapsed >= kLiftSeconds - kStepEpsilon)
@@ -753,9 +755,10 @@ void Simulation::stepIntruders()
 		const Route route = routeRetry(id, f, tx, tz, ty, true);
 		if (!route.found || route.points.empty())
 			return false;
+		std::vector<state::RoutePoint> points;
 		for (std::size_t p = 0; p < route.points.size(); ++p)
-			f.route.push_back({route.points[p].x, p < route.heights.size() ? route.heights[p] : f.y, route.points[p].z});
-		f.routeNext = 0;
+			points.push_back({route.points[p].x, p < route.heights.size() ? route.heights[p] : f.y, route.points[p].z});
+		setRoute(f, std::move(points), navigation_.get(), body(f));
 		++f.routeVersion;
 		f.routeSeq = 0;
 		f.routeChase = false;
@@ -808,6 +811,8 @@ void Simulation::stepIntruders()
 	};
 	for (std::size_t i = 0; i < members.size(); ++i)
 	{
+		if (!members[i].due)
+			continue; // (kenshi-k16.6.639)
 		flecs::entity actor = ecs.entity(combatEntities_[i]);
 		const state::TakeOut* found = actor.get<state::TakeOut>();
 		if (found == nullptr)
@@ -825,7 +830,7 @@ void Simulation::stepIntruders()
 			f.moveMode = 2; // the carry ends: back to the default speed mode
 			mirrorFighter(id);
 		};
-		take.elapsed += kTickSeconds;
+		take.elapsed += members[i].dueTicks * kTickSeconds;
 		if (f.dead || f.unconscious || f.down)
 		{
 			end(); // the carrier is out (stepCarry already dropped the person)
@@ -958,7 +963,7 @@ void Simulation::stepIntruders()
 				// 67 Running: the walk to the step's position - the body before the lift, the outside point after it.
 				const double tx = take.dropSet ? take.dropX : body->x;
 				const double tz = take.dropSet ? take.dropZ : body->z;
-				if (!f.walking() && std::hypot(f.x - tx, f.z - tz) <= (take.dropSet ? kBodyReach : kLiftReach))
+				if (!f.walking() && std::hypot(f.x - tx, f.z - tz) <= (take.dropSet ? kBodyReach : kLiftReach) && (take.dropSet || std::fabs(f.y - body->y) < kBodyReachY))
 				{
 					++take.step;
 					continue;
@@ -987,7 +992,7 @@ void Simulation::stepIntruders()
 					stuck = true; // the order ended without a lift: refused, unreachable, the body woke (the old executor's rule)
 					break;
 				}
-				if (f.walking() || std::hypot(f.x - body->x, f.z - body->z) > kLiftReach)
+				if (f.walking() || std::hypot(f.x - body->x, f.z - body->z) > kLiftReach || std::fabs(f.y - body->y) >= kBodyReachY)
 					break; // still on the way (the 67 step's route)
 				beginInteract(id, take.target, static_cast<std::uint8_t>(InteractAction::Carry), 0, {}, true);
 				take.liftOrdered = true;
@@ -1136,6 +1141,9 @@ void Simulation::stepSlaveTrade()
 	// edge or beyond the walkable rim, kenshi-k16.6.350) - so no walk is installed (a one-point-behind route never moves: the corner
 	// brake reads 0) and the step may count the member as arrived.
 	constexpr double kNoCloser = 1.0;
+	// The move request failed (Task_Move::onMoveFailedOrGiveUp, move_unreachable.md: no route at the goal -> addBlockedTarget 20 s + the task is
+	// impossible): set by runTo, read by the chain's walk step, which ends the chain and blocks the body (re-armed at expiry while unreachable).
+	bool moveFailed = false;
 	const auto runTo = [&](std::uint64_t id, double tx, double tz)
 	{
 		state::Fighter& f = *combat_->find(id);
@@ -1146,12 +1154,16 @@ void Simulation::stepSlaveTrade()
 		f.clearRoute();
 		const Route route = routeRetry(id, f, tx, tz, std::nullopt, true);
 		if (!route.found || route.points.empty())
+		{
+			moveFailed = true;
 			return false;
+		}
 		if (std::hypot(route.points.back().x - f.x, route.points.back().z - f.z) <= kNoCloser)
 			return true;
+		std::vector<state::RoutePoint> points;
 		for (std::size_t p = 0; p < route.points.size(); ++p)
-			f.route.push_back({route.points[p].x, p < route.heights.size() ? route.heights[p] : f.y, route.points[p].z});
-		f.routeNext = 0;
+			points.push_back({route.points[p].x, p < route.heights.size() ? route.heights[p] : f.y, route.points[p].z});
+		setRoute(f, std::move(points), navigation_.get(), body(f));
 		++f.routeVersion;
 		f.routeSeq = 0; // the AI's own route
 		f.routeChase = false;
@@ -1299,6 +1311,7 @@ void Simulation::stepSlaveTrade()
 		// from checkCurrentTask, so two instant steps take one update; ours takes the tick).
 		bool finished = false;
 		bool changed = false;
+		bool noRoute = false;
 		while (!finished && r.step < r.plan.size())
 		{
 			const std::uint16_t task = r.plan[r.step];
@@ -1317,7 +1330,9 @@ void Simulation::stepSlaveTrade()
 				const double tz = toCage ? cage->z : body->z;
 				const double reach = toCage && gameData_ != nullptr
 					? functionalityReach(*gameData_, cage->record, putFunction, true) : (body->unconscious ? kChainReach : kAwakeBodyReach);
-				if (!f.walking() && std::hypot(f.x - tx, f.z - tz) <= reach)
+				// The vertical gate applies to the body (rwh127 s2), not to the cage's own reach.
+				const bool sameLevel = toCage || std::fabs(f.y - body->y) < kBodyReachY;
+				if (!f.walking() && sameLevel && std::hypot(f.x - tx, f.z - tz) <= reach)
 				{
 					++r.step;
 					changed = true;
@@ -1327,11 +1342,23 @@ void Simulation::stepSlaveTrade()
 				r.chainElapsed = r.chainElapsed < 0.0 ? 0.0 : r.chainElapsed + kTickSeconds;
 				changed = true;
 				// Standing at the end of the only route there is, within a conscious body's stand-off of the body: arrived (the mesh gives no closer).
-				if (runTo(id, tx, tz) && !toCage && std::hypot(f.x - tx, f.z - tz) <= kAwakeBodyReach)
+				moveFailed = false;
+				const bool noCloser = runTo(id, tx, tz);
+				// A route that ends where the member stands, short of the body (the goal is over no ground: a partial path), is the exe's failed
+				// request too (it accepts only "goal reached", move_unreachable.md): not a wait of the 600 s give-up.
+				if (noCloser && !toCage && (!sameLevel || std::hypot(f.x - tx, f.z - tz) > kAwakeBodyReach))
+					moveFailed = true;
+				if (noCloser && !toCage && sameLevel && std::hypot(f.x - tx, f.z - tz) <= kAwakeBodyReach)
 				{
 					++r.step;
 					changed = true;
 					continue;
+				}
+				if (moveFailed && !toCage && f.carrying == 0)
+				{
+					worldTaskBlocks_[{id, bodyId}] = clockTick() + routines::kBlockTicks;
+					noRoute = true;
+					break;
 				}
 				break; // walking, or standing until the next tick
 			}
@@ -1530,6 +1557,19 @@ void Simulation::stepSlaveTrade()
 			finished = true;
 			changed = true;
 		}
+		if (noRoute)
+		{
+			std::ostringstream line;
+			line << "capture end " << r.goal << " member " << id << " body " << bodyId << " (no route to the body)";
+			logTask(line.str());
+			r.chainTarget = 0;
+			r.chainElapsed = -1.0;
+			r.plan.clear();
+			r.step = 0;
+			actor.set<state::Routine>(std::move(r));
+			mirrorFighter(id);
+			continue;
+		}
 		// A plan whose last step is the goal task, and that goal has its own branch above (168's lift): the step was the last, so the
 		// chain is done (dt18: the plan's goal state holds).
 		if (!finished && r.step >= r.plan.size())
@@ -1639,8 +1679,7 @@ void Simulation::stepCorpsePot()
 			? state::Fighter::PlanSource::Plan : f.routeSource;
 		if (navigation_ == nullptr)
 		{
-			f.route = {{f.x, f.y, f.z}, {tx, f.y, tz}};
-			f.routeNext = 0;
+			setRoute(f, {{f.x, f.y, f.z}, {tx, f.y, tz}}, nullptr);
 			++f.routeVersion;
 			f.routeSeq = 0;
 			f.routeChase = false;
@@ -1653,9 +1692,10 @@ void Simulation::stepCorpsePot()
 		const Route route = routeRetry(id, f, tx, tz, std::nullopt, true);
 		if (!route.found || route.points.empty())
 			return;
+		std::vector<state::RoutePoint> points;
 		for (std::size_t p = 0; p < route.points.size(); ++p)
-			f.route.push_back({route.points[p].x, p < route.heights.size() ? route.heights[p] : f.y, route.points[p].z});
-		f.routeNext = 0;
+			points.push_back({route.points[p].x, p < route.heights.size() ? route.heights[p] : f.y, route.points[p].z});
+		setRoute(f, std::move(points), navigation_.get(), body(f));
 		++f.routeVersion;
 		f.routeSeq = 0; // the AI's own route
 		f.routeChase = false;

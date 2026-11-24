@@ -267,6 +267,21 @@ void cripple(Simulation& sim, std::uint64_t id)
 	throw std::runtime_error("no leg to cripple");
 }
 
+// cripple() for a character whose legs are robotic: it goes down and, once the forced KO is over, is awake.
+void crippleRobotic(Simulation& sim, std::uint64_t id)
+{
+	state::Fighter& f = *fighterOf(sim, id);
+	const double point = sim.combat()->rules().koPoint(f);
+	for (state::FighterPart& part : f.parts)
+	{
+		if (part.collapses && (part.collapseBits & (16 | 32)) != 0) // the legs only: bit 1 is a vital part (head, chest), robotic and below the KO point it kills
+		{
+			part.robotic = true;
+			part.health = point - 5.0;
+		}
+	}
+}
+
 void teleport(Simulation& sim, std::uint64_t id, double x, double z)
 {
 	state::Fighter& f = *fighterOf(sim, id);
@@ -387,6 +402,13 @@ int main(int argc, char** argv)
 		std::printf("C: the squadmate with a kit did nothing for 60 s\n");
 
 		// E - a kit handed to the down victim: self-aid starts after the goal onset.
+		int aidStarts = 0; // FirstAid interacts the victim begins (counted by the task appearing), and event 13 FirstAid results sent for it
+		int aidEvents = 0;
+		sim.setInteractObserver([&](const InteractEvent& e)
+		{
+			if (e.kind == InteractEvent::Kind::Done && e.action == static_cast<std::uint8_t>(InteractAction::FirstAid) && e.who == victim)
+				++aidEvents;
+		});
 		packOf(sim, victim).add(kit->stringID, 1);
 		int started = -1;
 		for (int tick = 0; tick < 20 * 12 && started < 0; ++tick)
@@ -408,6 +430,34 @@ int main(int argc, char** argv)
 		}
 		test::require(stood > 0, "A: the NPC with a kit heals its legs and stands");
 		std::printf("A: stood %.1f s after the kit; charges left %.1f\n", stood * 0.05, fighterOf(sim, victim)->kitCharges);
+		(void)aidStarts;
+		for (int tick = 0; tick < 20 * 30; ++tick)
+			sim.run(1);
+		std::printf("A: %d first aid results (event 13 action 10) for the victim in the run\n", aidEvents);
+		test::require(aidEvents <= 1, "A: one aid, one result: a first aid that ends is not restarted every tick");
+		sim.setInteractObserver(nullptr);
+
+		// F - kenshi-k16.6.373: a down NPC whose only injury is robotic, carrying only a flesh kit: the kit reaches nothing, so no aid starts. Before
+		// the fix the plan counted both categories, the interact ended 'done' at once (event 13) and stepSelfAid began it again every tick.
+		dropKits(sim, mate);
+		crippleRobotic(sim, mate);
+		const int mateWoke = untilAwakeDown(sim, mate, 20 * 30);
+		test::require(mateWoke > 0, "F: the robotic-legged character is down and conscious");
+		packOf(sim, mate).add(kit->stringID, 1); // a flesh kit
+		int mateResults = 0;
+		sim.setInteractObserver([&](const InteractEvent& e)
+		{
+			if (e.kind == InteractEvent::Kind::Done && e.action == static_cast<std::uint8_t>(InteractAction::FirstAid) && e.who == mate)
+				++mateResults;
+		});
+		for (int tick = 0; tick < 20 * 20; ++tick)
+		{
+			sim.run(1);
+			test::require(!treating(sim, mate, mate), "F: a flesh kit on a robotic injury starts no aid");
+		}
+		test::require(mateResults == 0, "F: no first aid result is sent for an aid that never ran");
+		sim.setInteractObserver(nullptr);
+		std::printf("F: a flesh kit on robotic legs: no aid, no result\n");
 
 		// D - a medic: the caravan's package carries 58. A fresh world, so no squad left over from the search above fights it (a squad in a
 		// fight runs no goals). A kitless victim 6 u from the medics is treated, one 49 u away is not.

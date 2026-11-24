@@ -1,5 +1,6 @@
 #include "ksim/world/world.hpp"
 
+#include "ksim/economy/machines.hpp"
 #include "ksim/economy/producers.hpp"
 #include "ksim/ai/routines.hpp"
 
@@ -230,12 +231,16 @@ void addBuildingSite(kworld::CollisionLibrary& library, const kworld::PlacedInst
 	// upper floors and their stairs, kworld::WorldShape::keepInside), clustered by height so a storey's slabs and the top of
 	// its stairs make one floor. A step between them of less than kFloorGap is the same floor (the Bar's roof slabs differ
 	// by 5 units); a storey is ~70 (the Hub's ground 1576, floor 1 1646).
+	// A mask with no box (Outpost s-IV's: a convex hull and a capsule) keeps the height-by-slab rule below, as before the mask became one hull.
+	std::vector<kworld::WorldShape> mask;
+	const bool hasMask = library.addInteriorMask(instance, mask);
+	const bool boxMask = std::any_of(mask.begin(), mask.end(), [](const kworld::WorldShape& shape) { return shape.half != std::array<float, 3>{}; });
 	{
 		constexpr double kFloorGap = 30.0;
 		std::vector<double> tops;
 		for (const kworld::WorldShape& shape : shapes)
 		{
-			if (shape.use != kworld::NavUse::Walkable || !shape.keepInside || shape.vertices.size() < 3)
+			if (shape.use != kworld::NavUse::Walkable || !boxMask || !shape.keepInside || !shape.upperPart || shape.vertices.size() < 3)
 				continue;
 			double top = -1.0e30;
 			for (std::size_t i = 0; i + 2 < shape.vertices.size(); i += 3)
@@ -312,8 +317,7 @@ void addBuildingSite(kworld::CollisionLibrary& library, const kworld::PlacedInst
 		}
 	}
 	// The indoors trigger hull, when the building has an interior mask.
-	std::vector<kworld::WorldShape> mask;
-	if (library.addInteriorMask(instance, mask))
+	if (hasMask)
 	{
 		const Bounds hull = boundsOf(mask);
 		if (hull.minA <= hull.maxA)
@@ -974,6 +978,19 @@ void World::placeBuildings(const kdata::GameData& gameData, std::string_view dat
 			producerBuildings.insert(record->stringID);
 	}
 
+	std::unordered_map<std::string, std::uint32_t> machineBuildings; // BUILDING sid -> machineInfos_ index
+	machineInfos_.clear();
+	for (const kdata::Record* record : gameData.byType(kworld::itemTypeByName("BUILDING")))
+	{
+		if (record->boolOr("is foliage", false))
+			continue;
+		if (std::optional<machines::Static> info = machines::staticOf(gameData, *record))
+		{
+			machineBuildings.emplace(record->stringID, static_cast<std::uint32_t>(machineInfos_.size()));
+			machineInfos_.push_back(std::move(*info));
+		}
+	}
+
 	// The economy's camps (TOWN_LIFE_SLICE 7.3): every placed production BUILDING of any class, natural deposits excepted (a
 	// MINING foliage rock is a producer site, not a camp).
 	std::unordered_set<std::string> productionBuildings;
@@ -1005,7 +1022,15 @@ void World::placeBuildings(const kdata::GameData& gameData, std::string_view dat
 		if (disposalBuildings.count(instance.buildingID) != 0)
 			disposalSites_.push_back(DisposalSite{kworld::doorKey(kworld::placementId(instance)), instance.buildingID,
 				instance.ownerFaction, instance.squadTemplate, instance.x, instance.y, instance.z});
-		if (producerBuildings.count(instance.buildingID) != 0)
+		const bool producer = producerBuildings.count(instance.buildingID) != 0;
+		if (const auto machine = machineBuildings.find(instance.buildingID); machine != machineBuildings.end())
+		{
+			const std::uint64_t producerId = producer ? producers::kIdBase + producerSites_.size() : 0;
+			machineSites_.push_back(MachineSite{instance.buildingID, instance.ownerFaction, instance.x, instance.y, instance.z, producerId,
+				producerId != 0 ? producerId : machines::kMachineIdBase + machineSites_.size(), kworld::doorKey(kworld::placementId(instance)),
+				machine->second});
+		}
+		if (producer)
 			producerSites_.push_back(ProducerSite{producers::kIdBase + producerSites_.size(), instance.buildingID, instance.ownerFaction, instance.x, instance.y, instance.z});
 		if (productionBuildings.count(instance.buildingID) != 0)
 			productionSites_.push_back(ProductionSite{instance.buildingID, instance.ownerFaction, instance.x, instance.y, instance.z});
@@ -1085,6 +1110,54 @@ void World::placeBuildings(const kdata::GameData& gameData, std::string_view dat
 		}
 		++counts_.placedBuildings;
 	}
+}
+
+bool World::addPlacedBuilding(const kdata::GameData& gameData, const kworld::PlacedInstance& instance)
+{
+	const kdata::Record* record = gameData.find(instance.buildingID);
+	if (record == nullptr || std::any_of(placements_.begin(), placements_.end(),
+		[&](const kworld::PlacedInstance& other) { return other.instanceID == instance.instanceID; }))
+		return false;
+	placements_.push_back(instance);
+	flecs::entity entity = ecs_.entity();
+	entity.set<Position>(Position{instance.x, instance.y, instance.z});
+	entity.set<Rotation>(Rotation{instance.qw, instance.qx, instance.qy, instance.qz});
+	entity.set<Scale>(Scale{instance.scale});
+	entity.set<PlacementCell>(PlacementCell{instance.cell.x, instance.cell.z});
+	entity.set<PlacedBuilding>(PlacedBuilding{instance.instanceID, instance.buildingID, instance.layer});
+	entity.set<Detail>(Detail{DetailLevel::Strategic});
+	const auto prefab = prefabs_.find(instance.buildingID);
+	if (prefab == prefabs_.end() || prefab->second.get<Building>() == nullptr)
+		return true;
+	entity.is_a(prefab->second);
+	const Building& parent = *prefab->second.get<Building>();
+	const kdata::RefCategory* doors = record->findRefs("doors");
+	std::size_t index = 0;
+	for (std::size_t i = 0; doors != nullptr && i < doors->entries.size(); ++i)
+	{
+		if (doors->entries[i].v0 == kdata::kReferenceRemoved)
+			continue;
+		const kdata::Record* child = gameData.find(doors->entries[i].targetID);
+		doorSites_.push_back(DoorSite{
+			kworld::doorKey(kworld::doorId(instance, index++)), instance.x, instance.z,
+			parent.isGateway || parent.isWallGate,
+			child != nullptr && child->boolOr("always locks", false),
+			child != nullptr ? child->stringID : std::string(),
+			child != nullptr ? static_cast<double>(child->floatOr("door move speed", 0.5f)) : 0.5,
+			kworld::doorKey(kworld::placementId(instance)), instance.ownerFaction});
+	}
+	if (index > 0 && !parent.isWallGate && !parent.isGateway)
+	{
+		kworld::CollisionLibrary library(dataDir_, gameData);
+		const std::size_t before = buildingSites_.size();
+		addBuildingSite(library, instance, buildingSites_);
+		const kdata::RefCategory* interior = record->findRefs("interior");
+		if (buildingSites_.size() > before && interior != nullptr)
+			buildingSites_.back().hasInterior = std::any_of(interior->entries.begin(), interior->entries.end(),
+				[](const kdata::RefEntry& entry) { return entry.v0 != kdata::kReferenceRemoved; });
+	}
+	buildingSiteByKeyValid_ = false;
+	return true;
 }
 
 bool World::addFurnitureCage(const kdata::GameData& gameData, const kworld::PlacedInstance& instance)

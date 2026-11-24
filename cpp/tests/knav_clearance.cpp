@@ -248,6 +248,16 @@ int main()
 		test::require(!far.found, "a goal across the 7 u gap routed for a radius 4 body");
 		test::require(narrow->routeStats().routeClearanceNodes < 200, "the gap-goal searches expanded too many nodes");
 		std::cout << "goals in the 7 u gap's near half route; the far half fails in " << narrow->routeStats().routeClearanceNodes << " nodes in all\n";
+		// Clearance components (k16.6.382): the wall splits the floor for radius 4, so a goal across it is refused without a search (no nodes
+		// expanded), while a goal on the start's own side still routes and a radius 0 body still crosses.
+		const std::uint64_t before = narrow->routeStats().routeClearanceNodes;
+		const ksim::Route across = narrow->routeFrom({ 100.0, 0.5, 50.0 }, 30.0, 150.0, 0.5, false, 4.0);
+		test::require(!across.found && across.failure == ksim::state::AiReason::NoRoute, "a goal across the wall did not fail with NoRoute");
+		test::require(narrow->routeStats().routeClearanceNodes == before, "the cross-component refusal still searched");
+		const ksim::Route same = narrow->routeFrom({ 100.0, 0.5, 50.0 }, 30.0, 60.0, 0.5, false, 4.0);
+		test::require(same.found, "a same-component goal did not route at radius 4");
+		test::require(cross(*narrow, 0.0).found, "radius 0 no longer crosses");
+		std::cout << "cross-component goal refused with 0 nodes; same-component goal routes\n";
 		std::cout << "knav_clearance: ok\n";
 		return 0;
 	} catch (const std::exception& e) {

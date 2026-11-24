@@ -31,6 +31,7 @@
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -413,11 +414,12 @@ void saveLoad(const kworld::LoadOrder& order, const std::shared_ptr<const Combat
 		members[2].set<state::Routine>(c);
 	}
 	test::require(straight.rebuildRoutineBook() == 0, "no conflict left");
+	straight.run(7);
 	const routines::Reservations bookBefore = straight.routineBook();
-	test::require(bookBefore.size() == 3, "bed, table and the squad's bar table are claimed (" + std::to_string(bookBefore.size()) + ")");
+	// At the save tick, not before: the town's traders have claimed their tables by now (k16.7.117), so the book holds more than the three the test set.
+	test::require(bookBefore.size() >= 3, "bed, table and the squad's bar table are claimed (" + std::to_string(bookBefore.size()) + ")");
 	test::require(bookBefore.held(idOf(resident.squad)).object == 9003, "the squad's table is claimed by the squad");
 
-	straight.run(7);
 	const std::uint64_t split = straight.stateHash();
 	straight.saveGame(path);
 	straight.run(2 * kTicksPerGameHour / 8);
@@ -458,6 +460,29 @@ void saveLoad(const kworld::LoadOrder& order, const std::shared_ptr<const Combat
 
 	// Continue: the loaded run equals the uninterrupted one.
 	loaded.run(2 * kTicksPerGameHour / 8);
+#if KSIM_DEV
+	if (loaded.stateHash() != straight.stateHash())
+	{
+		// Name what differs (k16.6.390): instance Id and component, straight vs loaded.
+		std::map<std::pair<std::uint64_t, std::string>, std::uint64_t> was;
+		for (const ksim::StatePart& part : straight.stateParts())
+			was[{part.id, part.kind}] = part.hash;
+		int shown = 0;
+		for (const ksim::StatePart& part : loaded.stateParts())
+		{
+			const auto it = was.find({part.id, part.kind});
+			if (it == was.end())
+				std::cout << "only in loaded: " << part.id << " " << part.kind << "\n", ++shown;
+			else if (it->second != part.hash && shown < 40)
+				std::cout << "differs: " << part.id << " " << part.kind << "\n", ++shown;
+			if (it != was.end())
+				was.erase(it);
+		}
+		for (const auto& [key, hash] : was)
+			if (shown++ < 60)
+				std::cout << "only in straight: " << key.first << " " << key.second << "\n";
+	}
+#endif
 	test::require(loaded.stateHash() == straight.stateHash(), "load and continue gives the straight run's hash");
 	test::require(loaded.routineBook().size() == straight.routineBook().size(), "and the same book");
 	std::remove(path.c_str());
@@ -465,6 +490,87 @@ void saveLoad(const kworld::LoadOrder& order, const std::shared_ptr<const Combat
 }
 
 } // namespace
+
+// A region promotion is spread over ticks (k16.6.614): no tick builds more than kPromotesPerTick squads, the pass's whole queue is built before the next
+// pass, and once it is built no promoted squad at Full detail lacks a member's Fighter (nobody is missing once in view).
+void promotionSpread(Simulation& sim, const kworld::LoadOrder&, const std::shared_ptr<const CombatData>& combat)
+{
+	const routines::PackageTable packages(*sim.gameData());
+	const Resident resident = pickSquad(sim, packages, *combat);
+	centreOn(sim, 500000.0, 500000.0);
+	sim.run(routines::kResidentIntervalTicks + 1); // nothing is promoted
+	const auto promoted = [&] { return sim.residentStats().promotedSquads + sim.residentStats().worldPromotedSquads; };
+	const std::uint64_t before = promoted();
+	centreOn(sim, resident.x, resident.z);
+	std::uint64_t worst = 0;
+	std::uint64_t busyTicks = 0;
+	for (std::uint64_t i = 0; i < 3 * routines::kResidentIntervalTicks; ++i)
+	{
+		const std::uint64_t was = promoted();
+		sim.run(1);
+		worst = std::max(worst, promoted() - was);
+		busyTicks += promoted() != was ? 1 : 0;
+	}
+	test::require(worst <= routines::kPromotesPerTick, "a tick builds at most kPromotesPerTick squads (worst " + std::to_string(worst) + ")");
+	test::require(promoted() > before && promoted() - before <= static_cast<std::uint64_t>(routines::kResidentSquadsPerPass) * 3, "squads were promoted");
+	// Spread: the promotions land on more than one tick when there were more than kPromotesPerTick of them.
+	test::require(promoted() - before <= routines::kPromotesPerTick || busyTicks > 1, "the promotions are on several ticks");
+	test::require(sim.residentStats().promotedSquads > 0 || sim.residentStats().worldPromotedSquads > 0, "stats count them");
+	std::size_t unbuilt = 0;
+	ecsOf(sim).each([&](flecs::entity squad, const state::SquadRoutine&)
+	{
+		if (squad.has<state::TraderTrip>() || squad.get<Detail>()->level != DetailLevel::Full)
+			return;
+		for (const flecs::entity member : membersOf(sim, squad))
+			unbuilt += member.has<state::Fighter>() ? 0 : 1;
+	});
+	test::require(unbuilt == 0, "no member of a promoted squad at Full detail is missing a Fighter (" + std::to_string(unbuilt) + ")");
+	std::cout << "promotion spread ok (" << promoted() - before << " squads, worst tick " << worst << ", on " << busyTicks << " ticks)\n";
+}
+
+// A save taken between a pass and the end of its spread (v126, k16.6.614): the queue of squads still to build is saved, so the loaded run builds the
+// same squads on the same ticks as the straight run and the hashes stay equal.
+void promotionSave(const kworld::LoadOrder& order, const std::shared_ptr<const CombatData>& combat)
+{
+	const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_promotion_save.ksav";
+	Simulation straight = newGame(order);
+	enable(straight, combat);
+	straight.setPromoteBudget(1, 1); // one squad a tick: this world has few squads in routine mode, so a pass leaves some queued
+	straight.run(150); // past a new game's burst (arriveUntil_)
+	centreOn(straight, 500000.0, 500000.0);
+	straight.run(routines::kResidentIntervalTicks + 1);
+	// Areas on a dozen resident squads spread over the world: a pass has far more to build than one tick's share.
+	std::vector<std::pair<std::uint64_t, state::GroundPoint>> towns;
+	ecsOf(straight).each([&](const state::Id& id, const state::SquadInstance& instance, const state::Position& at)
+	{
+		if (instance.source == state::SpawnSource::TownResident)
+			towns.push_back({id.value, {at.x, at.z}});
+	});
+	std::sort(towns.begin(), towns.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+	std::vector<state::GroundPoint> centres;
+	for (std::size_t i = 0; i < towns.size() && centres.size() < 12; i += std::max<std::size_t>(1, towns.size() / 12))
+		centres.push_back(towns[i].second);
+	straight.enqueue(Command::setPlayerAreas(centres));
+	straight.run(1);
+	const auto promoted = [&](Simulation& sim) { return sim.residentStats().promotedSquads + sim.residentStats().worldPromotedSquads; };
+	do
+		straight.run(1);
+	while (straight.clockTick() % routines::kResidentIntervalTicks != 0);
+	const std::uint64_t atSave = promoted(straight);
+	const std::uint64_t split = straight.stateHash();
+	straight.saveGame(path);
+	straight.run(routines::kResidentIntervalTicks / 2);
+	test::require(promoted(straight) > atSave, "squads were still queued at the save (" + std::to_string(promoted(straight) - atSave) + " built after it)");
+	Simulation loaded = Simulation::loadGame(KENSHI_DATA, order, path, false, nullptr, RegionConfig{});
+	test::require(loaded.stateHash() == split, "load gives the saved hash");
+	enable(loaded, combat);
+	loaded.setPromoteBudget(1, 1);
+	loaded.run(routines::kResidentIntervalTicks / 2 + 50);
+	straight.run(50);
+	test::require(loaded.stateHash() == straight.stateHash(), "a save mid-spread loads and continues as the straight run");
+	test::require(promoted(loaded) == promoted(straight) - atSave, "the same squads were built");
+	std::cout << "promotion save ok (" << promoted(straight) - atSave << " squads built after the save point)\n";
+}
 
 int main()
 {
@@ -476,6 +582,8 @@ int main()
 		enable(sim, combat);
 		memberRoles(sim);
 		promoteDemote(sim, order, combat);
+		promotionSpread(sim, order, combat);
+		promotionSave(order, combat);
 		saveLoad(order, combat);
 		std::cout << "ksim_town_fighters: ok\n";
 		return 0;

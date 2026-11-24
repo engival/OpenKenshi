@@ -1,3 +1,4 @@
+#include "ksim/dev/test_phases.hpp"
 #include "ksim/combat/combat_data.hpp"
 
 #include "kdata/format.hpp"
@@ -6,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -140,11 +142,34 @@ std::int32_t CombatData::anatomyIndex(std::string_view name) const noexcept
 	return -1;
 }
 
+// One name per non-empty line, CR stripped (the original's readLine loop); a missing file is an empty list.
+std::vector<std::string> readNameLines(const std::string& path)
+{
+	std::vector<std::string> out;
+	std::ifstream in(path);
+	for (std::string line; std::getline(in, line);)
+	{
+		while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
+			line.pop_back();
+		if (!line.empty())
+			out.push_back(line);
+	}
+	return out;
+}
+
 std::shared_ptr<const CombatData> CombatData::build(const kdata::GameData& gameData,
 	std::string_view dataDir)
 {
+	KSIM_PHASE(Combat);
 	auto data = std::make_shared<CombatData>();
 	CombatData& out = *data;
+
+	const std::string dir(dataDir);
+	const std::vector<std::string> mixed = readNameLines(dir + "/namesMF.txt");
+	out.namesMale = readNameLines(dir + "/namesM.txt");
+	out.namesFemale = readNameLines(dir + "/namesF.txt");
+	out.namesMale.insert(out.namesMale.end(), mixed.begin(), mixed.end());
+	out.namesFemale.insert(out.namesFemale.end(), mixed.begin(), mixed.end());
 
 	// ---- GLOBAL CONSTANTS, after the loader's scaling (RESOLUTION.md 0.1) ----
 	const kdata::Record& c = requireRecord(gameData, "GLOBAL CONSTANTS", typeIndex("CONSTANTS"));
@@ -711,7 +736,23 @@ state::Fighter CombatData::makeFighter(const kdata::GameData& gameData,
 		throw std::runtime_error("combat data: unknown race " + race);
 	f.raceSid = raceData->sid;
 	f.look.female = rollFemale(*character, *raceData, entryState);
+	// `named`: a uniform draw from the sex's list (kenshi-rwh.247; no de-duplication). It uses a hash of the entry state, not
+	// the fighter's stream (the original's global rand() is not ours to scroll), so the rest of the roll is unchanged. An empty
+	// list gives an empty name, as the original.
+	if (character->boolOr("named", false))
+	{
+		const std::vector<std::string>& list = f.look.female ? namesFemale : namesMale;
+		std::uint64_t z = entryState ^ 0x6e616d6564ull;
+		z = (z + 0x9e3779b97f4a7c15ull);
+		z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+		z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+		z ^= z >> 31;
+		f.name = list.empty() ? std::string() : list[z % list.size()];
+	}
 	f.hungerRate = raceData->hungerRate;
+	// A malnourished squad template starts a non-robot member at the starvation line (rwh.193 Answer 4: char+0x4b8 = 1.7).
+	if (squad != nullptr && squad->boolOr("malnourished", false) && !raceData->isRobot)
+		f.hunger = 1.7;
 	f.raceStrength = raceData->strength;
 	f.raceDexterity = raceData->dexterity;
 	initParts(f, *raceData);
@@ -960,6 +1001,22 @@ state::Fighter CombatData::makeFighter(const kdata::GameData& gameData,
 	if (!f.animal && character->intOr("slave", 0) != 0)
 		f.slaveState = 1;
 	f.blood = f.minBlood + (f.maxBloodRace - f.minBlood) * s.strength * 0.01;
+	// rwh.193 section 5: a squad animal's age, drawn last so no other roll moves. The first animals / animals2 entry naming it gives v2.
+	if (f.animal && squad != nullptr)
+	{
+		for (const std::string_view list : {"animals", "animals2"})
+		{
+			const kdata::RefCategory* animals = squad->findRefs(list);
+			if (animals == nullptr)
+				continue;
+			const auto entry = std::find_if(animals->entries.begin(), animals->entries.end(),
+				[&](const kdata::RefEntry& e) { return e.targetID == character->stringID; });
+			if (entry == animals->entries.end())
+				continue;
+			f.age = std::max(0.0, rng.uniform01() * squad->floatOr("animal age random", 0.1) - 0.1 + entry->v2 * 0.01);
+			break;
+		}
+	}
 	rngState = rng.state();
 	return f;
 }

@@ -10,7 +10,7 @@
 
 namespace {
 
-// The worn shackles' work value (live rwh62 section 7; lock_tasks.cpp kShackleHardness).
+// The plain Prisoner Shackles record's `hardness` (rwh205_shackle_lock_fields.md; Simulation::shackleHardness loads it).
 constexpr double kShackleHardness = 20.0;
 
 using namespace ksim;

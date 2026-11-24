@@ -61,7 +61,7 @@ std::unique_ptr<Rig> animalRig()
 	return rig;
 }
 
-// 261: the Routine of an order or a plan; the sleeper lies down asleep, and wakes when the rolled floor-sleep hold runs out.
+// 261: the Routine of an order or a plan; the sleeper lies down asleep, and wakes at the end of our stand-in rest span (the exe ends it on isFullyRested, length unread; the 0.7-1.3 is the clip rate, not a hold).
 void floorSleeper()
 {
 	Rig rig({{routines::task::WorkTheSlaves}}, 0);
@@ -119,9 +119,6 @@ void fetchesAndPlays()
 	test::require(rig->until(30.0, [&] { return rig->sim.carriesLimb(rig->member); }), "277: the dog never took the limb");
 	test::require(!groundExists(*rig, ground), "277: the limb is still on the ground");
 	test::require(rig->until(2.0, [&] { return rig->goalOf(rig->member) == 0; }), "277: the fetch did not end");
-	// The cooldown (AI+0x318) holds the finder shut; a full dog fetches nothing either.
-	spawnGround(*rig, limb, f.x + 5.0, f.z);
-	test::require(!rig->sim.orderAnimalGoal(rig->member, routines::task::AnimalFetchALimb), "277: fetched again inside the cooldown");
 	std::cout << "  277: fetched a loose limb\n";
 
 	test::require(rig->sim.orderAnimalGoal(rig->member, routines::task::PlayWithLimbInMouth), "278: refused with a limb in the mouth");
@@ -137,6 +134,11 @@ void fetchesAndPlays()
 	packOf(*rig, rig->member).items.clear();
 	test::require(rig->until(3.0, [&] { return rig->goalOf(rig->member) == 0; }), "278: the play kept going without a limb");
 	std::cout << "  278: ran with the limb and re-picked its destination\n";
+	// The exe has no cooldown and no hunger gate (rwh.203): the dog that just fetched, and a full one, name the next limb at once.
+	f.hunger = 0.0;
+	spawnGround(*rig, limb, f.x + 5.0, f.z);
+	test::require(rig->sim.orderAnimalGoal(rig->member, routines::task::AnimalFetchALimb), "277: refused a second fetch (no cooldown, no hunger gate)");
+	std::cout << "  277: no cooldown, no hunger gate\n";
 }
 
 // 279: the finder names an ally animal with a limb in its mouth; the chaser ends within 50 u of it.

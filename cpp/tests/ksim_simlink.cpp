@@ -45,6 +45,7 @@
 #include <map>
 #include <random>
 #include <set>
+#include <optional>
 #include <thread>
 
 #ifndef KENSHI_DATA
@@ -216,6 +217,7 @@ struct Extras
 		std::vector<std::uint8_t> limb;
 	};
 	std::map<std::uint64_t, Medical> medical; // the latest CHAR_MEDICAL by id
+	std::map<std::uint64_t, std::vector<std::uint64_t>> medicalTicks; // every CHAR_MEDICAL's tick by id (k16.6.704)
 	std::vector<std::pair<std::uint64_t, std::uint32_t>> limbSevered; // EVENT 47: id, part strid
 	// EVENT 48 (task BG), read here because the client's decoder predates it: id, cause, the push direction, the strength,
 	// the hit part and the flop seed; plus the CHAR_DYNAMIC rest tail it follows.
@@ -236,6 +238,7 @@ struct Extras
 	std::set<std::uint64_t> uprightSeen; // ids streamed without it
 	std::map<std::uint64_t, float> aimYaws; // the last CHAR_DYNAMIC aim tail by id (flag bit 20)
 	std::set<std::uint64_t> aimSeen; // ids streamed with bit 20
+	std::map<std::uint64_t, std::vector<std::pair<std::uint64_t, std::uint32_t>>> dynLog; // id -> (tick, flags) of every CHAR_DYNAMIC
 	std::set<std::uint64_t> aimCleared; // ids that streamed bit 20 and later a record without it
 	std::map<std::uint64_t, std::uint64_t> turrets; // the last CHAR_DYNAMIC mounted tail by id (flag bit 21)
 	std::map<std::uint64_t, std::size_t> mountedLength; // the record length of the last mounted frame, by id
@@ -260,6 +263,23 @@ struct Extras
 		float chance = 0.0f;
 	};
 	std::vector<StealthKo> stealthKos;
+	struct Caught // EVENT 51 (client-approved 2026-11-16)
+	{
+		std::uint64_t thief = 0;
+		std::uint64_t witness = 0;
+		std::uint8_t cause = 0;
+		std::uint64_t container = 0;
+	};
+	std::vector<Caught> caughts;
+	struct Alarm // EVENT 52 (client-approved 2026-11-16)
+	{
+		std::uint64_t raiser = 0;
+		std::uint64_t criminal = 0;
+		std::uint8_t crime = 0;
+		std::uint32_t faction = 0;
+		float pos[3] = {0, 0, 0};
+	};
+	std::vector<Alarm> alarms;
 	bool recordedSample = false; // the recorded sample stream predates the CHAR_MEDICAL severed field (an old server's frames)
 	std::size_t detects = 0; // CHAR_DETECT frames (type 26)
 	std::size_t qualities = 0; // ITEM_QUALITY frames (type 27)
@@ -651,6 +671,7 @@ bool intercept(std::uint16_t type, const std::uint8_t* p, std::size_t n, Extras&
 				test::require(((m.limb.back() & 3u) == 1u) == (((m.severed >> i) & 1u) != 0), "CHAR_MEDICAL limb state 1 agrees with the severed bit");
 			}
 		}
+		extras.medicalTicks[readAt<std::uint64_t>(p, 8)].push_back(readAt<std::uint64_t>(p, 0));
 		extras.medical[readAt<std::uint64_t>(p, 8)] = std::move(m);
 	}
 	if (type == 26)
@@ -697,7 +718,7 @@ bool intercept(std::uint16_t type, const std::uint8_t* p, std::size_t n, Extras&
 		extras.eventKinds.push_back(readAt<std::uint16_t>(p, 8));
 	if (type == simlink::kEvent && n >= 10 && readAt<std::uint16_t>(p, 8) == 48)
 	{
-		// EVENT 48 (task BG): tick, kind, id, cause u8, dir f32 x3, strength f32, part strid, seed u32 (43 bytes). Additive:
+		// EVENT 48 (task BG): tick, kind, id, cause u8, dir f32 x3, strength f32, part strid, seed u32 (35 bytes). Additive:
 		// the client's decoder does not know it yet, so the test consumes it here.
 		test::require(n == 43, "event 48 length");
 		Extras::Ragdoll r;
@@ -730,6 +751,33 @@ bool intercept(std::uint16_t type, const std::uint8_t* p, std::size_t n, Extras&
 		extras.stealthKos.push_back(s);
 		return false;
 	}
+	if (type == simlink::kEvent && n >= 10 && readAt<std::uint16_t>(p, 8) == 51)
+	{
+		// EVENT 51 'caught_stealing': tick, kind, thief u64, witness u64, cause u8, container u64 (35 bytes).
+		test::require(n == 35, "event 51 length");
+		Extras::Caught c;
+		c.thief = readAt<std::uint64_t>(p, 10);
+		c.witness = readAt<std::uint64_t>(p, 18);
+		c.cause = p[26];
+		c.container = readAt<std::uint64_t>(p, 27);
+		test::require(c.cause <= 2, "event 51 cause is 0..2");
+		extras.caughts.push_back(c);
+		return false;
+	}
+	if (type == simlink::kEvent && n >= 10 && readAt<std::uint16_t>(p, 8) == 52)
+	{
+		// EVENT 52 'alarm_raised': tick, kind, raiser u64, criminal u64, crime u8, faction strid, x f32, y f32, z f32 (43 bytes).
+		test::require(n == 43, "event 52 length");
+		Extras::Alarm a;
+		a.raiser = readAt<std::uint64_t>(p, 10);
+		a.criminal = readAt<std::uint64_t>(p, 18);
+		a.crime = p[26];
+		a.faction = readAt<std::uint32_t>(p, 27);
+		for (int i = 0; i < 3; ++i)
+			a.pos[i] = readAt<float>(p, 31u + 4u * static_cast<std::size_t>(i));
+		extras.alarms.push_back(a);
+		return false;
+	}
 	if (type == simlink::kEvent && n >= 10 && readAt<std::uint16_t>(p, 8) == 49)
 	{
 		// EVENT 49 'shot': tick, kind, shooter u64, target u64, from f32 x3, to f32 x3, result u8, weapon strid, turret u64 (63 bytes).
@@ -756,6 +804,7 @@ bool intercept(std::uint16_t type, const std::uint8_t* p, std::size_t n, Extras&
 		// tail (client-approved 2026-11-07, bit 20) comes after both, so it is the last 4 bytes when set.
 		const std::uint64_t id = readAt<std::uint64_t>(p, 8);
 		const std::uint32_t flags = readAt<std::uint32_t>(p, 40);
+		extras.dynLog[id].emplace_back(readAt<std::uint64_t>(p, 0), flags);
 		const bool pose = (flags & ((1u << 15) | (1u << 16))) != 0;
 		const bool aim = (flags & (1u << 20)) != 0;
 		// The mounted tail (client-approved 2026-11-10, bit 21): a u64 turret after the aim tail, the very end of the record.
@@ -911,6 +960,8 @@ struct Client
 			const bool pose = (flags & ((1u << 15) | (1u << 16))) != 0;
 			cut = 1 + (pose ? 20 : 0) + (!pose && (flags & (1u << 5)) != 0 ? 4 : 0) + ((flags & (1u << 20)) != 0 ? 4 : 0) + ((flags & (1u << 21)) != 0 ? 8 : 0);
 		}
+		else if (type == simlink::kInteractable && n > 74 && p[16] == ks::kInteractableMachine) // 2026-11-22 kind 12: ownership tail (14), then u8 kind, u8 state, 2 strid, a turret's u64
+			cut = 14 + 10 + (p[74] == 3 ? 8 : 0);
 		else if (type == simlink::kInteractable && n > 16) // + the 2026-11-04 ownership tail (strid owner, u16 lockLevel, strid model, f32 yaw)
 			cut = p[16] == ks::kInteractableBed ? 0 : (p[16] == ks::kInteractableProducer ? 16 : p[16] == ks::kInteractableContainer ? 10 : 0) + 14; // the client decodes a bed whole (188febfb)
 		else if (type == simlink::kItemGrid && n > 21) // + the 2026-11-18 steal tail: one u8 per item, after the list (255 = no roll; the player's own pack)
@@ -1092,6 +1143,26 @@ int main()
 		const std::shared_ptr<ksim::MeshNavigator> nav = ksim::MeshNavigator::bake(KENSHI_DATA,
 			{ks::kHubZoneX, ks::kHubZoneZ}, {ks::kHubZoneX, ks::kHubZoneZ}, 4);
 		std::cout << "navmesh bake: " << std::chrono::duration<double>(Wall::now() - bakeStart).count() << " s\n";
+		// ---- catch-up pacing (kenshi-k16.6.634): speed 5, an injected slow tick, no burst beyond 2 intervals ----
+		{
+			namespace sl = ksim::simlink;
+			const double iv = ksim::kTickSeconds / 5.0;
+			const int per = 5;
+			double due = 0.0, now = 0.0;
+			int maxBurst = 0;
+			for (int round = 0; round < 40; ++round)
+			{
+				now += (round == 10 ? 0.6 : per * iv); // round 10: a 0.6 s stall
+				due = now - sl::catchUpLag(now - due, iv, per, true);
+				int burst = 0;
+				while (due <= now && burst < 8) { ++burst; due += iv; }
+				maxBurst = std::max(maxBurst, burst);
+			}
+			test::require(maxBurst <= per + 2 + 1, "pacing x5: a slow tick is repaid beyond 2 intervals");
+			test::require(sl::catchUpLag(0.6, iv, per, true) <= (per + 1) * iv + 1e-12, "pacing x5: lag not capped");
+			test::require(sl::catchUpLag(0.9, 0.05, 1, false) == 0.9 && sl::catchUpLag(0.3, 0.05, 1, false) == 0.3, "pacing x1: burst rule changed");
+			test::require(sl::catchUpLag(1.01, 0.05, 1, false) == 0.0, "pacing x1: no resync after 1 s");
+		}
 		// ---- the default pause policy: the sim idles while no ready session is connected ----
 		{
 			World w = makeWorld(order, data, gd, nav);
@@ -2131,6 +2202,90 @@ int main()
 				<< " matching the live fighter, cleared after the clip\n";
 		}
 
+		// ---- low detail (SIMLINK.md section 5, kenshi-k16.6.547): in interest, outside the bounds ----
+		// A character outside the full-detail bounds and inside the interest arrives with flag bit 10 at the squad rate (1 Hz); one
+		// inside the bounds arrives at full detail every tick; a crossing switches, both ways.
+		{
+			World lw = makeWorld(order, data, gd, nav);
+			ksim::CombatArena* arena = const_cast<ksim::CombatArena*>(lw.sim->combat());
+			lw.context.paused = true;
+			std::promise<int> portPromise;
+			ks::ServerOptions options;
+			options.onListening = [&portPromise](int listening) { portPromise.set_value(listening); };
+			ks::SimLinkServer server(*lw.sim, lw.context, options);
+			server.listen();
+			const int port = portPromise.get_future().get();
+			std::atomic<bool> stop{false};
+			std::thread thread([&]() { server.run(stop); });
+			const struct LowJoiner
+			{
+				std::atomic<bool>& stop;
+				std::thread& thread;
+				~LowJoiner()
+				{
+					stop.store(true);
+					if (thread.joinable())
+						thread.join();
+				}
+			} joiner{stop, thread};
+			Client c(port);
+			c.send(helloFrame(lw.context.dataHash));
+			test::require(c.pump([&]() { return c.snapshots >= 1 && !c.dec.bounds.empty(); }, 5000), "low detail: no initial snapshot");
+			const std::uint64_t player = lw.duel.player;
+			const std::uint64_t other = lw.duel.enemy;
+			const auto box = c.dec.bounds.front();
+			double px = 0, pz = 0;
+			server.call([&]() { px = arena->find(player)->x; pz = arena->find(player)->z; });
+			const double outX = box.maxX + 300.0;
+			const double inX = px;
+			const auto place = [&](double x)
+			{
+				server.call([&]()
+				{
+					ksim::state::Fighter* f = arena->find(other);
+					f->x = x;
+					f->z = pz;
+				});
+			};
+			place(outX);
+			simlink::OrderWriter orders;
+			std::vector<std::uint8_t> out;
+			const std::uint32_t seqInterest = orders.setInterest(out, static_cast<float>(px), static_cast<float>(pz), 100000.0f);
+			c.send(out);
+			c.send(rawOrder(7000, 40, [](auto& v) { put<std::uint8_t>(v, 0); })); // unpause
+			test::require(c.pump([&]() { return c.find(9, seqInterest) != nullptr; }, 5000), "low detail: interest not acknowledged");
+			// The last flags the character was sent with, and the frames since a tick.
+			const auto lastFlags = [&](std::uint64_t id) { return c.extras.dynLog[id].empty() ? 0u : c.extras.dynLog[id].back().second; };
+			const auto framesSince = [&](std::uint64_t id, std::uint64_t tick)
+			{
+				std::size_t n = 0;
+				for (const auto& [t, flags] : c.extras.dynLog[id])
+					n += t >= tick ? 1 : 0;
+				return n;
+			};
+			// 2 s of ticks outside: low detail at about 1 Hz, while the player (inside) gets every tick.
+			test::require(c.pump([&]() { return !c.extras.dynLog[other].empty() && (lastFlags(other) & simlink::kLowDetail) != 0; }, 10000),
+				"low detail: an outside character never arrived with the low-detail flag");
+			const std::uint64_t t0 = c.lastSnapshotEnd;
+			test::require(c.pump([&]() { return c.lastSnapshotEnd >= t0 + 60; }, 20000), "low detail: ticks did not run");
+			const std::uint64_t span = c.lastSnapshotEnd - t0;
+			const std::size_t lowFrames = framesSince(other, t0);
+			test::require(lowFrames >= 1 && lowFrames <= span / 20 + 2, "low detail: the outside character is not at the squad rate");
+			for (const auto& [t, flags] : c.extras.dynLog[other])
+				test::require(t < t0 || (flags & simlink::kLowDetail) != 0, "low detail: an outside frame without the flag");
+			test::require(framesSince(player, t0) >= span - 2 && (lastFlags(player) & simlink::kLowDetail) == 0, "low detail: the player is not at full detail");
+			// Into the bounds: full detail, every tick.
+			place(inX);
+			test::require(c.pump([&]() { return (lastFlags(other) & simlink::kLowDetail) == 0; }, 10000), "low detail: no switch to full detail");
+			const std::uint64_t t1 = c.lastSnapshotEnd;
+			test::require(c.pump([&]() { return c.lastSnapshotEnd >= t1 + 20; }, 20000), "low detail: ticks did not run (2)");
+			test::require(framesSince(other, t1 + 1) >= 18, "low detail: the inside character is not at full detail");
+			// And out again: low detail resumes.
+			place(outX);
+			test::require(c.pump([&]() { return (lastFlags(other) & simlink::kLowDetail) != 0; }, 10000), "low detail: no switch back to low detail");
+			std::cout << "low detail: outside " << lowFrames << " frames in " << span << " ticks; switches both ways\n";
+		}
+
 		// ---- order 60 action 14, the stealth KO (client-approved 2026-11-10) ----
 		// Refusals are answered at once (bad_target, not_allowed, bad_value for a queue flag and for any action above 14); an accepted
 		// order is applied at the next tick and the assassin starts the walk (Fighter::stealthKo).
@@ -2203,6 +2358,287 @@ int main()
 					&& c.extras.stealthKos[0].victim == sw.duel.enemy && c.extras.stealthKos[0].result == 2 && c.extras.stealthKos[0].chance == 0.0f,
 				"stealth KO: event 50 is not one abort (result 2, chance 0) of the player on the enemy");
 			std::cout << "stealth KO order: bad_target x2, bad_value x3, not_allowed, accepted\n";
+		}
+
+		// ---- CHAR_APPEARANCE body key "muscle" (kenshi-k16.6.568, rwh.240 section 3) ----
+		// Every character carries it: m = (floor(max(strength, weapon smith, armour smith)) * 0.01 - 0.2) / 0.79, unclamped; the appearance version
+		// bumps per whole stat level, not per XP tick.
+		{
+			World bw = makeWorld(order, data, gd, nav);
+			ksim::CombatArena* arena = const_cast<ksim::CombatArena*>(bw.sim->combat());
+			ksim::state::Fighter& npc = *arena->find(bw.duel.enemy);
+			ks::Session session(*bw.sim, bw.context);
+			std::vector<std::uint8_t> bytes;
+			ks::BinaryWriter w(bytes);
+			session.begin(w);
+			const std::vector<std::uint8_t> hello = helloFrame(bw.context.dataHash);
+			test::require(session.onFrame(ks::kHello, hello.data() + 6, hello.size() - 6, w), "muscle: hello refused");
+			session.sendTick(w, true);
+			struct Wire
+			{
+				bool seen = false;
+				float muscle = 0.0f;
+				std::uint32_t version = 0;
+				int muscleKeys = 0;
+				float skinny = -1.0f; // the second body key; -1 = absent
+			};
+			const auto send = [&]()
+			{
+				bytes.clear();
+				ks::BinaryWriter out(bytes);
+				session.sendTick(out, false);
+				Wire got;
+				for (std::size_t at = 0; at < bytes.size();)
+				{
+					std::uint32_t len = 0;
+					std::uint16_t type = 0;
+					std::memcpy(&len, &bytes[at], 4);
+					std::memcpy(&type, &bytes[at + 4], 2);
+					const std::uint8_t* p = &bytes[at + 6];
+					std::uint64_t id = 0;
+					std::memcpy(&id, p + 8, 8);
+					if (type == ks::kAppearance && id == bw.duel.enemy)
+					{
+						got.seen = true;
+						std::size_t o = 51;
+						const std::uint8_t count = p[o++];
+						for (std::uint8_t i = 0; i < count; ++i, o += 8)
+						{
+							// a non-custom human's body list is "muscle" then "skinny", an animal's "muscle" alone (key = a strid, value = f32)
+							std::memcpy(got.muscleKeys == 0 ? &got.muscle : &got.skinny, p + o + 4, 4);
+							++got.muscleKeys;
+						}
+						const std::uint8_t items = p[o++];
+						o += 13u * items + 3;
+						std::memcpy(&got.version, p + o, 4);
+					}
+					at += 4 + len;
+				}
+				return got;
+			};
+			npc.skills.strength = 1.0;
+			Wire first = send();
+			test::require(first.seen && first.muscleKeys == 2, "muscle: a non-custom human NPC carries the muscle and skinny keys");
+			test::require(first.skinny == 0.0f, "skinny: a fed human (hunger 3) sends 0");
+			// rwh.249 section 2.1: skinny = clamp01(1.5 * (1 - clamp01(hunger - 1))), 1/20 steps; the version bumps per step only.
+			npc.hunger = 1.7;
+			Wire thin = send();
+			test::require(thin.seen && std::fabs(thin.skinny - 0.45f) < 0.026f && thin.version > first.version, "skinny: hunger 1.7 sends 0.45 and bumps the version");
+			npc.hunger = 1.699;
+			test::require(!send().seen, "skinny: a drain inside one step does not resend");
+			npc.hunger = 2.0;
+			test::require(send().skinny == 0.0f, "skinny: hunger >= 2.0 sends skinny 0");
+			npc.animal = true;
+			npc.hunger = 1.7;
+			Wire dog = send();
+			test::require(dog.seen && dog.muscleKeys == 1 && dog.skinny < 0.0f, "skinny: an animal never sends skinny");
+			npc.animal = false;
+			npc.hunger = 3.0;
+			send();
+			test::require(std::fabs(first.muscle - (-0.2405074f)) < 1e-5f, "muscle: a stat-1 NPC sends -0.2405074");
+			npc.skills.strength = 1.9; // sub-level XP: floor is still 1
+			Wire sub = send();
+			test::require(!sub.seen, "muscle: a sub-level XP gain does not resend CHAR_APPEARANCE");
+			npc.skills.strength = 2.0;
+			Wire up = send();
+			test::require(up.seen && up.version > first.version, "muscle: one more strength level bumps appearanceVersion");
+			test::require(std::fabs(up.muscle - (0.02f - 0.2f) / 0.79f) < 1e-5f, "muscle: strength 2 -> (0.02 - 0.2) / 0.79");
+			// A smith: strength 1, a template whose STATS record carries weapon smith 80 -> m from the smith. The shipped data has no STATS
+			// record above 1 for the smiths (nothing there trains them), so one is given the field here and restored after the check.
+			const kdata::Record* smith = nullptr;
+			kdata::Record* smithStats = nullptr;
+			for (const kdata::Record* record : gd->byType(kworld::itemTypeByName("CHARACTER")))
+			{
+				const kdata::RefCategory* ref = record->findRefs("stats");
+				const kdata::Record* linked = ref != nullptr && !ref->entries.empty() ? gd->find(ref->entries.front().targetID) : nullptr;
+				if (smith == nullptr && linked != nullptr)
+				{
+					smith = record;
+					smithStats = const_cast<kdata::Record*>(linked);
+				}
+			}
+			test::require(smith != nullptr, "muscle: the data has a CHARACTER with a STATS record");
+			const float smithStat = 80.0f;
+			kdata::FieldFloat smithField;
+			smithField.key = "weapon smith";
+			std::memcpy(smithField.value.data(), &smithStat, 4);
+			smithStats->floats.push_back(smithField);
+			npc.skills.strength = 1.0;
+			bw.sim->setGameData(gd); // the template lookup reads the simulation's data
+			bw.sim->world().ecs().each([&](flecs::entity e, const ksim::state::Id& id)
+			{
+				if (id.value == bw.duel.enemy)
+					e.set<ksim::state::CharacterInstance>({smith->stringID});
+			});
+			Wire smithWire = send();
+			smithStats->floats.pop_back();
+			test::require(smithWire.seen, "muscle: a smith template resends CHAR_APPEARANCE");
+			test::require(std::fabs(smithWire.muscle - (std::floor(smithStat) * 0.01f - 0.2f) / 0.79f) < 1e-5f, "muscle: strength 1 and a smith stat sends m from the smith");
+		}
+
+		// ---- EVENT 51 caught_stealing (cause 0 failed roll, 1 witnessed take, 2 witnessed lockpick) and EVENT 52 alarm_raised ----
+		// Driven on a Session directly in sim time (no socket, no clock): every step is a fixed number of ticks, and the witness is
+		// polled in the sim until its sensor holds the thief before the act starts, so nothing depends on wall-clock timing.
+		{
+			World cw = makeWorld(order, data, gd, nav);
+			flecs::world& ecs = const_cast<flecs::world&>(cw.sim->world().ecs());
+			ksim::CombatArena* arena = const_cast<ksim::CombatArena*>(cw.sim->combat());
+			ksim::state::Fighter& thief = *arena->find(cw.duel.player);
+			ksim::state::Fighter& witness = *arena->find(cw.duel.enemy);
+			// A town over the alarm's spot (a real TownState; the environment's circles rebuild from it), and the witness the box's
+			// owner: another faction than the thief's (a same-faction witness is skipped), on its team (a hostile would fight it).
+			ksim::state::TownState town;
+			town.rootSid = town.activeSid = gd->byType(kworld::itemTypeByName("TOWN")).front()->stringID;
+			town.x = 10.0;
+			town.z = 20.0;
+			ecs.entity().set<ksim::state::TownState>(std::move(town));
+			ecs.each([&](flecs::entity e, const ksim::state::Id& idOf, const ksim::state::Fighter&)
+			{
+				if (idOf.value == cw.duel.enemy)
+					e.set<ksim::state::Allegiance>({"caught-test-owner"});
+			});
+			witness.faction = 9999;
+			witness.team = thief.team;
+			const auto placeWitness = [&]()
+			{
+				witness.x = thief.x + 2.0; // in plain sight
+				witness.y = thief.y;
+				witness.z = thief.z;
+				witness.yaw = std::atan2(thief.x - witness.x, thief.z - witness.z);
+				witness.orderStop = true;
+			};
+			ks::Session session(*cw.sim, cw.context);
+			std::vector<std::uint8_t> bytes;
+			ks::BinaryWriter w(bytes);
+			session.begin(w);
+			const std::vector<std::uint8_t> hello = helloFrame(cw.context.dataHash);
+			test::require(session.onFrame(ks::kHello, hello.data() + 6, hello.size() - 6, w), "caught: hello refused");
+			session.sendTick(w, true);
+			std::vector<Extras::Caught> caughts;
+			std::vector<Extras::Alarm> alarms;
+			const auto run = [&](std::uint64_t ticks)
+			{
+				cw.sim->run(ticks);
+				bytes.clear();
+				ks::BinaryWriter out(bytes);
+				session.sendTick(out, false);
+				for (std::size_t at = 0; at < bytes.size();)
+				{
+					std::uint32_t len = 0;
+					std::uint16_t type = 0;
+					std::memcpy(&len, &bytes[at], 4);
+					std::memcpy(&type, &bytes[at + 4], 2);
+					const std::uint8_t* p = &bytes[at + 6];
+					std::uint16_t kind = 0;
+					if (type == simlink::kEvent && len >= 12)
+						std::memcpy(&kind, p + 8, 2);
+					if (type == simlink::kEvent && kind == 51)
+					{
+						test::require(len == 2 + 35, "event 51 length");
+						Extras::Caught c;
+						std::memcpy(&c.thief, p + 10, 8);
+						std::memcpy(&c.witness, p + 18, 8);
+						c.cause = p[26];
+						std::memcpy(&c.container, p + 27, 8);
+						caughts.push_back(c);
+					} else if (type == simlink::kEvent && kind == 52) {
+						Extras::Alarm a;
+						std::memcpy(&a.raiser, p + 10, 8);
+						std::memcpy(&a.criminal, p + 18, 8);
+						a.crime = p[26];
+						std::memcpy(&a.faction, p + 27, 4);
+						for (int i = 0; i < 3; ++i)
+							std::memcpy(&a.pos[i], p + 31 + 4 * i, 4);
+						alarms.push_back(a);
+					}
+					at += 4 + len;
+				}
+			};
+			const auto causes = [&](std::uint8_t cause)
+			{
+				return static_cast<int>(std::count_if(caughts.begin(), caughts.end(), [cause](const Extras::Caught& x) { return x.cause == cause; }));
+			};
+			std::string itemSid;
+			for (const kdata::Record* r : gd->byType(kworld::itemTypeByName("ITEM")))
+			{
+				itemSid = r->stringID;
+				break;
+			}
+			const auto box = [&](bool locked)
+			{
+				ksim::state::Container c;
+				c.recordSid = "box";
+				c.x = c.useX = thief.x;
+				c.y = c.useY = thief.y;
+				c.z = c.useZ = thief.z;
+				c.ownerSid = "caught-test-owner";
+				c.locked = locked;
+				c.lockLevel = thief.skills.lockpicking + 39.0;
+				ksim::state::Inventory stock;
+				if (!locked)
+					stock.add(itemSid, 1);
+				return cw.sim->spawnContainer(c, stock).get<ksim::state::Id>()->value;
+			};
+			const auto endAct = [&]()
+			{
+				cw.sim->forgiveCrime(cw.duel.player, "caught-test-owner");
+				run(20);
+			};
+			run(201); // the town circle is rebuilt from the TownState
+			// Cause 0: the roll is seeded, so takes at thievery 0 fail on a fixed set of attempts; the witness faces away and does not know
+			// the thief, so the failed roll is the only sighting. Each take is a fixed 40 ticks.
+			thief.skills.thievery = 0.0;
+			for (std::uint32_t attempt = 0; attempt < 30 && causes(0) == 0; ++attempt)
+			{
+				placeWitness();
+				witness.yaw += 3.14159265;
+				witness.sight.clear();
+				cw.sim->enqueue(ksim::Command::containerTransfer(ksim::state::Id{cw.duel.player}, box(false), itemSid, 1, true, 7200 + attempt));
+				run(40);
+				endAct();
+			}
+			test::require(causes(0) >= 1, "EVENT 51 cause 0: no failed roll in thirty takes at thievery 0");
+			const Extras::Caught& zero = *std::find_if(caughts.begin(), caughts.end(), [](const Extras::Caught& x) { return x.cause == 0; });
+			test::require(zero.thief == cw.duel.player && zero.witness == 0 && zero.container == 0, "EVENT 51 cause 0: thief the player, witness 0, container 0");
+			// Cause 1: a take that lands (thievery 100) while the witness's sensor already holds the thief: one 51 naming both.
+			thief.skills.thievery = 100.0;
+			placeWitness();
+			ksim::perception::notice(witness, cw.duel.player);
+			std::uint32_t seenTicks = 0;
+			while (seenTicks < 100 && !(ksim::perception::find(witness, cw.duel.player) != nullptr && ksim::perception::find(witness, cw.duel.player)->seen))
+			{
+				cw.sim->run(1);
+				++seenTicks;
+			}
+			test::require(ksim::perception::find(witness, cw.duel.player) != nullptr && ksim::perception::find(witness, cw.duel.player)->seen, "EVENT 51 cause 1: the witness never sees the thief");
+			const int before1 = causes(1);
+			const std::uint64_t takeBox = box(false);
+			cw.sim->enqueue(ksim::Command::containerTransfer(ksim::state::Id{cw.duel.player}, takeBox, itemSid, 1, true, 7300));
+			run(40);
+			test::require(causes(1) == before1 + 1, "EVENT 51 cause 1: not exactly one witnessed take (" + std::to_string(causes(1) - before1) + ")");
+			const Extras::Caught& one = *std::find_if(caughts.begin(), caughts.end(), [](const Extras::Caught& x) { return x.cause == 1; });
+			test::require(one.thief == cw.duel.player && one.witness == cw.duel.enemy && one.container == takeBox, "EVENT 51 cause 1 names the thief, the witness and the container");
+			endAct();
+			// Cause 2: a lockpick under the same sight: the crime is reported every tick, the witness names it once.
+			placeWitness();
+			const std::uint64_t pickBox = box(true);
+			thief.orderStop = true;
+			ecs.each([&](flecs::entity e, const ksim::state::Id& idOf, const ksim::state::Fighter&)
+			{
+				if (idOf.value == cw.duel.player)
+					e.set<ksim::state::InteractTask>(ksim::state::InteractTask{pickBox, 3, 1, 0});
+			});
+			run(40);
+			test::require(causes(2) == 1, "EVENT 51 cause 2: not exactly one witnessed lockpick (" + std::to_string(causes(2)) + ")");
+			const Extras::Caught& two = *std::find_if(caughts.begin(), caughts.end(), [](const Extras::Caught& x) { return x.cause == 2; });
+			test::require(two.thief == cw.duel.player && two.witness == cw.duel.enemy && two.container == pickBox, "EVENT 51 cause 2 names the thief, the witness and the container");
+			// 52: an alarm the witness raises against the thief; a re-raise of the live alarm is silent.
+			cw.sim->raiseAlarm(3, 10.0, 20.0, cw.duel.enemy, cw.duel.player);
+			run(1);
+			test::require(alarms.size() == 1, "EVENT 52: not exactly one alarm (" + std::to_string(alarms.size()) + ")");
+			test::require(alarms[0].raiser == cw.duel.enemy && alarms[0].criminal == cw.duel.player && alarms[0].crime == 3 && alarms[0].pos[0] == 10.0f && alarms[0].pos[2] == 20.0f,
+				"EVENT 52: raiser, criminal, crime 3 and the point as raised");
+			std::cout << "EVENT 51 causes 0 / 1 / 2 and EVENT 52 decoded off the wire\n";
 		}
 
 		// ---- SEEN_BY (type 59, client-approved 2026-11-11, kenshi-h2v.1.3) ----
@@ -3097,7 +3533,9 @@ int main()
 					return false;
 				if (d.tick != measuredTick && ch.prev.tick != 0 && ch.prev.tick <= d.tick)
 				{
-					if (std::fabs(d.fwd) <= 0.1 * (std::fabs(d.lat) + 1.0))
+					// fwd / lat are the last tick's step only. A snapshot that batches several ticks (catch-up under load) can hide a
+					// shove in an earlier tick of its span, so only a one-tick span is measured (k16.6.661: dx 2.64 dz -3.06 at heading 1.5).
+					if (d.tick == ch.prev.tick + 1 && std::fabs(d.fwd) <= 0.1 * (std::fabs(d.lat) + 1.0))
 					{
 						strafeX += d.pos[0] - ch.prev.pos[0];
 						strafeZ += d.pos[2] - ch.prev.pos[2];
@@ -3206,6 +3644,21 @@ int main()
 				swung = swung || (e.kind == 1 && e.tick >= attackTick && e.b == player);
 			return swung || c.dec.clock.tick > attackTick + 20000;
 		}, 300000) && swung, "no swing at the servant after the attack order");
+		// CHAR_MEDICAL at speed (k16.6.704): one send steps many ticks, yet every visible character's row is at most 8 ticks + one send stale.
+		{
+			c.extras.medicalTicks.clear();
+			const std::uint64_t t0 = c.dec.clock.tick;
+			test::require(c.pump([&]() { return c.dec.clock.tick > t0 + 400; }, 20000), "no ticks at 16x");
+			std::uint64_t worst = 0, ids = 0;
+			for (const auto& [id, ticks] : c.extras.medicalTicks)
+			{
+				if (ticks.size() < 3) continue;
+				++ids;
+				for (std::size_t i = 1; i < ticks.size(); ++i) worst = std::max(worst, ticks[i] - ticks[i - 1]);
+			}
+			test::require(ids > 0, "no character sent CHAR_MEDICAL repeatedly at 16x");
+			test::require(worst >= 1 && worst <= 8 + 32, "CHAR_MEDICAL gap at 16x is " + std::to_string(worst) + " ticks");
+		}
 		// Perception: the servant became aware of the player (EVENT 15, observer = servant, target = player), and the player's
 		// detection meter was reported (CHAR_DETECT) while the servant was aware of it.
 		{
@@ -3549,6 +4002,8 @@ int main()
 		{
 			World w = makeScenarioWorld(order, data, gd, nav);
 			w.context.scenariosDir = KSIM_SCENARIO_FIXTURE_DIR;
+			w.context.cameraStart = ks::ServerContext::CameraStart{}; // an imported world: the scenario load below replaces it
+			w.context.cameraStart->hasCamera = true;
 			std::promise<int> portPromise;
 			ks::ServerOptions scenarioOptions;
 			scenarioOptions.onListening = [&portPromise](int listening) { portPromise.set_value(listening); };
@@ -3568,7 +4023,8 @@ int main()
 						thread.join();
 				}
 			} scenarioJoiner{scenarioStop, scenarioThread};
-			Client c(scenarioPort);
+			std::optional<Client> clientHolder(std::in_place, scenarioPort);
+			Client& c = *clientHolder;
 			c.send(helloFrame(w.context.dataHash));
 			test::require(c.pump([&]() { return c.snapshots >= 1; }, 5000), "scenario: no initial snapshot");
 			// 1. SCENARIO_LIST_REQ -> SCENARIO_LIST: the fixture directory's one header-carrying file.
@@ -3662,6 +4118,15 @@ int main()
 			test::require(!c.closed && c.dec.error().empty(), "the scenario wire ended the session");
 			std::cout << "scenario wire: list, load (seed 11), started (hash " << started.simHash << "), end -> "
 				<< metrics.metrics.size() << " metrics (" << metrics.elapsedGameS << " game s)\n";
+			// The world is no longer the import: a session that connects now gets no CAMERA_START (cym.43).
+			clientHolder.reset(); // one session at a time: the first one leaves
+			test::require(!w.context.cameraStart.has_value(), "SCENARIO_LOAD left the import's camera start");
+			{
+				Client late(scenarioPort);
+				late.send(helloFrame(w.context.dataHash));
+				test::require(late.pump([&]() { return late.snapshots >= 1; }, 5000), "scenario: late session got no snapshot");
+				test::require(late.cameraStarts.empty(), "scenario: CAMERA_START sent after a SCENARIO_LOAD replaced the import");
+			}
 		}
 
 		// ---- the recorded sample stream decodes ----
@@ -3683,7 +4148,10 @@ int main()
 				std::memcpy(&type, base + fed + 4, 2);
 				test::require(bytes.size() - fed >= 4u + len, "sample stream: truncated frame");
 				if (intercept(type, base + fed + 6, len - 2, sampleExtras))
-					test::require(decoder.feed(base + fed, 4u + len), "sample stream: " + decoder.error());
+				{
+					const bool fedOk = decoder.feed(base + fed, 4u + len); // before the message: the argument order of one call is unspecified
+					test::require(fedOk, "sample stream: " + decoder.error() + " (frame type " + std::to_string(type) + " at byte " + std::to_string(fed) + ")");
+				}
 				fed += 4u + len;
 			}
 			test::require(!sampleExtras.routes.empty(), "sample stream has a CHAR_ROUTE");

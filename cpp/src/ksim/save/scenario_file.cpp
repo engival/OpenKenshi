@@ -281,7 +281,7 @@ File parseFile(const std::string& path)
 			if (!c.task.empty() && !c.player)
 				fail(path, line, "task: char must be a player character");
 			c.speed = static_cast<int>(r.num("speed", 2.0));
-			c.age = r.num("age", 1.0);
+			c.age = r.num("age", -1.0);
 			c.blood = r.num("blood", -1.0); // absent: the race's maximum, filled in by apply
 			c.hunger = r.num("hunger", 3.0);
 			c.fed = r.num("fed", 0.0);
@@ -541,6 +541,8 @@ void applyChar(const kdata::GameData& gd, const CombatData& data, const Char& c,
 {
 	f.name = c.name;
 	f.look.female = c.female ? 1 : 0; // the file's own sex, not makeFighter's roll
+	if (c.age >= 0.0)
+		f.age = c.age; // an explicit age wins over the spawn roll
 	applyStats(f.skills, c.stats);
 
 	// Equipment: what is on the body replaces the template's roll. The first weapon is wielded (the sim wields one), armour pieces are worn.

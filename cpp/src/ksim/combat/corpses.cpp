@@ -38,6 +38,8 @@ void Simulation::stepCorpses()
 	std::vector<state::GroundPoint> centres;
 	if (const state::PlayerAreas* areas = ecs.get<state::PlayerAreas>())
 		centres = areas->centres;
+	if (const std::optional<state::ViewFocus> view = cameraFocus(ecs, centres))
+		centres.push_back({view->x, view->z});
 	const auto nearPlayer = [&](double x, double z)
 	{
 		const kworld::ZoneCell cell = kworld::zoneCellOf(x, z);

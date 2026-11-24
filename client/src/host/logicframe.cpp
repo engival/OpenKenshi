@@ -704,7 +704,7 @@ static void logic_paths(FramePacket& pk)
 					p.hasPiece = th.hasPiece;
 					props.push_back(std::move(p));
 				}
-				if (th.kind == simlink::Interactable::kProducer) { props.push_back({ id, app.sim.sidOf(th.record), { at[0], at[1], at[2] }, true }); }
+				if (th.kind == simlink::Interactable::kProducer || th.kind == simlink::Interactable::kMachine) { props.push_back({ id, app.sim.sidOf(th.record), { at[0], at[1], at[2] }, true }); }	// a machine (kind 12) too: the world draws the placement, the prop is its pick boxes (kenshi-v31x)
 				if (th.kind == simlink::Interactable::kItem)
 				{
 					WorldBuildings::Prop p{ id, app.sim.sidOf(th.record), { at[0], at[1], at[2] }, false, true, th.yaw, cut_hidden(at) };
@@ -728,7 +728,7 @@ static void logic_paths(FramePacket& pk)
 			{
 				if (!app.sim.playerBuilding(b)) { continue; }
 				const simlink::Interactable* th = app.sim.thing(id);
-				if (th && (th->kind == simlink::Interactable::kContainer || th->kind == simlink::Interactable::kProducer)) { continue; }
+				if (th && (th->kind == simlink::Interactable::kContainer || th->kind == simlink::Interactable::kProducer || th->kind == simlink::Interactable::kMachine)) { continue; }
 				WorldBuildings::Prop p;
 				p.id = id;
 				p.sid = app.sim.sidOf(b.record);
@@ -1276,7 +1276,7 @@ static void record_debug_views(const FramePacket& pk, ovl::List& out, ovl::List&
 		bands.at[1] = bands.ref;
 		if (!app.sim.selected().empty() && app.sim.placed(app.sim.selected().front(), at, hull)) { bands.ref = at[1]; std::copy(at, at + 3, bands.at); }
 		bands.cut = [](const double p[3]) { return app.buildings.cutAway(p); };
-		const Pick hp = pick_screen(app.mouseX, app.mouseY);
+		const Pick hp = pick_screen(app.mouseX, app.mouseY, nullptr, true);
 		bands.hover = hp.kind == Pick::Ground && app.nav.walkable(hp.hit) == ClientNav::Reach::kYes;	// the cursor's own test: no highlight where it says invalidmove
 		std::copy(hp.hit, hp.hit + 3, bands.hoverAt);
 		draw_navmesh(*app.nav.mesh(), mvp, cam.pos, centre, view::widthf(), view::heightf(), bands);

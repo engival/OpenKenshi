@@ -25,8 +25,6 @@ namespace ksim {
 namespace {
 
 constexpr double kGiveUpSeconds = 30.0; // world_tasks.cpp's: a walk that never arrives drops the goal
-constexpr double kHungerGate = 0.9 * 3.0; // 1409993a0: vf+0x398 against 0.9, as a share of the fed hunger (3.0). UNSURE: the stat's direction
-constexpr double kLimbCooldownSeconds = 30.0; // AI+0x318's cooldown after a fetch. OURS: the exe's span is unread
 constexpr double kChaseNear = 50.0; // 279's goal isNearTo = isWithin50Meters (combat.cpp's own reading)
 // Task_DogLimbRunningPlay (dt24_cage_loot_play): the start point lies 80 - 180 u beyond the group's average position; the tick re-picks a
 // destination 1000 - 1400 u away on arrival or within 200 u of it.
@@ -72,6 +70,7 @@ void Simulation::endGoalRoutine(std::uint64_t id, std::uint16_t goal)
 		return;
 	limbPlay_.erase(id);
 	standingRun_.erase(id);
+	runAway_.erase(id);
 	const flecs::entity squad = actor.target<state::MemberOf>();
 	if (squad.is_valid() && squad.has<state::SquadRoutine>())
 	{
@@ -132,9 +131,7 @@ bool Simulation::orderAnimalGoal(std::uint64_t id, std::uint16_t goal)
 	}
 	case routines::task::AnimalFetchALimb:
 	{
-		const auto cooling = limbCooldown_.find(id);
-		const bool allowed = f->hunger < kHungerGate && (cooling == limbCooldown_.end() || cooling->second <= clockTick());
-		target = worldres::limb277(*f, grounds(), allowed);
+		target = worldres::limb277(*f, grounds()); // 1409993a0 has no cooldown and no hunger gate (rwh.203): a full dog fetches too
 		break;
 	}
 	case routines::task::PlayWithLimbInMouth:
@@ -241,8 +238,6 @@ void Simulation::stepAnimalGoals(const std::function<bool(std::uint64_t, double,
 			const state::Fighter* body = item == nullptr && goal == routines::task::EatFoodOnGround ? combat_->find(target) : nullptr;
 			if (item == nullptr && (body == nullptr || !body->dead))
 			{
-				if (goal == routines::task::AnimalFetchALimb && carriesLimb(id))
-					limbCooldown_[id] = now + static_cast<std::uint64_t>(kLimbCooldownSeconds / kTickSeconds);
 				std::ostringstream line;
 				line << "animal " << goal << " member " << id << " took target " << target;
 				logTask(line.str());

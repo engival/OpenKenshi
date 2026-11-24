@@ -7,6 +7,8 @@ building set, rebuild.
 
 The runtime base is moving to the shipped tiles, patched by this bake where the world changes ("Runtime mesh", below).
 
+Building and interior surfaces are to come from a geometric generator instead of this voxel bake, Recast kept behind a switch: design in NAVMESH_GENERATOR.md (kenshi-k16.7.131).
+
 Our own file, not a Kenshi format. Written by `knav_bake`, read by `knav::NavMesh::load`
 (`cpp/include/knav/navmesh.hpp`). It holds the baked Detour tiles of a rectangle of zones.
 
@@ -39,6 +41,10 @@ Input is gathered per zone rectangle (`knav::gatherArea`):
   `xml collision` file (`kworld/collision.hpp`, per `COLLISION_FORMAT.md`). Parts with only a render
   mesh are skipped and counted. Parts flagged `passable` or `no collision` are skipped.
   `is stairs` parts are rasterised but never fill their footprint.
+  Measured (kenshi-k16.7.134, Hub bar stair hull col_46, recipes 42 and 43): the tread polygons lie
+  inside the hull's footprint, +2..3.5 u above its top face (median 2.9; detail median 2.2): the
+  cell-height / climb quantisation, not a misplacement. Over the same footprint the upper floor has
+  steep area-5 slivers 24-64 u above the slope, which the client's steep-polygon overlay also draws.
 - Foliage: `generateFoliage` for each zone. A FOLIAGE_MESH `collision` file is added as an OBSTACLE,
   or as WALKABLE when `walkable` is set (Hub: 207 of 6,876). With no collision file, `navmesh cutter`
   x instance scale is a PROJECTED 12-gon hole (Hub: 2,828).
@@ -549,7 +555,7 @@ Needs a world re-bake (navworld v8).
   their own interiors). Test `ksim_server_native_default`: no argument and the alias, a Hub route planned.
 - **Base**: the shipped navtiles (`knav::native`), converted to Detour at load, from the player's install. No first-run world
   bake. Work: cut each zone mesh (4608 u) into our 256 u tiles (512 polygons per tile, 6 corners per polygon: split faces);
-  interior meshes and their streaming links (`Edge::linked`) become shared edges or off-mesh links; faceData 4 / 5 ->
+  interior meshes and their streaming links (`Edge::linked`) become shared edges (no off-mesh links: an unmatched link stays a wall, review k16.7.136 F2); faceData 4 / 5 ->
   DoorOpen / DoorClosed; Shallow / Swim from height against the water plane. Clearance at query time, as the shipped mesh
   has no erosion: kinspect `findings/navmesh_runtime_spec.md` (17738d1; static `navrun_static.md`) is the spec. Per agent
   radius = race `pathfind footprint radius` x size factor (humans 4 u, King Gorillo 12-30 u); start snap r + 0.1, goal snap
@@ -733,7 +739,7 @@ install; the repo ships no cache and no generator for one; tests use a temp dir.
 
 **Where (MINE).** `$XDG_CACHE_HOME/kenshi-sim/navmesh` (default `~/.cache/kenshi-sim/navmesh`), overridden by
 `KENSHI_NAV_CACHE` (tests, a portable install) and turned off by `ksim_server --no-nav-cache`. Below it one tree per
-**world key**, `w<recipeVersion>_<dataHash>/`, where `dataHash` is `kworld::dataHash(loadOrder)`: the content hash of every
+**world key**, `w<recipeVersion>_<srcHash>_<dataHash>/`, where `srcHash` is the first 12 hex digits of `KNAV_BAKE_SRC_HASH` (the hash of the bake sources, compiler flags and Recast, the same one knav_bake's own cache keys on; a bake-source edit without a recipe bump starts a new tree, kenshi-k16.7.161; `NativeCacheOptions::bakeSrcHash` injects one for a test) and `dataHash` is `kworld::dataHash(loadOrder)`: the content hash of every
 merged data file, which the server already computes for the SIMLINK HELLO. A different mod set, load order or game data
 starts a different tree and never reads a neighbour's. The key is `NativeCacheOptions::worldKey`; 0 (no load order, as in
 a test or a tool) means no tree and no cache at all.
@@ -758,6 +764,7 @@ a test or a tool) means no tree and no cache at all.
 - Our recipe: bump `recipeVersion` on any change to the conversion, the bake recipe or its tuning, or the `.knav` layout.
   The tuning is process-wide and not stored in a file ("Bake speed"), so the cache is only valid under the default tuning;
   a tool that changes it must not use the cache (UNSURE: a tuning hash in the tree key instead of a refusal).
+  Recipe **49** (k16.7.129; 47 is k16.7.142, 48 may be k16.7.161): one clearance convention. No wall band or erosion in the baked mesh, the prop cut-out is the exact footprint (no furniture ring), the door area is the door box plus the 8 u mat (`kMatMargin`, rwh.310), and a polygon steeper than 72 degrees is reported per tile, not dropped. Hub canary digest 0x744fc50a29fc85c8.
   Recipe history, latest: **24** (k16.7.71), two rules. (1) A closed walkable furniture hull (`WorldShape::furniture`; 2 cells or more in x and z) keeps its top faces and loses its side sheets. The centre-based fill (fillShapes) is then its one rule: the conservative sheets took a floor cell on each side of a gap between two hulls (Noble House wall 2172 / shelf 2594: 11.2 u of hull gap came out 6.75 u in the mesh, 10.75 u without the sheets; a cell size of 1 gives the same). Other closed hulls keep their sheets: a building's floor slab (Squin Bar, General Shop) is walked onto, and its sheets are the step from the ground to its top face (dropping them cut the doorstep off); a closed obstacle hull's sheets are the keep-out of a solid (dropping them put fighters inside props: ksim_fight_prop, ksim_route_corners, ksim_storm_door; it would also open the Slave Shop's listed door, which stays a door-sweep gap). (2) A wall-band (Edge) piece whose contour simplifies away (under 3 vertices) is relabelled Land and the regions and contours are built again. Edge cells are their own regions (a region has one area), and the watershed cuts a strip one or two cells wide into small pieces whose contour collapses; such a piece left no polygon and the mesh wall moved in by the band's width (188 cells of zone 46,16 at the old recipe; the wider channels of rule 1 exposed 1278 and closed the Farm Shop route). 22 and 23 are taken by k16.7.74 and k16.7.94 in flight. **21** (k16.7.89): furniture body ring (footprint + clearance + margin nulled, stairs and use-node paths spared) and the slide height fallback; 12-19: unused (k16.7.89 rounds). **11** (k16.7.67, before the renumber): the zone key folds the gathered geometry digest and the heightmap stamp (the bake is unchanged). **10** (k16.7.85): k16.7.50 made bakes deterministic; caches baked before it are rebuilt (no mesh rule change).
   `navworld_v15` (baked 2026-11-15, `--threads 8`, before k16.7.50) is shipped data, not the patch cache, so the bump does not touch it; it may hold a tile in Recast's heap-noise variant (region_7_4 is known); not rebaked.
 - Game update: changes the merged data (`dataHash`), the shipped tiles (region keys) and, where the developers rebaked
@@ -815,7 +822,13 @@ A reader sees the old file or the whole new one, never a partial one, and two se
 bytes (the bakes are deterministic), so the race is harmless. No lock and no shared mutable index. The only deleter in v1 is
 the corrupt-entry rebuild; the prune (never built yet) would be the other.
 
-**Prune (UNSURE; not in v1).** On open, after the first `setCoverage`: if the cache is over a cap (default 8 GB), delete the oldest
+**Prune (built, kenshi-k16.7.101, user 2026-11-19: dev /scratch reached 76% on stale recipe trees).** `MeshNavigator::openNativeCache`
+touches the tree in use and keeps only the newest 3 `w<N>_<hash>` trees of the cache root by mtime (K = 3: a shared build dir
+alternates between a few branches' recipes); older ones are removed whole, one log line each (`nav cache: pruned ...`). Only direct
+children of the root named `w<digits>_<hex>` are considered, never a symlink, never anything outside the root. Test
+`ksim_nav_cache_prune` (5 fake trees: the oldest 2 go, the in-use one stays). Not built: the 8 GB cap and `--no-nav-cache-prune` below.
+
+**Prune, the earlier design (superseded by the above).** On open, after the first `setCoverage`: if the cache is over a cap (default 8 GB), delete the oldest
 trees by last use (touch the tree root on each start). Entries inside a tree are not evicted one by one; the keys are the
 point. No age-only expiry: a tree the player returns to a year later is still valid. `--no-nav-cache-prune` turns it off.
 
@@ -860,8 +873,10 @@ also gets right; it patches the shipped tiles at runtime ("Runtime mesh"), and t
 - **Seed pruning** (`knav/seeds.hpp`, `NavMesh::prune`): unreached polygons get flags 0, saved in the tile. `knav_bake --trace
   X Y Z` lists the seeds that keep a surface; `--no-prune` keeps everything. UNSURE: the seeds.def drop-to-ground mask 0x600.
 - **Mask clip** (`WorldShape::keepInside`, `hullPlanes`): the `building floor` >= 1 and `is stairs` parts of a walkable
-  building with an `interior mask` keep only their spans inside the mask hull (the intersection of its shapes, 2 u
-  tolerance). UNSURE: destroyed buildings' group mask and `destroyed collision` are not read.
+  building with an `interior mask` keep only their spans inside the mask hull: ONE convex hull of every corner of the mask's
+  boxes and every vertex of its convex-mesh shapes (kenshi-k16.7.142, recipe 43; rwh282/rwh292; it was the boxes' intersection, which cost the Longhouse
+  its upper floor), within `kClipTolerance` (2 u). Upper shapes only (the zone side is cut by the boxes in the original); `carveTerrain` stays the boxes one
+  by one. UNSURE: destroyed buildings' group mask and `destroyed collision` are not read.
 - **Interior part chance 0** (kenshi-k16.6.260): an `interior` entry whose chance (v1) is 0 is always placed, as the mask is.
   32 `interior` refs carry 0 in the merged data, all group 0 and on WALKABLE buildings (31 placed; Outpost Prison's is
   never placed). Of those, two parts have collision: Outpost s-IV's interior ramp (Newwworld.mod 42261, `is stairs`, the
@@ -1021,8 +1036,39 @@ RUNBOOK "Navmesh that follows the players"). Without the option nothing changes 
 - **Limits (UNSURE / open).** More than 25 zones wanted (a scattered multiplayer party) leaves the later areas without a mesh.
   `RegionConfig::fullDetailAll` is not streamed. A character that leaves the resident zones (chased out of the area) stands off
   mesh until it is demoted (a world squad that is not Full any more is demoted even while fighting off the mesh, and `position_corrected`
-  distance -1 is logged once per episode: TOWN_LIFE_SLICE 5.14 "Second NEW_GAME and off-mesh fights"). No thread pool: the load is synchronous.
+  distance -1 is logged once per episode: TOWN_LIFE_SLICE 5.14 "Second NEW_GAME and off-mesh fights"). No thread pool: the load is synchronous (a bake thread is designed below, "Bake thread", kenshi-k16.24).
 - Related: SIMLINK.md section 12 (tile stream), ARCHITECTURE.md "Pathfinding", RUNBOOK.md "Navmesh that follows the players".
+
+## Bake thread (kenshi-k16.24, design 2026-11-22; not built)
+
+User 2026-11-22: "A dedicated thread. The *entire* map gets queued on load (sorted by locations of interest, ie: where players are).
+And then cached to disk by hash (as discussed). So future loads are just a quick load." Today a region conversion (~1.8 s) and a stale
+zone's rebake (Hub ~0.8 s) run on the tick, in `syncNavCoverage`, the first time a zone is wanted ("Streaming coverage", last bullet).
+
+- **The tick never bakes.** A pool of bake threads owned by the `MeshNavigator` (default min(4, cores / 2), lowest OS priority; the
+  generator, kenshi-k16.7.131, plugs in as the same job) does every region conversion, stale-zone check and zone rebake. A job is pure:
+  it reads the game data and the shipped tiles (read only after load) and writes its result to the patch cache (temp file, then
+  rename, as now) and to a ready list. Nothing on the job side touches the `dtNavMesh`, the door book or the sim.
+- **One queue, ordered by interest.** On load (and on NEW_GAME) every zone of the world is queued. Its priority, highest first:
+  a wanted zone that is not ready (a walker is waiting on it); the 3 x 3 areas of player squads; the zones along their move goals and
+  far orders; the zones of the next ring around the players; the rest of the map by distance to the nearest player. The queue is
+  re-sorted when a player's area or a far order changes (at most once a second); a running job is never cancelled. A warm cache
+  turns a job into a key check and a file read, so the whole-map pass after the first is quick.
+- **The swap stays on the tick, at its boundary.** `syncNavCoverage` adds only zones whose job is done (`replaceTiles` with the
+  ready tiles); residency rules (25 zones, `kMaxResidentTiles`) do not change: the cache holds the world, the mesh holds the
+  wanted zones. A wanted zone that is not ready stays out of the mesh and jumps the queue; the server logs the wait (zone, ticks).
+- **A walker on a missing zone waits, the tick does not.** A route or far-order leg that needs a not-ready zone ends at the
+  resident edge (the far-order clamp already plans to the loaded zone's exit) and is re-planned when the zone joins; a character
+  that stands on a dropped or not-ready zone holds still (no off-mesh fall-back walk). UNSURE: the exe's behaviour at a not-yet-
+  loaded zone (it streams synchronously in the background loader; walkers at a missing tile stop).
+- **Determinism.** When a zone joins now depends on wall time, so two live runs can differ. Headless tests, the soak and any run
+  that compares hashes use **blocking mode** (the tick waits for its wanted zones, which is today's behaviour, with the same bytes):
+  `NavBakeMode::Blocking` is the default for tests and tools, `Background` for the server. Saves never record coverage, so a save is
+  the same in both.
+- **Disk.** The fully baked world is estimated at 4-6 GB ("Patch cache", world-wide estimate). The prune keeps the most recently
+  used zones under a size cap (server option, default 8 GB) and never the resident ones; a pruned zone is just a cold job again.
+- **Report (first build):** cold whole-world time on the pool and on one thread (estimate 13-16 min single), disk of a fully cached
+  world, RSS of the pool, tick wall-time p99 / max on the gate_heft far walk before and after (kenshi-k16.6.699 measures before).
 
 ## Island test (`ksim_nav_islands`, kenshi-k16.7.40; classified k16.7.43, 2026-11-15)
 
@@ -1096,11 +1142,29 @@ The runtime mesh is the original's tile where the stale check passes and our bak
 - **Covered %**: the original's surface at least 4 u from its own walls that our bake covers. **Surplus %**: our surface the original has no surface under (over-walk: roofs, wall tops, ground under a building, sea floor).
 - **Connectivity**: up to 160 polygon centres sampled on each mesh per zone, paired (40-500 u apart), kept when both meshes have a polygon within 2 / 6 / 2 u of both points; reachable (same Detour component, doors open) in one mesh and not the other: **under** (shipped yes, ours no) or **over** (ours yes, shipped no). The zone and its four neighbours are resident, so a pair may cross a seam.
 - **The gate fails** when the rebaked-zone count grows, the world cover falls or the world surplus rises by more than 0.005 points, the world under or over count rises, or a zone loses more than 2 points of cover or gains more than 2 of surplus. A recipe change that improves is checked in with `--write-baseline FILE` after the run is read. `--zones X0 Z0 X1 Z1` runs a window (no world gate); `--cell C` changes the grid (the baseline is at 4).
-- **Today's recipe (patch cache recipe 8), 970 rebaked zones** (not 1,051: the grass mask, k16.7.13, took the stale scan from 1,036 to 970; the review's 1,051 is the 2026-11-05 figure): covered **87.31%** (931,029,163 of 1,066,396,732 samples), surplus **14.86%** (165,996,739 of 1,117,437,964), connectivity 145,090 pairs, **under 1,033, over 615** (288 zones have an under pair, 94 an over pair). 160 zones cover under 80% and 41 under 50% (the worst: zone 6,26 at 2.2%, 56,31 at 4.7%, 30,56 at 6.1%, all with no folded building; **cause found, kenshi-k16.7.75: open deep sea, not a gap in the rebake.** `knav_compare --zone` on each: ours has 1.32 M samples against the original's 1.32 M, and 94-98% of ours is "at another height in the cell" (|dy| p50 90-98 u): the original meshes the water plane (flat y = 100.0, `--at` gives native 100.0) where the sea is at least 15 u deep, ours keeps the sea floor (y 2.8 at -117500, -25000, depth 97) on purpose ("Water" above: swimmers cross it, `swims = false` races walk it). The 30 u height tolerance therefore scores the whole zone as a miss and as surplus. Nothing is stranded: ours covers the zone. The same mismatch is in the partly-sea zones (41 zones under 50% cover, about 30 of them with surplus 50-80%); it is not the forest-only case of k16.7.74, and no recipe step, seed, prune, grass mask or height band is at fault. Fixing it in the bake would mean a second walkable layer at the water plane over deep water (a swimmer's surface; a design choice for ksim: path heights, `swims` races and the polygon count all change), so the baseline is not repinned. The honest alternative is in the gate: count a sample of ours in a Swim area under the plane as matching a native sample at y = 100); 116 zones have a surplus over 30%. The 221 zones whose reason is the buildings score 89.4% / 14.1%, the 749 forest-only zones 86.7% / 15.1%: the rebake of a zone with nothing built in it is worse than the tile it replaced.
+- **Today's recipe (patch cache recipe 8), 970 rebaked zones** (not 1,051: the grass mask, k16.7.13, took the stale scan from 1,036 to 970; the review's 1,051 is the 2026-11-05 figure): covered **87.31%** (931,029,163 of 1,066,396,732 samples), surplus **14.86%** (165,996,739 of 1,117,437,964), connectivity 145,090 pairs, **under 1,033, over 615** (288 zones have an under pair, 94 an over pair). 160 zones cover under 80% and 41 under 50% (the worst: zone 6,26 at 2.2%, 56,31 at 4.7%, 30,56 at 6.1%, all with no folded building; **cause found, kenshi-k16.7.75: open deep sea, not a gap in the rebake.** `knav_compare --zone` on each: ours has 1.32 M samples against the original's 1.32 M, and 94-98% of ours is "at another height in the cell" (|dy| p50 90-98 u): the original meshes the water plane (flat y = 100.0, `--at` gives native 100.0) where the sea is at least 15 u deep, ours keeps the sea floor (y 2.8 at -117500, -25000, depth 97) on purpose ("Water" above: swimmers cross it, `swims = false` races walk it). The 30 u height tolerance therefore scores the whole zone as a miss and as surplus. Nothing is stranded: ours covers the zone. The same mismatch is in the partly-sea zones (41 zones under 50% cover, about 30 of them with surplus 50-80%); it is not the forest-only case of k16.7.74, and no recipe step, seed, prune, grass mask or height band is at fault. Fixing it in the bake would mean a second walkable layer at the water plane over deep water (a swimmer's surface; a design choice for ksim: path heights, `swims` races and the polygon count all change), so the bake is left as it is (ksim, 2026-11-18, option a). **Done in the gate, kenshi-k16.7.96:** a sample of ours in a Swim-area polygon under the plane counts as a native sample at the plane height, both ways: our Swim triangles are lifted to `NavConfig::waterLevel` before the cover / surplus scoring, and a connectivity spot on a Swim floor is lifted to the plane, a spot at the plane that finds no polygon in the mesh falls back to the Swim polygon below it. No bake or recipe change. Re-pinned on recipe 30 (k16.7.95) and again on ksim f8679ce5 (k16.7.96 rework), before -> after: world cover 87.27% -> **93.69%**, surplus 13.25% -> **6.99%**; pairs 154,028 -> 161,789, under 366 -> 409, over 727 -> 738 (more pairs are judged now: the sea spots used to fall out for want of a polygon at both heights, so these counts are not comparable). Rework on ksim f8679ce5 against ksim's baseline (cover 87.27%, surplus 13.24%, 153,972 pairs, under 378, over 719): cover **93.686%**, surplus **6.990%**, pairs 161,759, **under 422, over 727**; the rise is +44 / +8 in 13 / 6 zones, none falling: under worst 35,42 (17 -> 38), 36,42 (+5), 19,41 (+4), over worst 19,2 (+3), the rest +1-2. These are newly judged sea-spot pairs, not a measured loss; whether 35,42 and 36,42 are marine is not checked (verify with `knav_compare --zone 35 42`); the three zones 6,26 / 56,31 / 30,56: cover 2.2 / 4.7 / 6.0% -> **99.8 / 99.9 / 100.0%**, surplus 98 / 95 / 94% -> 0.0 / 0.0 / 0.0%; zones under 50% cover 41 -> **2**, under 80% 160 -> 48, surplus over 30% 116 -> 23. The two left are 47,14 (42.0% cover, 58.0% surplus) and 50,56 (43.3% / 56.9%), both "forest only: no folded building, grass-limited trees", 324 tiles with no building shape: not marine, the next item; the baseline before this had the sea floor in all of the 41); (116 zones had a surplus over 30%, 23 after k16.7.96). The 221 zones whose reason is the buildings score 89.4% / 14.1%, the 749 forest-only zones 86.7% / 15.1%: the rebake of a zone with nothing built in it is worse than the tile it replaced.
+- **Swim-floor scoring on the 221-zone gate (kenshi-k16.7.96, rebased on ksim 07aaa9c4 after k16.7.74 cut the gated zones to 221).** Against ksim's baseline (cover 89.35%, surplus 11.41%, 36,555 pairs, under 273, over 669): cover **96.553%**, surplus **4.414%**, 38,333 pairs, **under 298, over 681** (more pairs are judged: sea spots now find a polygon). Zones under 50% cover 9 -> **0**, under 80% 29 -> **1** (48,13 at 78.7%, unchanged: not marine), surplus over 30% 21 -> 2. Under rose in 35,42 (13 -> 29) and 36,42 (10 -> 15), both now at 98.5% cover (they were 76.8 / 78.6%), so the new pairs are sea spots that used to drop out; over rose by 3 in 55,49 and 4 in 50,49. The baseline was regenerated with `--write-baseline` on the merged tree. The 47,14 / 50,56 leftovers of the 970-zone figures above are no longer gated (forest-only zones keep the shipped tile).
 - **Repinned for recipe 9 (k16.6.270's per-zone prune, the only mesh change since the first baseline; kenshi-k16.7.66 rework, 2026-11-17).** Covered 87.306 -> **87.268%** (-404,173 samples, 543 zones, none gains; worst 57,47 -93.1 -> 91.4%, 34,46, 18,48), surplus 14.855 -> **13.245%** (the pruned pockets were ours-only), pairs 145,090 -> 154,182, **under 1,033 -> 343**, **over 615 -> 688** (52 zones up, 25 down; worst 18,51 +8). Not one merge of the batch but one: 270 (recipe 9); 7.62 / 7.63 (clearance), 253, 277 (floors) and 8.27 (walker) do not touch the bake. Net it is an improvement on three of the four figures, and the prune is the intended change, so the baseline is repinned rather than the change fixed; the 0.04 points of cover are surface the zone's own seeds do not reach (UNSURE whether the original's tile has them as a sealed pocket: verify with `knav_compare --zone 57 47`). The seam numbers are unchanged (943 / 1,990 / 71 seams, same lengths).
 - **Why the zones are stale** (hash term that differs, as far as the hash lets one tell: the stored word cannot be split into the building fold and the forest word): 749 of 970 have **no folded building**, so only the forest word can differ (529 of them place `limit to grass areas` trees, whose paint is the part of the scatter still approximated, NAVHASH.md); in 1 more the buildings agree (stored = fold) and the shipped bake saw no trees; 220 have buildings and an unsplittable difference, 153 of them with grass-limited trees, 67 without, and 1 more has buildings and no trees of ours. No zone is unverifiable. So at least 750 of the 970 are stale on the forest alone, and the 220 with buildings may be too.
 - **Tiles no building shape touches** (a zone's 324 tiles; "touched": a building's shapes, or a shipped interior's vertices, within the tile): of 314,280 tiles of the 970 zones, **309,085 (98.3%)** have none, 188,952 of them take foliage shapes (rocks, trees) and **120,133 are pure terrain**; **740 zones have no building tile at all** (725 of them forest-only): the shipped zone mesh would do there, and it is the better mesh by the figures above. The rebake swaps the zone's whole 18 x 18 tile square, so a zone with one building replaces 323 tiles of the original's terrain for it (kenshi-k16.7.69 for the interior across a zone border).
 - **Seams** (unlinked portal length: boundary edges of walkable polygons on a zone border that face a walkable edge of the neighbour within 20 u in height and carry no Detour link, one side's edges counted, measured on the resident mesh; the 20 u is ours, the bake's climb is 5): rebaked | rebaked **943 seams, 3,666,780 u of portal, 2 u unlinked**; shipped | rebaked **1,990 seams, 5,994,296 u, 140,039 u unlinked (2.34%)**, 884 of the seams with some, median 0, p90 216 u, worst 48,57 | 48,58 (all 1,802 u), 47,25 | 48,25 (1,460 u of 3,372), 16,3 | 17,3 (1,210 of 4,541); shipped | shipped control (71 seams, every 55th zone pair) **0 u of 188,611**. A shipped / rebaked seam is the original's edge meeting ours: the vertices do not meet (the shipped faces are cut to 256 u tiles and our polygon edge sits where its voxels end), so Detour finds no portal. Whether a walker crosses at such a place is not tested here (no route crosses the 140 km in a test); a walker's path through the unlinked part fails or detours.
+- **Forest-only zones keep the shipped tile (patch cache recipe 42, kenshi-k16.7.74, 2026-11-17).** `kworld::forestOnlyStale`: the stored hash differs and the zone folds no building, so only the forest word can differ; `applyStaleCheck` keeps the shipped zone mesh (choice Shipped, reason "forest only...", `NativeStaleStats::zonesForestOnly`), interiors still checked on their own; the gate uses the same predicate, so those zones are no longer rebaked or gated (970 -> 221 rebaked zones; the gate baseline is re-pinned on it). Why the forest word differs: the tree paint (`limit to grass areas`) is the approximated part of the scatter (NAVHASH.md), 529 of the 749 place such trees, so it is our placement that is not exact, not the shipped bake's input that is wrong; not fixed here, and the shipped tile is not the wrong answer for it. NOT done: the per-tile rule for zones with buildings (a tile no building touches keeps the shipped tile): it adds shipped|rebaked seams inside a zone (2.34% of that portal length is unlinked today) and the seam numbers could not be measured without a run; kenshi-k16.7.93 is the place for it.
+
+## One clearance convention (kenshi-k16.7.129, bake recipe 2)
+
+The query applies the body's radius to moves too: `Walker::step` / `drive` take a `radius`, and a hop never ends nearer a mesh wall (a prop's cut-out, a building wall) than that radius or than the hop started (a start inside the margin may move away or along, not in). Combat's steer step, push-bent step and direct drive pass the fighter's path radius (`bodyRoom`); route following does not (route ends and shut doors lie inside the radius by design). The cut-out edge is the 2 u raster's, so a route leg planned by clearance on a bake can still pass inside the test's body margin of a prop's box (ksim_prop_clip_bake, char 919).
+
+The Recast bake no longer bakes a wall band (`Area::Edge`) or a prop ring: clearance comes from the query (portal clearance per radius), as on the
+shipped tiles. A prop is cut at its exact footprint; the door area is the door box grown by the 8 u mat margin (the exact box, or 1 or 4 u, lost 8-12
+door-sweep legs on the 4014 TwoStorey doors). A tile over `kMaxPolysPerTile` yields no tile. The bake reports, per tile on stderr, polygons whose own plane
+is steeper than 72 degrees (`kBridgeSlopeDegrees`; storey-bridging quads); it does not drop them (`kDropSteepPolys`), because Recast's coarse stair quads
+exceed the 55 degree stair limit. Stairs on collision shapes are the new generator's job (k16.7.131 -> .145); this path is its fallback.
+The door-sweep nav cache under `cpp/build/door_sweep` (and any runtime nav cache, keyed by the data hash and the recipe number) survives source edits to the
+bake: delete it before a rerun, or an experiment re-measures the old mesh.
+Door margin (kenshi-rwh.310): the original adds 0 u of door area (the door paints only the faces inside its box; the floor round it is ordinary mesh). Our 8 u `kMatMargin` is a stand-in for floor the Recast bake leaves out at doors (the exact box, 1 u and 4 u lose 8-12 door-sweep legs on the 4014 TwoStorey doors); it stays until the generator's door painter (k16.7.143) gives a continuous floor, then it goes to 0.
+Open: 4104-D-TwoStorey Clothing Shop deep0 (no route at radius 2 and up) is in `door_sweep_known_gaps.tsv` as a stand-in: the exact cut of Table 109 / Shelf 111 leaves a 4.5 u gap the original walks. Which furniture the original cuts and its outline: kenshi-rwh.315; kenshi-k16.7.162 applies it and drops the entry. The Edge-only squeeze retry in `clearanceCorridor` stays: removing it fails `ksim_foyer_route` (2 of 2 routes, 4 u body), so the Hub's shipped tiles still carry Edge polygons that reach it.
+Hub bar rebake (`ksim_navcoll_export native`, 110 u round the building, recipe 2): 69 faces, 0 `Area::Edge` (review rebake: 194 faces, 142 Edge), 0 faces over 55 degrees,
+furniture boundary median 0.92 u (review: 1.83; target 0.3: the 2 u cell grid), 18% of samples within 0.3 u; the bar's door is 464 u2 against a 70 u2 door box.
 
 ## Door sweep (`ksim_door_sweep`, kenshi-k16.6.251, 2026-11-16)
 
@@ -1118,6 +1182,7 @@ The island test sees walkable regions the world cannot reach; this one asks the 
 - **Deep-room gaps, second look (kenshi-k16.7.87, 2026-11-19).** Heft Clothing Shop is already gone from the gap file (k16.7.71's hull rule, recipe 24). Hub Travel Gear: the shipped ground floor (`knav_draw --native --box -63800 16560 -63620 16680 --y 436 452`) is one connected face set from the door mat through the middle to the far room (sample -63781 16585, y 446.4); the bake's (`--mesh navworld/region_4_8.knav --components`, 11 sets in the box, three on this floor) is cut into the far room + middle, the entrance strip, and a lower blob, with 10-20 u gaps where the original has floor. So not the original's narrowness. Not done (the worker guard forbids running `ksim_door_sweep` here, and the runtime rebake's navcache entry was not available): which bake step cuts them (prop hulls, wall band, closed-hull fill) and whether other `4104-D-TwoStorey` buildings share it. Next: `knav_draw --mesh <navcache zone entry>` on the runtime rebake (the bake in navworld may differ from it), then the same bake with props/hulls off.
 - **Travel Gear bisect (kenshi-k16.7.87, 2026-11-19; ksim 91f26330, recipe 24).** One-zone bake (`knav_bake --zones 18 35 18 35`, 3 s; zone cell = floor((v + 147456) / 4608)) matches navworld region 4,8: same cuts. `knav_draw --mesh ... --path -63650 16635 -63781 16585 --y 436 452` ends `partial` at the tip of the entrance corridor (x -63720, z 16638), a ~3 u gap short of the far room's tip; the lower blob (x -63750..-63690, z 16640..16670) is pruned (no seed). Obstacle props near the gap: Obstacle boxes 11 x 12 at (-63724..-63713, 16630..16642) y 442..454, 30 x 22 at (-63713..-63683, 16635..16657) and 21 x 31 at (-63771..-63750, 16625..16656). Ruled out (temporary debug switches, path still `partial`): the prop body clearance ring (k16.7.89), dropping all furniture Obstacle shapes (the gap narrows but stays), `--ledge off`, `--detail-cells 0`, `--partition layers` / monotone. Dropping a closed walkable hull (y 372/376) removes the floor itself (no path), (373/377) changes nothing. Not found: the shape or step that leaves the 3 u. The original has a 12 u neck at the same place with a hole where the 11 x 12 box stands. Next: dump the cells' area ids (wall band Edge vs null) at x -63720 z 16638 and the walkable shape whose side sheet crosses it; check a second 4104-D-TwoStorey building. The probe tools: `knav_draw --path` works on `--mesh`, not on `--native`.
 - **Travel Gear cause found (kenshi-k16.7.87, 2026-11-19).** Temporary dumps of the heightfield at the neck (-63708, 16627), tile by tile: the floor is rasterised whole (walkable span y 442.4..443.4, area 63); above it, from the terrain pass on, a non-walkable span y 454.4..458.4 (the dune the building is sunk into, steep so area 0), 11 u above the floor. `rcFilterWalkableLowHeightSpans` (agent height 18) nulls every floor span under it, which is the 3 u / 12 u cut: a diagonal band of the entrance vestibule. The building's interior mask has two boxes (-63739..-63627 x 16491..16608, y 638..822; -63814..-63632 x 16518..16714, y 419..814, AABBs of a yawed box) and `interior terrain` is off, so `carveInteriorTerrain` removes the terrain only inside them; the vestibule lies outside the yawed box, so its terrain roof stays. The original's interior mesh has the floor there (a 12 u neck round the 11 x 12 pillar box). Earlier suspects ruled out: obstacles, prop clearance, ledge filter, detail, partition, walkable hulls. Not a prop or wall-band problem, so not Heft-style. Fix options, none tried (each needs the shipped gate): (a) also carve terrain spans inside the building's closed walkable hulls grown up by the agent height (these hulls top out at 451, the roof span is at 454..458); (b) skip the low-height filter for a floor span whose ceiling is terrain and within a building's footprint hull; (c) a per-building exception. Other buildings: any sunk house whose entrance passage lies outside its mask box and under the dune shares this; not enumerated (a count of floor spans removed by the low-height filter with a terrain ceiling, per building, would list them).
+- **Travel Gear is not on the shipped tile (kenshi-k16.7.157, 2026-11-23, ksim 9ee342df, recipe 42).** Zone 18,35 folds 42 buildings (`hashes.buildings`), so `forestOnlyStale` is false: the stored zone hash differs (Stale) and the whole zone is rebaked (cache entry `zone_18_35_*.knav`, 19 sets in the Travel Gear box; the `--path` from the inside point ends `partial`). The shipped conversion (`knav_native OUT --region 4 8`, then `knav_draw --mesh OUT/region_4_8.knav --radius R --path -63656.5 16614.2 -63781.4 16585.5 --y 440 452`) routes `complete` at r 0, 0.5, 1 and 4 (132..136 u, 4-7 corners), so the original's 12 u neck passes a r 4 body and no clearance, portal or corner fix is needed. The sweep's failure (`closed short of the goal`, down to r 0.5) is the bake's terrain-roof cut ("Travel Gear cause found"), not routing. `knav_draw --path` takes `--radius R` (the runtime clearance search); `--native --path` is still not supported, convert the region first. The "keeps the shipped tile" claim of ds/k16.7.87 does not hold for this zone: the leg leaves the gap file only through the hull-roof carve (k16.7.87, held behind k16.7.128 / k16.7.142) or a rule that keeps the shipped tile for a zone whose only stale building is a sunk interior.
 - The gap file is a bug list, not a baseline to keep: each line is a door the player cannot walk through on the mesh, or (`out of search nodes` on a 100-u route) a route the search gave up on; `deep0` lines may also be a closed-off room of a building that the sample grid picked (a back room with its own door). Not done: doors other than the first of a building, gates, buildings outside the four towns, interior doors between rooms.
 
 ## Route-leg walk (`ksim_route_walk`, kenshi-k16.6.298; the last 3 legs, kenshi-k16.8.37, 2026-11-18)
@@ -1198,3 +1263,102 @@ one-sidedly (islands and door sweep see under-connection; over-walk is invisible
 Agreed by both: deterministic clearance A* and bake (fixed threads, pure tiles, no fast-math), failure never a silent
 shorter walk, chase / walk failures end in cooldown or give-up, measuring 7 / 8 against the shipped tiles was the
 right method.
+
+## Staleness by agreement (kenshi-k16.7.128, 2026-11-21)
+
+A hash-stale shipped tile is usually still the original's own mesh of the place (the Hub bar: area 24,440 vs 24,432 u2), and the
+original's cut-outs round furniture are tighter than our recipe's. So after the hash says stale (zone, unverifiable, or a stale
+interior in a fresh zone) the loader still rebakes as before, then compares per 256 u tile (`knav/navgeom.hpp`,
+`knav::tileAgreements`, built on `knav/compare.hpp`): where our bake covers the shipped surface and adds none of its own, the
+shipped tile stays and our bake of that tile is dropped; elsewhere our bake stays. A first try, a face test against current
+collision triangles, could not separate stale from fresh (control: fresh-hash zones kept only 70% of faces: the shipped ground
+is a coarser mesh than the heightmap and shipped floors sit off the collision triangles), so the measure is mesh against mesh.
+
+- **Measure** (2 u grid, height tolerance 30 u: the shipped ground is coarse in height, so it measures where, not how high;
+  shipped surface within 4 u of a shipped wall is not scored, our erosion differs there): covered = share of the scored shipped
+  samples within tolerance of one of ours; surplus = share of our samples with no shipped surface within tolerance.
+- **Rule**: agree when covered >= 90 % and surplus <= 10 %; a tile with under 200 samples either way agrees when it has at
+  most 12 missing + surplus samples.
+- **Calibration** (`knav_stalegeom --control 24`: 24 fresh-hash zones with a zone file, 7,677 tiles with >= 200 samples; the
+  shipped tile is right by the hash, our bake is not always): covered p50 100 %, histogram of tiles by covered, 0-10 %: 1,346,
+  10-90 %: 749, 90-100 %: 5,576; surplus p50 0.6 %, 5,282 tiles under 5 %, 1,282 at 95-100 %. The mass is bimodal (agree or
+  disjoint; the disjoint tiles are whole-tile height mismatches over water and slopes where our bake differs from a right tile);
+  70 % of fresh tiles pass the rule. The threshold sits in the valley between the modes; a p99 over fresh pairs does not exist
+  because a quarter of them genuinely disagree. A disagreeing tile keeps our bake, as before: the rule never makes a tile worse
+  than today, it only returns the original's mesh where ours matches it.
+- **Joins** (a tile agrees only if it joins its neighbours; found by the door sweep): area metrics cannot see a route cut.
+  Three shipped interiors (the Bar at one site, Thieves, Police; floor 0 deep) agree at 93-99 % with 1 % surplus, yet the
+  shipped rooms are cut off from each other for a body-sized walker (4 u) where our bake connects them. So `bridges` counts
+  regions of our surface (>= 25 cells of 2 u) that join two or more shipped regions (the shipped surface eroded 4 u by its
+  walls, >= 25 cells); a tile with `bridges != 0` does not agree and takes our bake. The Hub bar's tile (376,586,
+  bridges 2) is rebaked too although it routes shipped; region sizes do not separate it from the true cuts. That is the
+  better outcome: at the bar stair (col_46) the shipped conversion covers 34.8 % of the tread, our rebake 61 %, the
+  original's live mesh 73.2 % (k16.7.139). The 4 u cuts are not the original's: inspect-live (kenshi-rwh.281, kinspect
+  findings/kenshi-rwh.281/README.md) found all four interiors (Bar at both sites, Thieves, Police) ONE edge-connected face
+  graph with the portal to the world tile, no room split; our bake joining them is right, so the bridges rule stands (inset
+  not measured). On the control
+  zones 329 of 5,453 base-agreeing tiles flip. A cut can also run across a tile border (the Bar at the first site: the
+  bridging tile is rebaked, but the kept shipped tile beside it holds the target room, cut off from our bake). So an interior
+  (a few tiles of rooms) rebakes the 8 tiles around a bridging tile as well; a zone does not (the Hub would keep 137 of 324
+  tiles, not 237). The cache sidecar is `agree2`: the agreed tiles, then `joined`, then the agreed tiles beside no bridging one.
+- **Cuts and height offsets** (found by the tq run, ksim_mine_node_cut / ksim_route_walk / ksim_height_sweep): area agreement
+  also passed tiles where our bake cuts shipped ground (the Hub copper node: 344 u2 of shipped walkable inside the rock's
+  cover, 0.5 % of the tile) and tiles whose shipped ground is a coarse height off ours (2-6 u: height_sweep gaps; 15 u: seven
+  off-floor route legs beside a rebaked neighbour). So `cuts` counts regions (>= 25 cells) of shipped surface 4 u off its walls
+  that ours does not cover, and a tile disagrees when `cuts != 0` or more than 5 % of its shipped samples are over `kHeightOff`
+  (6 u) from our nearest surface (`offHeight`; the 30 u tolerance still decides covered / not). Cost: the Hub keeps 21 of 324
+  tiles (was 237) and the Bar's tile is rebaked; the stale zones of the world_sample keep 54 of 650. The sidecar is `agree5`.
+  Twelve height_sweep cells (Hub deck / stair, Heft slope) are new known gaps, 19 listed gaps now pass. Shipped ground is the
+  original's own but coarser than our collision, so the tiles that still agree are the flat ones.
+- **Link edges**: a shipped interior joins the world through streaming-link edges whose spans differ at the ends (the Bar at
+  the other site: 2.3 u), so only the corners within the snap joined and the interior was an island of 110 polys. The
+  converter now inserts, on each interior link edge, the world link edge's endpoints that lie inside it (and the reverse), so
+  Detour sees identical vertices and joins the whole overlap (`splitLinkedEdges` in `native_tiles.cpp`).
+- **Applied** (`knav_stalegeom --stale`, 221 stale zones, 118 zones with stale interiors): stale zones: 52,132 tiles agree
+  (kept shipped), 19,165 rebaked, every zone mixed; stale interiors of fresh zones: 385 tiles kept, 527 rebaked (1 zone keeps
+  all, 26 none, 91 some). The Hub (zone 20,32): 237 tiles shipped, 87 rebaked, the Bar's tile among them.
+- **Cache**: the decision is per zone, computed once over the zone's whole tile square and stored beside the zone entry as
+  `<entry>.agree` (text: `agree2`, the agreed tiles, `joined`, the joined tiles). A warm start reads it and compares nothing. Recipe 46 (renumbered
+  at merge). The hash stays the cheap "certainly fresh" shortcut. `NativeTileReport::agreed` / `rebaked` list the tiles;
+  `NativeStaleStats::tilesAgreed` / `tilesRebaked` count them; the loader's log line carries both.
+- Seams: a kept shipped tile beside a baked one is the same case as a stale zone beside a fresh one today (Detour tiles of
+  different origin joined at the border).
+- **Doors**: the shipped faces carry no door id, so a kept tile that holds a door of our bake is converted again with the
+  zone's `knav::nativeDoorKeys` (otherwise the sim finds no door polygon and spawns no door: `ksim_storm_door` failed). With the
+  keys the door sweep reaches the kept interiors; every leg of `door_sweep_known_gaps.tsv` that routed before still does
+  and no gap was added.
+- **Gate baselines after the stricter rule**: fewer tiles stay shipped, so more of the world is our bake. The shipped-tile gate world
+  line is re-pinned (under-connection pairs 273 -> 292, over-walk pairs 669 -> 238; cover and surplus within slack). The island test
+  gained five interior islands that are our bake's, listed as `bug` rows: the shipped tile joined them before the rule changed.
+  `--oracle` has not been run on them.
+
+## Bake cache
+
+`knav_bake` caches every output it writes (world and single-file modes) in a content-addressed directory (kenshi-k16.15.42).
+Root: CMake cache variable `KNAV_BAKE_CACHE` (compiled in, empty = off), overridden per run by the `KNAV_BAKE_CACHE` env var or
+`--cache DIR`; `--no-cache` turns it off; `--trace` runs bypass it.
+
+- **Key** (hashed to 128 bits; the text is stored in `<key>/.complete`): the recipe version (`kBakeRecipeVersion` in
+  `knav_bake.cpp`; bump it when the output can change without a source change), a SHA-256 of the contents of the sources it is
+  built from (generated at build time by `cmake/knav_srchash.cmake`: `src|include/{knav,kworld,kutil,kdata}`, `format.cpp`,
+  `gamedata.cpp`, `knav_bake.cpp`, the cache header, `recast.cmake`; any generator, not the binary's bytes), the game data path plus
+  a stamp of every file's relative name, size and mtime under it, and the args that shape the output (mode, regions or zones, radius,
+  prune, the tuning switches). The source hash also folds in `build/knav_bake_gen/buildid.txt` (`cmake/knav_buildid.cmake`,
+  kenshi-k16.15.45): compiler id + version, build type, CXX flag variables, directory and per-target (knav_bake, knav, kworld,
+  kutil, kdata) compile options and definitions, and the Recast/Detour identity (a system package: version + SHA-256 of its
+  library file; fetched: SHA-256 of its sources). `cpp/CMakeLists.txt` is not hashed (every added test edits it): nothing in it
+  reaches the bake's bytes except through those values and the hashed source directories. Not the thread count (`knav_bake_threads`) nor the output path.
+- **`.failed`** holds the exception text or exit status plus the last 40 lines of the bake's stdout+stderr; a rerun of the same key
+  fails at once with it. A killed bake (no marker, lock free) is cleared and rebaked. Dev builds: `KNAV_BAKE_TEST_FAIL=throw|exit`
+  forces a failure (part of the key).
+- **Layout**: `<root>/<key>/{.lock, .complete | .failed, data/}`. A miss takes `flock` on `.lock`, bakes straight into `data/`, writes
+  `.complete` last. A second run of the key waits on the lock (the kernel drops it if the holder dies), then starts over.
+  A bake that fails on its own error writes `.failed`; later runs of that key fail at once (a fix changes the source hash). A dir with
+  neither marker and no held lock was killed: it is cleared and rebaked.
+- **Hit**: prints `cache hit <key>`, touches `.complete`, and hard-links the entry's (read-only) files into the requested output (copy if
+  the filesystems differ). A miss places its output the same way.
+  Before an uncached bake writes an output file it unlinks what is there (it may be a read-only link into an entry); a hit also removes files in the output dir the entry lacks. Test: `knav_bake_cache_reuse` (k16.15.47).
+- **Cleanup**: `tools/knav_cache_prune.sh CACHE_DIR [days=7] [max_gb=40]` removes entries unused for N days, then least recently used
+  until under the cap; it takes each entry's lock non-blockingly and skips unmarked dirs younger than an hour.
+
+- **Gate baseline with both the swim-floor rule (k16.7.96) and the agreement rule (k16.7.128)**, re-recorded with `--write-baseline` on the merged tree. World, 221 zones: cover **96.552%**, surplus **4.354%**, 38,597 pairs, **under 316, over 244**. Against k16.7.96 alone (96.553%, 4.414%, 38,333 pairs, under 298, over 681): cover unchanged, surplus -0.06, under +18, over -437. Against this branch before the merge (89.345%, 11.353%, 36,754 pairs, under 292, over 238): the swim rule lifts cover and cuts surplus, under +24, over +6. The under rise is the kept shipped tiles' coarser ground against the sea spots the swim rule now scores.

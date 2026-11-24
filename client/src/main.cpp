@@ -187,6 +187,7 @@
 #include "host/uihost.hpp"
 #include "host/panels.hpp"
 #include "host/events.hpp"
+#include "dev/framelog.hpp"
 
 namespace host
 {
@@ -622,7 +623,7 @@ hints::Context hints_context()
 	c.leaveDrive = [] { leave_follow(); return true; };
 	// Items, beds, producers and doors (steps 4 and 5): the old sim_click's own calls
 	c.thingOrder = [](uint64_t id, int action, bool queue) { return app.sim.interact(id, (uint8_t)action, queue); };
-	c.showMachine = [](uint64_t id) { app.machine = id; app.panelProducer = id; };	// the panel follows the last clicked thing (k16.19.8.2)
+	c.showMachine = [](uint64_t id) { const simlink::Interactable* mt = app.sim.thing(id); if (!mt || mt->kind != simlink::Interactable::kMachine) { app.machine = id; } app.panelProducer = id; };	// the panel follows the last clicked thing (k16.19.8.2)
 	c.producerOpen = [](uint64_t id, bool queue) { app.panelProducer = id; return open_container(id, queue); };
 	c.producerUse = [](uint64_t id, bool queue) { app.panelProducer = id; return use_producer(id, queue); };
 	c.producerAutomatic = [](uint64_t id) { const simlink::Interactable* t = app.sim.thing(id); return t && producer_automatic(*t); };
@@ -756,7 +757,7 @@ void hover_cursor()
 	if (app.look) { hoverRule = "mouse look: no hover decision (the cursor is hidden)"; return; }
 	if (app.boxDown && app.boxDrag) { hoverRule = "box select drag: the hover cursor holds still"; return; }	// while the box shows the hover cursor holds still (the original skips the hover dispatch; kenshi-rwh.134)
 	if (app.uiOn && ui::wantsMouse()) { app.hoverThing = 0; app.hoverChar = 0; hoverCage = 0; hoverRule = "pointer over a UI panel -> arrow (no world pick)"; app.cursors.set("arrow"); return; }
-	const Pick p = pick_screen(app.mouseX, app.mouseY);
+	const Pick p = pick_screen(app.mouseX, app.mouseY, nullptr, true);
 	if (p.kind == Pick::Ground) { app.hoverHitOk = true; std::copy(p.hit, p.hit + 3, app.hoverHit); }
 	hoverRule = "no rule matched (nothing hit, or a hit with no cursor of its own) -> arrow";
 	app.hoverThing = p.kind == Pick::Item || p.kind == Pick::Door || p.kind == Pick::Container || p.kind == Pick::Producer ? p.id : 0;
@@ -782,7 +783,7 @@ void hover_cursor()
 		hoverRule = h.rule;
 	}
 	else if (p.kind == Pick::None) { hoverRule = "nothing under the pointer (letterbox bar or sky) -> arrow"; }
-	if (app.scripted() && name != app.cursors.current()) { printf("cursor: %s at %.0f %.0f (frame %llu)\n", name.c_str(), app.mouseX, app.mouseY, (unsigned long long)app.frames); }
+	if (static const bool cursorLog = framelog::on("cursor"); cursorLog && app.scripted() && name != app.cursors.current()) { printf("cursor: %s at %.0f %.0f (frame %llu)\n", name.c_str(), app.mouseX, app.mouseY, (unsigned long long)app.frames); }
 	app.cursors.set(name);
 }
 
@@ -947,6 +948,11 @@ bool open_container(uint64_t id, bool queue)
 
 bool producer_automatic(const simlink::Interactable& t)
 {
+	if (t.kind == simlink::Interactable::kMachine)	// a kind 12 machine: its BUILDING row's bit 11 (fully automatic: max operators 0, or a furnace)
+	{
+		const simlink::SimLinkDecoder::Building* r = app.sim.building(t.id);
+		return r && (r->flags & simlink::SimLinkDecoder::Building::kAutomatic);
+	}
 	return app.buildRecs.count(app.sim.decoder().str(t.record)) && t.maxOperators == 0;
 }
 const char* producer_cursor(const simlink::Interactable& t)
@@ -960,7 +966,7 @@ const char* producer_cursor(const simlink::Interactable& t)
 bool use_producer(uint64_t id, bool queue)
 {
 	const simlink::Interactable* t = app.sim.thing(id);
-	return t && t->kind == simlink::Interactable::kProducer && app.sim.interact(id, 4, queue);
+	return t && t->machineLike() && app.sim.interact(id, 4, queue);
 }
 
 // Loot a KO'd or dead character (LOOT_TARGET on a body): order 60 action 5 with flags bit 0, so the server walks there without taking anything and
@@ -1090,7 +1096,7 @@ void send_drive(uint8_t drive, double heading, int strafe = 0)
 	app.strafeSent = strafe;
 	app.headingSent = heading;
 	app.driveAge = 0;
-	if (app.scripted())
+	if (static const bool driveLog = framelog::on("drive"); driveLog && app.scripted())
 	{
 		const simlink::Dynamic& d = app.sim.decoder().chars.at(app.followId).cur;
 		printf("drive %u strafe %d heading %.2f (server: drive %u strafe %d heading %.2f driveSeq %u flags %x pos %.1f %.1f fwd %.2f)\n", drive, strafe, wrap_angle(heading), d.drive, (d.flags >> 23 & 1) - (d.flags >> 22 & 1), d.heading, d.driveSeq, d.flags, d.pos[0], d.pos[2], d.fwd);

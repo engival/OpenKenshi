@@ -37,7 +37,7 @@ int main(int argc, char** argv)
 		}
 
 		Rig r(order, gd, data, nav);
-		test::require(r.buildingFrames == 0 && r.dec.buildings.empty(), "connect: no BUILDING frame while there are no buildings");
+		test::require(r.buildingFrames == 0 && r.buildingIds().empty(), "connect: no BUILDING frame while there are no buildings");
 		const kdata::Record* shack = r.byName("Small Shack");
 		test::require(shack != nullptr, "the Small Shack record");
 		const std::vector<std::string> unlocked = r.unlocked();
@@ -199,7 +199,7 @@ int main(int argc, char** argv)
 			test::require(radius == 1000.0 && tx == site.x && tz == site.z, "one building: the town is centred on it with radius 1000");
 		}
 		test::require(townName == "Your Outpost" && townMembers == 1, "the town is \"Your Outpost\" with the building as its member");
-		test::require(r.buildingFrames == 1 && r.dec.buildings.size() == 1, "one BUILDING frame on first sight");
+		test::require(r.buildingFrames == 1 && r.buildingIds().size() == 1, "one BUILDING frame on first sight");
 		{
 			const auto& d = r.dec.buildings.at(id);
 			test::require(r.dec.str(d.record) == shack->stringID, "wire: record");
@@ -249,7 +249,7 @@ int main(int argc, char** argv)
 				test::require(dec2.feed(view.data(), view.size()), "decoder: " + dec2.error());
 				at += 4 + len;
 			}
-			test::require(dec2.buildings.size() == 1 && dec2.buildings.count(id) == 1, "the connect after a load carries the building");
+			test::require(dec2.buildings.count(id) == 1 && dec2.buildings.at(id).owner == r.dec.buildings.at(id).owner, "the connect after a load carries the building");
 			r.sim.run(100);
 			loaded.run(100);
 			test::require(loaded.stateHash() == r.sim.stateHash(), "save, load and continue differs from the uninterrupted run");

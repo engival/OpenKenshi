@@ -12,12 +12,17 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstddef>
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <queue>
 #include <set>
@@ -29,6 +34,13 @@
 #endif
 
 namespace knav {
+
+namespace
+{
+std::atomic<bool> gSlicedComponents{ false };
+}
+
+void setSlicedComponents(bool sliced) noexcept { gSlicedComponents.store(sliced, std::memory_order_relaxed); }
 
 namespace {
 
@@ -468,6 +480,7 @@ void NavMesh::replaceTiles(const std::vector<TileCoord>& removed, std::vector<Ba
 	indexDoors();
 	// A rebuilt tile is a whole new tile: one version step, and no patch chain across it.
 	revision_ = nextRevision();
+	geometryRevision_ = revision_;
 	for (const TileCoord& at : touched)
 	{
 		TileLog& log = tileLogs_[{ at.x, at.z }];
@@ -764,8 +777,8 @@ constexpr float kRefineRange = 300.0f;
 constexpr float kRefineRatio = 1.02f;
 // A band start's route longer than this (times the xz distance, plus the slack) is planned again from the start's own polygon.
 constexpr double kBandDetour = 1.3;
-constexpr double kBandSlack = 2.0;
-constexpr double kBandSaving = 0.7; // ... and replaces it only when it walks at most this share of it (a long way round a building is not a detour)
+constexpr double kBandSlack = 1.0;
+constexpr double kBandSaving = 0.9; // ... and replaces it only when it walks at most this share of it (a long way round a building is not a detour)
 constexpr float kBandCut = 0.5f; // the own-polygon route may come this much nearer a wall than the body's own spot (or r)
 
 // What one portal is known to let through: every radius up to `passes`, none from `fails` on.
@@ -1146,6 +1159,24 @@ struct NavQuery::ClearanceCache
 {
 	ClearanceMap known;
 	std::uint64_t revision = 0; // the mesh revision `known` was computed on
+	std::map<std::pair<int, int>, std::uint32_t> versions; // the tile set (x, z -> tileVersion) `known` was computed on
+	// Clearance components (refusedByComponents): per radius, a label per polygon (dense index: tileBase[tile] + poly).
+	std::uint64_t geometry = 0; // the mesh geometry revision they are for
+	std::vector<std::uint32_t> tileBase;
+	bool offMesh = false; // the mesh has off-mesh links, whose hops the labels do not model: no refusals
+	std::map<float, std::vector<std::uint32_t>> labels;
+	// The label build in progress, run in slices (kenshi-k16.6.699): a whole-mesh build is 200 ms at r 4 and 800 ms at r 22 on a streamed
+	// mesh, and every streamed-in region restarts it, so one call must not do it all. Until it is done the query answers "no refusal".
+	struct Build
+	{
+		bool active = false;
+		float radius = 0.0f;
+		std::uint32_t total = 0;
+		int tile = 0;
+		int poly = 0;
+		std::vector<std::uint32_t> parent;
+		std::uint64_t ns = 0; // wall time over all slices
+	} build;
 };
 
 NavQuery::NavQuery(const NavMesh& mesh, int maxNodes)
@@ -1393,8 +1424,40 @@ bool NavQuery::onMesh(const Point& point, const Point& halfExtents) const
 }
 
 bool NavQuery::slide(const Point& from, const Point& to, const Point& halfExtents, Point& out, bool& blocked,
-	const TravelFilter& travel) const
+	const TravelFilter& travel, const std::vector<DoorKey>& crossing) const
 {
+	if (!crossing.empty() && !travel.throughLocks)
+	{
+		// A route planned through an open door keeps its way when the door locks; another locked door still stops the walk.
+		TravelFilter through = travel;
+		through.throughLocks = true;
+		Point walked;
+		bool stopped = false;
+		DoorKey beyond = 0;
+		if (slide(from, to, halfExtents, walked, stopped, through)
+			&& (!standsOnLocked(walked, halfExtents, beyond) || std::find(crossing.begin(), crossing.end(), beyond) != crossing.end()))
+		{
+			out = walked;
+			blocked = stopped;
+			return true;
+		}
+	}
+	DoorKey held = 0;
+	if (!travel.throughLocks && standsOnLocked(from, halfExtents, held))
+	{
+		// The door shut on this body: it walks out of the leaf, and stops short of any other locked door.
+		TravelFilter leave = travel;
+		leave.throughLocks = true;
+		Point walked;
+		bool stopped = false;
+		DoorKey beyond = 0;
+		if (slide(from, to, halfExtents, walked, stopped, leave) && (!standsOnLocked(walked, halfExtents, beyond) || beyond == held))
+		{
+			out = walked;
+			blocked = stopped;
+			return true;
+		}
+	}
 	dtQueryFilter filter;
 	configureFilter(filter, travel);
 	dtPolyRef startRef = 0;
@@ -1463,6 +1526,9 @@ bool NavQuery::slide(const Point& from, const Point& to, const Point& halfExtent
 	// A hop that ENDS exactly on a polygon vertex or tile-border corner can fail outright (no polygon visited), not only stop short: a route
 	// corner is such a point (R221 leg 39, R234 leg 42 of ksim_route_walk, k16.8.37). The same hop a hair short of it is tried before the
 	// walker is called off the mesh.
+	// A retry that gets to its shortened end has arrived (a hair from the target), not been blocked: ksim_caravan_idle's boss froze at
+	// (69375.6, -71402.8) on a 0.372 u hop to the east that ends on an edge (k16.7.117).
+	bool arrivedShort = false;
 	if (!moved)
 	{
 		const float full = std::hypot(to[0] - start[0], to[2] - start[2]);
@@ -1479,6 +1545,7 @@ bool NavQuery::slide(const Point& from, const Point& to, const Point& halfExtent
 				visited = tryVisited;
 				visitedCount = tryCount;
 				moved = true;
+				arrivedShort = std::hypot(tryOut[0] - shorter[0], tryOut[2] - shorter[2]) <= kHair;
 			}
 		}
 	}
@@ -1509,7 +1576,7 @@ bool NavQuery::slide(const Point& from, const Point& to, const Point& halfExtent
 		if (found)
 			out[1] = height;
 	}
-	blocked = remaining(out) > kHair;
+	blocked = remaining(out) > kHair && !arrivedShort;
 	// moveAlongSurface can also refuse a hop that ENDS exactly on a polygon vertex: it stops a step short on the
 	// edge (the Hub's ramp top (-50802, 2756), where the walk stopped at (-50806, 2754), k16.8.6). The same hop to
 	// a point a hair short of the vertex arrives, so that is tried once and stands only if it gets there; the
@@ -1548,6 +1615,12 @@ float NavQuery::wallDistance(const PolyLoc& loc, float limit) const
 			loc.point.data(), limit, &walls, &hit, hitPos, hitNormal)))
 		return 0.0f;
 	return hit;
+}
+
+float NavQuery::clearanceAt(const Point& point, const Point& halfExtents, float limit) const
+{
+	PolyLoc loc;
+	return locate(point, halfExtents, loc) ? wallDistance(loc, limit) : -1.0f;
 }
 
 void configureFilter(dtQueryFilter& out, const TravelFilter& travel)
@@ -1635,13 +1708,182 @@ bool NavQuery::straightWalk(const Point& from, const Point& to, const TravelFilt
 	return true;
 }
 
+std::vector<CorridorPortal> NavQuery::corridor(const std::vector<Point>& points, float clearLimit, const TravelFilter& travel) const
+{
+	std::vector<CorridorPortal> out;
+	if (points.size() < 2)
+		return out;
+	dtQueryFilter filter;
+	configureFilter(filter, travel);
+	const dtQueryFilter walls = wallFilter();
+	const dtNavMesh& nav = *query_->getAttachedNavMesh();
+	const float extents[3] = { 1.0f, 12.0f, 1.0f };
+	const auto wallClear = [&](dtPolyRef ref, const Point& at)
+	{
+		float hit = 0.0f;
+		float hitPos[3];
+		float hitNormal[3];
+		if (dtStatusFailed(query_->findDistanceToWall(ref, at.data(), clearLimit, &walls, &hit, hitPos, hitNormal)))
+			return 0.0f;
+		return hit;
+	};
+	const auto pointPortal = [&](const Point& at, dtPolyRef ref, int index)
+	{
+		CorridorPortal portal;
+		portal.left = at;
+		portal.right = at;
+		portal.ref = ref;
+		portal.point = index;
+		// The wall clearance of the bend (0 at a wall's vertex): the walker pushes its aim off it by r + 5 - clearance (PATH_WALK.md, kenshi-e9s9.23).
+		if (ref != 0)
+			portal.clearLeft = portal.clearRight = wallClear(ref, at);
+		out.push_back(portal);
+	};
+	std::vector<dtPolyRef> hit(kMaxPathPolys);
+	dtPolyRef here = 0; // the polygon the walker is in at the end of the last leg (0 = unknown)
+	for (std::size_t i = 1; i < points.size(); ++i)
+	{
+		const Point& a = points[i - 1];
+		const Point& b = points[i];
+		const int index = static_cast<int>(i);
+		float nearA[3];
+		float nearB[3];
+		dtPolyRef startRef = here;
+		dtPolyRef endRef = 0;
+		const bool locatedEnd = !dtStatusFailed(query_->findNearestPoly(b.data(), extents, &filter, &endRef, nearB)) && endRef != 0;
+		bool chained = startRef != 0;
+		if (chained)
+		{
+			// The chained polygon holds the leg's start only if the point is over it (Detour's closest point lands on it).
+			float closest[3];
+			bool over = false;
+			if (dtStatusFailed(query_->closestPointOnPoly(startRef, a.data(), closest, &over)) || !over)
+				chained = false;
+		}
+		if (!chained)
+		{
+			if (dtStatusFailed(query_->findNearestPoly(a.data(), extents, &filter, &startRef, nearA)) || startRef == 0)
+			{
+				pointPortal(b, locatedEnd ? endRef : 0, index);
+				here = locatedEnd ? endRef : 0;
+				continue;
+			}
+			if (here != 0 && startRef != here && i > 1)
+				pointPortal(a, here, index - 1); // a join that leaves the polygon: a point portal at the join
+		} else {
+			dtVcopy(nearA, a.data());
+		}
+		if (distance(a, b) < 1e-3f)
+		{
+			here = startRef;
+			continue;
+		}
+		float t = 0.0f;
+		float normal[3];
+		int count = 0;
+		bool walked = locatedEnd && !dtStatusFailed(query_->raycast(startRef, nearA, nearB, &filter, &t, normal, hit.data(), &count, kMaxPathPolys))
+			&& t >= 1.0f - 0.3f / distance(a, b) && count > 0 && hit[static_cast<std::size_t>(count - 1)] == endRef;
+		std::vector<CorridorPortal> leg;
+		for (int k = 0; walked && k + 1 < count; ++k)
+		{
+			const dtMeshTile* tile = nullptr;
+			const dtPoly* poly = nullptr;
+			nav.getTileAndPolyByRefUnsafe(hit[static_cast<std::size_t>(k)], &tile, &poly);
+			const dtMeshTile* nextTile = nullptr;
+			const dtPoly* nextPoly = nullptr;
+			nav.getTileAndPolyByRefUnsafe(hit[static_cast<std::size_t>(k + 1)], &nextTile, &nextPoly);
+			if (poly->getType() != DT_POLYTYPE_GROUND || nextPoly->getType() != DT_POLYTYPE_GROUND)
+			{
+				walked = false;
+				break;
+			}
+			bool found = false;
+			CorridorPortal portal;
+			for (unsigned l = poly->firstLink; l != DT_NULL_LINK && !found; l = tile->links[l].next)
+				if (tile->links[l].ref == hit[static_cast<std::size_t>(k + 1)])
+				{
+					portalOf(*tile, *poly, tile->links[l], portal.left.data(), portal.right.data());
+					found = true;
+				}
+			if (!found)
+			{
+				walked = false;
+				break;
+			}
+			// Left / right as seen along the leg: the far side (towards b) is where (right - left) x (p - left) is positive.
+			const auto side = [&](const Point& p)
+			{
+				return (portal.right[0] - portal.left[0]) * (p[2] - portal.left[2]) - (portal.right[2] - portal.left[2]) * (p[0] - portal.left[0]);
+			};
+			if (side(b) < side(a))
+				std::swap(portal.left, portal.right);
+			portal.ref = hit[static_cast<std::size_t>(k)];
+			portal.point = index;
+			portal.clearLeft = wallClear(portal.ref, portal.left);
+			portal.clearRight = wallClear(portal.ref, portal.right);
+			if (dtVdist2D(portal.left.data(), portal.right.data()) < 0.5f)
+				portal.right = portal.left;
+			leg.push_back(portal);
+		}
+		if (walked)
+		{
+			out.insert(out.end(), leg.begin(), leg.end());
+			here = endRef;
+			if (i + 1 == points.size())
+				pointPortal(b, endRef, index);
+		} else {
+			// A leg the ray cannot walk is walked along its own points: the planner bent the route at `a` round something, and a funnel that skipped the
+			// vertex would cut the corner into the wall (kenshi-e9s9.22: a hairpin's kink 9 u beside the turn, the walker clipped the wall and re-planned).
+			const bool joined = !out.empty() && out.back().left == out.back().right && out.back().left == a;
+			if (i > 1 && !joined)
+				pointPortal(a, startRef, index - 1);
+			pointPortal(b, locatedEnd ? endRef : 0, index);
+			here = locatedEnd ? endRef : 0;
+		}
+	}
+	return out;
+}
+
 NavQuery::ClearanceCache& NavQuery::clearanceFor() const
 {
 	// Keys are polygon refs and link indices: replaceTiles re-links neighbour tiles (an index can name another portal) and a
-	// new wall across a seam changes widths, and a door patch repaints polygons. Any revision step drops the lot (kenshi-k16.7.63).
+	// new wall across a seam changes widths, and a door patch repaints polygons (kenshi-k16.7.63). A portal's fit reads only
+	// the walls within the radius (well under a tile, 256 u), so a revision step drops the entries of the tiles that changed and
+	// of their eight neighbours and keeps the rest: a streamed-in region no longer starts every label build from nothing.
 	if (clearance_->revision != mesh_.revision())
 	{
-		clearance_->known.clear();
+		std::map<std::pair<int, int>, std::uint32_t> now;
+		for (const BakedTile& tile : mesh_.tiles())
+			now[{ tile.x, tile.z }] = mesh_.tileVersion(tile.x, tile.z);
+		std::set<std::pair<int, int>> changed;
+		for (const auto& [at, version] : now)
+		{
+			const auto before = clearance_->versions.find(at);
+			if (before == clearance_->versions.end() || before->second != version)
+				changed.insert(at);
+		}
+		for (const auto& entry : clearance_->versions)
+			if (now.count(entry.first) == 0)
+				changed.insert(entry.first);
+		const dtNavMesh& nav = mesh_.detour();
+		for (auto it = clearance_->known.begin(); it != clearance_->known.end();)
+		{
+			const dtPolyRef ref = static_cast<dtPolyRef>(it->first >> 32);
+			bool drop = !nav.isValidPolyRef(ref);
+			if (!drop)
+			{
+				unsigned salt = 0;
+				unsigned tile = 0;
+				unsigned poly = 0;
+				nav.decodePolyId(ref, salt, tile, poly);
+				const dtMeshHeader* header = nav.getTile(static_cast<int>(tile))->header;
+				for (int dz = -1; dz <= 1 && !drop; ++dz)
+					for (int dx = -1; dx <= 1 && !drop; ++dx)
+						drop = changed.count({ header->x + dx, header->y + dz }) != 0;
+			}
+			it = drop ? clearance_->known.erase(it) : std::next(it);
+		}
+		clearance_->versions = std::move(now);
 		clearance_->revision = mesh_.revision();
 	}
 	return *clearance_;
@@ -1652,7 +1894,254 @@ std::size_t NavQuery::clearanceEntries() const
 	return clearanceFor().known.size();
 }
 
+bool NavQuery::standsOnLocked(const Point& point, const Point& halfExtents, DoorKey& door) const
+{
+	TravelFilter any;
+	any.throughLocks = true;
+	PolyLoc loc;
+	if (!locate(point, halfExtents, loc, any))
+		return false;
+	const dtMeshTile* tile = mesh_.detour().getTileAt(loc.tileX, loc.tileZ, 0);
+	if (tile == nullptr)
+		return false;
+	const auto found = mesh_.doorOfRef_.find(static_cast<std::uint32_t>(mesh_.detour().getPolyRefBase(tile) | static_cast<dtPolyRef>(loc.poly)));
+	if (found == mesh_.doorOfRef_.end() || mesh_.appliedDoors().get(found->second).state != DoorState::Locked)
+		return false;
+	// Inside the leaf, not pressed against its edge: a walker the lock just stopped stands at the boundary (the slide ends exactly on it)
+	// and the locate box (a unit) still finds the polygon, which must not read as an occupant leaving (rwh.231: the occupant is on the shut
+	// band; a walker planned through the closing gate is the crossing set's, NavQuery::slide).
+	const dtPoly& poly = tile->polys[loc.poly];
+	double area = 0.0;
+	for (int v = 0; v < poly.vertCount; ++v)
+	{
+		const float* a = &tile->verts[poly.verts[v] * 3];
+		const float* b = &tile->verts[poly.verts[(v + 1) % poly.vertCount] * 3];
+		area += static_cast<double>(a[0]) * b[2] - static_cast<double>(b[0]) * a[2];
+	}
+	constexpr double kInset = 0.5;
+	for (int v = 0; v < poly.vertCount; ++v)
+	{
+		const float* a = &tile->verts[poly.verts[v] * 3];
+		const float* b = &tile->verts[poly.verts[(v + 1) % poly.vertCount] * 3];
+		const double length = std::hypot(static_cast<double>(b[0]) - a[0], static_cast<double>(b[2]) - a[2]);
+		const double side = ((static_cast<double>(b[0]) - a[0]) * (point[2] - a[2]) - (static_cast<double>(b[2]) - a[2]) * (point[0] - a[0])) / std::max(length, 1.0e-9);
+		if ((area > 0.0 ? side : -side) < kInset)
+			return false;
+	}
+	door = found->second;
+	return true;
+}
+
+bool NavQuery::passesOtherLocked(const std::vector<DoorKey>& doors, DoorKey held) const
+{
+	for (const DoorKey door : doors)
+		if (door != held && mesh_.appliedDoors().get(door).state == DoorState::Locked)
+			return true;
+	return false;
+}
+
+
+bool NavQuery::refusedByComponents(std::uint32_t startRef, std::uint32_t endRef, const Point& end, float radius, bool exemptFirst) const
+{
+	constexpr std::size_t kMaxRadiusClasses = 32;
+	ClearanceCache& cc = *clearance_;
+	const dtNavMesh& nav = mesh_.detour();
+	if (cc.geometry != mesh_.geometryRevision())
+	{
+		cc.geometry = mesh_.geometryRevision();
+		cc.labels.clear();
+		cc.build = {};
+		cc.tileBase.assign(static_cast<std::size_t>(nav.getMaxTiles()), 0);
+		cc.offMesh = false;
+		std::uint32_t total = 0;
+		for (int t = 0; t < nav.getMaxTiles(); ++t)
+		{
+			const dtMeshTile* tile = nav.getTile(t);
+			if (tile->header == nullptr)
+				continue;
+			cc.tileBase[static_cast<std::size_t>(t)] = total;
+			total += static_cast<std::uint32_t>(tile->header->polyCount);
+			cc.offMesh = cc.offMesh || tile->header->offMeshConCount > 0;
+		}
+	}
+	if (cc.offMesh)
+		return false;
+	const auto dense = [&](dtPolyRef ref)
+	{
+		unsigned salt = 0;
+		unsigned tile = 0;
+		unsigned poly = 0;
+		nav.decodePolyId(ref, salt, tile, poly);
+		return cc.tileBase[tile] + poly;
+	};
+	auto found = cc.labels.find(radius);
+	if (found == cc.labels.end())
+	{
+		if (cc.labels.size() >= kMaxRadiusClasses)
+			cc.labels.clear();
+		ClearanceCache::Build& build = cc.build;
+		if (build.active && build.radius != radius)
+			return false; // one build at a time: the other radius waits for it
+		const auto began = std::chrono::steady_clock::now();
+		if (!build.active)
+		{
+			build = {};
+			build.active = true;
+			build.radius = radius;
+			for (int t = 0; t < nav.getMaxTiles(); ++t)
+				if (nav.getTile(t)->header != nullptr)
+					build.total = std::max(build.total, cc.tileBase[static_cast<std::size_t>(t)] + static_cast<std::uint32_t>(nav.getTile(t)->header->polyCount));
+			build.parent.resize(build.total);
+			std::iota(build.parent.begin(), build.parent.end(), 0u);
+		}
+		std::vector<std::uint32_t>& parent = build.parent;
+		const auto root = [&](std::uint32_t i)
+		{
+			while (parent[i] != i)
+				i = parent[i] = parent[parent[i]];
+			return i;
+		};
+		// Off unless setSlicedComponents (live server). The slice is a polygon count, not wall time: the answer "no refusal" while a build is pending must not depend on the clock, or
+		// the sim's routes (and world hash) vary run to run. 1024 polys is ~3 ms.
+		int kSlicePolys = gSlicedComponents.load(std::memory_order_relaxed) ? 1024 : std::numeric_limits<int>::max();
+#if KSIM_PROFILE
+		// Dev: KSIM_COMPONENTS_SLICE_POLYS=<n> sets the slice, 0 builds whole.
+		static const int sliceEnv = std::getenv("KSIM_COMPONENTS_SLICE_POLYS") != nullptr ? std::atoi(std::getenv("KSIM_COMPONENTS_SLICE_POLYS")) : -1;
+		if (sliceEnv == 0)
+			kSlicePolys = std::numeric_limits<int>::max();
+		else if (sliceEnv > 0)
+			kSlicePolys = sliceEnv;
+#endif
+		ClearanceMap& cache = clearanceFor().known;
+		int budget = kSlicePolys;
+		bool paused = false;
+		for (; build.tile < nav.getMaxTiles() && !paused; ++build.tile, build.poly = 0)
+		{
+			const dtMeshTile* tile = nav.getTile(build.tile);
+			if (tile->header == nullptr)
+				continue;
+			for (; build.poly < tile->header->polyCount; ++build.poly)
+			{
+				if (budget-- <= 0)
+				{
+					paused = true;
+					break;
+				}
+				const int p = build.poly;
+				const dtPoly& poly = tile->polys[p];
+				const dtPolyRef ref = nav.getPolyRefBase(tile) | static_cast<dtPolyRef>(p);
+				for (unsigned i = poly.firstLink; i != DT_NULL_LINK; i = tile->links[i].next)
+				{
+					const dtLink& link = tile->links[i];
+					if (link.ref == 0)
+						continue;
+					const std::uint32_t a = root(cc.tileBase[static_cast<std::size_t>(build.tile)] + static_cast<std::uint32_t>(p));
+					const std::uint32_t b = root(dense(link.ref));
+					if (a == b)
+						continue;
+					float left[3];
+					float right[3];
+					portalOf(*tile, poly, link, left, right);
+					if (fits(*query_, cache, ref, i, left, right, radius))
+						parent[a] = b;
+				}
+			}
+		}
+		build.ns += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - began).count());
+#if KSIM_PROFILE
+		knav::measure::loadNs[knav::measure::kLoadComponents].fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - began).count()), std::memory_order_relaxed);
+		knav::measure::loadCount[knav::measure::kLoadComponents].fetch_add(1, std::memory_order_relaxed);
+#endif
+		if (paused)
+			return false;
+		std::vector<std::uint32_t> label(build.total);
+		for (std::uint32_t i = 0; i < build.total; ++i)
+			label[i] = root(i);
+#if KSIM_PROFILE
+		if (std::getenv("KSIM_SLOWQ"))
+			std::fprintf(stderr, "COMPONENTS r=%.2f polys=%u ms=%.1f bytes=%llu\n", radius, build.total, static_cast<double>(build.ns) / 1.0e6,
+				static_cast<unsigned long long>(2ull * sizeof(std::uint32_t) * build.total));
+#endif
+		cc.build = {};
+		found = cc.labels.emplace(radius, std::move(label)).first;
+	}
+	const std::vector<std::uint32_t>& label = found->second;
+	// The comps a polygon's own is joined by an exempt hop: its neighbours' (the goal's last hop, the start's first).
+	const auto reachable = [&](dtPolyRef ref, bool withNeighbours, std::vector<std::uint32_t>& out)
+	{
+		out.push_back(label[dense(ref)]);
+		if (!withNeighbours)
+			return;
+		const dtMeshTile* tile = nullptr;
+		const dtPoly* poly = nullptr;
+		nav.getTileAndPolyByRefUnsafe(ref, &tile, &poly);
+		for (unsigned i = poly->firstLink; i != DT_NULL_LINK; i = tile->links[i].next)
+			if (tile->links[i].ref != 0)
+				out.push_back(label[dense(tile->links[i].ref)]);
+	};
+	std::vector<std::uint32_t> from;
+	std::vector<std::uint32_t> to;
+	reachable(startRef, exemptFirst, from);
+	reachable(endRef, true, to);
+	// The squeeze retry (clearanceCorridor squeezeReach 2r) exempts portals within 2r of the goal that touch a wall-band polygon: walk those
+	// links out from the goal's polygon (a portal's test is the same from both sides) and take every component they reach.
+	if (radius > 0.0f)
+	{
+		const float reach = 2.0f * radius;
+		std::vector<dtPolyRef> todo{ endRef };
+		std::vector<dtPolyRef> seen{ endRef };
+		for (std::size_t n = 0; n < todo.size(); ++n)
+		{
+			const dtMeshTile* tile = nullptr;
+			const dtPoly* poly = nullptr;
+			nav.getTileAndPolyByRefUnsafe(todo[n], &tile, &poly);
+			for (unsigned i = poly->firstLink; i != DT_NULL_LINK; i = tile->links[i].next)
+			{
+				const dtLink& link = tile->links[i];
+				if (link.ref == 0 || std::find(seen.begin(), seen.end(), link.ref) != seen.end())
+					continue;
+				const dtMeshTile* nextTile = nullptr;
+				const dtPoly* nextPoly = nullptr;
+				nav.getTileAndPolyByRefUnsafe(link.ref, &nextTile, &nextPoly);
+				float left[3];
+				float right[3];
+				portalOf(*tile, *poly, link, left, right);
+				float t = 0.0f;
+				if ((poly->getArea() == static_cast<unsigned char>(Area::Edge) || nextPoly->getArea() == static_cast<unsigned char>(Area::Edge))
+					&& dtDistancePtSegSqr2D(end.data(), left, right, t) <= reach * reach)
+				{
+					seen.push_back(link.ref);
+					todo.push_back(link.ref);
+					to.push_back(label[dense(link.ref)]);
+				}
+			}
+		}
+	}
+	for (const std::uint32_t a : from)
+		if (std::find(to.begin(), to.end(), a) != to.end())
+			return false;
+	return true;
+}
+
 PathResult NavQuery::findPath(const Point& from, const Point& to, const Point& halfExtents,
+	const TravelFilter& travel) const
+{
+#if defined(KSIM_PROFILE) && KSIM_PROFILE
+	++measure::call.findPaths;
+#endif
+	DoorKey held = 0;
+	if (!travel.throughLocks && standsOnLocked(from, halfExtents, held))
+	{
+		TravelFilter leave = travel;
+		leave.throughLocks = true;
+		PathResult out = findPathFrom(from, to, halfExtents, leave);
+		if (out.complete && !passesOtherLocked(out.doors, held))
+			return out;
+	}
+	return findPathFrom(from, to, halfExtents, travel);
+}
+
+PathResult NavQuery::findPathFrom(const Point& from, const Point& to, const Point& halfExtents,
 	const TravelFilter& travel) const
 {
 	Point snappedStart{};
@@ -1792,6 +2281,9 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 		}
 	}
 
+#if defined(KSIM_PROFILE) && KSIM_PROFILE
+	++measure::call.searches;
+#endif
 	Scratch& sc = scratch_;
 	std::vector<dtPolyRef>& polys = sc.polys;
 	polys.assign(kMaxPathPolys, 0); // full size: Detour is handed polys.data() with a capacity of kMaxPathPolys
@@ -1811,6 +2303,9 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 			return result;
 		}
 		const int probed = query_->getNodePool() != nullptr ? query_->getNodePool()->getNodeCount() : 0;
+#if defined(KSIM_PROFILE) && KSIM_PROFILE
+		measure::call.probeNodes += static_cast<std::uint64_t>(probed);
+#endif
 		// A probe that closed short of the goal (the whole reachable set searched, no node limit hit) is the answer (kenshi-k16.6.262):
 		// a clearance search only refuses portals, so it cannot get there either and used to run its whole budget (30-50 ms at Heft)
 		// to say so. The original accepts only a goal-reached search and discards partials (rwh.144 section 2). Taken before the pushes,
@@ -1842,6 +2337,14 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 		const bool shortWay = travel.straighten && direct < kRefineRange;
 		const float probeLength = probeFits && shortWay ? pulledLength(polys, polyCount) : 0.0f; // once: used twice below
 		const bool roundabout = probeFits && shortWay && probeLength > kRefineRatio * direct;
+		if (!probeClosed && !probeFits && refusedByComponents(startRef, endRef, end, travel.radius, exemptFirst))
+		{
+			// The goal is in another clearance component of this radius: the search would close short of it after exploring the whole
+			// component, so it is not run (a refusal is the same answer, Closed, in O(1); k16.6.382).
+			result.failure = PathResult::Failure::Closed;
+			result.plainFailed = false;
+			return result;
+		}
 		if (!probeClosed && (!probeFits || roundabout))
 		{
 #if defined(KSIM_PROFILE) && KSIM_PROFILE
@@ -1854,6 +2357,10 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 			clearanceCorridor(*query_, clearance, startRef, endRef, start, end, filter, travel,
 				std::min(maxNodes_, std::max(kClearanceNodes, kClearanceProbeScale * probed)), clear, outOfNodes, shortWay,
 				result.clearanceNodes, exemptFirst, 0.0f);
+#if defined(KSIM_PROFILE) && KSIM_PROFILE
+			++measure::call.clearRuns;
+			measure::call.clearNodes += static_cast<std::uint64_t>(result.clearanceNodes);
+#endif
 			// The strict search refused a goal the plain search reaches (the Hub bar foyer: the last portals before the barman's spot are
 			// furniture-ring gaps no body fits, so the search floods its budget, kenshi-k16.8.46). Run once more with the portals within
 			// a body diameter of the goal exempt. Only after a refusal, so a successful search costs nothing extra.
@@ -1865,6 +2372,9 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 					std::min(maxNodes_, std::max(kClearanceNodes, kClearanceProbeScale * probed)), clear, outOfNodes, shortWay,
 					again, exemptFirst, 2.0f * travel.radius);
 				result.clearanceNodes += again;
+#if defined(KSIM_PROFILE) && KSIM_PROFILE
+				measure::call.againNodes += static_cast<std::uint64_t>(again);
+#endif
 			}
 			// A copy, never a move: `polys` is also the buffer the probe above hands Detour with a capacity of kMaxPathPolys
 			// (`polys.data()`), and a moved-from vector drops to the corridor's own size. A second search from a shrunk buffer was
@@ -1893,6 +2403,9 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 	} else {
 		searched = query_->findPath(startRef, endRef, start.data(), end.data(), &filter, polys.data(), &polyCount,
 			kMaxPathPolys);
+#if defined(KSIM_PROFILE) && KSIM_PROFILE
+		measure::call.probeNodes += query_->getNodePool() != nullptr ? static_cast<std::uint64_t>(query_->getNodePool()->getNodeCount()) : 0;
+#endif
 	}
 	if (dtStatusFailed(searched) || polyCount == 0)
 	{
@@ -1955,7 +2468,6 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 	// A corner lies on a portal, and the portal's ends are interpolated along the polygon's edge: a long edge whose neighbour across the
 	// tile border has more vertices on it (a T-junction on steep terrain: a 256 u edge facing 3 shorter ones) is straight where the surface
 	// is not, so the corner can be 16 u off the floor (R15 leg 2, kenshi-k16.8.37). The corner stands on the corridor's own surface.
-	constexpr float kCornerSnapMax = 24.0f;
 	for (std::size_t i = 1; i + 1 < result.points.size(); ++i)
 	{
 		float best = 0.0f;
@@ -1969,8 +2481,10 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 				best = h;
 			found = true;
 		}
-		// Only a small fix: a corner's own portal is off by an edge's interpolation, never by a floor (stacked floors share xz).
-		if (found && std::fabs(best - result.points[i][1]) <= kCornerSnapMax)
+		// The height comes from the detail mesh of the corridor's own polygon that holds the corner, whatever the edge's interpolation
+		// was off by (26 u on a 256 u seam edge over a slope, route 78 leg 12, kenshi-k16.7.129); of two stacked floors in the
+		// corridor the one nearest the plane height wins, and no ground query outside the corridor is made.
+		if (found)
 			result.points[i][1] = best;
 	}
 	for (std::size_t i = 1; i < result.points.size(); ++i)

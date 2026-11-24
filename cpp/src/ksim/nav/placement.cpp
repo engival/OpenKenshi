@@ -2,6 +2,7 @@
 
 #include "ksim/core/rng.hpp"
 #include "ksim/core/state.hpp"
+#include "ksim/world/nest_sources.hpp"
 #include "ksim/world/spawn.hpp"
 
 #include "kdata/gamedata.hpp"
@@ -30,9 +31,6 @@ constexpr double kWaterLevel = 100.0;
 // UNSURE: a slope the walkable mesh can hold; the AI snap decides the rest.
 constexpr double kMaxSlope = 0.6;
 constexpr int kTries = 48;
-// A nest TOWN's squad lists, as the spawner reads them (spawn.cpp).
-constexpr const char* kNestLists[] = {"residents", "default resident", "bar squads",
-	"roaming squads"};
 
 // data/newland/land/areasmap.tga (TERRAIN_FORMAT.md): 256^2 uncompressed 24-bit
 // TGA, pixel 0xRRGGBB == BIOME_GROUP `index`. Rows are stored from the bottom
@@ -134,8 +132,9 @@ std::int64_t totalChance(const kdata::Record& record, std::string_view category)
 class Placer
 {
 public:
-	Placer(const kdata::GameData& gameData, std::string_view dataDir, std::uint64_t seed)
+	Placer(const kdata::GameData& gameData, const worldstate::Facts& facts, std::string_view dataDir, std::uint64_t seed)
 		: data_(gameData)
+		, facts_(facts)
 		, areas_(readAreasMap(std::string(dataDir) + "/newland/land/areasmap.tga"))
 		, terrain_(kworld::Heightmap::open(std::string(dataDir) + "/newland/land/fullmap.tif"))
 		, rng_(streamSeed(seed, kPlacementStream))
@@ -144,14 +143,9 @@ public:
 		, factionType_(kworld::itemTypeByName("FACTION"))
 	{
 		// BIOME_GROUP only: the exe never reads a BIOMES record's lists
-		// (retired/placement_biomes_homeless_lists.txt). A nest whose own `world state` fails is no source (spawn.cpp).
-		flecs::world scratch;
-		RngStream unused(1);
-		const SquadBuilder judge(scratch, data_, unused);
-		judge_ = &judge;
+		// (retired/placement_biomes_homeless_lists.txt).
 		for (const kdata::Record* record : data_.byType(groupType_))
 			collect(*record);
-		judge_ = nullptr;
 	}
 
 	PlacementReport run(flecs::world& ecs)
@@ -203,15 +197,12 @@ private:
 		});
 		const double nests = static_cast<double>(totalChance(record, "nests"));
 		const double count = record.intOr("num nests", 6);
-		forEachRef(record, "nests", [&](const kdata::RefEntry& nestEntry)
+		forEachLiveNest(data_, facts_, townType_, record, [&](const kdata::Record& nest, const kdata::RefEntry& nestEntry)
 		{
-			const kdata::Record* nest = data_.find(nestEntry.targetID);
-			if (nest == nullptr || nest->type != townType_ || !judge_->worldStateHolds(*nest))
-				return;
-			const double expected = count * std::max(nestEntry.v0, 0) / nests;
-			for (const char* list : kNestLists)
+			const double expected = count * nestEntry.v0 / nests;
+			for (const std::string_view list : kNestSquadLists)
 			{
-				forEachRef(*nest, list, [&](const kdata::RefEntry& entry)
+				forEachRef(nest, list, [&](const kdata::RefEntry& entry)
 				{
 					add(entry.targetID, colour, expected);
 				});
@@ -349,7 +340,7 @@ private:
 	}
 
 	const kdata::GameData& data_;
-	const SquadBuilder* judge_ = nullptr; // only while the constructor collects
+	const worldstate::Facts& facts_; // the game's: placement judges world states as the spawners do
 	AreaMap areas_;
 	kworld::Heightmap terrain_;
 	RngStream rng_;
@@ -435,7 +426,9 @@ std::uint32_t AreaLookup::colourAt(double x, double z) const
 PlacementReport placeWilderness(flecs::world& ecs, const kdata::GameData& gameData,
 	std::string_view dataDir, std::uint64_t seed)
 {
-	return Placer(gameData, dataDir, seed).run(ecs);
+	worldstate::Facts facts;
+	worldstate::collectStatuses(ecs, facts);
+	return Placer(gameData, facts, dataDir, seed).run(ecs);
 }
 
 } // namespace ksim

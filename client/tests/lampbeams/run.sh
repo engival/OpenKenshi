@@ -18,13 +18,16 @@ do
 		b0) extra=(--set render.lamp_beams=0) ;;
 		b0.3) extra=(--set render.lamp_beams=0.3) ;;
 		b1) extra=(--set render.lamp_beams=1) ;;
+		b035) extra=(--set render.lamp_beams=0.35) ;;
+		b035_lock) extra=(--set render.lamp_beams=0.35 --set render.thread=lockstep) ;;
 		b1_lock) extra=(--set render.lamp_beams=1 --set render.thread=lockstep) ;;
 		b0_lock) extra=(--set render.lamp_beams=0 --set render.thread=lockstep) ;;
 		b1_sun) extra=(--set render.lamp_beams=1 --set render.sun_shafts=1) ;;
 		sun) extra=(--set render.sun_shafts=1) ;;
 		occ) extra=(--set render.lamp_occlusion=true) ;;
 	esac
-	start_server_on_free_port "$out/server.log" "$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:@PORT@ --scenario-file "$tree/scenarios/bar_lure.kscen" --debug-view	# a fresh port per start (kenshi-k16.2.358)
+	[ -n "${XSET:-}" ] && extra+=($XSET)	# more kclient words, e.g. XSET='--set render.sun_shafts_debug=7' (the beam term x8 alone)
+	start_server_on_free_port "$out/server.log" "$server" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen 127.0.0.1:@PORT@ --scenario-file "$tree/scenarios/${SCEN:-bar_lure}.kscen" --debug-view	# a fresh port per start (kenshi-k16.2.358)
 	pid=$SERVER_PID; port=$SERVER_PORT
 	(cd "$tree" && timeout 300 nice -n 10 client/tools/headless.sh -- stdbuf -oL "$tree/client/build/kclient" --simlink 127.0.0.1:$port --debug "${extra[@]}" ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} --script "$out/script.txt" > "$out/client.log" 2>&1)
 	for tm in night:01:00 day:12:00; do n=${tm%%:*}; h=${tm#*:}; for k in 0 1 2 3 4; do grep -q "^time: $h" "$out/$n$k.txt" 2>/dev/null && { cp "$out/$n$k.png" "$out/$n.png"; break; }; done; [ -f "$out/$n.png" ] || echo "$mode: no $n shot at the right hour"; done

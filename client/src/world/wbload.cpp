@@ -1173,14 +1173,28 @@ namespace
 const cfg::Text kPrecache{ cfg::Group{ "Performance" }, "stream.precache", "off", { "off", "high" },
 	"Background world precache (kenshi-nbmu): high = once the load screen lifts, every static building in the world (shells, interiors, furniture, features and the parts nested under a building: meshes and textures) is decoded on loader threads and uploaded in what the near and in-view streams leave (stream.precache_ms a frame), so a far town shows no black stand-in; it holds a few GB of RAM and VRAM (see dump precache) and is never evicted. Nothing is delayed for it: the load screen, the sim and the near streams go first. off: buildings stream in as the camera reaches them" };
 
+// the resident set in bytes; 0 where there is no probe (only Linux has one: /proc/self/statm), which the reports print as "RSS n/a"
 size_t residentBytes()
 {
+#if defined(__linux__)
 	FILE* f = fopen("/proc/self/statm", "r");
 	if (!f) { return 0; }
 	unsigned long pages = 0, res = 0;
 	const int n = fscanf(f, "%lu %lu", &pages, &res);
 	fclose(f);
 	return n == 2 ? (size_t)res * (size_t)sysconf(_SC_PAGESIZE) : 0;
+#else
+	return 0;
+#endif
+}
+
+// "RSS +123 MB" for a delta, or "RSS n/a" when either end has no probe
+std::string rssDeltaText(size_t now, size_t base)
+{
+	if (now == 0 || base == 0) { return "RSS n/a"; }
+	char b[48];
+	snprintf(b, sizeof b, "RSS %+.0f MB", ((double)now - (double)base) / 1048576.0);
+	return b;
 }
 
 double wallNow() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
@@ -1286,8 +1300,8 @@ void WorldBuildings::precacheStep(const double cam[3])
 		preTDone_ = now - preT0_;
 		preRssDone_ = residentBytes();
 		preBytesDone_ = rq::stats().streamBytes;
-		fprintf(stderr, "kclient: precache: done t=%.3f in %.2f s since the lift; GPU creates %.0f MB, RSS %+.0f MB\n", preT0_ + preTDone_, preTDone_,
-			(double)(preBytesDone_ - preBytes0_) / 1048576.0, ((double)preRssDone_ - (double)preRss0_) / 1048576.0);
+		fprintf(stderr, "kclient: precache: done t=%.3f in %.2f s since the lift; GPU creates %.0f MB, %s\n", preT0_ + preTDone_, preTDone_,
+			(double)(preBytesDone_ - preBytes0_) / 1048576.0, rssDeltaText(preRssDone_, preRss0_).c_str());
 	}
 	else if (now - preLastLog_ >= 2.0)
 	{
@@ -1304,10 +1318,10 @@ std::string WorldBuildings::precacheReport() const
 	for (const TexEntry& t : textures_) { if (t.pinned) { pt++; ptReady += t.state == Ready; } }
 	char line[512];
 	const double since = preStarted_ ? (preDone_ ? preTDone_ : wallNow() - preT0_) : 0.0;
-	snprintf(line, sizeof line, "precache: %s, %zu of %zu parts left, %.2f s since the lift%s; pinned meshes %zu/%zu ready, textures %zu/%zu ready; GPU creates %.0f MB, RSS %+.0f MB\n",
+	snprintf(line, sizeof line, "precache: %s, %zu of %zu parts left, %.2f s since the lift%s; pinned meshes %zu/%zu ready, textures %zu/%zu ready; GPU creates %.0f MB, %s\n",
 		!preHigh_ ? "off" : !preStarted_ ? "waiting for the lift" : preDone_ ? "done" : "running", preLive_.size(), preTotalParts_, since, preDone_ ? " (done)" : "",
 		pmReady, pm, ptReady, pt, preStarted_ ? (double)((preDone_ ? preBytesDone_ : rq::stats().streamBytes) - preBytes0_) / 1048576.0 : 0.0,
-		preStarted_ ? ((double)(preDone_ ? preRssDone_ : residentBytes()) - (double)preRss0_) / 1048576.0 : 0.0);
+		preStarted_ ? rssDeltaText(preDone_ ? preRssDone_ : residentBytes(), preRss0_).c_str() : "RSS +0 MB");
 	// the parts the precache covers, by kind (0 shell, 1 interior, 2 mask, 3 furniture, other): how many, and how many of them have their mesh ready
 	size_t cnt[5] = {}, rdy[5] = {};
 	for (uint32_t pid = 0; pid < preScore_.size(); pid++)
@@ -1322,7 +1336,10 @@ std::string WorldBuildings::precacheReport() const
 	snprintf(kl, sizeof kl, "precache kinds (parts ready/total): shell %zu/%zu, interior %zu/%zu, mask %zu/%zu, furniture %zu/%zu, other %zu/%zu\n",
 		rdy[0], cnt[0], rdy[1], cnt[1], rdy[2], cnt[2], rdy[3], cnt[3], rdy[4], cnt[4]);
 	char ml[160];
-	snprintf(ml, sizeof ml, "precache memory (any setting): RSS %.0f MB, stream-lane GPU creates since start %.0f MB\n", (double)residentBytes() / 1048576.0,
+	const size_t rssNow = residentBytes();
+	char rssText[32] = "RSS n/a";
+	if (rssNow) { snprintf(rssText, sizeof rssText, "RSS %.0f MB", (double)rssNow / 1048576.0); }
+	snprintf(ml, sizeof ml, "precache memory (any setting): %s, stream-lane GPU creates since start %.0f MB\n", rssText,
 		(double)rq::stats().streamBytes / 1048576.0);
 	return std::string(line) + kl + ml;
 }

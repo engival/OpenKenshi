@@ -592,12 +592,15 @@ int main(int argc, char** argv)
 		Simulation probe = newGame(order);
 		const std::shared_ptr<const CombatData> combat = CombatData::build(*probe.gameData(), KENSHI_DATA);
 		test::require(behaviourName(Behaviour::BarHangout) == "bar_hangout", "behaviour name");
-		hubBar(order, combat);
-		fallThrough(order, combat);
-		shoppingAndSave(order, combat);
-		traderStay(order, combat);
+		if (test::wantPart(argc, argv, 2, "hubBar")) { hubBar(order, combat); }
+		if (test::wantPart(argc, argv, 2, "fallThrough")) { fallThrough(order, combat); }
+		if (test::wantPart(argc, argv, 2, "shoppingAndSave")) { shoppingAndSave(order, combat); }
+		if (test::wantPart(argc, argv, 2, "traderStay")) { traderStay(order, combat); }
 		if (argc > 1 && test::worldRegionReady(std::string(argv[1]), simlink::kHubZoneX, simlink::kHubZoneZ))
-			{ realHub(argv[1], order, combat); realHeng(argv[1], order, combat); }
+		{
+			if (test::wantPart(argc, argv, 2, "realHub")) realHub(argv[1], order, combat);
+			if (test::wantPart(argc, argv, 2, "realHeng")) realHeng(argv[1], order, combat);
+		}
 		else
 			std::cout << "real Hub: skipped (pass the world navmesh bake directory)\n";
 		std::cout << "ksim_town_bar: ok\n";

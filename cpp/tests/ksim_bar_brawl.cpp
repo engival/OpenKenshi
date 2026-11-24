@@ -205,10 +205,26 @@ int main(int argc, char** argv)
 		sim.enqueue(Command::fighterAttack(state::Id{game.player}, state::Id{patron}));
 		double wokeAt = 1.0e9;
 		double stumbleFor = 0.0;
+		std::size_t carrierTicks = 0;
 		for (int i = 0; i < 20 * 90; ++i)
 		{
 			sim.run(1);
 			clock += 0.05;
+			// k16.6.535: the bar crew / a guard carrying the KO'd troublemaker out (the 223 / 224 / 240 take-out, state::TakeOut) is no kidnapping:
+			// no captive flag on the carried (so no ally of it reads a kidnap, CARRY_KIDNAP_LIVE.md C82) and no crime on the carrier.
+			for (const CombatArena::Member& member : sim.combat()->members())
+			{
+				if (member.fighter.carrying == 0)
+					continue;
+				const state::Fighter* carriedBody = sim.combat()->find(member.fighter.carrying);
+				if (carriedBody == nullptr || carriedBody->carriedBy != member.id)
+					continue;
+				++carrierTicks;
+				test::require(!carriedBody->captive, "a take-out carry sets no captive flag (" + who(sim, member.id) + " carries " + who(sim, member.fighter.carrying) + ")");
+				const state::CrimeRecord* record = sim.crimeRecord(member.id);
+				test::require(record == nullptr || record->crime == 0, "a take-out carry raises no crime on the carrier (" + who(sim, member.id) + ", crime "
+					+ std::to_string(record != nullptr ? record->crime : 0) + ")");
+			}
 			const state::Fighter* me = sim.combat()->find(game.player);
 			if (knockedOutAt < 1.0e8 && me != nullptr)
 			{
@@ -281,6 +297,7 @@ int main(int argc, char** argv)
 			if (!member.fighter.playerControlled && member.fighter.target != 0 && std::hypot(member.fighter.x - kBarX, member.fighter.z - kBarZ) < 300.0)
 				++stillFighting;
 		test::require(stillFighting == 0, "the bar is calm after the player's knock-out (" + std::to_string(stillFighting) + " still hold a target)");
+		std::printf("ksim_bar_brawl: %zu carrier-ticks checked for the captive flag and crime\n", carrierTicks);
 		std::printf("ksim_bar_brawl: ok (%zu picks, %zu on the player, %zu by the victim's squad)\n", picks.size(), onPlayer, victimSide);
 		return 0;
 	} catch (const std::exception& e) {

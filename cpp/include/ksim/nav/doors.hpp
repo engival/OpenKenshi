@@ -173,6 +173,9 @@ private:
 	void bind(flecs::world& ecs, const std::vector<TownSite>& towns);
 	// The crews reopen their shut gates: removes the overrides that have been shut for the unlock + open time.
 	void crewsReopen(flecs::world& ecs, std::uint64_t tick);
+	// The same for a gate a player's close shut (a state::Door); whether the crew's faction may unlock the gate.
+	void crewsReopenDoors(flecs::world& ecs, std::uint64_t tick);
+	bool crewUnlocks(flecs::world& ecs, const Gate& gate, flecs::entity_t crewFaction) const;
 	knav::DoorBook build(flecs::world& ecs) const;
 	void publish(knav::DoorBook&& book, const Navigator* navigator);
 	const GateTown* nearest(double x, double z, double reach) const;
@@ -188,6 +191,7 @@ private:
 	std::vector<state::DoorOverride> overrides_; // the ones the book was built with
 	bool applied_ = false;
 	std::unordered_map<std::uint64_t, std::uint64_t> shutSince_; // gate door key -> tick the crew started on it
+	std::unordered_map<std::uint64_t, std::uint64_t> closedSince_; // gate door key -> tick its state::Door was found shut
 	DoorStats stats_;
 };
 

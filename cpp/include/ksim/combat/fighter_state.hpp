@@ -438,12 +438,48 @@ struct RoutePoint
 	}
 };
 
+// One portal of a walker's corridor (PATH_WALK.md 3a, kenshi-e9s9.4): the stretch of a polygon edge a route leg crosses, left / right as seen walking
+// the leg (x east, z north), the wall clearance of each end measured at plan time, and the index of the route point it leads to. A portal under 0.5 u
+// wide is a point portal. `ref` is the polygon's Detour ref: derived data, never saved (it is re-derived by setRoute after a load).
+struct RoutePortal
+{
+	double lx = 0.0;
+	double lz = 0.0;
+	double rx = 0.0;
+	double rz = 0.0;
+	double clearLeft = 0.0;
+	double clearRight = 0.0;
+	std::uint32_t point = 0;
+	std::uint64_t ref = 0; // not saved
+
+	bool isPoint() const noexcept { return std::hypot(rx - lx, rz - lz) < 0.5; }
+	// Positive on the far side of the portal (towards the route's next polygon), negative behind it: (right - left) x (p - left) / width. A point
+	// portal has no line: 0.
+	double side(double x, double z) const noexcept
+	{
+		const double width = std::hypot(rx - lx, rz - lz);
+		return width < 0.5 ? 0.0 : ((rx - lx) * (z - lz) - (rz - lz) * (x - lx)) / width;
+	}
+
+	template <typename Archive, typename Self>
+	static void fields(Archive& ar, Self& self)
+	{
+		ar(self.lx);
+		ar(self.lz);
+		ar(self.rx);
+		ar(self.rz);
+		ar(self.clearLeft);
+		ar(self.clearRight);
+		ar(self.point);
+	}
+};
+
 // An individual goal (DIALOGUE.md 5, step 6b): a dialogue effect's order that the routines and the squad AI leave alone until it ends
 // (Simulation::stepIndividualGoals). Each one ends by itself (target gone, arrived, timer), so it is never a terminal state.
 enum class IndividualKind : std::uint8_t
 {
 	None = 0,
-	Flee = 1, // task 280 RUN_AWAY_FORCED (DA_RUN_AWAY): runs from `target`, takes no fight
+	// 1 was Flee (280): now the Routine goal 280 (orderRunAwayGoal); the number stays free
 	GoHome = 2, // task 19 GO_HOMEBUILDING (DA_GO_HOME): walks to the squad's home building, else its home town
 	Summoned = 3, // task 67 MOVE_ON_FREE_WILL_FAST (DA_SUMMON_MY_SQUAD): runs to `target`, the summoner
 	RunAway = 4, // goal 32 SELF_PRESERVATION / task 35 RUN_AWAY: an attacked non-fighter runs from `target` until nobody is aggressing against it
@@ -615,6 +651,10 @@ struct Fighter
 	bool passive = false; // CharStats+0x12c: PROTECT_ALLIES is utility 0 (rwh.148 3a); the rest of the AI runs. Saved, v112
 	bool holdPosition = false; // the HOLD POSITION toggle: joins an ally's fight but never leaves the anchor: crossbow in reach, melee in close range only (rwh.148 3b, rwh.179; UNSURE, not measured as the toggle). Saved, v112
 	bool fought = false; // had a target at least once (Simulation::stepRearm): only such a member stands down when the squad is quiet (k16.6.361). Saved, v118
+	// An animal's age (0 baby .. 1 adult), rolled at spawn by makeFighter from the squad template's animals / animals2 entry (rwh.193 section 5:
+	// rand * `animal age random` - 0.1 + entry v2 * 0.01, clamped >= 0). 1 for everything else. Only stored: no size-by-age scale or aging is
+	// decoded (UNSURE, FEATURES "Animal age"). Saved, v132; rebuilt by makeFighter from the member's dice seed, so a demoted member needs no delta.
+	double age = 1.0;
 
 	// Kinematics (the hot part). yaw in radians, 0 = +z, increasing towards +x.
 	double x = 0.0;
@@ -718,6 +758,7 @@ struct Fighter
 	double eatTimer = 0.0; // seconds to the next bite
 	std::string kitSid; // the first aid kit in use (ITEM record), "" none
 	double kitCharges = 0.0; // charges left of that kit
+	std::uint64_t aidTick = ~std::uint64_t{0}; // the tick a medic last worked this body's wounds / bandage pools (one stream per patient, rwh.154)
 
 	// CombatClass.
 	CombatState state = CombatState::Hub;
@@ -780,9 +821,19 @@ struct Fighter
 	// given. routeVersion bumps whenever the route is set or cleared (the wire's CHAR_ROUTE).
 	std::vector<RoutePoint> route;
 	std::uint32_t routeNext = 0;
+	// The route's corridor (PATH_WALK.md 3a; kenshi-e9s9.4, save v128): written only by setRoute (nav/navigator.hpp), derived from `route`. portalNext is
+	// the first portal whose route point is routeNext or later. vx / vz: the walk's velocity as a vector (speed x walkHeading), kept in step by walkOrder.
+	// Nothing walks by them yet.
+	std::vector<RoutePortal> portals;
+	// The unlocked doors the route was planned through (MeshNavigator::openDoorsOn), not saved: the walk goes through them if they lock.
+	std::vector<std::uint64_t> routeDoors;
+	std::uint32_t portalNext = 0;
+	double vx = 0.0;
+	double vz = 0.0;
 	std::uint32_t routeVersion = 0;
 	std::uint32_t routeSeq = 0; // clientSeq of the order that made the route
 	bool routeApproach = false; // the route ends at an approach point, not the clicked spot (CHAR_ROUTE flags bit 1)
+	bool routeMoreLegs = false; // the route's end is a far order's leg end, the next leg follows: not a stop (the corridor walk neither brakes nor gates there; not saved, far_orders.cpp sets it)
 	// Direct drive: sticky state, heading (radians, 0 = +z, towards +x), clientSeq of the last
 	// applied drive order. A driven character is in the AI-off hold (`hold`).
 	DriveMode drive = DriveMode::Stop;
@@ -795,7 +846,7 @@ struct Fighter
 	bool driveTurn = false;
 	// Seconds a walking character has barely moved (a move order or a route): 5 s re-paths (the original, s70 section 4).
 	double walkStuck = 0.0;
-	// Seconds the walk has been off its route (the exe's timeOffPath); 5 s re-requests the path. Not saved: a loaded walk starts counting again.
+	// Seconds the walk has been off its route (the exe's timeOffPath); 5 s re-requests the path. Saved from v131 (older saves load 0).
 	double offPath = 0.0;
 	std::uint64_t orderTarget = 0; // attack order: pickTarget keeps this enemy until it is down
 	// Task dt25 (45 BODYGUARD): the protected hand, the original's AITaskSystem+0x10 - the character a bodyguard order (a
@@ -810,6 +861,7 @@ struct Fighter
 	// the body is targeted by a new attacker or hit while not in combat (onTargetedBy -> requestReplan) and consumed by the same step, which stops the
 	// task for `orderPause` ticks and lets the order start again from its beginning.
 	bool orderBusy = false;
+	bool fleeing = false; // a 280 RUN_AWAY_FORCED Routine runs: the combat tick picks no target. Derived (orderRunAwayGoal / endRunAway), never saved
 	bool orderInterrupt = false;
 	std::uint8_t orderPause = 0;
 
@@ -836,9 +888,10 @@ struct Fighter
 	};
 	PlanSource routeSource = PlanSource::None;
 	PlanSource followSource = PlanSource::None;
-	// Seconds to the next fight-goal re-selection (task fight-goals; kinspect patrol_aggro_town.md a8a41b7 section 3: the exe's per-AI
-	// throttle, a random phase U(1,40)/60 s re-rolled at every full update). Transient: a load starts it at 0 (select on the next tick).
-	double fightGoalClock = 0.0;
+	// The sim time (clock tick x kTickSeconds) of the next fight-goal re-selection (task fight-goals; kinspect patrol_aggro_town.md a8a41b7
+	// section 3: the exe's per-AI throttle, a random phase U(1,40)/60 s re-rolled at every full update). A due-stamp, not a counter: nothing
+	// is written between re-selections. Transient: a load starts it at 0 (select on the next tick).
+	double fightGoalDue = 0.0;
 
 	// Sneak mode (Character+0xd4, SQUAD_FOLLOW.md s9): a sneaking character does not join an ally's fight, a follower
 	// copies its leader's, and a hostile that targets it clears it (`clearSneak`, the exe's onTargetedBy).
@@ -850,8 +903,8 @@ struct Fighter
 	std::uint8_t moveMode = 2;
 	// The Group mode's group key (the lowest state::Id of the order's ids; 0 = no group). Another mode leaves the group.
 	std::uint64_t speedGroup = 0;
-	// The display name: the CHARACTER record's name (a unique's own, e.g. "Beep"), set by makeFighter. The sim has no random
-	// name generator yet: a random spawn carries its record's name (OPEN). Scenarios may overwrite it.
+	// The display name: the CHARACTER record's name (a unique's own, e.g. "Beep"), set by makeFighter; a `named` CHARACTER
+	// gets a draw from the name list instead (kenshi-rwh.247). Scenarios may overwrite it.
 	std::string name;
 	// The follow task (order 3, SQUAD_FOLLOW.md s4): 0 = none. The route of a follower in path mode rides
 	// `route` with routeChase, like a chase. followHx/Hz is the task's smoothed heading (+0xa0; (0,0) = fresh
@@ -915,8 +968,19 @@ struct Fighter
 	std::uint32_t portraitSerial = 0;
 	// The creator's look (NEW_GAME with Specs); `look.custom` false for everyone else.
 	FighterLook look;
-	// The sensor: seconds since its last scan (negative = not staggered yet), and its records sorted by target.
+	// The sensor: its records sorted by target. `senseAt` is the arena time (CombatArena::time()) its last scan counts from (a due-stamp:
+	// the scan is due when the time since it reaches the interval, so a skipped member owes nothing and nothing is written per step);
+	// kNoStamp = not staggered yet. `senseClock` is the counted clock of a save before v128 (seconds since the last scan, negative = none):
+	// read only by the loader, converted into `senseAt` by the arena's first step, then -1 again.
+	static constexpr double kNoStamp = -1.0e30;
 	double senseClock = -1.0;
+	double senseAt = kNoStamp;
+	// The last medical update and the last hunger update, in arena phase steps (CombatArena::phaseStep()); kNoStep = not placed yet (a new
+	// character, or a save before v128): the arena's first step puts it on its own 1 s slice. Hunger and a medically quiet member's
+	// medical run once a second on that slice (CombatArena::step), with the time since the stamp.
+	static constexpr std::uint64_t kNoStep = ~std::uint64_t{0};
+	std::uint64_t medStep = kNoStep;
+	std::uint64_t hungerStep = kNoStep;
 	std::vector<SightRecord> sight;
 	// The chase give-up monitor (s73_static.md section 3; Task_Move chaseGiveUpMonitor 14033a800): the target it watches (0 = none),
 	// sim seconds since this chase began, sim seconds the target has gone unsensed, and the sight record's position of it (it follows
@@ -966,6 +1030,9 @@ struct Fighter
 	// Task BP (derived, never saved): `captorSid` as a faction entity id, resolved by the Simulation every tick, so combat's enemy test
 	// can see whose captive a shackled slave is without the ecs (its captor and its captor's allies do not attack it).
 	std::uint64_t captorFaction = 0;
+	// kenshi-k16.6.673, special-case (user 2026-11-21, revisit with the medic/formation systems; derived, never saved): the character it
+	// follows holds a live first aid interact (25 / 58, 249 / 250, 60 / 57 all run as InteractAction::FirstAid) on it, so followStep holds still.
+	bool heldForAid = false;
 	// kenshi-k16.6.116 (derived, never saved): the slave state is 1 and the character carries its own job row 187 Obedient Slave (rwh.99 section 5),
 	// kept by the Simulation (jobs.cpp syncObedient). The row gates PROTECT_ALLIES (utility 0) and the same-owner shield among slaves.
 	bool obedient = false;
@@ -1041,9 +1108,13 @@ struct Fighter
 			clearWhy = why;
 		}
 		route.clear();
+		portals.clear();
+		routeDoors.clear();
+		portalNext = 0;
 		routeNext = 0;
 		offPath = 0.0;
 		routeApproach = false;
+		routeMoreLegs = false;
 		routeChase = false;
 		routeSource = PlanSource::None;
 	}
@@ -1143,6 +1214,13 @@ struct Fighter
 		ar(self.playerControlled);
 		ar(self.route);
 		ar(self.routeNext);
+		if (ar.version >= 128)
+		{
+			ar(self.portals);
+			ar(self.portalNext);
+			ar(self.vx);
+			ar(self.vz);
+		}
 		ar(self.routeVersion);
 		ar(self.routeSeq);
 		ar(self.routeApproach);
@@ -1167,6 +1245,8 @@ struct Fighter
 		}
 		if (ar.version >= 118)
 			ar(self.fought);
+		if (ar.version >= 132)
+			ar(self.age);
 		ar(self.walkStuck);
 		ar(self.orderTarget);
 		ar(self.hold);
@@ -1202,7 +1282,8 @@ struct Fighter
 		ar(self.crouched);
 		ar(self.asleep);
 		ar(self.attention);
-		ar(self.senseClock);
+		if (ar.version < 130)
+			ar(self.senseClock);
 		ar(self.sight);
 		ar(self.carrying);
 		ar(self.carriedBy);
@@ -1283,6 +1364,17 @@ struct Fighter
 		// Save v114: the pair-distance cache entries (k16.8.50). An older save loads none: the first looks re-measure.
 		if (ar.version >= 114)
 			ar(self.pathSamples);
+		// Save v130: the sensor's due-stamp and the medical / hunger stamps (k16.6.637). Older saves carry `senseClock` in its old place (the
+		// arena converts it at its first step) and no steps: the arena places the member on its 1 s slice.
+		if (ar.version >= 130)
+		{
+			ar(self.senseAt);
+			ar(self.medStep);
+			ar(self.hungerStep);
+		}
+		// Save v133: the walk's time off its route (kenshi-rmw6): a load mid-walk continues the 5 s re-path count as the straight run does.
+		if (ar.version >= 133)
+			ar(self.offPath);
 	}
 };
 

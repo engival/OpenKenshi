@@ -3,6 +3,7 @@
 
 #include "ksim/save/newgame.hpp"
 
+#include "ksim/law/crime.hpp"
 #include "ksim/nav/navigator.hpp"
 #include "ksim/core/rng.hpp"
 #include "ksim/core/simulation.hpp"
@@ -119,6 +120,33 @@ void applySpec(state::Fighter& fighter, const CharacterSpec& spec, const Creator
 	look.stance = spec.stance;
 }
 
+// The CHARACTER record's spawn bounty (rwh.193 §2, Character::vf111): chance c fires at randInt(0,100) < c (c/101), no player exemption; the amount is
+// `bounty amount` + int(randInt(0, fuzz*2) * 0.5) per faction of `bounty factions`, United Cities (defaultEmpireFactionSID) when the list is empty.
+std::vector<std::pair<std::string, std::int32_t>> rollSpawnBounty(const kdata::GameData& gameData, const std::string& character, std::uint64_t& rngState)
+{
+	std::vector<std::pair<std::string, std::int32_t>> out;
+	const kdata::Record* record = gameData.find(character);
+	if (record == nullptr || record->intOr("bounty chance", 0) <= 0)
+		return out;
+	RngStream rng(rngState == 0 ? 1 : rngState);
+	if (rng.between(0, 100) < record->intOr("bounty chance", 0))
+	{
+		const std::int32_t fuzz = record->intOr("bounty amount fuzz", 0);
+		const std::int32_t amount = record->intOr("bounty amount", 0) + static_cast<std::int32_t>(static_cast<double>(rng.between(0, fuzz * 2)) * 0.5);
+		forEachRef(*record, "bounty factions", [&](const kdata::RefEntry& entry) { out.emplace_back(entry.targetID, amount); });
+		if (out.empty())
+		{
+			for (const kdata::Record* faction : gameData.byType(kworld::itemTypeByName("FACTION")))
+			{
+				if (faction->name == "United Cities")
+					out.emplace_back(faction->stringID, amount);
+			}
+		}
+	}
+	rngState = rng.state();
+	return out;
+}
+
 } // namespace
 
 StartCatalog StartCatalog::build(const kdata::GameData& gameData, std::string_view dataDir)
@@ -128,17 +156,16 @@ StartCatalog StartCatalog::build(const kdata::GameData& gameData, std::string_vi
 	if (records.empty())
 		return catalog;
 	const kworld::Towns towns = kworld::Towns::join(gameData, dataDir);
-	const auto townPlace = [&](const std::string& sid) -> std::optional<StartOff::Place>
+	// Every placement of the town is a candidate (rwh.193 §3: one Town object per placement, the pick is uniform over all of them).
+	const auto townPlaces = [&](const std::string& sid, std::vector<StartOff::Place>& out)
 	{
 		for (const kworld::TownRecord& town : towns.towns())
 		{
-			if (town.stringID == sid && !town.placementIndices.empty())
-			{
-				const kworld::TownPlacement& at = towns.placements()[town.placementIndices.front()];
-				return StartOff::Place{sid, at.x, at.z};
-			}
+			if (town.stringID != sid)
+				continue;
+			for (const std::size_t index : town.placementIndices)
+				out.push_back({sid, towns.placements()[index].x, towns.placements()[index].z});
 		}
-		return std::nullopt;
 	};
 	for (const kdata::Record* record : records)
 	{
@@ -155,8 +182,7 @@ StartCatalog StartCatalog::build(const kdata::GameData& gameData, std::string_vi
 		} else {
 			forEachRef(*record, "town", [&](const kdata::RefEntry& entry)
 			{
-				if (const auto place = townPlace(entry.targetID))
-					start.places.push_back(*place);
+				townPlaces(entry.targetID, start.places);
 			});
 			if (start.places.empty())
 				start.places.push_back({"", kFallbackX, kFallbackZ});
@@ -622,6 +648,7 @@ void Simulation::runNewGame(const Command& command)
 
 	// Every character is built before anything changes: a record the combat data cannot build refuses the whole start.
 	std::vector<state::Fighter> fighters;
+	std::vector<std::vector<std::pair<std::string, std::int32_t>>> bounties; // per fighter: (faction, amount) the CHARACTER record rolled
 	try
 	{
 		for (std::size_t i = 0; i < wanted.size(); ++i)
@@ -638,6 +665,7 @@ void Simulation::runNewGame(const Command& command)
 				applySpec(fighter, specs[i], *creatorCatalog());
 			else if (!specs.empty())
 				fighter.name = specs[i].name;
+			bounties.push_back(rollSpawnBounty(*gameData_, member.character, fighterRng));
 			fighter.team = 0;
 			fighter.playerControlled = true;
 			if (combatSettings_.newGameStealth >= 0.0)
@@ -724,6 +752,13 @@ void Simulation::runNewGame(const Command& command)
 				pack.add(sid, count);
 			++pack.version;
 			entity.set<state::Inventory>(std::move(pack));
+		}
+		if (const auto& rolled = bounties[outcome.members.size()]; !rolled.empty())
+		{
+			state::CrimeRecord crime;
+			for (const auto& [faction, amount] : rolled)
+				crime::addFlat(crime, faction, amount, gameHoursIn(clockTick()));
+			entity.set<state::CrimeRecord>(std::move(crime));
 		}
 		addPlayerMember(squad, id);
 		if (outcome.members.empty())

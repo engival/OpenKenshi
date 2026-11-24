@@ -28,7 +28,11 @@ using namespace delta_scene;
 // replacing its pin 17417856568400189656; 7989452899866182258 before that merge); followers' placement only, the delta store is untouched by it.
 // Repinned for kenshi-k16.8.24 (chases outside buildings slew the velocity: the members' placement after the walk moves, the delta store is untouched by it; 6976828997182875623 before).
 // Repinned for kenshi-k16.8.24 (chases outside buildings slew the velocity: the members' placement after the walk moves, the delta store is untouched by it; 17183893509936566136 before).
-constexpr std::uint64_t kPinned = 10960152686983995781ull; // the members' hash after the round trip
+// Repinned for kenshi-k16.6.614 (a pass's promotions are built a few a tick, so a re-promoted squad is built a few ticks after its pass and the placement after the
+// walk moves; the delta store is untouched by it: 10960152686983995781 before).
+// Repinned for kenshi-e9s9.18 on the k16.7.127 bake (recipe 45) (a hop keeps the surface layer within 8 u; a chase re-plans when off its route's surface: the members'
+// placement after the walk moves, the delta store is untouched by it; 12574167448220524344 on ksim 9d63ba01 before, 18035350237351644041 on the earlier base).
+constexpr std::uint64_t kPinned = 967332254289828886ull; // the members' hash after the round trip
 
 void mix(std::uint64_t& hash, const std::string& text)
 {

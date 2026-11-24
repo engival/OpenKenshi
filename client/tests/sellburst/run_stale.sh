@@ -5,6 +5,7 @@
 # dropped as stale ("(stale, dropped)" in the client log).
 # Usage: run_stale.sh OUT  (OUT is created; logs OUT/server.log, OUT/client.log). Port: PORT (default 47834).
 set -u
+export KCLIENT_FRAMELOG=hud	# the "hud" log lines this test parses are opt-in (kenshi-jvhw)
 . "$(dirname "${BASH_SOURCE[0]}")/../need_data.sh"
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 tree=$(cd "$here/../../.." && pwd)

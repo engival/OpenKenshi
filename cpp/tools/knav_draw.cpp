@@ -1,5 +1,5 @@
 // knav_draw: a top-down picture of a world bake (knav_bake --world DIR) over a box, for looking at what the bake did.
-//   knav_draw OUT.ppm (--navworld DIR | --mesh FILE [--components] | --native) --box X0 Z0 X1 Z1 [--scale U] [--y Y0 Y1] [--path X0 Z0 X1 Z1 ...]
+//   knav_draw OUT.ppm (--navworld DIR | --mesh FILE [--components] | --native) --box X0 Z0 X1 Z1 [--scale U] [--y Y0 Y1] [--radius R] [--path X0 Z0 X1 Z1 ...]
 // --mesh FILE draws one .knav (a navcache zone entry) instead of --navworld; --components colours its polygons by connected set
 // (and prints the count); --probe X Z lists the drawn polygons over that point (height range, corners), for any source.
 // --native draws the original's shipped navtiles over the box instead (knav::native, the grader): faces grey, doors green
@@ -12,6 +12,7 @@
 
 #include "knav/native.hpp"
 #include "knav/navmesh.hpp"
+#include "knav/travel.hpp"
 #include "kworld/zones.hpp"
 
 #include <DetourNavMesh.h>
@@ -130,7 +131,7 @@ int zoneOf(double v)
 
 int usage()
 {
-	std::cerr << "usage: knav_draw OUT.ppm (--navworld DIR | --mesh FILE [--components] | --native) --box X0 Z0 X1 Z1 [--scale U] [--y Y0 Y1 [--height]] [--path X0 Z0 X1 Z1 ...]\n";
+	std::cerr << "usage: knav_draw OUT.ppm (--navworld DIR | --mesh FILE [--components] | --native) --box X0 Z0 X1 Z1 [--scale U] [--y Y0 Y1 [--height]] [--radius R] [--path X0 Z0 X1 Z1 ...]\n";
 	return 2;
 }
 
@@ -149,11 +150,13 @@ int main(int argc, char** argv)
 		std::vector<std::array<double, 2>> probes; // --probe X Z: list the drawn polygons over that point
 		bool native = false;
 		bool byHeight = false;
+		bool links = false; // --links: with --probe, dump the detour neighbour refs / flags / area of the polygons over the point
 		double box[4] = {};
 		bool haveBox = false;
 		double scale = 0.5;
 		float y0 = -1e9f, y1 = 1e9f;
 		std::vector<std::array<double, 4>> paths;
+		float radius = 0.0f; // --radius R: the body radius of each --path (the runtime clearance search)
 		for (int i = 2; i < argc; ++i)
 		{
 			const std::string_view arg = argv[i];
@@ -170,6 +173,8 @@ int main(int argc, char** argv)
 				components = true;
 			else if (arg == "--native")
 				native = true;
+			else if (arg == "--links")
+				links = true;
 			else if (arg == "--height")
 				byHeight = true;
 			else if (arg == "--box" && i + 4 < argc)
@@ -185,6 +190,8 @@ int main(int argc, char** argv)
 				y0 = static_cast<float>(std::atof(argv[++i]));
 				y1 = static_cast<float>(std::atof(argv[++i]));
 			}
+			else if (arg == "--radius" && i + 1 < argc)
+				radius = static_cast<float>(std::atof(argv[++i]));
 			else if (arg == "--path" && i + 4 < argc)
 			{
 				std::array<double, 4> p{};
@@ -286,6 +293,31 @@ int main(int argc, char** argv)
 						shape.top = std::max(shape.top, c[1]);
 						band = band || inBand(c[1]);
 					}
+					if (links)
+					{
+						for (const std::array<double, 2>& at : probes)
+						{
+							bool pos = false, neg = false;
+							for (int v = 0; v < poly.vertCount; ++v)
+							{
+								const float* a = &tile->verts[poly.verts[v] * 3];
+								const float* b = &tile->verts[poly.verts[(v + 1) % poly.vertCount] * 3];
+								((b[0] - a[0]) * (at[1] - a[2]) - (b[2] - a[2]) * (at[0] - a[0]) < 0 ? neg : pos) = true;
+							}
+							if ((pos && neg) || !band)
+								continue;
+							std::cout << "poly tile " << tile->header->x << "," << tile->header->y << " #" << p << " area " << static_cast<int>(poly.getArea()) << " flags " << poly.flags
+								<< " y " << shape.top << ":\n";
+							for (int v = 0; v < poly.vertCount; ++v)
+							{
+								const float* a = &tile->verts[poly.verts[v] * 3];
+								std::cout << "  edge " << v << " (" << a[0] << " " << a[1] << " " << a[2] << ") nei " << poly.neis[v] << "\n";
+							}
+							for (unsigned int k = poly.firstLink; k != DT_NULL_LINK; k = tile->links[k].next)
+								std::cout << "  link edge " << static_cast<int>(tile->links[k].edge) << " side " << static_cast<int>(tile->links[k].side) << " ref " << std::hex
+									<< tile->links[k].ref << std::dec << " (tile salt/it/ip decoded: poly " << (tile->links[k].ref & 0xffff) << ")\n";
+						}
+					}
 					if (band)
 						shapes.push_back(std::move(shape));
 				}
@@ -348,7 +380,11 @@ int main(int argc, char** argv)
 		{
 			const knav::Point from{ static_cast<float>(p[0]), (y0 + y1) / 2 > -1e8f ? (y0 + y1) / 2 : 0.0f, static_cast<float>(p[1]) };
 			const knav::Point to{ static_cast<float>(p[2]), from[1], static_cast<float>(p[3]) };
-			const knav::PathResult route = knav::NavQuery(*mesh, 65535).findPath(from, to, { 4.0f, y0 > -1e8f ? (y1 - y0) / 2 + 10.0f : 5000.0f, 4.0f });
+			const knav::Point extents{ 4.0f, y0 > -1e8f ? (y1 - y0) / 2 + 10.0f : 5000.0f, 4.0f };
+			knav::TravelFilter travel;
+			travel.radius = radius;
+			const knav::NavQuery query(*mesh, 65535);
+			const knav::PathResult route = query.findPath(from, to, extents, travel);
 			std::cout << "path " << p[0] << " " << p[1] << " -> " << p[2] << " " << p[3] << ": "
 				<< (route.complete ? "complete" : route.found ? "partial" : "none") << ", length " << route.length << ", "
 				<< route.points.size() << " corners\n";

@@ -1,3 +1,4 @@
+#include "ksim/nav/stand_points.hpp"
 #include "ksim/net/simlink.hpp"
 #include "ksim/economy/inventory_grid.hpp"
 
@@ -24,6 +25,7 @@
 #include <optional>
 #include <ostream>
 #include <set>
+#include <unordered_set>
 #include <sstream>
 #include <stdexcept>
 
@@ -1025,6 +1027,7 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 		// so the scatter is deterministic per member count and selection order: the same count gives the
 		// same offsets on every click (our seed is the count, not the tick/seq).
 		RngStream scatter(streamSeed(kClickStream, ids.size()));
+		std::vector<std::pair<std::pair<double, double>, double>> stand;
 		const MeshNavigator* nav = sim_.navigation();
 		for (std::size_t i = 0; i < ids.size(); ++i)
 		{
@@ -1037,7 +1040,10 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 				const double angle = scatter.uniform01() * 2.0 * 3.14159265358979323846;
 				goalX += radius * std::sin(angle);
 				goalZ += radius * std::cos(angle);
+				// Stand points (k16.6.597, user 2026-11-21): the member's own spot, both footprints from every earlier member's.
+				std::tie(goalX, goalZ) = standPoint({goalX, goalZ}, arena->data().pathRadius(arena->find(id)->raceSid), stand, angle);
 			}
+			stand.push_back({{goalX, goalZ}, arena->data().pathRadius(arena->find(id)->raceSid)});
 			Route route;
 			// A goal in a zone that is not loaded is never refused here (kenshi-k16.6.481, rwh208): the walk goes by legs along the line
 			// and the roads, and the goal is routed when the walker's zone is its own (Simulation::startMoveOrder).
@@ -1102,7 +1108,8 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 		movesActor = true;
 		if (!checkIds())
 			break;
-		const state::Fighter* enemy = arena->find(target);
+		// A hostile of an imported save may still be a member of a token squad (no Fighter): the order builds its squad (kenshi-k16.6.679).
+		const state::Fighter* enemy = sim_.promoteForOrder(target) ? arena->find(target) : nullptr;
 		if (enemy == nullptr || enemy->dead)
 		{
 			reject = "bad_target";
@@ -1798,6 +1805,7 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 		apply = [this, speed]()
 		{
 			ctx_.speed = speed;
+			sim_.setGameSpeed(speed); // the decision cadences (k16.6.633); a load keeps it: speed is a session setting
 			if (ctx_.pausedUntilOrder)
 			{
 				ctx_.paused = false; // a --paused start ends at the client's first speed order
@@ -2147,6 +2155,16 @@ void Session::writeInteractable(RecordWriter& out, std::uint64_t tick, const Int
 		out.u64("building", record.building);
 		out.strid("furniture", record.furniture.empty() ? 0 : sid(record.furniture));
 		out.u64("occupant", record.occupant);
+	}
+	// The machine tail (kind 12, client-approved 2026-11-22, kenshi-k16.5.25): kind, state (again: the draw / pick), input and output; a turret's key last.
+	if (record.kind == kInteractableMachine)
+	{
+		out.u8("machineKind", record.machineKind);
+		out.u8("machineState", record.state);
+		out.strid("input", record.input.empty() ? 0 : sid(record.input));
+		out.strid("output", record.output.empty() ? 0 : sid(record.output));
+		if (record.machineKind == static_cast<std::uint8_t>(machines::Kind::Turret))
+			out.u64("turret", record.building);
 	}
 	// The container tail (kind 3, client-approved 2026-11-13): which building and layout piece it is, so the client draws no mesh of its own.
 	if (record.kind == kInteractableContainer)
@@ -2939,7 +2957,7 @@ void Session::writeBuildings(RecordWriter& out, std::uint64_t tick, const std::v
 		}
 		out.listEnd();
 		// Phases 3-6 fill these (power, workers, efficiency); neutral until then.
-		out.f32("powerValue", 0.0f);
+		out.f32("powerValue", static_cast<float>(v.powerValue));
 		out.f32("powerSupplied", 0.0f);
 		out.f32("powerDemand", 0.0f);
 		out.f32("stored", 0.0f);
@@ -3056,6 +3074,12 @@ std::string Session::lookSignature(const state::Fighter& fighter, const std::str
 	return signature;
 }
 
+// rwh.249 section 2.1: skinny = clamp01(1.5 * (1 - clamp01(hunger - 1))), in 1/20 steps (0.45 = step 9).
+static int skinnyStep(double hunger)
+{
+	return static_cast<int>(std::lround(std::clamp(1.5 * (1.0 - std::clamp(hunger - 1.0, 0.0, 1.0)), 0.0, 1.0) * 20.0));
+}
+
 std::uint32_t Session::lookVersion(const CombatArena::Member& m)
 {
 	Look& look = looks_[m.id];
@@ -3065,6 +3089,11 @@ std::uint32_t Session::lookVersion(const CombatArena::Member& m)
 		signature += "#" + std::to_string(squad);
 	if (const auto found = ctx_.looks.find(m.id); found != ctx_.looks.end())
 		signature += "@" + found->second.factionSid;
+	// The body's bulk rides in CHAR_APPEARANCE ("muscle"): whole stat levels, so one resend per level, not per XP tick.
+	signature += "!" + std::to_string(static_cast<long>(std::floor(sim_.bodyBulkStat(m.id))));
+	// "skinny" (humans only): hunger quantised to 1/20 of the key, so a drain does not resend every tick.
+	if (!m.fighter.animal)
+		signature += "~" + std::to_string(skinnyStep(m.fighter.hunger));
 	if (look.version == 0 || look.signature != signature)
 	{
 		look.signature = signature;
@@ -3147,7 +3176,7 @@ void Session::writeAppearance(RecordWriter& out, std::uint64_t tick, const Comba
 	out.strid("hairColour", made.hairColour.empty() ? 0 : sid(made.hairColour));
 	out.f32("skinTone", static_cast<float>(made.skin));
 	// body: the creator's slider values by name, then "Idle stance" (1..N, the creator's stance slider; no field of its own).
-	out.list("body", made.custom ? made.sliders.size() + 1 : 0, 8);
+	out.list("body", (made.custom ? made.sliders.size() + 1 : 0) + 1 + (fighter.animal ? 0 : 1), 8);
 	if (made.custom)
 	{
 		for (const state::LookSlider& slider : made.sliders)
@@ -3159,6 +3188,16 @@ void Session::writeAppearance(RecordWriter& out, std::uint64_t tick, const Comba
 		out.item();
 		out.strid("key", strings_.intern(4, "Idle stance"));
 		out.f32("value", static_cast<float>(made.stance));
+	}
+	// "muscle" for every character: the unclamped bulk m of rwh.240 section 3, from the whole stat level (the version bumps per level).
+	out.item();
+	out.strid("key", strings_.intern(4, "muscle"));
+	out.f32("value", static_cast<float>((std::floor(sim_.bodyBulkStat(m.id)) * 0.01 - 0.2) / 0.79));
+	if (!fighter.animal) // an animal has no physique (AppearanceAnimal)
+	{
+		out.item();
+		out.strid("key", strings_.intern(4, "skinny"));
+		out.f32("value", static_cast<float>(skinnyStep(fighter.hunger) / 20.0));
 	}
 	out.listEnd();
 	out.list("items", items.size(), 8);
@@ -3180,10 +3219,10 @@ void Session::writeAppearance(RecordWriter& out, std::uint64_t tick, const Comba
 }
 
 void Session::writeDynamic(RecordWriter& out, std::uint64_t tick, const CombatArena::Member& m, std::uint32_t version,
-	const std::set<std::int32_t>& playerTeams)
+	const std::set<std::int32_t>& playerTeams, bool lowDetail)
 {
 	const state::Fighter& fighter = m.fighter;
-	std::uint32_t flags = 0;
+	std::uint32_t flags = lowDetail ? static_cast<std::uint32_t>(kFlagLowDetail) : 0u;
 	if (sim_.combatMode(fighter))
 		flags |= kFlagCombat;
 	if (fighter.weapon.weaponType != 5) // the weapon in the hand: task 6 puts it there, task 7 (Inventory::kSheathed) takes it out (rwh.105)
@@ -3200,9 +3239,11 @@ void Session::writeDynamic(RecordWriter& out, std::uint64_t tick, const CombatAr
 		flags |= kFlagBlockMode;
 	if (fighter.sneak)
 		flags |= kFlagStealth;
-	if (fighter.moveMode != 0)
+	// A fighter strolling on a non-urgent goal moves at the walk speed (gaitOf), so the wire says Walk: the client picks its clip from these.
+	const std::uint32_t wireMode = fighter.strolling ? 0u : static_cast<std::uint32_t>(fighter.moveMode) & 3u;
+	if (wireMode != 0)
 		flags |= kFlagRun;
-	flags |= (static_cast<std::uint32_t>(fighter.moveMode) & 3u) << kFlagSpeedModeShift;
+	flags |= wireMode << kFlagSpeedModeShift;
 	if (fighter.hold)
 		flags |= kFlagHold;
 	if (fighter.passive)
@@ -3243,7 +3284,12 @@ void Session::writeDynamic(RecordWriter& out, std::uint64_t tick, const CombatAr
 		aimTail = t.clip >= 0;
 	}
 	std::uint8_t actionFlags = 0; // bit 0 loop: the client repeats the clip until `action` changes
-	if (action == 0 && !fighter.dead && !fighter.unconscious)
+	if (lowDetail)
+	{
+		action = 0;
+		aimTail = false;
+	}
+	if (action == 0 && !lowDetail && !fighter.dead && !fighter.unconscious)
 	{
 		if (const std::optional<Simulation::OperateAction> operate = sim_.operateAction(m.id))
 		{
@@ -3252,7 +3298,7 @@ void Session::writeDynamic(RecordWriter& out, std::uint64_t tick, const CombatAr
 			actionFlags = 1;
 		}
 	}
-	if (action == 0 && !fighter.dead && !fighter.unconscious)
+	if (action == 0 && !lowDetail && !fighter.dead && !fighter.unconscious)
 	{
 		if (const std::optional<Simulation::CaptureAction> capture = sim_.captureAction(m.id))
 		{
@@ -3855,6 +3901,7 @@ void Session::sendTick(RecordWriter& out, bool initial)
 			for (const std::uint64_t member : outcome.members)
 				ctx_.looks[member].factionSid = outcome.factionSid;
 			progressLevel_ = 1; // the client sends order 98 again once the new game has started
+			ctx_.cameraStart.reset(); // a new game is not the import
 		}
 		writeNewGameResult(out, outcome);
 	}
@@ -3985,6 +4032,14 @@ void Session::sendTick(RecordWriter& out, bool initial)
 		for (auto it = jobsSent_.begin(); it != jobsSent_.end();)
 			it = living.count(it->first) != 0 ? std::next(it) : jobsSent_.erase(it);
 	}
+	// The turrets somebody mans (their keys): kind 12's state and its BUILDING row's workers.
+	std::unordered_set<std::uint64_t> mounted;
+	if (arena != nullptr)
+	{
+		for (const CombatArena::Member& m : arena->members())
+			if (m.fighter.mount.mounted())
+				mounted.insert(m.fighter.mount.building);
+	}
 	// BUILDING: on connect every building of the faction, later the ones whose version the client has not heard (a rate or status change
 	// bumps it; hp alone does not: the client extrapolates progress from the rate).
 	std::vector<Simulation::BuildingView> buildingsOut;
@@ -4014,9 +4069,69 @@ void Session::sendTick(RecordWriter& out, bool initial)
 			}
 		}
 	}
+	// Machines and placed containers inside the detail bounds, whoever owns them (kenshi-k16.5.26): the BUILDING row's id is the INTERACTABLE id of
+	// the same thing (kind 4 producer, kind 12 machine, kind 3 container placement), so the join needs no new field. Sent on first sight and
+	// whenever the row's version moves; the client drops it with the INTERACTABLE's event 11.
+	{
+		if (initial)
+			machineRowsSent_.clear();
+		// The version the row would carry, read from the entity before any row is built (the same sum the row's `version` is).
+		std::unordered_map<std::uint64_t, std::uint32_t> producerVersion;
+		sim_.world().each([&](const state::Id& id, const state::Producer& box, const state::Inventory& stock) { producerVersion[id.value] = box.version + stock.version; });
+		const auto unchanged = [&](std::uint64_t id, std::uint32_t version)
+		{
+			const auto sent = machineRowsSent_.find(id);
+			return sent != machineRowsSent_.end() && sent->second == version;
+		};
+		for (const MachineSite& site : sim_.world().machineSites())
+		{
+			if (!inBounds(sentBounds_, f(site.x), f(site.z)) || !inInterest(f(site.x), f(site.z)))
+			{
+				machineRowsSent_.erase(site.id);
+				continue;
+			}
+			std::uint32_t version = mounted.count(site.key) != 0 ? 2 : 1;
+			if (site.producerId != 0)
+			{
+				const auto live = producerVersion.find(site.producerId);
+				if (live == producerVersion.end())
+				{
+					machineRowsSent_.erase(site.id);
+					continue;
+				}
+				version = live->second;
+			}
+			if (unchanged(site.id, version))
+				continue;
+			if (std::optional<Simulation::BuildingView> row = sim_.machineView(site, mounted.count(site.key) != 0))
+			{
+				machineRowsSent_[site.id] = row->version;
+				buildingsOut.push_back(std::move(*row));
+			}
+		}
+		sim_.world().each([&](const state::Id& id, const state::Container& box, const state::Inventory& stock)
+		{
+			if (id.value >= machines::kMachineIdBase || box.key == 0 || box.piece != state::Container::kNoPiece || box.building != box.key)
+				return; // a furnace (a machine), a scenario stand-in or a layout piece
+			if (!inBounds(sentBounds_, f(box.x), f(box.z)) || !inInterest(f(box.x), f(box.z)))
+			{
+				machineRowsSent_.erase(id.value);
+				return;
+			}
+			if (unchanged(id.value, box.version + stock.version))
+				return;
+			if (std::optional<Simulation::BuildingView> row = sim_.containerView(id.value))
+			{
+				machineRowsSent_[id.value] = row->version;
+				buildingsOut.push_back(std::move(*row));
+			}
+		});
+	}
 	const std::shared_ptr<const prospect::Result> prospects = std::move(prospectDue_);
 	prospectDue_.reset();
 	std::vector<Entry> visible;
+	struct LowEntry { const CombatArena::Member* member; std::uint32_t version; bool appearance; bool dynamic; };
+	std::vector<LowEntry> lowVisible;
 	std::vector<Observed> events = std::move(observed_);
 	observed_.clear();
 	const std::vector<std::pair<std::uint32_t, std::string>> late = std::move(lateRejects_);
@@ -4049,8 +4164,10 @@ void Session::sendTick(RecordWriter& out, bool initial)
 			present.insert(m.id);
 			// The player's own characters are always sent, wherever the camera's interest is (SIMLINK.md section 5): interest
 			// and the detail bounds filter only the others. A camera panned 2 km away must not empty the selection.
-			const bool seen = m.fighter.playerControlled
-				|| (inBounds(sentBounds_, m.fighter.x, m.fighter.z) && inInterest(m.fighter.x, m.fighter.z));
+			// In interest but outside the bounds: sent as a low-detail figure at the squad rate (SIMLINK.md section 5).
+			const bool inside = inBounds(sentBounds_, m.fighter.x, m.fighter.z);
+			const bool low = !m.fighter.playerControlled && !inside && inInterest(m.fighter.x, m.fighter.z);
+			const bool seen = m.fighter.playerControlled || low || (inside && inInterest(m.fighter.x, m.fighter.z));
 			auto it = known_.find(m.id);
 			if (!seen)
 			{
@@ -4079,6 +4196,14 @@ void Session::sendTick(RecordWriter& out, bool initial)
 			it->second.unconscious = m.fighter.unconscious;
 			const bool appearance = it->second.version != version;
 			it->second.version = version;
+			const bool wasLow = it->second.low;
+			it->second.low = low;
+			if (low)
+			{
+				// Positions only: no route, medical, actions, stats or blood, and not in `visible` (the full-detail set).
+				lowVisible.push_back({&m, version, appearance || fresh || !wasLow, fresh || !wasLow || (tick + m.id) % kSlowIntervalTicks == 0});
+				continue;
+			}
 			// A route is sent when it is set or cleared (nothing for a clear the client never heard of). The clear carries the seq
 			// of the route it clears: an order's route that arrives zeroes routeSeq (world_tasks.cpp freeMember reads it), so the
 			// seq the client last heard is kept here.
@@ -4103,7 +4228,10 @@ void Session::sendTick(RecordWriter& out, bool initial)
 				}
 			}
 			// CHAR_MEDICAL: on first sight and at 2.5 Hz (staggered by id so a crowd does not burst on one tick).
-			const bool medical = fresh || (tick + m.id) % kMedicalIntervalTicks == 0;
+			// A send that steps several ticks (speed) sends when the bucket changed since the last send, not on tick%8 alone.
+			const bool medical = fresh || wasLow || (tick + m.id) / kMedicalIntervalTicks != (it->second.medicalTick + m.id) / kMedicalIntervalTicks;
+			if (medical)
+				it->second.medicalTick = tick;
 			visible.push_back({&m, version, appearance, route, routeSeq, medical});
 			// Ground blood (events 2 drop, 16 pool, 17 smear): the exe's medical tick, ~1 s per character.
 			{
@@ -4559,6 +4687,8 @@ void Session::sendTick(RecordWriter& out, bool initial)
 		});
 		sim_.world().each([&](const state::Id& id, const state::Container& box)
 		{
+			if (id.value >= machines::kMachineIdBase)
+				return; // a furnace: kind 12 below
 			visit(id.value, f(box.x), f(box.z), box.version, [&]()
 			{
 				InterRecord r;
@@ -4611,6 +4741,35 @@ void Session::sendTick(RecordWriter& out, bool initial)
 				return r;
 			});
 		});
+		// Machines (kind 12, kenshi-k16.5.26): every placed machine that is no producer entity. The id is machines::kMachineIdBase + the
+		// site's index, the same on every load. A turret's version moves when somebody mounts or leaves it; a furnace follows its box.
+		{
+			for (const MachineSite& site : sim_.world().machineSites())
+			{
+				if (site.producerId != 0)
+					continue;
+				const machines::Static& info = sim_.world().machineInfo(site);
+				const bool manned = info.kind == machines::Kind::Turret && mounted.count(site.key) != 0;
+				visit(site.id, f(site.x), f(site.z), manned ? 2u : 1u, [&]()
+				{
+					InterRecord r;
+					r.id = site.id;
+					r.kind = kInteractableMachine;
+					r.record = site.recordSid;
+					r.pos[0] = r.use[0] = f(site.x);
+					r.pos[1] = r.use[1] = navigation ? f(site.y) : 0.0f;
+					r.pos[2] = r.use[2] = f(site.z);
+					r.machineKind = static_cast<std::uint8_t>(info.kind);
+					r.state = manned || (info.maxWorkers == 0 && info.kind != machines::Kind::Turret) ? 1 : 0;
+					r.version = manned ? 2 : 1;
+					r.owner = site.ownerFaction;
+					r.input = info.input;
+					r.output = info.output;
+					r.building = site.key;
+					return r;
+				});
+			}
+		}
 		// Beds (kind 5, client-approved 2026-11-06): every real layout bed. The id is the layout placement's site key
 		// (routines::siteId), never a runtime index, so it is the same across a save/load and a restart. The version toggles
 		// with the occupant, so a take/leave re-sends the record; the client reads the occupant from it.
@@ -4825,8 +4984,18 @@ void Session::sendTick(RecordWriter& out, bool initial)
 			if (e.appearance)
 				writeAppearance(w, tick, *e.member, e.version);
 		}
+		for (const LowEntry& e : lowVisible)
+		{
+			if (e.appearance)
+				writeAppearance(w, tick, *e.member, e.version);
+		}
 		for (const Entry& e : visible)
 			writeDynamic(w, tick, *e.member, e.version, playerTeams);
+		for (const LowEntry& e : lowVisible)
+		{
+			if (e.dynamic)
+				writeDynamic(w, tick, *e.member, e.version, playerTeams, true);
+		}
 		for (const Entry& e : visible)
 		{
 			if (e.route)

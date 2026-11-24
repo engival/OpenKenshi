@@ -1,0 +1,38 @@
+# beams_air ask (kenshi-ac8f): the ask's camera (kenshi-jj3.28.1.1.1 shots 121229 / 121530: eye -50698 1104.6 -1255.1, yaw 110.5, pitch -8.8) in the Hub bar. Two shots per run: lamp_beams soloed at 02:49 (solo0..4), all terms at 04:21 (all0..4); the sim clock overwrites `set time` a few frames later, so each is tried 5 times and the sidecar's `time:` line says which one landed (ask.sh picks).
+100 set animate 1
+100 set timescale 0
+150 camera char Wanderer
+310 move -50544 -1231
+850 camera char Wanderer
+852 key F down
+854 key F up
+856 key F down
+858 key F up
+
+1262 set pos -50698,-1255
+1263 set yaw 110.5
+1264 set pitch -8.8
+1265 set alt 29.2
+1300 light lamp_beams solo
+1303 set time 2.82
+1305 screenshot OUTDIR/solo0.png
+1311 set time 2.82
+1313 screenshot OUTDIR/solo1.png
+1319 set time 2.82
+1321 screenshot OUTDIR/solo2.png
+1327 set time 2.82
+1329 screenshot OUTDIR/solo3.png
+1335 set time 2.82
+1337 screenshot OUTDIR/solo4.png
+1340 light all on
+1343 set time 4.35
+1345 screenshot OUTDIR/all0.png
+1351 set time 4.35
+1353 screenshot OUTDIR/all1.png
+1359 set time 4.35
+1361 screenshot OUTDIR/all2.png
+1367 set time 4.35
+1369 screenshot OUTDIR/all3.png
+1375 set time 4.35
+1377 screenshot OUTDIR/all4.png
+1400 quit

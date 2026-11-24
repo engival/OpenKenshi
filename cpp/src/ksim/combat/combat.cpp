@@ -16,6 +16,9 @@
 #include <limits>
 #if defined(KSIM_PROFILE) && KSIM_PROFILE
 #include "knav/route_measure.hpp"
+#if KSIM_PROFILE
+#include "ksim/dev/island_probe.hpp"
+#endif
 #endif
 
 // The combat arena: the state machine of ENGAGEMENT.md around the rules of combat_rules.cpp.
@@ -57,6 +60,15 @@ constexpr double kHoldBrake = 200.0; // u/s^2 (per second) when the steer turns 
 constexpr double kTuneApproachDistance = 150.0; // beyond this the target is "not directly reachable"
 constexpr double kImpactW = CombatRules::kCharWidth; // cc+0x1a0, the character width
 constexpr double kCapsuleRadius = 3.45; // target capsule radius at the impact test
+// The impact box's vertical test (kenshi-rwh.214, findings/rwh214_melee_box_axes_static.md): the box's local Y is vertical
+// (the rotation is a yaw) with half-extent 25.0, centred ~6 u above the attacker's feet (clamped ground + 9, pulled back);
+// an impact whose attack direction is LEFT(2)/RIGHT(3) replaces the half-extents with (13, 8, D/2): 8 u vertical. The target
+// is an axis-aligned box, feet to feet + 20 (s = 1; prone 5).
+constexpr double kBoxHalfUp = 25.0;
+constexpr double kBoxHalfUpSide = 8.0;
+constexpr double kBoxCentreUp = 6.0;
+constexpr double kTargetHeight = 20.0;
+constexpr double kTargetHeightProne = 5.0;
 // Melee avoidance (kinspect s74_static.md 1.4-1.6 and bq9_crowd_spacing.md): CombatSteer's two avoidance calls. Footprint radius of a human 2.6
 // (race 'pathfind footprint radius', UNSURE for other races: all take 2.6 here); neighbours inside r_self + r_other + 40 horizontally and 20
 // vertically; a repulsion that grows linearly to 100 at distance 0 within r_nb + Rsum + comfort radius; gain 0.105; hostile neighbours weigh 1,
@@ -98,7 +110,7 @@ constexpr double kDepenetratePosture = 0.02;
 // (124 u/s: 1-6 of 9-10 overlapped bodies pushed, mean 2.8; 20 u/s: all). The arena step is 0.025 s (two per 0.05 s tick, substeps 2): a runner steps
 // 3.1 u and spends 3-5 steps inside R = 8 (chord 10.6-16 u), a walker 10+ per 0.05 s. A neighbour pushes only once it has been inside R for kContactTicks
 // consecutive earlier steps (0.1 s): a run pass then catches the long chords only, about the live share; a walk catches every body.
-constexpr int kContactTicks = 4;
+constexpr double kContactTime = 0.1; // the lag as a duration (4 steps of 0.025 s); separate() counts steps, so it converts at the arena's step
 constexpr int kSettlePasses = 8; // settleSelf: the halving overlap is under 0.4 % of itself after 8 (live rest spacing 7.98-7.99 of R = 8)
 constexpr double kDepenetrateMin = 0.02; // the push is dropped below this overlap (raw 0.001 physics units)
 // The body layer (task AW, OURS: the original resolves bodies with ragdoll physics). A lying body gives way a fraction of its own
@@ -156,6 +168,9 @@ constexpr double kChaseRouteAbove = 100.0;
 // and re-plans when the gap crosses it (a target that took a stair). OURS: a storey is 50-70 u, so 20 clears
 // slopes and stair steps; the Watchtower's floors are 127 apart and the Hub Storm House is a storey too.
 constexpr double kFloorApart = 20.0;
+// A chaser whose height is more than this off its route's surface (nearest point on the current leg) has left the route's level: a hit's recoil carried it off a
+// stair's edge onto the floor beneath. It re-plans from where it stands (OURS, UNSURE: the original's rule is not decoded; the rwh.295 re-plan interval is 2.6 s median, PATH_WALK.md 3d).
+constexpr double kOffSurface = 8.0;
 // ...unless the gap is a hillside's: under kFloorSlope x the xz distance. On the runtime mesh the shipped surface sits up to 30 u off the
 // heightmap, so two bodies on one slope differ by 20+ u (kenshi-k16.6.271). OURS, tuned: the mesh's own 40 degrees (0.84) merged the tower's
 // floors (128 u at ~150 u xz, ksim_melee_floors); see NAVMESH_CACHE.md "Native source".
@@ -177,6 +192,8 @@ constexpr double kStuckRepath = 5.0; // seconds of barely moving on a walk befor
 // or off the mesh (LOCOMOTION.md 9, D7).
 constexpr double kOffPathRepath = 5.0;
 constexpr double kOffPathReach = 3.0;
+// The corridor walk (PATH_WALK.md 3b step 5): a position this close behind a portal's line counts as on it, passed (ours, not the exe's).
+constexpr double kOnPortalLine = 0.05;
 constexpr double kFirstPointDrop = 4.0; // a route's start this near the walker, with a clear way to the next point, is dropped (k16.8.8)
 constexpr double kArriveReach = 1.0; // a walk within this (xz) of its end has arrived (bq16_deadlocks.md Q2: 0.01 physics^2)
 constexpr double kFaceByVelocity = 4.0; // above this speed (u/s) the body faces the velocity, below it the way to the next corner (s70 section 3)
@@ -187,6 +204,8 @@ constexpr double kFollowHeadingRate = 0.5; // heading += (h - heading) * rate * 
 constexpr double kFollowSlotLead = 1.0; // the slot leads the leader by this many seconds of its speed
 constexpr double kFollowFixCos = -0.8660254037844386; // option squad.follow_heading_fix: snap beyond 150 degrees
 constexpr double kFollowStandoff = 40.0; // Task_FollowLeader's follow distance, for a leader outside the squad
+constexpr double kSlotStandOff = 1.0; // a slot on the mesh stands this far from its edge: the prop ring (0.75 u) alone left a follower there under a body's margin from the prop (kenshi-k16.6.548)
+constexpr double kFollowStandOffRate = 2.0; // u/s a halted follower is eased off a mesh edge
 constexpr double kSlotSnapReach = 64.0; // how far from a formation slot off the mesh the nearest mesh edge is looked for (clearSlot)
 constexpr double kFollowDirectionFloor = 0.1; // the direction factor never goes below this
 // The give-up monitor (s4 step 2): "perceived" is the follower's sensor having seen the leader on its last scan
@@ -207,6 +226,8 @@ constexpr double kSelfDefenceRange = 150.0;
 // measured; 40 u is about twice the melee ring (the circling band) so a swing's reach and a ring-mate count, and the 60 u keep stops a
 // target at the edge flickering the pick.
 constexpr double kHoldRange = 40.0;
+// Task 13 ATTACK_ATTACKERS_OF: the ally's attacker is taken only within this distance of the ally (rwh.189 s3, d^2 <= 22500).
+constexpr double kAttackerOfRadius = 150.0;
 constexpr double kHoldKeep = 60.0;
 // The player speed modes (SIMLINK.md order 10 `which` 5; kinspect 0789d56, the exe's setSpeedMode 140665150): Jog's cap
 // in u/s. Walk is the race walk speed through the run flag (gaitOf), Run has no cap, Group the slowest member's run speed.
@@ -323,12 +344,67 @@ bool clearFormationSlot(const knav::Walker& walker, double y, double radius, dou
 	return true;
 }
 
+// The push that takes (x, z) on the mesh back from an edge it is within kSlotStandOff of: a follower that stops stands there for good, and the
+// edge of a prop's clearance ring is only 0.75 u off the prop (a body's margin is 1.1 u, kenshi-k16.6.548). (0, 0) when clear of every edge.
+static void standOffPush(const knav::Walker& walker, double y, double x, double z, double& px, double& pz)
+{
+	px = 0.0;
+	pz = 0.0;
+	for (int i = 0; i < 8; ++i)
+	{
+		const double ux = std::sin(i * (std::numbers::pi / 4.0));
+		const double uz = std::cos(i * (std::numbers::pi / 4.0));
+		const knav::StepResult r = walker.step({x, y, z}, ux * kSlotStandOff, uz * kSlotStandOff);
+		if (r.onMesh && r.blocked)
+		{
+			px -= ux * (kSlotStandOff - r.moved);
+			pz -= uz * (kSlotStandOff - r.moved);
+		}
+	}
+}
+
 struct CombatArena::Ctx
 {
 	CombatArena& arena;
 	const CombatRules& rules;
 	const CombatData& data;
 	double dt = 0.0;
+#if KSIM_PROFILE
+	// kenshi-k16.6.305: think (the pick) vs act inside the update loop; counted only while `on`.
+	struct ThinkProbe
+	{
+		bool on = false;
+		int depth = 0;
+		std::uint64_t thinkNs = 0, thinkRouteNs = 0, thinkCalls = 0, scanNs = 0, scanCalls = 0;
+		std::array<std::uint64_t, 9> byState{}; // outer pickTarget calls by the caller's state (kenshi-k16.6.631): Attack Defend Between Hub Circle Wait Stumble Done Approach
+	} think;
+	// kenshi-k16.6.631: the member being updated, its distance band, and the branch it took (Dead Down Walk Follow Drive Idle Fight Other).
+	enum Branch : int { BrDead, BrDown, BrWalk, BrFollow, BrDrive, BrIdle, BrFight, BrOther };
+	int branch = BrOther;
+	int band = 2;
+	std::array<std::uint64_t, 24> branchN{}; // [branch * 3 + band]
+	struct ThinkTimer
+	{
+		ThinkProbe& p;
+		std::uint64_t began = 0, routeBegan = 0;
+		bool outer;
+		explicit ThinkTimer(ThinkProbe& probe) : p(probe), outer(probe.on && probe.depth == 0)
+		{
+			if (!outer) return;
+			++p.depth;
+			began = knav::measure::now();
+			routeBegan = knav::measure::counters.routeNs.load(std::memory_order_relaxed);
+		}
+		~ThinkTimer()
+		{
+			if (!outer) return;
+			--p.depth;
+			++p.thinkCalls;
+			p.thinkNs += knav::measure::now() - began;
+			p.thinkRouteNs += knav::measure::counters.routeNs.load(std::memory_order_relaxed) - routeBegan;
+		}
+	};
+#endif
 	// Steering request of the fighter being updated.
 	struct Steer
 	{
@@ -448,7 +524,10 @@ struct CombatArena::Ctx
 	{
 		auto it = std::lower_bound(arena.members_.begin(), arena.members_.end(), id,
 			[](const Member& m, std::uint64_t v) { return m.id < v; });
-		return it != arena.members_.end() && it->id == id ? &*it : nullptr;
+		if (it == arena.members_.end() || it->id != id)
+			return nullptr;
+		it->dirty = true; // a mutable handle into another member: a possible write, so the mirror copies it
+		return &*it;
 	}
 
 	void emit(CombatEvent::Kind kind, std::uint64_t who, std::uint64_t other, std::int32_t code = 0,
@@ -564,6 +643,7 @@ struct CombatArena::Ctx
 		{
 			if (mate.fighter.squad != side.fighter.squad)
 				continue;
+			mate.dirty = true;
 			auto& list = mate.fighter.hostileSquads;
 			const auto at = std::lower_bound(list.begin(), list.end(), other.squad);
 			if (at == list.end() || *at != other.squad)
@@ -581,6 +661,7 @@ struct CombatArena::Ctx
 		{
 			if (mate.fighter.squad != side.fighter.squad)
 				continue;
+			mate.dirty = true;
 			auto& list = mate.fighter.aggressorSquads;
 			const auto at = std::lower_bound(list.begin(), list.end(), other.squad);
 			if (at == list.end() || *at != other.squad)
@@ -689,6 +770,9 @@ struct CombatArena::Ctx
 			}
 		}
 		++arena.pathQueries_;
+#if KSIM_PROFILE
+		const knav::measure::WhoScope whoScope(a.id, 1);
+#endif
 		const Route route = routeForBody(*n, {fa.x, fa.y, fa.z}, fb.x, fb.z, fb.y, bodyOf(fa));
 		double length = std::numeric_limits<double>::infinity();
 		if (route.found && !route.points.empty() && std::fabs(route.heights.back() - fb.y) <= kPathEndHeight)
@@ -969,6 +1053,7 @@ struct CombatArena::Ctx
 			return false;
 		}
 		o.engaged.push_back(attacker);
+		owner.fightTier = true;
 		return true;
 	}
 
@@ -1025,6 +1110,7 @@ struct CombatArena::Ctx
 		f.target = id;
 		if (id != 0)
 		{
+			m.fightTier = true;
 			f.comfortRolls += 1.0; // a melee task start: the comfort radii re-roll (BQ12 a)
 			Member* now = member(id);
 			if (now != nullptr && unsensedShooter(f, m.id, now->fighter, goal))
@@ -1147,11 +1233,21 @@ struct CombatArena::Ctx
 		{
 			// BQ10: an aggressor at work against an ally (goal 21 target filter, no range) is joined too; the joiner then holds the
 			// attacker's squad hostile for as long as the fight lasts.
-			if (!usable(foe.fighter) || foe.fighter.target == 0 || !perception::aware(f, foe.id))
+			if (!usable(foe.fighter) || foe.fighter.target == 0)
 				continue;
 			const Member* ally = member(foe.fighter.target);
 			if (ally == nullptr || ally->fighter.dead)
 				continue;
+			// Plan 13 ATTACK_ATTACKERS_OF (14099c3b0, rwh.228 s4): the attacker comes from the ally's aggressor list; the ally senses it fresh OR
+			// I hold any record of it (existence), and it stands within 150 u of the ally (22500 = DAT_1416e345c). My own attacker needs a record.
+			if (foe.fighter.target == m.id)
+			{
+				if (!perception::aware(f, foe.id))
+					continue;
+			} else {
+				if ((!perception::sensedNow(ally->fighter, foe.id) && perception::find(f, foe.id) == nullptr) || !withinAllyReach(foe.fighter.target, foe))
+					continue;
+			}
 			const double d = centre(f, foe.fighter);
 			const bool hostile = enemy(f, foe.fighter) || goalTarget(foe.fighter, f);
 			if (foe.fighter.target == m.id)
@@ -1171,7 +1267,7 @@ struct CombatArena::Ctx
 				// rwh.99 section 5 (AI::vf14): PROTECT_ALLIES is utility 0 for a slave that carries its 187 row; its own attacker is still answered.
 				// A passive member (CharStats+0x12c, rwh.148 3a: goal 15 utility 0) and a holder (3b) joins it (rwh.179: goal 15 fires under Hold,
 				// the body stays at its anchor) only where it can act from there: holdReach. Both still answer their own attacker (goal 32; the holder within kHoldRange).
-				if (f.sneak || tasked || f.obedient || f.passive || (f.holdPosition && !holdReach(f, foe.fighter, kHoldRange)))
+				if (f.sneak || tasked || f.obedient || f.passive)
 					continue;
 				// The attacker of an ally need not be hostile to ME (k16.6.238, user playtest: crime guards beating a thief of the
 				// squad, hostile to the thief only): PROTECT_ALLIES answers whoever attacks the ally. Not my own squad (a spar, a duel).
@@ -1184,6 +1280,10 @@ struct CombatArena::Ctx
 				// An ally of another team is no ally (two factionless fighters are "bonded" for the wild squads, but the victim of a fight
 				// against my squadmate is the enemy, not something to defend).
 				if (!((f.squad != 0 && ally->fighter.squad == f.squad) || (ally->fighter.team == f.team && arena.bonded(f.faction, ally->fighter.faction))))
+					continue;
+				// Goal 15's own gates (rwh.179 / rwh.189 s3): MY sensor holds the ALLY, seen or heard now (not just the attacker), and the plan's
+				// task 13 takes only an attacker within 150 u of the ally. A far animal that has picked a target pulls nobody in.
+				if (!perception::sensedNow(f, ally->id) || centre(ally->fighter, foe.fighter) > kAttackerOfRadius)
 					continue;
 			}
 			if (best == nullptr || d < bestD)
@@ -1198,8 +1298,13 @@ struct CombatArena::Ctx
 			// (the attack task holds the target).
 			if (!enemy(f, best->fighter))
 				markHostile(*best, f);
+			if (best->fighter.target != m.id)
+				learn(m, best->id); // 140858f40(...,0): the winner is force-noticed into my senses
 			// The goal this join runs (task AT, the Goal row): SELF_PRESERVATION for my own attacker, PROTECT_ALLIES for an ally's.
-			setTarget(m, best->id, best->fighter.target == m.id ? 32 : 15);
+			const std::uint16_t joinGoal = best->fighter.target == m.id ? 32 : 15;
+			setTarget(m, best->id, joinGoal);
+			if (std::vector<CombatArena::FightCandidate> none; fightTraced(m))
+				traceFight(m, best->id, joinGoal, false, none); // reported when made, not at the next full pick
 		}
 		return best;
 	}
@@ -1209,7 +1314,21 @@ struct CombatArena::Ctx
 	std::uint64_t attackerOf(std::uint64_t hand)
 	{
 		const Member* protector = hand != 0 ? member(hand) : nullptr;
-		return protector != nullptr ? protector->fighter.target : 0;
+		const Member* attacker = protector != nullptr && protector->fighter.target != 0 ? member(protector->fighter.target) : nullptr;
+		// Task 13 takes only an attacker within 150 u of the ally (rwh.189 s3).
+		return attacker != nullptr && centre(protector->fighter, attacker->fighter) <= kAttackerOfRadius ? attacker->id : 0;
+	}
+
+	// Goal 288's only radius (kenshi-rwh.215, task 13 at 14099c3b0): the ally's attacker is within 150 u OF THE ALLY (22500 squared).
+	// There is no town leash: 288's resolver is goal 15's, and leaving town ends nothing.
+	bool withinAllyReach(std::uint64_t ally, const Member& attacker)
+	{
+		const Member* a = member(ally);
+		if (a == nullptr)
+			return false;
+		const double dx = attacker.fighter.x - a->fighter.x;
+		const double dz = attacker.fighter.z - a->fighter.z;
+		return dx * dx + dz * dz <= 22500.0;
 	}
 
 	// The combat goals' live evaluators (G4; dt24_143 / dt24_15 / dt24_16): the hand is the goal's target - the attacker for 15 / 143,
@@ -1398,14 +1517,14 @@ struct CombatArena::Ctx
 	// buffers and the picker chooses (dt24_16 / dt24_21 / dt24_34 / dt24_144 / dt24_41). A character with no package (a duel, a test) still
 	// fights its attacker under SELF_PRESERVATION and anyone else under ATTACK_ENEMIES.
 	std::uint16_t joinGoal(const Member& m, const Member& other, std::uint64_t hand143, std::uint64_t hand15, bool hand16, bool hand21,
-		bool hand34, bool hand144, bool hand41, bool hand101, bool hand248, std::uint64_t hand288, bool inRing288)
+		bool hand34, bool hand144, bool hand41, bool hand101, bool hand248, std::uint64_t hand288)
 	{
 		// 32 SELF_PRESERVATION is a goal like the others: the attacker is admitted (cond 39) and the goal's plan [13, 32] decides.
 		if (other.fighter.target == m.id && combatPlan(m, routines::task::SelfPreservation, other.id).found())
 			return routines::task::SelfPreservation;
 		if (!m.joinDriven)
 			return 16;
-		if (hand288 != 0 && inRing288 && attackerOf(hand288) == other.id
+		if (hand288 != 0 && attackerOf(hand288) == other.id && withinAllyReach(hand288, other)
 			&& combatPlan(m, routines::task::ProtectAlliesStayInTown, other.id).found())
 			return routines::task::ProtectAlliesStayInTown;
 		if (hand21 && combatPlan(m, routines::task::AttackEnemiesAndNeutrals, other.id).found())
@@ -1435,6 +1554,14 @@ struct CombatArena::Ctx
 	// returns). Every member the fighter targets, holds or admits through its package goals, scored by the picker (14059e300 stand-in).
 	Member* scanCandidates(Member& m, std::uint16_t& goal, std::vector<CombatArena::FightCandidate>* seen = nullptr)
 	{
+#if KSIM_PROFILE
+		struct ScanTimer
+		{
+			ThinkProbe& p;
+			std::uint64_t began = knav::measure::now();
+			~ScanTimer() { if (p.on) { ++p.scanCalls; p.scanNs += knav::measure::now() - began; } }
+		} scanTimer{think};
+#endif
 		const Fighter& f = m.fighter;
 		std::uint64_t hand143 = 0;
 		std::uint64_t hand15 = 0;
@@ -1471,11 +1598,14 @@ struct CombatArena::Ctx
 				hand143 = worldres::protectOwnSquad143(f, ctx, lookup);
 			if ((m.joinGoals & joins::kProtectAllies) != 0 && !f.passive)
 				hand15 = worldres::protectAllies15(f, ctx, lookup);
-			if ((m.joinGoals & joins::kProtectAlliesTown) != 0 && !f.passive && !f.holdPosition && haveHome)
+			if ((m.joinGoals & joins::kProtectAlliesTown) != 0 && !f.passive && !f.holdPosition)
 				hand288 = worldres::protectAllies15(f, ctx, lookup);
 		}
 		Member* best = nullptr;
 		double bestScore = 0.0;
+		// AI+0xbc (rwh.228 s1.4): the count of records hostile and capable (not downed, dead, carried), remembered ones included. Goal 16 searches only
+		// while it is non-zero.
+		int someoneToFight = -1; // lazy: only a member with goal 16 in its join goals asks
 		std::uint16_t bestGoal = 0;
 		// Only a member the observer is aware of can be a candidate, and its sight records are sorted by id like members_: walk
 		// those (a handful) instead of every member, in the same order, so the pick and its ties are unchanged.
@@ -1509,8 +1639,18 @@ struct CombatArena::Ctx
 				otherGoal = f.combatGoal;
 			else
 			{
+				// FRESH (rwh.212 / rwh.228): the held target (the goal's own, NONE strength) is not re-tested; a fresh one passes only while AI+0xbc
+				// is set, and a conscious down body inside a town is dropped (14059f3a0's downed-in-a-town rule, a slave of mine excepted).
+				const auto freshFight = [&]
+				{
+					if (other.fighter.down && other.fighter.slaveState != 1 && arena.environment_.townOf(other.fighter.x, other.fighter.z) >= 0)
+						return false; // downed in a town
+					if (someoneToFight < 0)
+						someoneToFight = worldres::hostileCapable(f, ctx, lookup) ? 1 : 0;
+					return someoneToFight == 1 && worldres::attackEnemies16(f, ctx, other.id, lookup);
+				};
 				const bool hand16 = m.joinDriven && (m.joinGoals & joins::kAttackEnemies) != 0
-					&& worldres::attackEnemies16(f, ctx, other.id, lookup);
+					&& ((other.id == f.target && f.combatGoal == 16) || freshFight());
 				const bool hand21 = m.joinDriven && (m.joinGoals & joins::kAttackNeutrals) != 0
 					&& worldres::attackEnemiesAndNeutrals21(f, ctx, other.id, lookup);
 				const bool hand34 = m.joinDriven && (m.joinGoals & joins::kTroubleMakers) != 0
@@ -1523,11 +1663,7 @@ struct CombatArena::Ctx
 					&& worldres::defeatSquad101(f, ctx, other.id, lookup, m.id);
 				const bool hand101 = squadFoe && (m.joinGoals & joins::kDefeatSquad) != 0;
 				const bool hand248 = squadFoe && (m.joinGoals & joins::kDefeatSquadChase) != 0;
-				const double ringX = other.fighter.x - homeX;
-				const double ringZ = other.fighter.z - homeZ;
-				const double ring = homeRadius * worldres::kHomeRingScale;
-				otherGoal = joinGoal(m, other, hand143, hand15, hand16, hand21, hand34, hand144, hand41, hand101, hand248, hand288,
-					haveHome && ringX * ringX + ringZ * ringZ <= ring * ring);
+				otherGoal = joinGoal(m, other, hand143, hand15, hand16, hand21, hand34, hand144, hand41, hand101, hand248, hand288);
 			}
 			if (otherGoal == 0)
 				continue;
@@ -1595,6 +1731,13 @@ struct CombatArena::Ctx
 		arena.fightSink_(pick);
 	}
 
+	// A counter-retarget made outside pickTarget is reported when made, not at the member's next full pick (which a busy member reaches late).
+	void traceCounter(const Member& m)
+	{
+		if (std::vector<CombatArena::FightCandidate> none; m.fighter.target != 0 && fightTraced(m))
+			traceFight(m, m.fighter.target, m.fighter.combatGoal, false, none);
+	}
+
 	bool fightTraced(const Member& m) const
 	{
 		return arena.fightSink_ && (!arena.fightWants_ || arena.fightWants_(m.id));
@@ -1604,6 +1747,16 @@ struct CombatArena::Ctx
 	// has seen or heard it within the memory: perception.hpp; this replaces the 600 unit proxy).
 	Member* pickTarget(Member& m)
 	{
+#if KSIM_PROFILE
+		if (think.on && think.depth == 0)
+		{
+			static constexpr int kSlot[12] = {0, 1, -1, 2, 3, 4, 5, -1, 6, 7, -1, 8}; // by CombatState value
+			const int state = static_cast<int>(m.fighter.state);
+			if (state >= 0 && state < 12 && kSlot[state] >= 0)
+				++think.byState[static_cast<std::size_t>(kSlot[state])];
+		}
+		const ThinkTimer thinkTimer(think);
+#endif
 		Member* const held = targetOf(m);
 		Member* picked = pickTargetPlain(m);
 		// HOLD POSITION: no target beyond close range, so no chase (a player's attack order is its own task and stands).
@@ -1647,7 +1800,7 @@ struct CombatArena::Ctx
 		}
 		// RUN_AWAY_FORCED (DIALOGUE.md 5, step 6b): a fleeing character takes no target, so its run is not dropped for a fight. UNSURE
 		// whether the original's runner fights back when attacked (kinspect 6b question).
-		if (f.goal.kind == state::IndividualKind::Flee || f.goal.kind == state::IndividualKind::RunAway)
+		if (f.fleeing || f.goal.kind == state::IndividualKind::RunAway)
 		{
 			setTarget(m, 0);
 			return nullptr;
@@ -1734,20 +1887,28 @@ struct CombatArena::Ctx
 			Fighter& f = m.fighter;
 			if (!usable(f))
 				continue;
-			if (f.senseClock < 0.0)
-				f.senseClock = interval * perception::stagger(arena.diceKey(m.id));
-			f.senseClock += dt;
-			if (f.senseClock < interval)
+			// An NPC outside a fight scans at the scaled interval at game speed above 1 (k16.6.633); a player character and a fighter keep it.
+			const double mine = arena.environment_.cadenceScale > 1 && !f.playerControlled && f.target == 0 && f.engaged.empty()
+				? interval * arena.environment_.cadenceScale : interval;
+			// A due-stamp: `senseAt` is the time the clock counts from, so a member that is not due is not written (nothing owed, nothing dirty).
+			const double now = arena.time_;
+			if (f.senseAt <= Fighter::kNoStamp * 0.5)
+			{
+				f.senseAt = now - dt - mine * perception::stagger(arena.diceKey(m.id)); // the counted clock took this step's dt on the spot
+				m.dirty = true;
+			}
+			if (now - f.senseAt < mine)
 				continue;
+			m.dirty = true;
 			if (others.empty())
 				for (const Member& o : arena.members_)
 					others.push_back({o.id, &o.fighter});
 			if (arena.environment_.weatherAt)
 				arena.environment_.weatherAt(f.x, f.z, arena.environment_.weatherType, arena.environment_.weatherStrength);
 			const RaceCombat* race = data.race(f.raceSid);
-			perception::scan(m.id, f, race != nullptr ? race->visionRangeMult : 1.0, f.senseClock, others, arena.environment_,
+			perception::scan(m.id, f, race != nullptr ? race->visionRangeMult : 1.0, now - f.senseAt, others, arena.environment_,
 				noticed);
-			f.senseClock = 0.0;
+			f.senseAt = now;
 		}
 		for (const perception::Noticed& n : noticed)
 			emit(CombatEvent::Kind::Noticed, n.observer, n.target);
@@ -1781,7 +1942,10 @@ struct CombatArena::Ctx
 			double strength = arena.environment_.weatherStrength;
 			arena.environment_.weatherAt(f.x, f.z, type, strength);
 			if (type == 2)
+			{
+				m.dirty = true;
 				wear(f, type, kAcidDamagePerSecond);
+			}
 		}
 	}
 
@@ -1820,7 +1984,10 @@ struct CombatArena::Ctx
 			double strength = 0.0;
 			arena.environment_.beamAt(f.x, f.z, type, strength);
 			if (strength > 0.0)
+			{
+				m.dirty = true;
 				wear(f, type, kBeamDamagePerSecond * strength, true);
+			}
 		}
 	}
 
@@ -1864,13 +2031,24 @@ struct CombatArena::Ctx
 	// 0.75 D + w + max(L - moved, -1) (17.5 + ... here). The box then stretches back towards the
 	// attacker until its near edge is radius - D/2 forward. `moved` = root-motion distance of the
 	// swing so far (the clip's cumulative root displacement at the current clip time).
-	// Height is not tested: the box spans 50 vertical units and the sim is flat (y = 0). The box alone
-	// overlapped a character through a ceiling (task AQ), so the pair must also be walkable to each other
-	// within the box's far edge plus kPathSlack (one helper with tryEngageTarget).
+	// Height: boxVerticalHit (rwh.214), characters only, no occlusion. No walk gate: the vertical bound alone stops a hit through a ceiling.
 	// UNSURE: the stretch uses the attacker's radius w (a humanoid 4, a race's bodyWidth) and a horizontal |C0 - pos|; the
 	// disassembly's 3D distance would include the +9 centre height.
-	bool inImpactBox(const Member& att, const Technique& t, const Member& def)
+	// The vertical overlap of the swing box and the target's box (kenshi-rwh.214). `sideways` = the impact's attack direction is LEFT/RIGHT.
+	static bool boxVerticalHit(const Fighter& a, const Fighter& d, bool sideways)
 	{
+		const double half = sideways ? kBoxHalfUpSide : kBoxHalfUp;
+		const double height = (d.down || d.unconscious || d.dead) ? kTargetHeightProne : kTargetHeight;
+		const double centre = a.y + kBoxCentreUp;
+		return d.y <= centre + half && d.y + height >= centre - half;
+	}
+
+	static bool sidewaysImpact(const ImpactPoint& i) { return i.dir == 2 || i.dir == 3; }
+
+	bool inImpactBox(const Member& att, const Technique& t, const Member& def, const ImpactPoint* impact = nullptr)
+	{
+		if (!boxVerticalHit(att.fighter, def.fighter, impact != nullptr && sidewaysImpact(*impact)))
+			return false;
 		const Fighter& a = att.fighter;
 		const Fighter& d = def.fighter;
 		const double D = CombatRules::weaponLength(a);
@@ -1898,9 +2076,7 @@ struct CombatArena::Ctx
 		// Circle (the capsule seen from above) against the rectangle.
 		const double outF = std::max(0.0, std::fabs(forward) - halfForward);
 		const double outL = std::max(0.0, std::fabs(lateral) - (w + 0.5));
-		if (std::hypot(outF, outL) > kCapsuleRadius)
-			return false;
-		return withinPathReach(att, def, centre + halfForward + kCapsuleRadius + kPathSlack);
+		return std::hypot(outF, outL) <= kCapsuleRadius;
 	}
 
 	// The attacker's hit list (`140608460`) at the time the defender reacts: the impact box plus the
@@ -1916,11 +2092,16 @@ struct CombatArena::Ctx
 		// The far edge of the real box grows with 0.75 D (item 17); the fit was made at D = 18.
 		const double reach = hitReachBase() + 0.75 * (CombatRules::weaponLength(a) - CombatRules::kCharD)
 			+ hitReachPerDistance() * t.attackDistance + lunge;
+		bool sideways = !t.impacts.empty();
+		for (const ImpactPoint& i : t.impacts)
+			sideways = sideways && sidewaysImpact(i);
+		if (!boxVerticalHit(a, d, sideways))
+			return false;
 		const double dx = d.x - a.x;
 		const double dz = d.z - a.z;
 		if (std::hypot(dx, dz) > reach || dx * std::sin(a.yaw) + dz * std::cos(a.yaw) <= 0.0)
 			return false;
-		return withinPathReach(att, def, reach + kPathSlack);
+		return true;
 	}
 
 	// ---- XP (`1408c6980`) ----
@@ -2052,6 +2233,7 @@ struct CombatArena::Ctx
 	{
 		// knockedOut / died are reported, not emitted: the caller emits Hit first, so the hit that
 		// caused a KO or death always precedes it in the event stream.
+		defender.dirty = true;
 		Fighter& f = defender.fighter;
 		const CombatConstants& k = data.k;
 		// 4.1 part selection.
@@ -2271,7 +2453,7 @@ struct CombatArena::Ctx
 			// relation never made an enemy).
 			if (other.id == att.id || !usable(other.fighter) || !(enemy(a, other.fighter) || other.id == a.target))
 				continue;
-			if (inImpactBox(att, t, other))
+			if (inImpactBox(att, t, other, &impact))
 				targets.push_back({centre(a, other.fighter), &other});
 		}
 		std::sort(targets.begin(), targets.end(),
@@ -2283,6 +2465,7 @@ struct CombatArena::Ctx
 			Member& def = *entry.second;
 			if (std::find(a.hitList.begin(), a.hitList.end(), def.id) == a.hitList.end())
 				a.hitList.push_back(def.id); // the swinger is a threat to it until the swing ends (incoming())
+			def.fightTier = true;
 			double dmg[6];
 			rules.computeDamage(a, def.fighter, dmg);
 			for (int i = 0; i < 4; ++i)
@@ -2429,6 +2612,11 @@ struct CombatArena::Ctx
 			return result(1);
 		if (!tryAcquire(d, a.id))
 			return result(5);
+		// A swing against the asker is only started by a fighter the asker's engaged list can hold: turning on the asker is setTarget, which
+		// lists the defender there (a fresh attacker's list does not hold it yet), and a full list refuses it, so a Wait-ring attacker or one the
+		// full list refused stays out of the fight however the roll falls (crowd-combat.md: 0 of 22 hits from outside the list).
+		const auto& askerList = a.fighter.engaged;
+		const bool askerListed = askerList.size() <= 4 || std::find(askerList.begin(), askerList.end(), d.id) != askerList.end();
 		if (D.state == CombatState::Stumble || D.pending == CombatState::Stumble || D.down)
 		{
 			if (D.state == CombatState::Stumble)
@@ -2444,11 +2632,12 @@ struct CombatArena::Ctx
 				// The counter flip (CADENCE_SLICE.md Follow-up 3, 7): a defender waiting in state 3 with pending Defend, nothing aimed at
 				// it and no clip running, whose own attack roll wins, turns to attack and retargets onto the asker (exe: 1.63 flip swings
 				// per fight, a median 0.42 s after the hub).
-				if (D.state == CombatState::Between && !clipPlaying(D) && incoming(d).empty()
+				if (D.state == CombatState::Between && !clipPlaying(D) && incoming(d).empty() && askerListed
 					&& rules.attackChanceRoll(CombatRules::attackValue(D), CombatRules::attackValue(a.fighter), D.rng))
 				{
 					D.pending = CombatState::Attack;
 					setTarget(d, a.id);
+					traceCounter(d);
 					return result(D.target == a.id ? 1 : 5);
 				}
 				return result(0);
@@ -2484,11 +2673,12 @@ struct CombatArena::Ctx
 			D.pending = CombatState::Defend;
 			return result(0);
 		}
-		if (!attacking && !clipPlaying(D))
+		if (!attacking && !clipPlaying(D) && askerListed)
 		{
 			D.pending = CombatState::Attack;
 			setState(d, CombatState::Between);
 			setTarget(d, a.id);
+			traceCounter(d);
 		}
 		return result(D.target == a.id ? 1 : 5);
 	}
@@ -3128,6 +3318,10 @@ struct CombatArena::Ctx
 
 	const MeshNavigator* nav() const { return arena.navigation_.get(); }
 
+	// The wall room a move keeps (Walker::step's radius): the body's path radius (the cut-out edge is the raster's, up to a cell off the hull), so a prop's cut-out (exact outline, no baked ring) and a wall keep
+	// the body off by the query's convention, whatever moves it (kenshi-k16.7.129). ksim_prop_clip holds the body to the radius less 1.5 u.
+	double bodyRoom(const Fighter& f) const { return arena.data().pathRadius(f.raceSid); }
+
 	// Moves f by (dx, dz): through the Walker when there is a navmesh (slides along edges, sets y),
 	// freely on the plane in a bare combat harness (setNavigation). A fighter the Walker finds off
 	// the mesh does not move; the correction at the start of the next step deals with it.
@@ -3140,7 +3334,7 @@ struct CombatArena::Ctx
 			f.z += dz;
 			return;
 		}
-		const knav::StepResult r = n->walker().step({f.x, f.y, f.z}, dx, dz);
+		const knav::StepResult r = n->walker().step({f.x, f.y, f.z}, dx, dz, bodyRoom(f));
 		if (r.onMesh)
 		{
 			f.x = r.at.x;
@@ -3174,8 +3368,17 @@ struct CombatArena::Ctx
 	// A formation slot off the mesh is moved clear of the solid it is in (clearFormationSlot).
 	void clearSlot(const Fighter& f, double& ax, double& az) const
 	{
-		if (nav() != nullptr)
-			clearFormationSlot(nav()->walker(), f.y, arena.data().pathRadius(f.raceSid), ax, az);
+		if (nav() != nullptr && !clearFormationSlot(nav()->walker(), f.y, arena.data().pathRadius(f.raceSid), ax, az))
+		{
+			double px = 0.0;
+			double pz = 0.0;
+			standOffPush(nav()->walker(), f.y, ax, az, px, pz);
+			if ((px != 0.0 || pz != 0.0) && nav()->walker().onMesh({ax + px, f.y, az + pz}))
+			{
+				ax += px;
+				az += pz;
+			}
+		}
 	}
 
 	// A follower on the clearance route of a direct-mode follow keeps the direct steer's facing: the velocity while it is above 0.1 u/s.
@@ -3263,6 +3466,41 @@ struct CombatArena::Ctx
 		return best;
 	}
 
+	// PATH_WALK.md 3e: whether (x, z) lies in the corridor polygon of portals [portalNext-1, portalNext+4): the quads between consecutive portals
+	// (a point portal makes a triangle). A window with a portal whose polygon ref is gone (a loaded save) cannot say: the caller falls back to the polyline.
+	bool inCorridorWindow(const Fighter& f, double x, double z, bool& known) const
+	{
+		const std::size_t from = f.portalNext > 0 ? f.portalNext - 1 : 0;
+		const std::size_t to = std::min<std::size_t>(f.portalNext + 4, f.portals.size());
+		known = f.portalNext > 0 || (!f.portals.empty() && f.portals[0].point == 0); // before the first portal the walker is on the start leg, which no quad covers
+		for (std::size_t i = from; i < to; ++i)
+			known = known && f.portals[i].ref != 0;
+		const auto inTri = [&](double ax, double az, double bx, double bz, double cx, double cz)
+		{
+			const double d1 = (bx - ax) * (z - az) - (bz - az) * (x - ax);
+			const double d2 = (cx - bx) * (z - bz) - (cz - bz) * (x - bx);
+			const double d3 = (ax - cx) * (z - cz) - (az - cz) * (x - cx);
+			return !((d1 < 0.0 || d2 < 0.0 || d3 < 0.0) && (d1 > 0.0 || d2 > 0.0 || d3 > 0.0));
+		};
+		if (to - from == 1)
+			return std::hypot(f.portals[from].lx - x, f.portals[from].lz - z) < 1.0;
+		for (std::size_t i = from; i + 1 < to; ++i)
+		{
+			const state::RoutePortal& a = f.portals[i];
+			const state::RoutePortal& b = f.portals[i + 1];
+			if (inTri(a.lx, a.lz, a.rx, a.rz, b.rx, b.rz) || inTri(a.lx, a.lz, b.rx, b.rz, b.lx, b.lz))
+				return true;
+			if (a.isPoint() && b.isPoint()) // a leg between two point portals has no area: the polyline within the reach (kenshi-e9s9.7)
+			{
+				const double abx = b.lx - a.lx, abz = b.lz - a.lz, len2 = abx * abx + abz * abz;
+				const double t = len2 > 1.0e-9 ? std::clamp(((x - a.lx) * abx + (z - a.lz) * abz) / len2, 0.0, 1.0) : 0.0;
+				if (std::hypot(a.lx + t * abx - x, a.lz + t * abz - z) <= kOffPathReach * footprintOf(f))
+					return true;
+			}
+		}
+		return false;
+	}
+
 #if KSIM_DEV
 	// kenshi-k16.8.39: where along the whole route `f` is nearest (3D distance, segment index), against the window the tracker tests.
 	static std::pair<double, std::size_t> nearestRouteSegment(const Fighter& f)
@@ -3306,6 +3544,42 @@ struct CombatArena::Ctx
 			room = std::fmin(room, n.roomAhead(x, y, z, sideX / side, sideZ / side, footprint, footprint * kMaxCornerRoomFactor));
 		return std::fmax(footprint, room); // never less than the footprint the route was planned with
 	}
+	// walkOrder, then the corridor state kept in step (PATH_WALK.md 3a; nothing walks by it yet): the corridor of a route no installer laid (an older
+	// save) derived once, portalNext after routeNext, the velocity as a vector.
+	void walkOrderSynced(Member& m, bool crawl = false)
+	{
+		Fighter& f = m.fighter;
+		if (f.portals.empty() && f.route.size() >= 2)
+			rebuildCorridor(f, nav(), bodyOf(f));
+		else if (!f.portals.empty() && f.portals.front().ref == 0 && f.route.size() >= 2 && nav() != nullptr)
+		{
+			// A loaded walk: the portals' polygon refs are not saved (derived). Take them from the corridor the route gives again, so the off-path test
+			// sees the same window as the uninterrupted walk (kenshi-e9s9.23, ksim_interact save + load).
+			const std::vector<state::RoutePortal> again = nav()->corridorFor(f.route, bodyOf(f));
+			if (again.size() == f.portals.size())
+				for (std::size_t i = 0; i < again.size(); ++i)
+					f.portals[i].ref = again[i].ref;
+		}
+		walkOrder(m, crawl);
+		if (!dev::pathWalk())
+			syncPortalNext(f); // the corridor walk keeps portalNext itself (portals share route points)
+		if (dev::pathWalk() && !f.portals.empty())
+		{
+			// The corridor walk's velocity is its own vector (walkOrder set it), at the speed that was covered; the body's facing lags it at 20 rad/s and
+			// would bend a set-off facing away from the aim through the facing (kenshi-e9s9.20).
+			const double mag = std::hypot(f.vx, f.vz);
+			if (mag > 1.0e-6)
+			{
+				f.vx *= f.forwardSpeed / mag;
+				f.vz *= f.forwardSpeed / mag;
+				return;
+			}
+		}
+		const double heading = f.yaw == f.walkFacing ? f.walkHeading : f.yaw;
+		f.vx = f.forwardSpeed * std::sin(heading);
+		f.vz = f.forwardSpeed * std::cos(heading);
+	}
+
 	void walkOrder(Member& m, bool crawl = false)
 	{
 #if defined(KSIM_PROFILE) && KSIM_PROFILE
@@ -3333,16 +3607,116 @@ struct CombatArena::Ctx
 		arena.walkStats_.walkSeconds += dt;
 		arena.walkStats_.maybePrint(arena.time_);
 #endif
-		f.routeNext = static_cast<std::uint32_t>(passedWaypoints(f, f.routeNext, f.x, f.z)); // the funnel's next corner: not the one under the feet
-		const state::RoutePoint& next = f.route[f.routeNext];
 		const knav::Gait gait = gaitOf(f);
+		// KSIM_PATH_WALK (kenshi-e9s9.5): the corridor walk, PATH_WALK.md 3b / 3c. The aim is the per-tick funnel's first corner, pushed off the wall.
+		const bool pw = dev::pathWalk() && !f.portals.empty();
+		if (pw)
+		{
+			if (f.portalNext >= f.portals.size())
+				f.portalNext = static_cast<std::uint32_t>(f.portals.size() - 1);
+			f.routeNext = f.portals[f.portalNext].point;
+			if (f.routeNext >= f.route.size())
+				f.routeNext = static_cast<std::uint32_t>(f.route.size() - 1);
+		} else {
+			f.routeNext = static_cast<std::uint32_t>(passedWaypoints(f, f.routeNext, f.x, f.z)); // the funnel's next corner: not the one under the feet
+		}
+		const state::RoutePoint& next = f.route[f.routeNext];
+		double cornerX = next.x, cornerZ = next.z; // pw: the pushed funnel corner (the goal when the funnel sees it)
+		bool cornerGoal = f.routeNext + 1 == f.route.size();
+		bool cornerLegEnd = false;
+		double brakeToX = 0.0, brakeToZ = 0.0; // pw: the brake's toCorner (the flip check)
+		double arcLimit = std::numeric_limits<double>::infinity(); // pw: the speed the turn after the corner allows (ours, D6)
+		if (pw)
+		{
+			// The route's first point is where the walk starts, not a corner to aim at (a walker set down 2 u from it would aim back at it for a tick, then swing
+			// 40+ degrees onto the leg: kenshi-e9s9.20). Its point portal is passed before the funnel runs.
+			// So is the first portal's line when the walker stands within 4 u of it (a walk set down short of its first point): the funnel's corner would be the portal's near end for the first ticks.
+			while (f.portalNext == 0 && f.portals.size() > 1 && (f.portals[0].isPoint() ? f.portals[0].point == 0 : f.portals[0].side(f.x, f.z) > -4.0))
+				f.portalNext = 1;
+			const state::RoutePoint& goal = f.route.back();
+			const knav::FunnelCorner c = knav::firstCorner(f.portals, f.portalNext, f.x, f.z, goal.x, goal.z);
+			cornerGoal = c.goal || c.index + 1 >= f.portals.size(); // the last portal is the route's end
+			cornerLegEnd = cornerGoal && f.routeMoreLegs; // a far order's leg end is a straight continuation: no gate, no arrival brake (the next leg follows)
+			cornerX = c.x;
+			cornerZ = c.z;
+			brakeToX = c.x - f.x;
+			brakeToZ = c.z - f.z;
+			const state::RoutePortal* end = c.goal ? nullptr : &f.portals[c.index];
+			if (end != nullptr && !cornerGoal)
+			{
+				// D6 (ours, kenshi-e9s9.20): the turn at the corner and the road after it. The exe's brake looks at the first corner only, which lets a walker reach a
+				// sharp corner with a short leg behind it at speed and orbit it. The leg out ends at the portal's route point (a point portal's: the next one).
+				// A leg out shorter than kMinLeg is a kink of the same corner (route points 1-2 u apart), not a leg: the anchor is the first point beyond it.
+				constexpr double kMinLeg = 8.0;
+				std::size_t anchor = end->isPoint() ? end->point + 1 : end->point;
+				while (anchor < f.route.size() && std::hypot(f.route[anchor].x - c.x, f.route[anchor].z - c.z) < kMinLeg)
+					++anchor;
+				if (anchor < f.route.size())
+				{
+					const double outX = f.route[anchor].x - c.x, outZ = f.route[anchor].z - c.z;
+					const double inX = c.x - f.x, inZ = c.z - f.z;
+					// The leg out runs along the route until the next real turn (more than ~6 degrees off its first direction) or the goal: a bend followed by a
+					// near-straight polyline is one long leg, not an 8 u one (kenshi-e9s9.23, ksim_group_settle).
+					constexpr double kSlightBend = 6.0 * 3.14159265358979323846 / 180.0;
+					const double firstHeading = std::atan2(outX, outZ);
+					const double firstLen = std::hypot(outX, outZ);
+					double outLen = firstLen;
+					for (std::size_t k = anchor + 1; k < f.route.size(); ++k)
+					{
+						const double segX = f.route[k].x - f.route[k - 1].x, segZ = f.route[k].z - f.route[k - 1].z;
+						if (std::hypot(segX, segZ) < 1.0e-6)
+							continue;
+						double turnOut = std::fabs(std::atan2(segX, segZ) - firstHeading);
+						turnOut = std::min(turnOut, 2.0 * 3.14159265358979323846 - turnOut);
+						if (turnOut > kSlightBend)
+							break;
+						outLen = std::hypot(f.route[k].x - c.x, f.route[k].z - c.z);
+					}
+					const double inLen = std::hypot(inX, inZ);
+					if (inLen > 1.0e-3)
+					{
+						const double turn = std::acos(std::clamp((inX * outX + inZ * outZ) / (inLen * firstLen), -1.0, 1.0));
+						arcLimit = knav::arcCornerSpeed(turn, gait.acceleration, 0.35 * outLen);
+					}
+				}
+			}
+			const double sight = std::hypot(brakeToX, brakeToZ);
+			// A point portal is the planner's own bend, a taut path round a wall's vertex: the exe's corner there is a portal end whose clearance is the vertex's own (0 at a wall's
+			// vertex, rwh.308), so the aim is pushed r + 5 - clearance off the vertex, to the outside of the turn (the wall is on its inside). Ours: only where the route turns by more than
+			// ~15 degrees (a straight-through point would jink 9 u sideways), and a point with no route point after it (the goal) gets none.
+			double pointSide = 0.0;
+			if (end != nullptr && end->isPoint() && sight > 1.0e-6 && end->point + 1 < f.route.size())
+			{
+				const double outX = f.route[end->point + 1].x - c.x, outZ = f.route[end->point + 1].z - c.z;
+				const double outLen = std::hypot(outX, outZ);
+				const double turnCross = brakeToX * outZ - brakeToZ * outX;
+				if (outLen > 1.0e-6 && std::fabs(turnCross) / (sight * outLen) > std::sin(15.0 * 3.14159265358979323846 / 180.0) && brakeToX * outX + brakeToZ * outZ > -0.99 * sight * outLen)
+					pointSide = turnCross > 0.0 ? -1.0 : 1.0;
+			}
+			if (end != nullptr && (!end->isPoint() || pointSide != 0.0) && sight > 1.0e-6)
+			{
+				const double push = end->isPoint() ? std::max(0.0, gait.footprint + 5.0 - std::min(end->clearLeft, end->clearRight)) * std::min(1.0, sight / 12.0) : std::max(0.0, gait.footprint + 5.0 - (c.left ? end->clearLeft : end->clearRight));
+				const double side = end->isPoint() ? pointSide : c.left ? 1.0 : -1.0; // a left end is pushed to the right of the sight line, a right end to the left
+				const double px = side * brakeToZ / sight * push;
+				const double pz = -side * brakeToX / sight * push;
+				cornerX += px;
+				cornerZ += pz;
+				// The flip check (rwh.268 section 6): the brake's toCorner is the pushed vector unless the push cuts progress along v.
+				const double sp = std::hypot(f.vx, f.vz);
+				if (sp < 1.0e-6 || (px * f.vx + pz * f.vz) >= 0.0)
+				{
+					brakeToX = cornerX - f.x;
+					brakeToZ = cornerZ - f.z;
+				}
+			}
+		}
 		// A fighter its squadmates follow walks at the group's pace, not the gait's top speed: the carry gives a world squad's
 		// leader a short route every step, so at the top speed it would reach each carrot and stand until the next step.
 		const bool paced = !f.playerControlled && isFollowed(m.id);
 		const double top = crawl ? std::min(knav::gaitSpeed(gait), CombatArena::kCrawlSpeed)
 			: paced ? std::min(knav::gaitSpeed(gait), UtilityGroupLayer::kWalkSpeed) : knav::gaitSpeed(gait);
-		const double toX = next.x - f.x;
-		const double toZ = next.z - f.z;
+		const double toX = cornerX - f.x;
+		const double toZ = cornerZ - f.z;
 		const double toGo = std::hypot(toX, toZ);
 		// D5: our route corners clear by the route's own radius (pathRadius = the footprint), not the exe's footprint + 5, so the corner speed comes from
 		// the geometry of the arc (knav::arcCornerSpeed), not from the exe's sqrt(2 a L): a near-straight corner is not braked for, a 90-degree turn in a
@@ -3356,25 +3730,81 @@ struct CombatArena::Ctx
 			const double lateral = std::min(1.0, std::fabs(f.forwardSpeed) * std::fabs(std::sin(f.yaw) * toZ - std::cos(f.yaw) * toX) / toGo / (gait.acceleration * dt));
 			brakeShare = std::sqrt(1.0 - lateral * lateral);
 		}
-		const double limit = knav::Walker::speedLimit({f.x, f.y, f.z}, f.route, f.routeNext, top,
+		const double limit = pw ? top : knav::Walker::speedLimit({f.x, f.y, f.z}, f.route, f.routeNext, top,
 			gait.acceleration, gait.footprint, true, std::fabs(f.forwardSpeed) * dt, brakeShare, std::fabs(f.forwardSpeed),
 			[&](double x, double z, double inX, double inZ, double outX, double outZ) { return cornerRoom(*n, gait.footprint, f.route, x, z, inX, inZ, outX, outZ); });
 		// The step never overshoots the route's end, measured along the route: the crow to the end reads 0 when the
 		// end is on the floor above (its x,z is the walker's), and braked the walk to a stop under the goal (task AQ).
-		double remaining = toGo;
+		double remaining = pw ? std::hypot(next.x - f.x, next.z - f.z) : toGo;
 		for (std::size_t i = f.routeNext; i + 1 < f.route.size(); ++i)
 			remaining += std::hypot(f.route[i + 1].x - f.route[i].x, f.route[i + 1].z - f.route[i].z);
-		const double desired = std::min(limit, remaining / dt);
+		// The arc's speed holds at the corner, not all along the approach: the walker may carry what it can still brake down to it in the distance (D7, ours).
+		const double arcAhead = std::isfinite(arcLimit) ? std::sqrt(arcLimit * arcLimit + 2.0 * gait.acceleration * toGo) : arcLimit;
+		double desired = std::min(std::min(limit, arcAhead), remaining / dt);
+		double aimX = toGo > 1.0e-6 ? toX / toGo * desired : 0.0;
+		double aimZ = toGo > 1.0e-6 ? toZ / toGo * desired : 0.0;
+		double perpAim = 0.0;
+		// A corner within one step (at least 1 u) that is not the end is reached this tick: the aim would flip to behind the walker on the next, reverse the
+		// velocity through zero and stall it on the vertex (a funnel corner with no push, or a point portal; kenshi-e9s9.20). Keep the heading, no brake;
+		// the portal advance moves the aim on once the walker is across.
+		const double heading = std::hypot(f.vx, f.vz);
+		const bool atCorner = pw && !cornerGoal && heading > 1.0e-3 && toGo < std::max(1.0, heading * dt);
+		if (atCorner)
+		{
+			aimX = f.vx / heading * desired;
+			aimZ = f.vz / heading * desired;
+		}
+		if (pw && toGo > 1.0e-6 && !atCorner)
+		{
+			// PATH_WALK.md 3c: the brake on the funnel's first corner only. Gate: proj - 1 u < s^2 / 2a; speed: sqrt(2 a 10 u |sin|), sin against the unit funnel direction.
+			const double s = std::hypot(f.vx, f.vz);
+			const double dx = toX / toGo;
+			const double dz = toZ / toGo;
+			if (s > 1.0e-3)
+			{
+				const double hx = f.vx / s;
+				const double hz = f.vz / s;
+				const double proj = hx * brakeToX + hz * brakeToZ;
+				// A goal not dead ahead (the funnel sees it as the corner is rounded) is braked for on the crow distance, not its projection on the velocity, and
+				// with the budget the turn leaves (as brakeShare does for a corner): v lands on it, not past it (kenshi-e9s9.23, ksim_move_detour: 80 degrees at the end).
+				const double goalAhead = cornerGoal ? 0.0 : proj; // the goal's profile below caps by itself, no gate
+				if (!cornerLegEnd && goalAhead - 1.0 < s * s / (2.0 * gait.acceleration))
+				{
+					if (cornerGoal)
+					{
+						{
+						// Arrival: stops at the goal. The slew sheds a dt of speed a tick and each tick steps at its new speed, so the speed that stops in toGo is
+						// u with u^2/2a + u dt = toGo (a tick of margin for the quantised steps), not the continuous sqrt(2 a toGo) (which arrives at ~20 u/s and snaps from it).
+						const double half = gait.acceleration * dt;
+						desired = std::min(desired, std::sqrt(half * half + 2.0 * gait.acceleration * toGo * std::pow(std::clamp(proj / toGo, 0.2, 1.0), 3.0)) - half);
+					}
+					} else {
+						const double sine = hz * dx - hx * dz; // dot(perp(v_hat), d), perp(v) = (v.z, -v.x)
+						const double k = std::fabs(2.0 * gait.acceleration * 10.0 * sine);
+						if (desired * desired > k)
+							desired = std::min(desired, std::max({std::sqrt(k), std::sqrt(2.0 * gait.acceleration), arcLimit})); // floor: the speed that stops in 1 u, so a dead-straight corner never stalls the walker (ours); and what the arc after the corner allows (D7, ours: a corner headed at straight with a slight bend behind it is not braked to the floor, kenshi-e9s9.23)
+						else
+							perpAim = sine < 0.0 ? -1.0 : 1.0; // the corner is across the travel: the velocity goes sideways at vmax (rwh.268 section 5)
+					}
+					aimX = perpAim != 0.0 ? perpAim * hz * desired : dx * desired;
+					aimZ = perpAim != 0.0 ? -perpAim * hx * desired : dz * desired;
+				}
+			}
+		}
 		// The velocity vector slews towards desired x the direction to the next corner by at most
 		// accel x dt, so a corner is an arc and a reversal brakes through zero (HAVOKCHAR_EXE.md section 3, updateVelocity). UNSURE (ours): the
 		// corner brake is speedLimit over the route's corners, not the exe's lateral-offset test of the first corner alone.
 		// The velocity so far is forwardSpeed along the body's facing (the facing follows the velocity above 4 u/s, so they agree; it is
 		// not last tick's net displacement, which a push, a teleport or a slide into a wall would corrupt).
 		const double memory = f.yaw == f.walkFacing ? f.walkHeading : f.yaw;
-		knav::Velocity v = knav::slewVelocity({f.forwardSpeed * std::sin(memory), f.forwardSpeed * std::cos(memory)}, toGo > 1.0e-6 ? toX / toGo * desired : 0.0,
-			toGo > 1.0e-6 ? toZ / toGo * desired : 0.0, gait.acceleration, dt);
-		const bool last = f.routeNext + 1 == f.route.size();
-		const bool snap = last && std::hypot(v.x, v.z) * dt >= toGo; // the step would pass the end: pos := goal, v := 0 (the exe's stop snap)
+		// The corridor walk keeps the velocity's own heading (f.vx, f.vz: last tick's command): the body's facing turns at 20 rad/s and a walker that sets off
+		// facing away from its aim would swing its velocity through the facing (a 30+ degree turn a tick at the route start, kenshi-e9s9.20).
+		const double heldSpeed = std::hypot(f.vx, f.vz);
+		const knav::Velocity held = pw && heldSpeed > 1.0e-3 ? knav::Velocity{f.vx / heldSpeed * f.forwardSpeed, f.vz / heldSpeed * f.forwardSpeed}
+			: knav::Velocity{f.forwardSpeed * std::sin(memory), f.forwardSpeed * std::cos(memory)};
+		knav::Velocity v = knav::slewVelocity(held, aimX, aimZ, gait.acceleration, dt);
+		const bool last = pw ? cornerGoal && f.portalNext + 1 == f.portals.size() : f.routeNext + 1 == f.route.size();
+		const bool snap = last && std::hypot(v.x, v.z) * dt >= toGo;
 		if (snap)
 			v = {toX / dt, toZ / dt};
 		// The body faces the velocity above 4 u/s, the way to the next corner below it (s70 section 3), at no more than 20 rad/s.
@@ -3382,7 +3812,11 @@ struct CombatArena::Ctx
 		// A player's move walk takes no push at all (playerOrderWalk: it walks through its squadmates, the original's group move, k16.6.231), so the
 		// facing is the travel direction; the squadmate push of k16.6.182's net-displacement facing is gone with it.
 		const bool byVelocity = speed > kFaceByVelocity;
-		f.yaw = knav::turnToward(f.yaw, byVelocity ? std::atan2(v.x, v.z) : std::atan2(toX, toZ), knav::kTurnRate, dt);
+		// The corridor walk's last step (under max(1 u, a step) to the goal) holds the facing of the last real step: a pivot towards a goal a hair away is noise
+		// (kenshi-e9s9.23, ksim_group_settle facing at rest).
+		const bool holdFacing = pw && cornerGoal && toGo < std::max(1.0, speed * dt);
+		if (!holdFacing)
+			f.yaw = knav::turnToward(f.yaw, byVelocity ? std::atan2(v.x, v.z) : std::atan2(toX, toZ), knav::kTurnRate, dt);
 		f.walkHeading = f.yaw; // saved with the fighter (v109); the memory and the yaw are one again
 		f.walkFacing = f.yaw;
 		f.forwardSpeed = snap ? 0.0 : speed;
@@ -3399,11 +3833,11 @@ struct CombatArena::Ctx
 			const double uz = toZ / toGo;
 			const double side = m.pushX * uz - m.pushZ * ux < 0.0 ? -0.5 : 0.5;
 			const double step = speed * dt;
-			r = n->walker().step({f.x, f.y, f.z}, (ux + side * uz) * step, (uz - side * ux) * step);
+			r = n->walker().step({f.x, f.y, f.z}, (ux + side * uz) * step, (uz - side * ux) * step, bodyRoom(f));
 		} else {
 			r = n->walker().step({f.x, f.y, f.z}, v.x * dt, v.z * dt);
 		}
-		if (r.onMesh)
+		if (r.onMesh && !pw)
 			at = passedWaypoints(f, at, r.at.x, r.at.z);
 		// Barely moving while asked to: 5 s of it is a re-path, like a block (s70 section 4: 5 s off the corridor). The progress is how much closer the
 		// step got to its waypoint, from where it stood before the push: a walker pressing into (or sidestepping around, side to side) a character that
@@ -3412,7 +3846,10 @@ struct CombatArena::Ctx
 		// A step that hit the mesh edge leaves the velocity the distance actually covered (the exe: velocity := (pos - old) / dt after a hit).
 		if (r.blocked && r.onMesh)
 			f.forwardSpeed = std::min(speed, std::hypot(r.at.x - f.x, r.at.z - f.z) / dt); // never above what was commanded (the mesh's float32 coordinates blur the distance by ~0.08 u/s)
-		const double progress = std::hypot(toX + m.pushX, toZ + m.pushZ) - std::hypot(next.x - r.at.x, next.z - r.at.z);
+		// After a hit the velocity is the slide's displacement as a vector, not the commanded direction at the lower speed (rwh.271: v := (pos - old) / dt), so the next
+		// tick's slew starts along the wall instead of into it.
+		const knav::Velocity carried = pw && r.blocked && r.onMesh ? knav::Velocity{(r.at.x - f.x) / dt, (r.at.z - f.z) / dt} : v;
+		const double progress = std::hypot(toX + m.pushX, toZ + m.pushZ) - std::hypot((pw ? cornerX : next.x) - r.at.x, (pw ? cornerZ : next.z) - r.at.z);
 		f.walkStuck = asked > 0.01 && progress < 0.1 * asked ? f.walkStuck + dt : 0.0;
 		if (r.onMesh)
 		{
@@ -3420,11 +3857,48 @@ struct CombatArena::Ctx
 			f.y = r.at.y;
 			f.z = r.at.z;
 			f.routeNext = static_cast<std::uint32_t>(at);
+			if (!last && at + 1 < f.route.size())
+			{
+				// A corner the arc cut leaves the walker on the mesh edge, 0.75 u off a prop (the ring): eased back inside kSlotStandOff of it
+				// (kenshi-k16.6.548). Not on the last leg: the goal may stand at an edge and the walker must arrive.
+				double px = 0.0;
+				double pz = 0.0;
+				standOffPush(n->walker(), f.y, f.x, f.z, px, pz);
+				shift(f, px, pz);
+			}
+			if (pw)
+			{
+				// Portal advance (3b step 5): the position on the far side of the portal's line; a point portal by the plane across its leg. The last
+				// portal is passed only by the stop snap.
+				while (f.portalNext + 1 < f.portals.size())
+				{
+					const state::RoutePortal& pt = f.portals[f.portalNext];
+					bool passed;
+					if (!pt.isPoint())
+						passed = pt.side(f.x, f.z) > -kOnPortalLine; // a walker sliding along the portal's own line (a zone border) never gets strictly across it
+					else
+					{
+						const state::RoutePoint& a = f.route[pt.point > 0 ? pt.point - 1 : 0];
+						// Or within a step (at least 1 u) of it: the aim would flip to behind the walker next tick, reverse the velocity through zero and stall it at the point (kenshi-e9s9.20).
+						passed = (f.x - pt.lx) * (pt.lx - a.x) + (f.z - pt.lz) * (pt.lz - a.z) >= 0.0 || std::hypot(f.x - pt.lx, f.z - pt.lz) < std::max(1.0, speed * dt);
+					}
+					if (!passed)
+						break;
+					++f.portalNext;
+				}
+				if (snap)
+					f.portalNext = static_cast<std::uint32_t>(f.portals.size());
+				f.routeNext = f.portalNext < f.portals.size() ? f.portals[f.portalNext].point : static_cast<std::uint32_t>(f.route.size());
+				f.vx = carried.x;
+				f.vz = carried.z;
+			}
 		}
 		// Off the route for 5 s: the path is re-requested from here to the same goal (the exe's timeOffPath > 5.0 s -> BROKEN -> requestPath, the
 		// walk keeps going on the old route meanwhile). Back on the route resets it. Not counted toward kMaxReroutes: it is the exe's own
 		// recovery, one per 5 s off the route, and a failed re-request keeps the old route and tries again 5 s later.
-		const bool onRoute = r.onMesh && distanceToRouteWindow(f, f.x, f.y, f.z) <= kOffPathReach * footprintOf(f);
+		bool corridorKnown = false;
+		const bool inCorridor = pw && inCorridorWindow(f, f.x, f.z, corridorKnown);
+		const bool onRoute = r.onMesh && (pw && corridorKnown ? inCorridor : distanceToRouteWindow(f, f.x, f.y, f.z) <= kOffPathReach * footprintOf(f)); // 3e: the polygon; the polyline within 3 footprints only when a portal's ref is stale
 		f.offPath = onRoute ? 0.0 : f.offPath + dt;
 		if (f.offPath > kOffPathRepath)
 		{
@@ -3594,13 +4068,16 @@ struct CombatArena::Ctx
 		const MeshNavigator* n = nav();
 		if (n == nullptr)
 			return false;
+#if KSIM_PROFILE
+		const knav::measure::WhoScope whoScope(f.diceSeed, 2);
+#endif
 		const Route again = routeForBody(*n, {f.x, f.y, f.z}, tx, tz, ty, bodyOf(f));
 		if (!again.found || again.points.size() < 2)
 			return false;
-		f.route.clear();
+		std::vector<state::RoutePoint> points;
 		for (std::size_t i = 0; i < again.points.size(); ++i)
-			f.route.push_back({again.points[i].x, again.heights[i], again.points[i].z});
-		f.routeNext = 0;
+			points.push_back({again.points[i].x, again.heights[i], again.points[i].z});
+		setRoute(f, std::move(points), n, bodyOf(f));
 		f.offPath = 0.0;
 		++f.routeVersion;
 		f.clearWhy = why;
@@ -3618,6 +4095,20 @@ struct CombatArena::Ctx
 	// runs out short of it, and after a block (bounded by kMaxReroutes). The follow task's path mode uses it too,
 	// with its slot as the target (`target` false: a leader that cannot be routed to is not dropped).
 	// False: a target chase (`target` true) whose fresh plan finds no route at all — the target is unreachable.
+	// True when the body's y is more than kOffSurface from the route's surface at the nearest point of the leg it walks (routeNext - 1 -> routeNext).
+	static bool offRouteSurface(const Fighter& f)
+	{
+		if (!f.routeChase || f.routeNext >= f.route.size())
+			return false;
+		const state::RoutePoint& b = f.route[f.routeNext];
+		const state::RoutePoint& a = f.route[f.routeNext > 0 ? f.routeNext - 1 : 0];
+		const double lx = b.x - a.x;
+		const double lz = b.z - a.z;
+		const double len2 = lx * lx + lz * lz;
+		const double t = len2 > 1.0e-9 ? std::clamp(((f.x - a.x) * lx + (f.z - a.z) * lz) / len2, 0.0, 1.0) : 1.0;
+		return std::fabs(f.y - (a.y + (b.y - a.y) * t)) > kOffSurface;
+	}
+
 	bool chaseStep(Fighter& f, double tx, double tz, std::optional<double> ty, double speed, bool ramp, bool target, double accel = kFootworkAcceleration, double replanDrift = kChaseReplan)
 	{
 		const MeshNavigator* n = nav();
@@ -3631,7 +4122,8 @@ struct CombatArena::Ctx
 		}
 		const bool stale = !f.routeChase || f.routeNext >= f.route.size()
 			|| std::hypot(tx - f.chaseTx, tz - f.chaseTz) > replanDrift
-			|| (ty && !f.route.empty() && std::fabs(f.route.back().y - *ty) > kFloorApart);
+			|| (ty && !f.route.empty() && std::fabs(f.route.back().y - *ty) > kFloorApart)
+			|| offRouteSurface(f);
 		if (stale && (!f.routeChase || f.chasePlanAge >= kChaseMinPlan))
 		{
 			f.chasePlanAge = 0.0;
@@ -3688,7 +4180,7 @@ struct CombatArena::Ctx
 			// The position follows the route's points at the slewed speed (a step along the velocity leaves the route: the chase's next corner moves
 			// every step and the bandits of ksim_bw_orders never closed); the slew gives the speed, the pivots and the facing.
 			std::size_t at = f.routeNext;
-			r = n->walker().follow({f.x, f.y, f.z}, f.route, at, vSpeed * dt);
+			r = n->walker().follow({f.x, f.y, f.z}, f.route, at, vSpeed * dt, 0.0, f.routeDoors);
 			if (r.onMesh)
 			{
 				f.x = r.at.x;
@@ -3706,7 +4198,7 @@ struct CombatArena::Ctx
 			else
 				f.forwardSpeed = speed;
 			std::size_t at = f.routeNext;
-			r = n->walker().follow({f.x, f.y, f.z}, f.route, at, f.forwardSpeed * dt);
+			r = n->walker().follow({f.x, f.y, f.z}, f.route, at, f.forwardSpeed * dt, 0.0, f.routeDoors);
 			if (r.onMesh)
 			{
 				f.x = r.at.x;
@@ -3815,6 +4307,17 @@ struct CombatArena::Ctx
 		// STEALTH_CLEAR.md section 3), so a squad whose leader is fighting drops stealth on the next follow step (task sneak-break).
 		f.sneak = lead.sneak && !perception::inCombat(lead);
 
+		// SPECIAL-CASE SHIM (kenshi-k16.6.673; user 2026-11-21, revisit with the medic/formation systems): a follower whose followed actor
+		// is first-aiding it holds still until the aid is gone. The original does this with squad order 0x3e; ours reads the target's task
+		// instead (Simulation sets heldForAid from the medic's InteractTask). Only a medic the patient is FOLLOWING ever triggers it, so it
+		// cannot freeze anyone who chose not to follow (no exploit). Without it a conscious patient keeps formation and the medic loops.
+		if (f.heldForAid)
+		{
+			f.forwardSpeed = 0.0;
+			f.clearRoute();
+			return;
+		}
+
 		// Task BP: a shackled slave of the leader's faction follows like a squadmate (the tight slot, not the 40 u standoff for a leader
 		// outside the squad): a captive led along at 40 u loses sight of its captor in a town and the follow ends (OURS/UNSURE).
 		const bool squadmate = lead.team == f.team || (f.slaveState == 1 && arena.captiveOf(f.captorFaction, lead.faction));
@@ -3908,6 +4411,16 @@ struct CombatArena::Ctx
 		if (speed <= 0.0)
 		{
 			f.forwardSpeed = 0.0;
+			if (nav() != nullptr)
+			{
+				// A halted follower is eased back from a mesh edge it stands within kSlotStandOff of (a prop's ring edge, 0.75 u off the prop).
+				double px = 0.0;
+				double pz = 0.0;
+				standOffPush(nav()->walker(), f.y, f.x, f.z, px, pz);
+				const double len = std::hypot(px, pz);
+				if (len > 1.0e-6)
+					shift(f, px / len * std::min(len, kFollowStandOffRate * dt), pz / len * std::min(len, kFollowStandOffRate * dt));
+			}
 			if (f.routeChase)
 				f.clearRoute(Fighter::kClearWentDirect);
 			f.swingProgress = computeSwingProgress(f);
@@ -3992,7 +4505,7 @@ struct CombatArena::Ctx
 		const double top = crawl ? std::min(gaitSpeed(f), CombatArena::kCrawlSpeed) : gaitSpeed(f);
 		const knav::StepResult r = n->walker().drive({f.x, f.y, f.z},
 			static_cast<knav::Drive>(f.drive), f.driveHeading, top, f.forwardSpeed, dt,
-			gaitOf(f).acceleration, f.driveStrafe);
+			gaitOf(f).acceleration, f.driveStrafe, bodyRoom(f));
 		if (r.onMesh)
 		{
 			f.x = r.at.x;
@@ -4050,6 +4563,7 @@ struct CombatArena::Ctx
 			f.x = snapped->x;
 			f.y = snapped->y;
 			f.z = snapped->z;
+			m.dirty = true;
 			++arena.corrections_;
 		} else {
 			++arena.uncorrectable_;
@@ -4061,8 +4575,16 @@ struct CombatArena::Ctx
 	void update(Member& m)
 	{
 		Fighter& f = m.fighter;
+#if KSIM_PROFILE
+		branch = BrOther;
+#endif
 		if (f.dead)
+		{
+#if KSIM_PROFILE
+			branch = BrDead;
+#endif
 			return;
+		}
 		steer = {};
 		clipAdvanced = false;
 		f.aggroBlock = std::max(f.aggroBlock - dt, 0.0);
@@ -4076,6 +4598,9 @@ struct CombatArena::Ctx
 			const MeshNavigator* n = nav();
 			if (reachable && n != nullptr)
 			{
+#if KSIM_PROFILE
+				const knav::measure::WhoScope whoScope(f.diceSeed, 3);
+#endif
 				const Route route = routeForBody(*n, {f.x, f.y, f.z}, blocked->fighter.x, blocked->fighter.z,
 					blocked->fighter.y, bodyOf(f));
 				reachable = route.found;
@@ -4091,7 +4616,29 @@ struct CombatArena::Ctx
 		std::uint32_t severedBefore = 0; // parts are <= 16 on the wire (CHAR_MEDICAL severed bits)
 		for (std::size_t i = 0; i < f.parts.size() && i < 32; ++i)
 			severedBefore |= f.parts[i].severed() ? 1u << i : 0u;
-		const bool died = rules.updateMedical(f, dt);
+		// Hunger and a medically quiet member's medical run once a second on the member's own slice, with the time since the stamp (so a
+		// skipped step owes nothing); any other member runs the medical update at every step it takes (k16.6.607 item 6).
+		const double stepSeconds = arena.stepSeconds_;
+		// A clock jump (setClockTick, a debug time skip) moves the phase clock without time passing in the fight: capped at kMaxOwedSeconds.
+		constexpr double kMaxOwedSeconds = 10.0;
+		const double hungerOwed = std::min(kMaxOwedSeconds, static_cast<double>(arena.phaseStep_ - f.hungerStep) * stepSeconds);
+		const bool quiet = rules.medicallyQuiet(f);
+		// A member that stopped being quiet in this step (a KO, a wound) owes only this step: the quiet time before it must not run down a
+		// timer set a moment ago (the forced KO).
+		const double medicalOwed = std::min(quiet ? kMaxOwedSeconds : m.stepDt, static_cast<double>(arena.phaseStep_ - f.medStep) * stepSeconds);
+		// Due on the first step after the member's own second boundary (the phase is the Id's), measured from the stamp, whatever the stride.
+		const std::uint64_t slice = arena.sliceSteps_;
+		const std::uint64_t phase = arena.diceKey(m.id); // the stable dice identity, not the Id: an unrelated spawn must not move anyone's slice
+		const std::uint64_t nowSlice = (arena.phaseStep_ + phase) / slice;
+		const bool hungerDue = nowSlice > (f.hungerStep + phase) / slice;
+		bool died = false;
+		if (hungerDue || nowSlice > (f.medStep + phase) / slice || !quiet)
+		{
+			died = rules.updateMedical(f, medicalOwed, hungerDue ? hungerOwed : 0.0);
+			f.medStep = arena.phaseStep_;
+			if (hungerDue)
+				f.hungerStep = arena.phaseStep_;
+		}
 		for (std::size_t i = 0; i < f.parts.size() && i < 32; ++i) // the Dismemberment 2 sink path of updateMedical
 		{
 			if (f.parts[i].severed() && (severedBefore & (1u << i)) == 0)
@@ -4108,6 +4655,9 @@ struct CombatArena::Ctx
 		}
 		if (died)
 		{
+#if KSIM_PROFILE
+			branch = BrDead;
+#endif
 			emit(CombatEvent::Kind::Death, m.id, 0);
 			// EVENT 48 cause 1, unless the body was already ragdolled (BG2: KO'd or dead, which the death makes of itself): the
 			// client is already showing a ragdoll and a death changes nothing on screen. A crawler's no-blow death is a new
@@ -4145,6 +4695,9 @@ struct CombatArena::Ctx
 		}
 		if (f.unconscious || f.down)
 		{
+#if KSIM_PROFILE
+			branch = BrDown;
+#endif
 			// Incapacitated: no actions, no fighting. The crawl pose is state Stumble with no clip. The technique goes whatever the state
 			// was: a block's pointer outlives its clip through the stagger (resolveIncoming), so a KO that lands in state Stumble kept
 			// it, and a woken player read "in combat, Attacking target" with no target for good (the client's slaver re-test).
@@ -4196,7 +4749,7 @@ struct CombatArena::Ctx
 			}
 			if (f.walking())
 			{
-				walkOrder(m, true);
+				walkOrderSynced(m, true);
 				return;
 			}
 			// A player's attack order is taken too (kinspect bf_crawl_down.md 9a539ac: the down player crawled ~200 u to
@@ -4305,22 +4858,42 @@ struct CombatArena::Ctx
 			f.driveTurn = false; // the hold ended, or a drive took over
 		if (f.driveTurn && !clipPlaying(f) && f.state != CombatState::Stumble)
 		{
+#if KSIM_PROFILE
+			branch = BrDrive;
+#endif
 			driveTurnStep(m);
 			return;
 		}
 		// Direct drive, then a player's move order (no avoidance, no fighting on the way).
 		if (f.driving() && !clipPlaying(f) && f.state != CombatState::Stumble)
 		{
+#if KSIM_PROFILE
+			branch = BrDrive;
+#endif
 			driveStep(m);
+			return;
+		}
+		// Squad order 0x3e (hold still, kenshi-k16.6.674): a same-squad patient under a first aid interact does not walk off (the fight
+		// response below it is untouched). Posted by tasks 25 / 249 / 60 (InteractAction::FirstAid), gone when the interact stops.
+		if (f.heldForAid && f.walking() && !clipPlaying(f) && f.state != CombatState::Stumble)
+		{
+			f.forwardSpeed = 0.0;
+			f.clearRoute();
 			return;
 		}
 		if (f.walking() && !clipPlaying(f) && f.state != CombatState::Stumble)
 		{
-			walkOrder(m);
+#if KSIM_PROFILE
+			branch = BrWalk;
+#endif
+			walkOrderSynced(m);
 			return;
 		}
 		if (f.followTarget != 0 && !clipPlaying(f) && f.state != CombatState::Stumble)
 		{
+#if KSIM_PROFILE
+			branch = BrFollow;
+#endif
 			followStep(m);
 			return;
 		}
@@ -4372,6 +4945,9 @@ struct CombatArena::Ctx
 			m.waitFar = false;
 		if (f.state != CombatState::Approach && !(f.state == CombatState::Wait && m.waitFar))
 			f.chaseId = 0; // the monitor belongs to the move-in task (and a far waiter): each spell of approach is a new Task_Move
+#if KSIM_PROFILE
+		branch = f.state == CombatState::Hub || f.state == CombatState::Done ? BrIdle : f.state == CombatState::Stumble ? BrOther : BrFight;
+#endif
 		switch (f.state)
 		{
 		case CombatState::Hub:
@@ -4801,7 +5377,7 @@ struct CombatArena::Ctx
 							streak = c.second;
 					}
 					contacts.push_back({from->m->id, streak + 1});
-					if (streak < kContactTicks)
+					if (streak < std::lround(kContactTime / dt))
 						continue;
 				}
 				const double mag = std::clamp((R - d) * (0.5 + (rb - ra) / R), 0.0, kDepenetrateCap);
@@ -4828,6 +5404,15 @@ struct CombatArena::Ctx
 				continue;
 			if (a.sneak || a.crouched || a.down)
 				bestMag *= kDepenetratePosture; // a crawler gives way like a sneaker (live, bar_pile_throwout.md 4)
+			// The camera's character is never moved (k16.6.597, user 2026-11-21): the others yield, and a neighbour that would have shared the overlap
+			// with it yields all of it.
+			if (self.id == arena.cameraFollow_)
+				continue;
+			if (bestId == arena.cameraFollow_)
+				bestMag = std::min(bestMag * 2.0, pushCap(a)); // a walk-aside, never a jump
+			// A player character moves at most a walk step per tick under any push, from any pusher (k16.6.597, ksim decision 2026-11-21); NPC-on-NPC
+			// keeps the exe's rule.
+			bestMag = std::min(bestMag, pushCap(a));
 			const double fromX = a.x;
 			const double fromZ = a.z;
 			shift(a, bestX * bestMag, bestZ * bestMag);
@@ -4856,14 +5441,18 @@ struct CombatArena::Ctx
 	{
 		Fighter& a = self.fighter;
 		const double ra = footprintOf(a);
-		for (int pass = 0; pass < kSettlePasses; ++pass)
+		if (self.id == arena.cameraFollow_)
+			return; // the camera's character stays; its neighbours yield in separate()
+		double budget = pushCap(a, false); // one tick's walk, never a jump; what is left of the overlap is walked off by separate()
+		for (int pass = 0; pass < kSettlePasses && budget > 0.0; ++pass)
 		{
 			double bestMag = 0.0;
 			double bestX = 0.0;
 			double bestZ = 0.0;
 			for (const Member& other : arena.members_)
 			{
-				if (&other == &self || !pushes(other))
+				// A squadmate still on its own move walk is passing through, not standing here: it is no one to step off from (it settles at its own stop).
+				if (&other == &self || !pushes(other) || moveWalking(other))
 					continue;
 				const Fighter& b = other.fighter;
 				const double rb = footprintOf(b);
@@ -4883,8 +5472,25 @@ struct CombatArena::Ctx
 			}
 			if (bestMag < kDepenetrateMin)
 				return;
+			bestMag = std::min(bestMag, budget);
+			budget -= bestMag;
 			shift(a, bestX * bestMag, bestZ * bestMag);
 		}
+	}
+
+	// The most a push may move a player character in one tick: its walking speed x dt, so any nudge is a walk-aside, never a position jump
+	// (k16.6.597, user 2026-11-21; kenshi-k16.17.13.8: standing players drifting 2.7 u/tick under patrollers). Others keep the exe's own cap.
+	double pushCap(const Fighter& f, bool onTopOfPace = true) const
+	{
+		if (!f.playerControlled)
+			return kDepenetrateCap;
+		knav::Gait gait = gaitOf(f);
+		gait.run = false;
+		const double walkStep = knav::gaitSpeed(gait) * dt;
+		// A character already walking or running gets only what is left of a walk step on top of its own pace, so the total never beats it
+		// (ksim_speed_modes: a group's fast member shoved on top of its capped drive).
+		const double own = onTopOfPace ? std::hypot(f.velX, f.velZ) * dt : 0.0;
+		return std::min(kDepenetrateCap, std::max(0.0, walkStep - own));
 	}
 
 	// A lying body (task AW): KO'd or dead (a ragdoll), not being carried, and keeping its place in a bed or a cage. A conscious down
@@ -5007,6 +5613,7 @@ void CombatArena::markHostile(std::uint64_t id, std::uint64_t other)
 	{
 		if (mate.fighter.squad != me->squad)
 			continue;
+		mate.dirty = true;
 		auto& list = mate.fighter.hostileSquads;
 		const auto at = std::lower_bound(list.begin(), list.end(), them->squad);
 		if (at == list.end() || *at != them->squad)
@@ -5024,6 +5631,7 @@ void CombatArena::forgiveHostile(std::uint64_t id, std::uint64_t other)
 	{
 		if (mate.fighter.squad != me->squad)
 			continue;
+		mate.dirty = true;
 		auto& list = mate.fighter.hostileSquads;
 		const auto at = std::lower_bound(list.begin(), list.end(), them->squad);
 		if (at != list.end() && *at == them->squad)
@@ -5237,6 +5845,8 @@ void CombatArena::add(std::uint64_t id, state::Fighter fighter)
 	// A member added during a step has not moved in it: the reported fwd/lat start from where it appeared.
 	it->preX = it->fighter.x;
 	it->preZ = it->fighter.z;
+	initSchedule(*it);
+	stampsPending_ = true; // the first step places the member's stamps (and converts a counted sensor clock)
 	it->stepFwd = 0.0;
 	it->stepLat = 0.0;
 	// The crowd penalty at a load resumes from the saved Fighter::overflow: the next step's readers use the phase that survives
@@ -5438,7 +6048,10 @@ CombatArena::EatOutcome CombatArena::eat(std::uint64_t victimId, bool drainPath,
 CombatArena::Member* CombatArena::memberOf(std::uint64_t id) noexcept
 {
 	auto it = std::lower_bound(members_.begin(), members_.end(), id, [](const Member& m, std::uint64_t v) { return m.id < v; });
-	return it != members_.end() && it->id == id ? &*it : nullptr;
+	if (it == members_.end() || it->id != id)
+		return nullptr;
+	it->dirty = true; // a mutable handle: a possible write
+	return &*it;
 }
 
 void CombatArena::landBlow(Ctx& ctx, Member& att, Member& def, double dmg[6])
@@ -5691,16 +6304,28 @@ bool CombatArena::remove(std::uint64_t id)
 	return true;
 }
 
+// A mutable find is a possible write from outside the arena: the member is marked for the next mirror (a const find is a read).
 state::Fighter* CombatArena::find(std::uint64_t id) noexcept
 {
 	auto it = std::lower_bound(members_.begin(), members_.end(), id,
 		[](const Member& m, std::uint64_t v) { return m.id < v; });
-	return it != members_.end() && it->id == id ? &it->fighter : nullptr;
+	if (it == members_.end() || it->id != id)
+		return nullptr;
+	it->dirty = true;
+	return &it->fighter;
 }
 
 const state::Fighter* CombatArena::find(std::uint64_t id) const noexcept
 {
-	return const_cast<CombatArena*>(this)->find(id);
+	const auto it = std::lower_bound(members_.begin(), members_.end(), id,
+		[](const Member& m, std::uint64_t v) { return m.id < v; });
+	return it != members_.end() && it->id == id ? &it->fighter : nullptr;
+}
+
+void CombatArena::touch(std::uint64_t id) noexcept
+{
+	if (Member* m = memberOf(id))
+		m->dirty = true;
 }
 
 #if KSIM_PROFILE
@@ -5726,6 +6351,192 @@ void CombatArena::setSensorContext(sensor::Context context)
 	};
 }
 
+#if KSIM_PROFILE
+// kenshi-k16.6.305: the update loop's think / route / total times and the interaction islands, into the tick's probe columns. The islands use the
+// positions after the update (the loop moves a member by a fraction of a unit): union-find over the characters within the sensor's longest sight
+// (1500 u, race mult 1), and over the target links; each island's share of the loop is the sum of its members' own update times.
+void CombatArena::profileIslands(const std::vector<std::uint64_t>& updateNs, std::uint64_t updateTotalNs, std::uint64_t routeNs, std::uint64_t thinkNs,
+	std::uint64_t thinkRouteNs, std::uint64_t thinkCalls, std::uint64_t scanNs, std::uint64_t scanCalls)
+{
+	using profile::Probe;
+	profiler_->probe(Probe::ThinkUs, static_cast<double>(thinkNs) / 1000.0);
+	profiler_->probe(Probe::ThinkRouteUs, static_cast<double>(thinkRouteNs) / 1000.0);
+	profiler_->probe(Probe::ThinkCalls, static_cast<double>(thinkCalls));
+	profiler_->probe(Probe::ScanUs, static_cast<double>(scanNs) / 1000.0);
+	profiler_->probe(Probe::ScanCalls, static_cast<double>(scanCalls));
+	profiler_->probe(Probe::UpdUs, static_cast<double>(updateTotalNs) / 1000.0);
+	profiler_->probe(Probe::UpdRouteUs, static_cast<double>(routeNs) / 1000.0);
+	profiler_->probe(Probe::UpdMembers, static_cast<double>(members_.size()));
+	const std::uint64_t began = knav::measure::now();
+	static thread_local dev::IslandProbe uf;
+	static thread_local std::vector<double> xs, zs;
+	static thread_local std::vector<char> active;
+	const std::size_t n = members_.size();
+	xs.resize(n);
+	zs.resize(n);
+	active.resize(n);
+	for (std::size_t i = 0; i < n; ++i)
+	{
+		const Fighter& f = members_[i].fighter;
+		xs[i] = f.x;
+		zs[i] = f.z;
+		active[i] = Ctx::usable(f) ? 1 : 0;
+	}
+	uf.reset(n);
+	uf.joinByRange(xs, zs, active, 1500.0);
+	const dev::IslandStats sight = uf.stats(active);
+	std::uint64_t topNs = 0;
+	std::uint64_t allNs = 0;
+	for (std::size_t i = 0; i < n; ++i)
+	{
+		allNs += updateNs[i];
+		if (active[i] && uf.find(i) == sight.largestIndex)
+			topNs += updateNs[i];
+	}
+	const double unionUs = static_cast<double>(knav::measure::now() - began) / 1000.0;
+	// The target links alone: a member and the one it targets (a fight, a chase).
+	uf.reset(n);
+	for (std::size_t i = 0; i < n; ++i)
+		if (active[i] && members_[i].fighter.target != 0)
+			if (const auto it = std::lower_bound(members_.begin(), members_.end(), members_[i].fighter.target, [](const Member& m, std::uint64_t v) { return m.id < v; });
+				it != members_.end() && it->id == members_[i].fighter.target)
+				uf.join(i, static_cast<std::size_t>(it - members_.begin()));
+	const dev::IslandStats links = uf.stats(active);
+	std::size_t activeCount = 0;
+	for (const char a : active)
+		activeCount += a != 0 ? 1 : 0;
+	profiler_->probe(Probe::IslN, static_cast<double>(sight.components));
+	profiler_->probe(Probe::IslMax, static_cast<double>(sight.largest));
+	profiler_->probe(Probe::Isl2nd, static_cast<double>(sight.second));
+	profiler_->probe(Probe::IslSingle, static_cast<double>(sight.singletons));
+	profiler_->probe(Probe::IslTopShare, allNs > 0 ? static_cast<double>(topNs) / static_cast<double>(allNs) : 0.0);
+	profiler_->probe(Probe::IslUfUs, unionUs);
+	profiler_->probe(Probe::TgtN, static_cast<double>(links.components));
+	profiler_->probe(Probe::TgtMax, static_cast<double>(links.largest));
+	profiler_->probe(Probe::TgtNonsingle, static_cast<double>(links.nonSingleton));
+	profiler_->probe(Probe::IslActive, static_cast<double>(activeCount));
+	profiler_->probe(Probe::Steps, 1.0);
+}
+#endif
+
+bool CombatArena::inFightTier(const Member& m) const
+{
+	const Fighter& f = m.fighter;
+	return f.target != 0 || !f.engaged.empty() || !f.hitList.empty() || f.technique >= 0 || f.reactClip >= 0 || f.recovering
+		|| f.state == CombatState::Stumble || f.unconscious || f.down || f.orderTarget != 0 || f.carrying != 0 || f.carriedBy != 0
+		|| f.stealthKo.active() || f.mount.building != 0;
+}
+
+// Whether `m` is updated this step. The tier is the fight predicate now, or an event promotion (the setters above and promote(), which set
+// fightTier between two steps) not yet consumed here. Nothing else is remembered, so a load that re-derives the tier from the fighter state lands
+// on the straight run's schedule exactly (kenshi-k16.6.658). A member that leaves the tier on an off-phase step owes its idle step the whole
+// span since its last update (the dt is phaseStep - lastStep), which is what initSchedule's latest-due-step gives a reload.
+bool CombatArena::stepsNow(Member& m)
+{
+	const int fight = std::max(1, rules_.settings().fightStride);
+	const int idle = std::max(1, rules_.settings().idleStride);
+	if (fight == 1 && idle == 1)
+		return true;
+	const bool fighting = inFightTier(m);
+	const bool tier = fighting || m.fightTier;
+	m.fightTier = fighting;
+	const std::uint64_t stride = static_cast<std::uint64_t>(tier ? fight : idle);
+	return (phaseStep_ + m.id) % stride == 0;
+}
+
+// The last update: the previous step for the fight tier, else the latest due step of the idle phase (what the straight run's schedule had).
+void CombatArena::initSchedule(Member& m)
+{
+	m.fightTier = inFightTier(m);
+	m.lastStep = phaseStep_;
+	if (!m.fightTier)
+		m.lastStep -= (phaseStep_ + m.id) % static_cast<std::uint64_t>(std::max(1, rules_.settings().idleStride));
+}
+
+// A member whose Fighter carries an older save's counted sensor clock, or no medical / hunger step (a new character or an older save): the stamps
+// say the time up to the previous step is accounted; the member's own second boundary (the Id's phase) then staggers when each runs (k16.6.637).
+void CombatArena::placeStamps(Member& m)
+{
+	Fighter& f = m.fighter;
+	if (f.senseClock >= 0.0)
+	{
+		f.senseAt = time_ - stepSeconds_ - f.senseClock; // the save's seconds since the last scan; the counted clock took this step's dt on the spot
+		f.senseClock = -1.0;
+		m.dirty = true;
+	}
+	if (f.medStep == Fighter::kNoStep || f.hungerStep == Fighter::kNoStep)
+	{
+		const std::uint64_t last = phaseStep_ - 1; // everything up to the previous step is accounted (a counted save, or a new character)
+		if (f.medStep == Fighter::kNoStep)
+			f.medStep = last;
+		if (f.hungerStep == Fighter::kNoStep)
+			f.hungerStep = last;
+		m.dirty = true;
+	}
+}
+
+void CombatArena::setPhaseStep(std::uint64_t steps) noexcept
+{
+	if (steps == phaseStep_)
+		return;
+	phaseStep_ = steps;
+	for (Member& m : members_)
+		initSchedule(m);
+}
+
+void CombatArena::publishDue(std::uint64_t tick, int steps)
+{
+	const int fight = std::max(1, rules_.settings().fightStride);
+	const int idle = std::max(1, rules_.settings().idleStride);
+	const bool all = fight == 1 && idle == 1;
+	for (Member& m : members_)
+	{
+		bool due = all;
+		if (!all)
+		{
+			// The tier the first step would use (promotion is the scan or an event; the demotion lands on a due step), then any of the steps.
+			const std::uint64_t stride = static_cast<std::uint64_t>(m.fightTier || inFightTier(m) ? fight : idle);
+			for (int k = 1; k <= steps && !due; ++k)
+				due = (phaseStep_ + static_cast<std::uint64_t>(k) + m.id) % stride == 0;
+		}
+		m.tickStepped = false;
+		// A route set or cleared since its last pass is due at once: the door planner has to see a walker that starts beside a shut door
+		// before its first step carries it past (a pure function of the fighter's state).
+		due = due || m.fighter.routeVersion != m.dueRouteVersion;
+		m.due = due;
+		if (due)
+		{
+			markDue(m, tick, all);
+			m.dueRouteVersion = m.fighter.routeVersion;
+		}
+	}
+}
+
+void CombatArena::markDue(Member& m, std::uint64_t tick, bool all)
+{
+	m.dueTicks = all || m.dueLastTick == 0 || m.dueLastTick >= tick ? 1 : static_cast<std::uint32_t>(tick - m.dueLastTick);
+	m.dueLastTick = tick;
+}
+
+void CombatArena::settleDue(std::uint64_t tick)
+{
+	// The pre-pass ran on the prediction; a step that landed on a member the prediction missed (a promotion mid-tick) puts it on the list now,
+	// for the loops that run after the arena.
+	for (Member& m : members_)
+		if (m.tickStepped && !m.due)
+		{
+			m.due = true;
+			markDue(m, tick, false);
+		}
+}
+
+void CombatArena::promote(std::uint64_t id) noexcept
+{
+	const auto it = std::lower_bound(members_.begin(), members_.end(), id, [](const Member& m, std::uint64_t v) { return m.id < v; });
+	if (it != members_.end() && it->id == id)
+		it->fightTier = true;
+}
+
 void CombatArena::step(double dt)
 {
 	if (members_.empty())
@@ -5737,7 +6548,10 @@ void CombatArena::step(double dt)
 		~MemoScope() { memo.on = false; }
 	} memoScope(*relationMemo_);
 	time_ += dt;
+	stepSeconds_ = dt;
+	sliceSteps_ = std::max<std::uint64_t>(1, static_cast<std::uint64_t>(std::llround(1.0 / std::max(dt, 1.0e-6))));
 	++stepCount_;
+	++phaseStep_;
 	// The crowd penalty's double buffer (crowd_melee.md §10): this step's refusals accumulate in the new phase; every reader sees
 	// the other phase, i.e. the previous step's count. The new phase starts empty (no decay, no accumulation).
 	refusePhase_ ^= 1;
@@ -5749,7 +6563,10 @@ void CombatArena::step(double dt)
 	{
 		m.preX = m.fighter.x;
 		m.preZ = m.fighter.z;
+		if (stampsPending_)
+			placeStamps(m);
 	}
+	stampsPending_ = false;
 	Ctx ctx(*this);
 	ctx.dt = dt;
 	ctx.indexFollows();
@@ -5764,15 +6581,86 @@ void CombatArena::step(double dt)
 	ctx.separate(); // the controller's push runs before the velocity step (s80_static.md Q1.6)
 	STEP_MARK(CsSeparate);
 	for (Member& m : members_)
-		m.fighter.swingProgress = ctx.computeSwingProgress(m.fighter);
+	{
+		const double progress = ctx.computeSwingProgress(m.fighter);
+		if (progress != m.fighter.swingProgress)
+		{
+			m.fighter.swingProgress = progress;
+			m.dirty = true;
+		}
+	}
+#if KSIM_PROFILE
+	const bool probing = profiler_ != nullptr && profiler_->probing();
+	std::vector<std::uint64_t> updateNs;
+	std::uint64_t routeBefore = 0;
+	std::uint64_t updateBegan = 0;
+	if (probing)
+	{
+		updateNs.assign(members_.size(), 0);
+		routeBefore = knav::measure::counters.routeNs.load(std::memory_order_relaxed);
+		ctx.think.on = true;
+		updateBegan = knav::measure::now();
+	}
+	std::size_t memberIndex = 0;
+	std::vector<std::pair<double, double>> players;
+	if (probing)
+	{
+		for (const Member& m : members_)
+		{
+			if (m.fighter.playerControlled && !m.fighter.dead)
+				players.emplace_back(m.fighter.x, m.fighter.z);
+		}
+	}
+#endif
 	for (Member& m : members_)
 	{
 		const double px = m.fighter.x;
 		const double pz = m.fighter.z;
-		ctx.update(m);
-		m.fighter.velX = (m.fighter.x - px) / dt; // the mover's velocity (+0xd0, +0xd8) the follow task reads
-		m.fighter.velZ = (m.fighter.z - pz) / dt;
+#if KSIM_PROFILE
+		const std::uint64_t memberBegan = probing ? knav::measure::now() : 0;
+		if (probing)
+		{
+			double nearest = std::numeric_limits<double>::infinity();
+			for (const auto& [qx, qz] : players)
+				nearest = std::min(nearest, std::hypot(px - qx, pz - qz));
+			ctx.band = nearest <= 2000.0 ? 0 : nearest <= 3250.0 ? 1 : 2;
+		}
+#endif
+		m.stepped = stepsNow(m);
+		if (m.stepped)
+		{
+			m.tickStepped = true;
+			// Owed time: the steps since its last update (1 in the fight tier, the stride otherwise; a tier change flushes the partial).
+			m.stepDt = m.lastStep + 1 == phaseStep_ ? dt : static_cast<double>(phaseStep_ - m.lastStep) * dt;
+			m.lastStep = phaseStep_;
+			ctx.dt = m.stepDt;
+			ctx.update(m);
+			ctx.dt = dt;
+			m.fighter.velX = (m.fighter.x - px) / m.stepDt; // the mover's velocity (+0xd0, +0xd8) the follow task reads
+			m.fighter.velZ = (m.fighter.z - pz) / m.stepDt;
+			m.dirty = true;
+		}
+#if KSIM_PROFILE
+		if (probing)
+		{
+			updateNs[memberIndex] = knav::measure::now() - memberBegan;
+			++ctx.branchN[static_cast<std::size_t>(ctx.branch * 3 + ctx.band)];
+		}
+		++memberIndex;
+#endif
 	}
+#if KSIM_PROFILE
+	if (probing)
+	{
+		ctx.think.on = false;
+		for (std::size_t i = 0; i < ctx.branchN.size(); ++i)
+			profiler_->probe(static_cast<profile::Probe>(static_cast<std::size_t>(profile::Probe::BranchBase) + i), static_cast<double>(ctx.branchN[i]));
+		for (std::size_t i = 0; i < ctx.think.byState.size(); ++i)
+			profiler_->probe(static_cast<profile::Probe>(static_cast<std::size_t>(profile::Probe::PickBase) + i), static_cast<double>(ctx.think.byState[i]));
+		profileIslands(updateNs, knav::measure::now() - updateBegan, knav::measure::counters.routeNs.load(std::memory_order_relaxed) - routeBefore, ctx.think.thinkNs,
+			ctx.think.thinkRouteNs, ctx.think.thinkCalls, ctx.think.scanNs, ctx.think.scanCalls);
+	}
+#endif
 	STEP_MARK(CsUpdate);
 	// The ragdoll's lying yaw (task BG, PHYSICS.md 3): a prone body (flag bit 5) keeps one rest yaw; a body that goes down
 	// without an EVENT 48 of its own (a limb collapse, a load of an older save) rolls one here, and a body that is up again
@@ -5781,9 +6669,14 @@ void CombatArena::step(double dt)
 	{
 		Fighter& f = m.fighter;
 		if (!(f.down || f.unconscious || f.dead))
+		{
+			if (f.restYawValid)
+				m.dirty = true;
 			f.restYawValid = false;
-		else if (!f.restYawValid)
+		} else if (!f.restYawValid) {
 			rollRagdoll(f, m.id);
+			m.dirty = true;
+		}
 	}
 	// The facing at the end of the step: forward is (sin yaw, cos yaw), the right is (cos yaw, -sin yaw).
 	for (Member& m : members_)
@@ -5792,11 +6685,36 @@ void CombatArena::step(double dt)
 		const double dz = m.fighter.z - m.preZ;
 		const double sin = std::sin(m.fighter.yaw);
 		const double cos = std::cos(m.fighter.yaw);
-		m.stepFwd = (dx * sin + dz * cos) / dt;
-		m.stepLat = (dx * cos - dz * sin) / dt;
+		if (m.stepped)
+		{
+			m.stepFwd = (dx * sin + dz * cos) / m.stepDt;
+			m.stepLat = (dx * cos - dz * sin) / m.stepDt;
+		}
 		// The count the next step's readers will see, into the saved field: a load must resume with the same crowd penalty the
 		// straight run would (ksim_nav_regions compares the two hashes). Fighter::overflow is what the save carries.
-		m.fighter.overflow = m.refused[refusePhase_];
+		if (m.fighter.overflow != m.refused[refusePhase_])
+		{
+			m.fighter.overflow = m.refused[refusePhase_];
+			m.dirty = true;
+		}
+		// Whatever moved (the correction snap, the separation push, a walker) differs from the ECS copy.
+		if (dx != 0.0 || dz != 0.0)
+			m.dirty = true;
+	}
+	// A member a stepping member is linked to may have been written by it (the victim's engaged list and slots, a hit, a carried body): the
+	// same set the fight tier promotes, so a far member the step touched is copied at this tick's mirror.
+	for (const Member& m : members_)
+	{
+		if (!m.stepped)
+			continue;
+		const Fighter& f = m.fighter;
+		for (const std::uint64_t id : {f.target, f.carrying, f.carriedBy, f.orderTarget, f.followTarget})
+			if (id != 0)
+				touch(id);
+		for (const std::uint64_t id : f.engaged)
+			touch(id);
+		for (const std::uint64_t id : f.hitList)
+			touch(id);
 	}
 	STEP_MARK(CsTail);
 }

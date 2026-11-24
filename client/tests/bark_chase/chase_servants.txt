@@ -1,0 +1,13 @@
+# bark_chase (kenshi-jtnm): the Wanderer flees west from a hostile Holy Nation patrol; shots every ~4 s of the chase, the client's `speech:` lines are the bubble log.
+# @Wanderer@ is resolved by run.sh from a probe on a throwaway server. OUTDIR is the output directory.
+60 camera char Wanderer
+90 dump chars
+100 select id=@Wanderer@
+# the crime: the Wanderer walks up to a Holy servant and hits him in front of the patrol (assault witnessed), then runs west
+105 move -50705 -1015
+170 attack id=@Holy servant 1@
+200 attack id=@Holy servant 1@
+260 move -54000 -1000
+SHOTS
+3600 dump chars
+3650 quit

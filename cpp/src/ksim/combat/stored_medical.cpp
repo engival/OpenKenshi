@@ -1,3 +1,4 @@
+#include "ksim/ai/routines.hpp"
 #include "ksim/combat/corpses.hpp"
 #include "ksim/combat/combat.hpp"
 #include "ksim/core/simulation.hpp"
@@ -25,6 +26,7 @@ struct Stored
 	bool hasInventory = false;
 	bool taken = false;
 	bool hadRecord = false;
+	bool medicRole = false; // its goal list holds 58 JOB_MEDIC
 };
 
 double woundSum(const state::Fighter& f)
@@ -34,11 +36,25 @@ double woundSum(const state::Fighter& f)
 
 } // namespace
 
+bool Simulation::canTreatAllies(flecs::entity member)
+{
+	const flecs::entity squad = member.target<state::MemberOf>();
+	const routines::CompiledPackage* package = squad.is_valid() ? appliedPackage(squad) : nullptr;
+	if (package == nullptr)
+		return false;
+	for (const routines::GoalRow& row : package->list(liveRole(member)))
+	{
+		if (row.task == routines::task::FirstAid)
+			return true;
+	}
+	return false;
+}
+
 // The off-screen medical step (k16.6.52; ARCHITECTURE.md "Corpses", RUNTIME_SAVE.md v100), behind setOffscreenMedical. Once a game minute, for every
 // world squad that has a stored member with a body record (state::MemberDelta kBody): each member is rebuilt as promotion would build it, then
 // kStoredMedicalTicks ticks of in-detail medical time run on it with the in-detail functions, never a copy (CombatRules::updateMedical: bleed,
-// clot, KO, the blood coma, death; Simulation::treatBodies: first aid). Per tick, each conscious squadmate carrying a kit treats the squad's worst
-// bleeder, itself included (a lone member only treats itself, at the self skill). The result is stored again as the difference from the template:
+// clot, KO, the blood coma, death; Simulation::treatBodies: first aid). Per tick, each conscious member carrying a kit treats itself, and one in the Medic role (canTreatAllies)
+// the squad's worst bleeder (a lone member only treats itself, at the self skill). The result is stored again as the difference from the template:
 // a member back at it loses its record. OURS / UNSURE (deferred: playtesting): the treatment has no walk to the patient and no interact time;
 // hunger is not stepped (it is not stored: the in-detail clock is the only one); an untouched squadmate is rebuilt only for the aid it can give.
 void Simulation::stepStoredMedical()
@@ -92,6 +108,9 @@ void Simulation::stepStoredMedical()
 			}
 			stored.push_back(std::move(one));
 		}
+		// rwh.204 / dt45: only a member whose goal list holds the Medic row (58) treats a downed ally; any carrier of a kit treats itself (269).
+		for (Stored& one : stored)
+			one.medicRole = canTreatAllies(one.member);
 		for (std::uint64_t tick = 0; tick < kStoredMedicalTicks; ++tick)
 		{
 			for (Stored& medic : stored)
@@ -101,6 +120,8 @@ void Simulation::stepStoredMedical()
 				Stored* patient = nullptr;
 				for (Stored& other : stored)
 				{
+					if (&other != &medic && !medic.medicRole)
+						continue;
 					if (!other.now.dead && !other.now.wounds.empty() && (patient == nullptr || woundSum(other.now) > woundSum(patient->now)))
 						patient = &other;
 				}

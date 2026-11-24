@@ -1,4 +1,4 @@
-// kenshi-k16.6.32: the Hub's bar seats its patrons one to a seat. Setup as tools/ksim_hub_census (New Game at the Hub); at t1 (30 s) and 31 game
+// kenshi-k16.6.32 / k16.6.512: the Hub's bar seats its patrons one to a seat. Setup as tools/ksim_hub_census (New Game at the Hub); at t1 (30 s) and 31 game
 // minutes later (1130 ticks) asserts: no two seated characters share a seat (the book holds one member per BarSeat, and no two seated bodies are within
 // 2 u), and no RELAX 214 character stands within kTableRing of a table without a seat (the member with no free seat takes another goal).
 //
@@ -51,6 +51,7 @@ try
 	const kworld::LoadOrder order = kworld::resolveLoadOrder(KENSHI_DATA, "");
 	SpawnOptions options;
 	options.seed = 1;
+	options.settleSeconds = 0.0; // a fresh load, not a New Game settle (TOWN_LIFE_SLICE 5.40): rwh.73 measured the day-1 load
 	Simulation sim = Simulation::newGame(KENSHI_DATA, order, options, nullptr, RegionConfig{});
 	sim.markPristine();
 	CombatSettings settings;
@@ -159,10 +160,39 @@ try
 		test::require(patrons >= 5 && thugs >= 1, "the bar's four patron squads are in the Hub");
 		test::require(unseated == 0, "a patron of the bar is not seated on its RELAX goal after 31 game minutes");
 	};
-	sim.run(static_cast<std::uint64_t>(30.0 / kTickSeconds));
+	// rwh.73 (findings/rwh73_hub_bar_thugs_live.md): on a fresh load the Bar Thug is not at the bar; he walks in (~495 u) and sits ~20.6 game min
+	// after the load. So no Bar thugs member is seated at t0, and he sits only after the walk (not before 10 game min) and within the 31 game min run.
+	std::uint64_t elapsed = 0;
+	std::map<std::uint64_t, std::uint64_t> thugSeated; // Bar thugs member id -> the tick (after the load) it first sat
+	const auto watch = [&](std::uint64_t ticks)
+	{
+		const flecs::world& ecs = sim.world().ecs();
+		for (std::uint64_t t = 0; t < ticks; ++t, ++elapsed)
+		{
+			ecs.each([&](flecs::entity entity, const state::Id& id, const state::Routine&)
+			{
+				const state::Fighter* f = sim.combat()->find(id.value);
+				if (f == nullptr || !near(*f) || thugSeated.count(id.value) != 0 || !sim.seated(id.value))
+					return;
+				const flecs::entity squad = entity.target<state::MemberOf>();
+				const state::SquadInstance* instance = squad.is_valid() ? squad.get<state::SquadInstance>() : nullptr;
+				const kdata::Record* record = instance != nullptr ? sim.gameData()->find(instance->templateSid) : nullptr;
+				if (record != nullptr && record->name == "Bar thugs")
+					thugSeated[id.value] = elapsed;
+			});
+			sim.run(1);
+		}
+	};
+	watch(static_cast<std::uint64_t>(30.0 / kTickSeconds));
 	check("t1");
-	sim.run(1130);
+	watch(1130);
 	check("+31 min");
+	test::require(!thugSeated.empty(), "a Bar Thug sits at the bar within the run");
+	for (const auto& [id, tick] : thugSeated)
+	{
+		std::cout << "Bar Thug " << id << " first seated " << static_cast<double>(tick) / kTicksPerGameMinute << " game min after the load\n";
+		test::require(tick >= static_cast<std::uint64_t>(10.0 * kTicksPerGameMinute), "a Bar Thug is not pre-seated: he walks in and sits after >= 10 game min (rwh.73: 20.6)");
+	}
 	patronsSeated();
 	std::cout << "ksim_bar_spread: OK\n";
 	return 0;

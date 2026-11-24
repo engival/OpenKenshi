@@ -28,7 +28,7 @@ constexpr double kBedReach = 10, kBedLift = 3;
 bool ray_hit_collision(const double origin[3], const double dir[3], double hit[3], bool* building, const double* eye, std::vector<PickSkip>* skipped, float* hitBox)
 {
 	*building = false;
-	if (app.scripted()) { app.collide.wait(); }
+	pick_settle();
 	const bool prevCuts = app.buildings.levelCuts;
 	app.buildings.levelCuts = true;	// the click pick: buildings nobody is in are cut at the floor selector's level (WorldBuildings::levelCuts)
 	double terrain[3], groundT = 1e30;
@@ -100,7 +100,7 @@ Pick pick_at_collision(const double dir[3], std::vector<PickSkip>* skipped)
 	}
 	for (const auto& [id, th] : app.sim.things())	// producers: by their placement's mesh boxes (the original's hover covers the whole mine)
 	{
-		if (th.kind != simlink::Interactable::kProducer || !app.buildings.propRay(id, from, dir, t) || t > std::min(best, world)) { continue; }
+		if (!th.machineLike() || !app.buildings.propRay(id, from, dir, t) || t > std::min(best, world)) { continue; }
 		const double at[3] = { from[0] + dir[0] * t, from[1] + dir[1] * t, from[2] + dir[2] * t };
 		std::string why;
 		if (pick_hidden(at, &why))	// a producer on a floor the cut hides is not drawn (k16.2.259)

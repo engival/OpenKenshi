@@ -413,7 +413,8 @@ void testTroubleMakers()
 		const std::uint64_t a = rig.spawn(0.0, 0.0, kMyFaction, 7, 0);
 		const std::uint64_t bystander = rig.spawn(40.0, 0.0, kNeutralFaction, 10, 0);
 		const std::uint64_t troublemaker = rig.spawn(20.0, 0.0, kNeutralFaction, 10, 0);
-		rig.me(troublemaker).target = bystander; // it runs an attack task: goal 34's criminal test
+		rig.me(troublemaker).target = bystander; // its victim (rwh313 G4-G7: a neutral bystander, no ally or enemy of A)
+		rig.me(troublemaker).combatGoal = 61; // UNPROVOKED_FOCUSED_MELEE_ATTACK: aggression weight > 0 (rwh313 G2; a bare target is not enough)
 		seen(rig.me(a), bystander);
 		seen(rig.me(a), troublemaker);
 		test::require(rig.arena.setJoinGoals(a, true, joins::kTroubleMakers), "no member A");
@@ -501,7 +502,51 @@ void testSelfPreservationAndTownGoals()
 	test::require(rig.me(a).target == bandit && rig.firstPick(a) == 32, "32: the attacker on me was not taken as goal 32");
 }
 
+// 288 (kenshi-rwh.215): no town leash. A has no town; an ally's attacker within 150 u of the ally is taken as goal 288, one just
+// outside is not (task 13's bound, measured from the ally).
+void testProtectAlliesStayInTownBound()
+{
+	const kdata::GameData gd = kworld::loadMergedGameData(KENSHI_DATA);
+	for (const bool inside : {true, false})
+	{
+		Rig rig(gd, CombatData::build(gd, KENSHI_DATA), 43);
+		const std::uint64_t a = rig.spawn(0.0, 0.0, kMyFaction, 7, 0);
+		const std::uint64_t ally = rig.spawn(20.0, 0.0, kMyFaction, 9, 0);
+		const std::uint64_t bandit = rig.spawn(20.0 + (inside ? 149.0 : 151.0), 0.0, kFoeFaction, 9, 1, true);
+		rig.fight(ally, bandit);
+		seen(rig.me(a), ally);
+		seen(rig.me(a), bandit);
+		test::require(rig.arena.setJoinGoals(a, true, joins::kProtectAlliesTown), "no member A");
+		rig.run(3);
+		if (inside)
+			test::require(rig.me(a).target == bandit && rig.firstPick(a) == 288, "288: the attacker 149 u from the ally was not taken");
+		else
+			test::require(rig.me(a).target == 0, "288: A took an attacker 151 u from the ally");
+	}
+}
+
 } // namespace
+
+// k16.6.624: a player member carries the player faction's real id, never 0 (the factionless, wild animals among them, are faction 0).
+// A wild animal fighting a third party is no ally of the member: sensor::ally is false and the member does not take goal 15; a second
+// player member stays an ally.
+void testFactionlessNotAlly()
+{
+	const kdata::GameData gd = kworld::loadMergedGameData(KENSHI_DATA);
+	Rig rig(gd, CombatData::build(gd, KENSHI_DATA), 5);
+	const std::uint64_t a = rig.spawn(0.0, 0.0, kMyFaction, 1ull << 62 | 7, 0, true);
+	const std::uint64_t animal = rig.spawn(20.0, 0.0, 0, 9, 0);
+	const std::uint64_t mate = rig.spawn(-20.0, 0.0, kMyFaction, 1ull << 62 | 8, 0, true);
+	const std::uint64_t bandit = rig.spawn(30.0, 0.0, kFoeFaction, 11, 1);
+	test::require(!sensor::ally(rig.arena.sensorContext(), rig.me(a), rig.me(animal)), "a wild animal reads as a player member's ally");
+	test::require(sensor::ally(rig.arena.sensorContext(), rig.me(a), rig.me(mate)), "two player members are not allies");
+	rig.fight(animal, bandit);
+	seen(rig.me(a), animal);
+	seen(rig.me(a), bandit);
+	test::require(rig.arena.setJoinGoals(a, true, joins::kProtectAllies), "no member A");
+	rig.run(3);
+	test::require(rig.firstPick(a) != 15, "15: a player member took PROTECT_ALLIES for a wild animal");
+}
 
 int main()
 {
@@ -513,11 +558,13 @@ int main()
 		testDefeatSquad();
 		testProtectAllies();
 		testFollowBlocksProtectAllies();
+		testFactionlessNotAlly();
 		testAttackEnemies();
 		testAttackNeutrals();
 		testTroubleMakers();
 		testTerritorial();
 		testSelfPreservationAndTownGoals();
+		testProtectAlliesStayInTownBound();
 	} catch (const std::exception& e) {
 		std::cerr << "FAIL: " << e.what() << "\n";
 		return 1;

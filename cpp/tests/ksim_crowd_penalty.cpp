@@ -61,6 +61,7 @@ struct Rig
 		f.yaw = 1.5707963267948966; // facing +x
 		f.team = team;
 		f.playerControlled = !fights;
+		f.passive = !fights; // a fixture never joins an ally's fight (PASSIVE gates the join, rwh.228 s4)
 		const std::uint64_t id = nextId++;
 		arena.add(id, std::move(f));
 		return id;
@@ -80,6 +81,13 @@ void crowd(state::Fighter& target)
 	target.engaged = {9001, 9002, 9003, 9004, 9005};
 }
 
+// notice() plus the last scan's FRESH flag (a notice alone leaves sinceSensed stale: goal 16 needs a sensed record, rwh.212).
+void sensed(state::Fighter& observer, std::uint64_t target)
+{
+	perception::notice(observer, target);
+	const_cast<state::SightRecord*>(perception::find(observer, target))->sinceSensed = 0.0;
+}
+
 void testCrowdLosesToFree()
 {
 	const kdata::GameData gd = kworld::loadMergedGameData(KENSHI_DATA);
@@ -90,8 +98,8 @@ void testCrowdLosesToFree()
 	const std::uint64_t crowded = rig.spawn(40.0, 0.0, 1, false);
 	const std::uint64_t free = rig.spawn(90.0, 0.0, 1, false);
 	crowd(rig.me(crowded));
-	perception::notice(rig.me(picker), crowded);
-	perception::notice(rig.me(picker), free);
+	sensed(rig.me(picker), crowded);
+	sensed(rig.me(picker), free);
 	rig.me(picker).playerControlled = false; // from now on it picks fights
 	rig.run(4);
 	test::require(rig.me(picker).target == free,
@@ -106,8 +114,8 @@ void testCurrentTargetKeepsItsBonus()
 	const std::uint64_t crowded = rig.spawn(40.0, 0.0, 1, false);
 	const std::uint64_t free = rig.spawn(90.0, 0.0, 1, false);
 	crowd(rig.me(crowded));
-	perception::notice(rig.me(picker), crowded);
-	perception::notice(rig.me(picker), free);
+	sensed(rig.me(picker), crowded);
+	sensed(rig.me(picker), free);
 	rig.me(picker).target = crowded;
 	rig.me(picker).targetAge = 2.0; // the exe holds a normal NPC for 0 s: the pick re-scores every tick
 	rig.me(picker).playerControlled = false;

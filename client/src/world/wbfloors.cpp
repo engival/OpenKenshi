@@ -453,6 +453,10 @@ bool WorldBuildings::inSolidZone(const double p[3])
 bool WorldBuildings::cutAbove(uint32_t bi, int s, const double p[3], double bottom, const DrawnPart* part)
 {
 	if (part && part->instance == bi) { return partCutHidden(part->def->floor, part->def->sign, s); }
+	// kenshi-wsbz: a drawn part of a standalone placement (no parent: a camp's campfire, a processor, a turret) is cut by no other building: the renderer hides a
+	// part only through its own building's floor, so a placement standing within another building's footprint (the Outpost s-IV's box covers the Stone Camp, and
+	// its floor-1 slab sits under the camp's ground) is drawn and picks. The slab-by-height test is for what has no part: a collision shape, a prop, a character.
+	if (part && part->instance < data_.instances.size() && data_.instances[part->instance].parent < 0) { return false; }
 	return aboveSlab(bi, s, p, bottom);
 }
 

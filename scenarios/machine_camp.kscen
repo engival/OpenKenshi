@@ -1,0 +1,6 @@
+KSCEN 2
+scenario title=Camp setup=x look_for=x bead=kenshi-j8xs metrics=player_downed_s
+source save=playtest game=1.0.68 radius=0 centre=64742,-49500 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=1084-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=1084-gamedata.base x=64742 y=800 z=-49440 yaw=0.690 leader=1 player=1

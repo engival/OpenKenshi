@@ -161,9 +161,9 @@ int main(int argc, char** argv)
 		for (int dz = -1; dz <= 1; ++dz)
 			for (int dx = -1; dx <= 1; ++dx)
 				zones.push_back({zone.x + dx, zone.z + dz});
-		const std::shared_ptr<MeshNavigator> mesh = test::openWorldNav(bake, zones);
-		const Run on = run(file, mesh, true);
-		const Run off = run(file, mesh, false);
+		// One mesh per run: the area-driven coverage unloads zones, so a shared mesh would hand the second run a different start.
+		const Run on = run(file, test::openWorldNav(bake, zones), true);
+		const Run off = run(file, test::openWorldNav(bake, zones), false);
 		test::require(on.hash == off.hash, "the state hash differs with the trace sink on and off");
 
 		// A combat pick has a target and, when a scan ran, exactly one Chosen candidate: the target.

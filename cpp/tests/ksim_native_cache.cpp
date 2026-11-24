@@ -185,6 +185,19 @@ int main()
 {
 	try
 	{
+		// The cache root from a faked environment (no data needed): the option wins, then XDG, the Windows variables, HOME.
+		const auto root = [](std::map<std::string, std::string> env)
+		{
+			return ksim::nativeCacheRoot([&env](const char* name) { const auto at = env.find(name); return at == env.end() ? nullptr : at->second.c_str(); });
+		};
+		test::require(root({}).empty(), "no environment must give no cache root");
+		test::require(root({ { "HOME", "/h" } }) == "/h/.cache/kenshi-sim/navmesh", "HOME root");
+		test::require(root({ { "HOME", "/h" }, { "XDG_CACHE_HOME", "/x" } }) == "/x/kenshi-sim/navmesh", "XDG beats HOME");
+		test::require(root({ { "LOCALAPPDATA", "C:/L" }, { "APPDATA", "C:/A" } }) == "C:/L/kenshi-sim/navmesh", "LOCALAPPDATA beats APPDATA");
+		test::require(root({ { "APPDATA", "C:/A" } }) == "C:/A/kenshi-sim/navmesh", "APPDATA root");
+		test::require(root({ { "LOCALAPPDATA", "C:/L" }, { "HOME", "/h" } }) == "C:/L/kenshi-sim/navmesh", "LOCALAPPDATA beats HOME (Proton)");
+		test::require(root({ { "KENSHI_NAV_CACHE", "/k" }, { "XDG_CACHE_HOME", "/x" } }) == "/k", "KENSHI_NAV_CACHE wins");
+		test::require(root({ { "XDG_CACHE_HOME", "" }, { "HOME", "/h" } }) == "/h/.cache/kenshi-sim/navmesh", "an empty variable is unset");
 		if (!fs::is_directory(knav::native::navtilesDir(KENSHI_DATA)))
 		{
 			std::cerr << "ksim_native_cache: SKIPPED: no shipped navtiles in " << KENSHI_DATA << "\n";
@@ -232,7 +245,8 @@ int main()
 		{
 			std::vector<fs::path> zoneFiles;
 			for (const auto& entry : fs::directory_iterator(cold.tree))
-				if (entry.is_regular_file() && entry.path().filename().string().rfind("zone_", 0) == 0)
+				if (entry.is_regular_file() && entry.path().filename().string().rfind("zone_", 0) == 0
+					&& entry.path().extension() == ".knav")
 					zoneFiles.push_back(entry.path());
 			test::require(!zoneFiles.empty(), "no zone entry to corrupt");
 			const fs::path victim = zoneFiles.front();
@@ -245,6 +259,17 @@ int main()
 			test::require(rebuilt.cache.zoneMisses >= 1, "the rebuilt open baked no zone");
 			std::cout << "ksim_native_cache: corrupt entry -> " << rebuilt.cache.loadFailures << " deleted and rebuilt, "
 				<< rebuilt.ms << " ms\n";
+		}
+
+		// ---- a corrupt .agree sidecar (garbage) is recomputed, never trusted or fatal ----
+		{
+			for (const auto& entry : fs::directory_iterator(cold.tree))
+				if (entry.path().extension() == ".agree")
+				{
+					std::ofstream(entry.path(), std::ios::trunc) << "agree5\n12 x\nnot a tile\n";
+				}
+			const Opening again = open(KENSHI_DATA, hubZones, cache);
+			test::require(again.hash == cold.hash, "a corrupt .agree sidecar changed the mesh");
 		}
 
 		// ---- the cache off: nothing read or written ----

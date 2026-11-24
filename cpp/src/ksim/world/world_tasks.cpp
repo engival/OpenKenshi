@@ -200,6 +200,9 @@ bool worldExecutable(std::uint16_t task) noexcept
 	case routines::task::OpenUpShopDoors:
 	case routines::task::Shopkeeper: // 20 / 255: the home building's counter / throne slot, walked to and held
 	case routines::task::SitOnThrone:
+	case routines::task::WanderTown: // 37 / 47 / 51 (rwh.55): a general node of the home building, reserved, stood on and faced, released
+	case routines::task::StandAtGeneralNode:
+	case routines::task::StandAtNode:
 		return true;
 	default:
 		return false;
@@ -246,6 +249,15 @@ struct Resolved
 	bool any() const noexcept { return fighter != 0 || cage || building != 0 || stock != 0 || gate != 0 || item != 0 || point || door || slot || pot != 0; }
 };
 
+// The patrol / wander goals: a low-tier filler that never ends by itself (216's search picks building after building), so the selector
+// re-scores a member on one every kReselectSeconds. Without it the first pass decides for good: a 270 gate locked a tick after
+// that pass was never offered (k16.6.651).
+bool wanderGoal(std::uint16_t task) noexcept
+{
+	return task == routines::task::PatrolTown || task == routines::task::Patrol || task == routines::task::RunAroundTown;
+}
+constexpr double kReselectSeconds = 5.0;
+
 // A goal whose executor in this file ends the Routine itself; the selector's interruption check guards the window for them.
 bool selectorGoal(std::uint16_t task) noexcept
 {
@@ -272,7 +284,7 @@ bool selectorGoal(std::uint16_t task) noexcept
 		|| task == routines::task::LootFoodAndStuff || task == routines::task::WorkTheSlaves || task == routines::task::GatherSlavesFemaleOrBeast
 		|| task == routines::task::GiveAllMySlavesTo || task == routines::task::GiveAllMySlavesToImport
 		|| task == routines::task::LockAllMyDoors || task == routines::task::LockDoorsStayOutside || task == routines::task::OpenUpShopDoors
-		|| task == routines::task::Shopkeeper || task == routines::task::SitOnThrone
+		|| task == routines::task::Shopkeeper || task == routines::task::SitOnThrone || routines::task::standsAtNode(task)
 		|| task == routines::task::StandUp || task == routines::task::SeekAndTalk || task == routines::task::SendDialogue
 		|| task == routines::task::FollowWhileTalking || task == routines::task::TownStalker;
 }
@@ -287,13 +299,14 @@ bool selectorGoal(std::uint16_t task) noexcept
 // carrier through the capture chain's own Routine instead). Its finished lift (the CarryStep's phase 1 is the carry itself) does not
 // keep it busy then; a lift still under way does.
 // `graftOk`: the character is a slave the master's package scores (the graft, rwh.99 section 3): a player's slave included, which no other pass scores.
+// `reselectOk`: a member on a wander-class goal (wanderGoal) that is due its re-score is free too, so a higher-scoring goal can take it.
 // `idleOk`: a member holding only the idle STAY_IN_HOME routine (43) is free too (the squad has a fresh captive to treat: k16.6.413).
-bool freeMember(const CombatArena& combat, std::uint64_t id, flecs::entity entity, bool carrierOk = false, bool graftOk = false, bool idleOk = false)
+bool freeMember(const CombatArena& combat, std::uint64_t id, flecs::entity entity, bool carrierOk = false, bool graftOk = false, bool idleOk = false, bool reselectOk = false)
 {
 	const state::Fighter* f = combat.find(id);
 	const bool ordered = f != nullptr && (f->routeSeq != 0 || f->orderTarget != 0);
 	return f != nullptr && !ordered && !f->dead && !f->unconscious && !f->down && (graftOk || !f->playerControlled) && f->target == 0 && (carrierOk || f->carrying == 0)
-		&& f->carriedBy == 0 && !f->asleep && f->goal.kind == state::IndividualKind::None && (entity.get<state::Routine>() == nullptr || (idleOk && entity.get<state::Routine>()->goal == routines::task::StayInHome))
+		&& f->carriedBy == 0 && !f->asleep && f->goal.kind == state::IndividualKind::None && (entity.get<state::Routine>() == nullptr || (idleOk && entity.get<state::Routine>()->goal == routines::task::StayInHome) || reselectOk)
 		&& !entity.has<state::InteractTask>() && !entity.has<state::DoorStep>() && !entity.has<state::TakeOut>()
 		&& (!entity.has<state::CarryStep>() || (carrierOk && entity.get<state::CarryStep>()->phase == 1));
 }
@@ -633,10 +646,10 @@ bool Simulation::inFightNow(const state::Fighter& f)
 		|| f.state == state::CombatState::Stumble;
 }
 
-bool Simulation::sheatheWeapon(std::uint64_t id)
+bool Simulation::sheatheWeapon(std::uint64_t id, bool player)
 {
 	state::Fighter* f = combat_ != nullptr ? combat_->find(id) : nullptr;
-	if (f == nullptr || f->playerControlled || f->animal || gameData_ == nullptr)
+	if (f == nullptr || (f->playerControlled && !player) || f->animal || gameData_ == nullptr)
 		return false;
 	const flecs::entity who = fighterEntity(id);
 	const std::string weapon = weaponSidOf(*gameData_, who.get<state::Inventory>(), true);
@@ -704,7 +717,7 @@ void Simulation::stepRearm()
 		return;
 	std::vector<std::uint64_t> drawing;
 	for (const CombatArena::Member& m : combat_->members())
-		if (m.fighter.target != 0 && !m.fighter.dead && !m.fighter.playerControlled && !m.fighter.animal)
+		if (m.due && m.fighter.target != 0 && !m.fighter.dead && !m.fighter.playerControlled && !m.fighter.animal)
 			drawing.push_back(m.id);
 	for (const std::uint64_t id : drawing)
 	{
@@ -825,7 +838,31 @@ void Simulation::stepWorldTasks()
 	const std::uint64_t now = clockTick();
 	const auto& members = combat_->members();
 	for (auto it = worldTaskBlocks_.begin(); it != worldTaskBlocks_.end();)
-		it = it->second <= now ? worldTaskBlocks_.erase(it) : std::next(it);
+	{
+		if (it->second > now)
+		{
+			++it;
+			continue;
+		}
+		if (it->second == 0) // operator[] on a lookup leaves a zero: never a block
+		{
+			it = worldTaskBlocks_.erase(it);
+			continue;
+		}
+		// addBlockedTarget at expiry (tickCurrentTask 14050f0b0, dt4_unreachable_target.md): the navmesh query on the target's current
+		// position; it passes and the entry is erased, it fails and the 20 s timer is re-armed, so an unreachable body stays blocked.
+		// UNSURE: ours asks routeFrom from the member (the exe's query is the target position on the navmesh); a target that is not
+		// a character (a box, a gone body) is erased without a query.
+		const state::Fighter* member = combat_->find(it->first.first);
+		const state::Fighter* target = combat_->find(it->first.second);
+		bool reachable = member == nullptr || target == nullptr || member->dead || target->dead || navigation_ == nullptr;
+		if (!reachable)
+			reachable = navigation_->routeFrom({member->x, member->y, member->z}, target->x, target->z, target->y, false, body(*member)).found;
+		if (reachable)
+			it = worldTaskBlocks_.erase(it);
+		else
+			(it++)->second = now + kBlockTicks;
+	}
 	for (auto it = eatenUntil_.begin(); it != eatenUntil_.end();)
 		it = it->second <= now || combat_->find(it->first) == nullptr ? eatenUntil_.erase(it) : std::next(it);
 	// 230: the corpses whose last bite landed in the previous pass go now (the executor loop below holds the arena by index).
@@ -849,8 +886,7 @@ void Simulation::stepWorldTasks()
 		std::vector<state::RoutePoint> points;
 		for (std::size_t p = 0; p < route.points.size(); ++p)
 			points.push_back({route.points[p].x, p < route.heights.size() ? route.heights[p] : f.y, route.points[p].z});
-		f.route = std::move(points);
-		f.routeNext = 0;
+		setRoute(f, std::move(points), navigation_.get(), body(f));
 		++f.routeVersion;
 		f.routeSeq = 0;
 		f.routeChase = false;
@@ -878,8 +914,7 @@ void Simulation::stepWorldTasks()
 		std::vector<state::RoutePoint> points;
 		for (std::size_t p = 0; p < route.points.size(); ++p)
 			points.push_back({route.points[p].x, p < route.heights.size() ? route.heights[p] : f.y, route.points[p].z});
-		f.route = std::move(points);
-		f.routeNext = 0;
+		setRoute(f, std::move(points), navigation_.get(), body(f));
 		++f.routeVersion;
 		f.routeSeq = 0;
 		f.routeChase = false;
@@ -1316,6 +1351,9 @@ void Simulation::stepWorldTasks()
 	// ---- the tasks in hand ----
 	for (std::size_t i = 0; i < members.size(); ++i)
 	{
+		if (!members[i].due)
+			continue; // the arena did not step it this tick (kenshi-k16.6.639)
+		const double dt = members[i].dueTicks * kTickSeconds; // the time since its last pass
 		flecs::entity actor = ecs.entity(combatEntities_[i]);
 		const state::Routine* current = actor.get<state::Routine>();
 		if (current == nullptr)
@@ -1333,6 +1371,8 @@ void Simulation::stepWorldTasks()
 				|| current->goal == routines::task::LootContainer || current->goal == routines::task::FirstAid);
 		if (!squad.is_valid() || (squad.has<state::SquadRoutine>() && !residentPull))
 			continue;
+		if (current->goal == routines::task::GatePost && squad.has<state::GateCrew>())
+			continue; // a gate crew's post is task 51 too, held by stepGateCrewPosts; no node window ends it
 		const std::uint64_t id = members[i].id;
 		state::Fighter& f = *combat_->find(id);
 		state::Routine r = *current;
@@ -1361,7 +1401,7 @@ void Simulation::stepWorldTasks()
 		const bool orderTask = r.goal == routines::task::StandUp || r.goal == routines::task::SeekAndTalk || r.goal == routines::task::SendDialogue
 			|| r.goal == routines::task::FollowWhileTalking || r.goal == routines::task::TownStalker || r.goal == routines::task::SleepOnFloorFakeAmbush
 			|| r.goal == routines::task::LootAnimalsJob;
-		if (selectorGoal(r.goal) && !orderTask && !residentPull && inSlice(now, id) && !goalWindowOpen(actor, r.goal, f.raceSid))
+		if (selectorGoal(r.goal) && !orderTask && !residentPull && inSliceScaled(now, id, f.playerControlled || inFight(f)) && !goalWindowOpen(actor, r.goal, f.raceSid))
 		{
 			// A floor sleeper whose package window closes (the animals' 22-6 / 23-6 rows) wakes with it; endTask mirrors the wake.
 			if (r.goal == routines::task::SleepOnFloor)
@@ -1485,7 +1525,7 @@ void Simulation::stepWorldTasks()
 			// patient healed, gone or dead leaves nothing to do.
 			const state::Fighter* patient = combat_->find(r.chainTarget);
 			const goap::Plan chain = patient != nullptr ? planMedicChain(id, r.chainTarget) : goap::Plan{};
-			const bool owed = chain.found() && chain.steps.size() > 1; // [25, 58]; [58] alone = the goal already holds
+			const bool owed = chain.found() && std::any_of(chain.steps.begin(), chain.steps.end(), [](const goap::Step& step) { return step.task == goap::kFirstAidOrder; }); // [25, 58] or [7, 25, 58]; [58] alone = the goal already holds
 			// No terminal state is missing: a medic that has not finished in kAidGiveUpSeconds drops the patient for the 20 s block.
 			const bool gaveUp = static_cast<double>(ticksSince(now, r.since)) * kTickSeconds > kAidGiveUpSeconds;
 			if (patient == nullptr || patient->dead || f.dead || f.unconscious || f.down || !owed || gaveUp)
@@ -1497,6 +1537,8 @@ void Simulation::stepWorldTasks()
 			}
 			if (actor.has<state::InteractTask>())
 				continue; // the treatment interact runs itself, one tick of treat() at a time
+			if (chain.steps.front().task == routines::task::UnequipWeapon && sheatheWeapon(id)) // the plan's 7, before the aid (rwh250)
+				continue;
 			const InteractTarget aim = findInteractTarget(ecs, combat_.get(), r.chainTarget, this);
 			if (aim.kind != InteractKind::None && aim.within(f))
 			{
@@ -1549,7 +1591,7 @@ void Simulation::stepWorldTasks()
 			// The eat application (CombatArena::eat, 140650370): the EATER's race picks the limb loop or the blood drain, a live victim
 			// also screams and trains toughness, and the counter past the last part removes the body as "eaten".
 			const bool first = live && eatenUntil_.find(r.chainTarget) == eatenUntil_.end();
-			const CombatArena::EatOutcome eaten = combat_->eat(r.chainTarget, [&] { const RaceCombat* race = combat_->data().race(f.raceSid); return race != nullptr && race->vampiric; }() /* RACE "vampiric" = +0x7d */, kTickSeconds, eatenBites_[r.chainTarget]);
+			const CombatArena::EatOutcome eaten = combat_->eat(r.chainTarget, [&] { const RaceCombat* race = combat_->data().race(f.raceSid); return race != nullptr && race->vampiric; }() /* RACE "vampiric" = +0x7d */, dt, eatenBites_[r.chainTarget]);
 			if (eaten.result == CombatArena::EatResult::Inedible)
 			{
 				worldTaskBlocks_[{id, r.chainTarget}] = now + kBlockTicks;
@@ -1612,7 +1654,7 @@ void Simulation::stepWorldTasks()
 			}
 			f.yaw = std::atan2(body->x - f.x, body->z - f.z);
 			const double before = std::fmod(r.chainElapsed, kChopSeconds) / kChopSeconds;
-			r.chainElapsed += kTickSeconds;
+			r.chainElapsed += dt;
 			const double after = std::fmod(r.chainElapsed, kChopSeconds) / kChopSeconds;
 			const std::uint64_t victim = r.chainTarget;
 			const std::uint16_t killGoal = r.goal;
@@ -1993,7 +2035,7 @@ void Simulation::stepWorldTasks()
 			f.clearRoute();
 			f.forwardSpeed = 0.0;
 			f.lateralSpeed = 0.0;
-			r.chainElapsed += kTickSeconds;
+			r.chainElapsed += dt;
 			if (r.chainElapsed < kProcessSeconds)
 			{
 				actor.set<state::Routine>(std::move(r));
@@ -2265,7 +2307,7 @@ void Simulation::stepWorldTasks()
 			f.yaw = std::atan2(gate->x - f.x, gate->z - f.z); // face the slab, not the outside point
 			if (r.chainElapsed < 0.0)
 				r.chainElapsed = 0.0;
-			r.chainElapsed += kTickSeconds;
+			r.chainElapsed += dt;
 			if (r.chainElapsed < bash.seconds)
 			{
 				actor.set<state::Routine>(std::move(r));
@@ -2521,7 +2563,7 @@ void Simulation::stepWorldTasks()
 			f.clearRoute();
 			f.forwardSpeed = 0.0;
 			f.lateralSpeed = 0.0;
-			r.chainElapsed += kTickSeconds;
+			r.chainElapsed += dt;
 			if (r.chainElapsed < kLootStorableSeconds)
 			{
 				actor.set<state::Routine>(std::move(r));
@@ -3008,7 +3050,7 @@ void Simulation::stepWorldTasks()
 			}
 			continue;
 		}
-		if (r.goal == routines::task::Shopkeeper || r.goal == routines::task::SitOnThrone)
+		if (r.goal == routines::task::Shopkeeper || r.goal == routines::task::SitOnThrone || routines::task::standsAtNode(r.goal))
 		{
 			// 20 / 255: walk to the claimed counter / throne slot and stay on it; the package window or a fight ends it (the selector
 			// re-scores). No site entry (a stale target) ends the goal - never a terminal state.
@@ -3027,6 +3069,16 @@ void Simulation::stepWorldTasks()
 			f.clearRoute();
 			f.forwardSpeed = 0.0;
 			f.lateralSpeed = 0.0;
+			if (routines::task::standsAtNode(r.goal))
+			{
+				// Task_StandAtNode start (rwh.55 section 5): a type-1 node is faced along its stored direction (node+0xc0).
+				const double yaw = std::atan2(entry->faceX, entry->faceZ);
+				if (std::fabs(yaw - f.yaw) > 0.01)
+				{
+					f.yaw = yaw;
+					mirrorFighter(id);
+				}
+			}
 			continue;
 		}
 		if (r.goal == routines::task::SitAround)
@@ -3232,9 +3284,9 @@ void Simulation::stepWorldTasks()
 		// fights (bq18 / BQ18).
 		const auto fightGoal = [&](flecs::entity member, const state::Id& memberId)
 		{
-			state::Fighter* f = combat_->find(memberId.value);
+			const state::Fighter* f = std::as_const(*combat_).find(memberId.value); // a read: the writes below take the mutable find (the mirror copies only what was written)
 			if (f == nullptr || f->dead || f->unconscious || f->down || f->playerControlled || f->carrying != 0
-				|| f->carriedBy != 0 || f->asleep || f->goal.kind != state::IndividualKind::None)
+				|| f->carriedBy != 0 || f->asleep || f->goal.kind != state::IndividualKind::None || f->fleeing)
 				return;
 			// Only a plan may be preempted: a route or follow a command did NOT set. Plan is the marked plan (the world carry, a world
 			// task's walk); None is an unmarked one a routine wrote (a resident's job walk, a guard's follow to its post); Order is a
@@ -3251,8 +3303,8 @@ void Simulation::stepWorldTasks()
 			// route beside the den while it ran away.
 			if (f->target != 0)
 			{
-				f->clearRoute();
-				combat_->endFollow(*f);
+				combat_->find(memberId.value)->clearRoute();
+				combat_->endFollow(*combat_->find(memberId.value));
 				return;
 			}
 			// A new pick is the package selector's own: not while a task executor holds the member (carry.cpp and the interaction, door,
@@ -3270,14 +3322,14 @@ void Simulation::stepWorldTasks()
 				if (!squad.is_valid() || !squad.has<state::SquadRoutine>() || routine->chainTarget != 0 || !routine->plan.empty())
 					return;
 			}
-			f->fightGoalClock -= kTickSeconds;
-			if (f->fightGoalClock > 0.0)
+			const double worldNow = static_cast<double>(now) * kTickSeconds;
+			if (f->fightGoalDue > worldNow)
 				return;
 			// The next re-selection: the exe's random phase U(1,40)/60 s, a pure function of the seed, the fighter's dice key and the
 			// tick (task CC's convention: a replay is identical, nothing is saved).
 			RngStream phase(streamSeed(streamSeed(streamSeed(seed_, kFightGoalStream), static_cast<std::size_t>(combat_->diceKey(memberId.value))),
 				static_cast<std::size_t>(now)));
-			f->fightGoalClock = static_cast<double>(phase.between(1, 40)) / 60.0;
+			combat_->find(memberId.value)->fightGoalDue = worldNow + static_cast<double>(phase.between(1, 40)) / 60.0;
 			const CombatArena::FightGoal fight = combat_->fightGoalOf(memberId.value);
 			if (fight.target == 0)
 				return;
@@ -3300,8 +3352,8 @@ void Simulation::stepWorldTasks()
 				return;
 			// Commit: the goal preempts the plan and the combat tick fights the target it handed over (whom, not whether).
 			combat_->orderFight(memberId.value, fight.target, fight.task);
-			f->clearRoute();
-			combat_->endFollow(*f);
+			combat_->find(memberId.value)->clearRoute();
+			combat_->endFollow(*combat_->find(memberId.value));
 			logTask("fight goal " + std::to_string(fight.task) + " member " + std::to_string(memberId.value) + " target "
 				+ std::to_string(fight.target));
 		};
@@ -3666,7 +3718,9 @@ void Simulation::stepWorldTasks()
 			constexpr double kCarryIdleSeconds = 30.0;
 			if (self->carrying == 0 || canPlace)
 				carryIdleSince_.erase(memberId);
-			if (!freeMember(*combat_, memberId, member, canPlace, graft, !grafted.empty()))
+			const state::Routine* wandering = member.get<state::Routine>();
+			const bool reselect = wandering != nullptr && wanderGoal(wandering->goal) && now >= wandering->nextScore && !commitLocked(*wandering, memberId, now);
+			if (!freeMember(*combat_, memberId, member, canPlace, graft, !grafted.empty(), reselect))
 			{
 				if (self->carrying != 0 && !canPlace && arrestOrders_.count(memberId) == 0 && freeMember(*combat_, memberId, member, true))
 				{
@@ -3686,6 +3740,15 @@ void Simulation::stepWorldTasks()
 			}
 			if (graft)
 				graftPassed.push_back(memberId);
+			const std::uint16_t heldGoal = reselect ? wandering->goal : 0; // the wander goal this pass re-scores
+			if (reselect)
+			{
+				state::Routine again = *wandering;
+				again.nextScore = now + static_cast<std::uint64_t>(std::ceil(kReselectSeconds / kTickSeconds));
+				member.set<state::Routine>(std::move(again));
+				--onTask[heldGoal]; // not its own crowd
+			}
+			const auto restoreCrowd = [&]() { if (heldGoal != 0) ++onTask[heldGoal]; };
 			std::vector<goalsel::Offer> offers;
 			std::vector<Resolved> targets; // parallel to offers
 			std::vector<std::vector<std::uint16_t>> plans; // parallel to offers: the GOAP chain of a row that has one (G4)
@@ -3732,7 +3795,12 @@ void Simulation::stepWorldTasks()
 				switch (row.task)
 				{
 				case routines::task::CaptureSlaves:
-					res.fighter = capture::nearest(memberId, *self, ctx, kBodySight, lookup, claimed);
+					// The scorer skips a blocked target (14059e300): a body this member gave up on stays out until the block lapses.
+					res.fighter = capture::nearest(memberId, *self, ctx, kBodySight, lookup, [&](std::uint64_t target)
+					{
+						const auto blocked = worldTaskBlocks_.find({memberId, target});
+						return claimed(target) || (blocked != worldTaskBlocks_.end() && blocked->second > now);
+					});
 					break;
 				case routines::task::LootTheDead:
 					// OURS (task BO's live run): one member loots; the next body waits for it to finish.
@@ -3911,6 +3979,31 @@ void Simulation::stepWorldTasks()
 					const state::SquadRoutine* routine = squad.get<state::SquadRoutine>();
 					res.door = resolveDoorRow(memberId, row.task, homeDoorsOf(self->homeBuilding, self->x, self->z),
 						routine != nullptr && routine->homeLocked != 0, strangerIn(self->homeBuilding));
+					break;
+				}
+				case routines::task::WanderTown:
+				case routines::task::StandAtGeneralNode:
+				case routines::task::StandAtNode:
+				{
+					// 37 / 47 / 51 (rwh.55 section 4): the node DB's mode-1 query on the home building (flag 1: nodes the building owns),
+					// a free node or the one I hold, then the plan's own test (a 51 plans its walk, 67, in front). UNSURE: 37's district
+					// building (1409fc6c0) is not ported, the home building stands in; 51 takes 47's node (its atNode resolver is shared).
+					if (self->homeBuilding == 0)
+						break;
+					const state::Routine* mine = member.get<state::Routine>();
+					const state::Routine none;
+					RngStream dice(streamSeed(streamSeed(streamSeed(seed_, kRoutineStream), static_cast<std::size_t>(memberId)),
+						static_cast<std::size_t>(now + 1)));
+					dice.uniform01();
+					const std::optional<SiteChoice> pick = pickSite(mine != nullptr ? *mine : none, memberId, row.task, self->homeBuilding,
+						routines::SiteKind::GeneralNode, dice.uniform01(), now, self->x, self->z, std::nullopt, true);
+					if (pick && planTownGoal(memberId, row.task, false).found())
+					{
+						res.slot = true;
+						res.site = pick->site;
+						res.px = pick->x;
+						res.pz = pick->z;
+					}
 					break;
 				}
 				case routines::task::Shopkeeper:
@@ -4609,7 +4702,10 @@ void Simulation::stepWorldTasks()
 				plans.push_back(std::move(plan));
 			}
 			if (offers.empty())
+			{
+				restoreCrowd();
 				continue;
+			}
 			std::vector<goalsel::Verdict> verdicts;
 			const bool traced = tracing(memberId);
 			const goalsel::Choice choice = goalsel::select(offers, {}, hour, traced ? &verdicts : nullptr);
@@ -4624,15 +4720,27 @@ void Simulation::stepWorldTasks()
 				decisionTrace_.record(pick);
 			}
 			if (!choice.found)
+			{
+				restoreCrowd();
 				continue; // the default task (IDLE): the member keeps the follow and re-scores next second
+			}
 			const auto picked = std::find_if(offers.begin(), offers.end(), [&choice](const goalsel::Offer& offer)
 			{
 				return offer.task == choice.task && offer.target == choice.target;
 			});
 			if (picked == offers.end())
+			{
+				restoreCrowd();
 				continue;
+			}
 			const auto at = static_cast<std::size_t>(picked - offers.begin());
 			const Resolved& res = targets[at];
+			if (reselect && (choice.task == heldGoal || choice.task == routines::task::FollowSquadLeader || choice.task == routines::task::FollowSlaveMaster
+				|| choice.task == routines::task::FollowUrgentEscape))
+			{
+				restoreCrowd(); // the wander goal still wins (or only a follow does): it keeps running, re-scored in kReselectSeconds
+				continue;
+			}
 			state::Fighter& f = *combat_->find(memberId);
 			if (choice.task == routines::task::FollowSquadLeader || choice.task == routines::task::FollowSlaveMaster
 				|| choice.task == routines::task::FollowUrgentEscape)
@@ -4800,12 +4908,41 @@ void Simulation::syncBoardStates() const
 			arrests.entries.push_back({guard, order.victim, order.since, order.lift, order.started, order.snatched, order.gaveUp});
 		ecs.set<state::ArrestStates>(std::move(arrests));
 	}
-	if (limbCooldown_.empty() && limbPlay_.empty() && alarms_.empty() && alarmDwell_.empty() && alarms_.last() == 0 && farOrders_.empty())
+	const bool streaming = navigation_ != nullptr && navigation_->streaming();
+	const bool treesBuilt = los_ != nullptr && los_->loadedRegions() > 0; // line of sight enabled but with no tree built is the same as off: a load need not enable it
+	const bool inFlight = streaming || treesBuilt || travelKnown_ || (residentData_ != nullptr && !residentData_->queued.empty());
+	if (limbPlay_.empty() && alarms_.empty() && alarmDwell_.empty() && alarms_.last() == 0 && farOrders_.empty() && !inFlight)
 		return;
 	state::RunStates run;
+	// The region promotion's work in flight (v126): what a pass queued, the zones and trees the spread has done so far, the heading.
+	if (residentData_ != nullptr)
+	{
+		for (const auto& [squad, world] : residentData_->queued)
+			if (squad.is_alive() && squad.get<state::Id>() != nullptr)
+				run.promotions.push_back({squad.get<state::Id>()->value, world});
+	}
+	run.streaming = streaming;
+	if (streaming)
+	{
+		for (const kworld::ZoneCell zone : navigation_->coveredZones())
+		{
+			run.navZones.push_back(static_cast<std::uint32_t>(kworld::zoneIndexOf(zone)));
+			if (furnishedZones_.count(kworld::zoneIndexOf(zone)) != 0)
+				run.navFurnished.push_back(static_cast<std::uint32_t>(kworld::zoneIndexOf(zone)));
+		}
+	}
+	run.hasLos = treesBuilt;
+	if (treesBuilt)
+	{
+		for (const std::int32_t region : los_->loadedRegionList())
+			run.losRegions.push_back(static_cast<std::uint32_t>(region));
+	}
+	run.travelKnown = travelKnown_;
+	run.travelX = travelX_;
+	run.travelZ = travelZ_;
+	run.headX = headX_;
+	run.headZ = headZ_;
 	run.lastAlarm = alarms_.last();
-	for (const auto& [member, finder] : limbCooldown_)
-		run.cooldowns.push_back({member, finder});
 	for (const auto& [member, play] : limbPlay_)
 		run.plays.push_back({member, play.x, play.z, play.picks});
 	alarms_.each([&](int town, const alarm::Alarm& a)
@@ -4824,8 +4961,10 @@ void Simulation::syncBoardStates() const
 		e.goalY = o.goalY.value_or(0.0);
 		e.hasGoalY = o.goalY.has_value();
 		for (const kworld::RoadNetwork::Marker& m : o.markers)
-			e.markers.push_back({m.x, m.y, m.z});
+			e.markers.push_back({m.x, m.y, m.z, m.width});
 		e.next = static_cast<std::uint32_t>(o.next);
+		e.cur = static_cast<std::uint32_t>(o.cur);
+		e.onMarker = o.onMarker;
 		e.done = o.done;
 		e.blocked = o.blocked;
 		e.blockedUntil = o.blockedUntil;
@@ -4852,15 +4991,13 @@ void Simulation::restoreBoards()
 	if (const state::ArrestStates* arrests = world_.ecs().get<state::ArrestStates>())
 		for (const state::ArrestStates::Entry& e : arrests->entries)
 			arrestOrders_[e.guard] = {e.lift, e.victim, e.since, e.started, e.snatched, e.gaveUp};
-	limbCooldown_.clear();
 	limbPlay_.clear();
 	alarms_.clear();
 	alarmDwell_.clear();
 	farOrders_.clear();
 	if (const state::RunStates* run = world_.ecs().get<state::RunStates>())
 	{
-		for (const state::RunStates::Cooldown& e : run->cooldowns)
-			limbCooldown_[e.member] = e.finder;
+		// run->cooldowns: an older save's 277 cooldown, which the exe does not have (rwh.203): dropped
 		for (const state::RunStates::Play& e : run->plays)
 			limbPlay_[e.member] = {e.x, e.z, e.picks};
 		for (const state::RunStates::Alarm& e : run->alarms)
@@ -4877,8 +5014,10 @@ void Simulation::restoreBoards()
 			if (e.hasGoalY)
 				o.goalY = e.goalY;
 			for (const state::RunStates::FarMarker& m : e.markers)
-				o.markers.push_back({m.x, m.y, m.z});
+				o.markers.push_back({m.x, m.y, m.z, m.width});
 			o.next = e.next;
+			o.cur = e.cur;
+			o.onMarker = e.onMarker;
 			o.done = e.done;
 			o.blocked = e.blocked;
 			o.blockedUntil = e.blockedUntil;
@@ -5016,15 +5155,22 @@ blackboard::Situation Simulation::situationOf(flecs::entity squad, const blackbo
 	out.owned = board != nullptr ? static_cast<int>(board->owned.size()) : 0;
 	int engaged = 0;
 	const state::Fighter* lead = nullptr;
-	for (const auto& [memberId, member] : members)
+	const std::vector<const state::Fighter*> living = [&]
 	{
-		const state::Fighter* f = combat_->find(memberId);
-		if (f == nullptr || f->dead)
-			continue;
+		std::vector<const state::Fighter*> list;
+		for (const auto& [memberId, member] : members)
+			if (const state::Fighter* f = combat_->find(memberId); f != nullptr && !f->dead)
+				list.push_back(f);
+		return list;
+	}();
+	for (const state::Fighter* f : living)
+	{
 		if (lead == nullptr)
 			lead = f;
 		++out.members;
-		if (f->target != 0)
+		// Package_PassingByTownAssault vf13 / vf18 (14028eca0 / 14028ea90, rwh.228 s2): a member counts with vf+0x118 > 0, the zone id (inside the
+		// town). M: our zone is the town circle (townEntityAt); a combat target plays no part.
+		if (townEntityAt(f->x, f->z) != 0)
 			++engaged;
 	}
 	out.engagedMembers = engaged;
@@ -5053,6 +5199,21 @@ blackboard::Situation Simulation::situationOf(flecs::entity squad, const blackbo
 			!playerOwned && mine.is_valid() && factionsHostile(*gameData_, mine, theirs));
 	}
 	out.assaultTown = hostile;
+	// The assault's target set (rwh.228 s2, +0xd8): hostiles the members sense that stand in a town, are not dead, KO'd, down or bedded.
+	// The exe never prunes the set (a gone one fails the field test); ours reads the members' records now, which is the same for the living.
+	const blackboard::Package* assaulting = board != nullptr && !board->current.empty() ? blackboard::find(*board, board->current) : nullptr;
+	if (assaulting != nullptr && assaulting->signalFunc == blackboard::kPassingByTownAssault)
+	{
+		for (const state::Fighter* f : living)
+		{
+			for (const state::SightRecord& record : f->sight)
+			{
+				const state::Fighter* t = combat_->find(record.target);
+				if (t != nullptr && !t->dead && !t->unconscious && !t->down && !t->asleep && combat_->hostileFactions(f->faction, t->faction) && townEntityAt(t->x, t->z) != 0)
+					out.targetsGone = false;
+			}
+		}
+	}
 	// 140289180: a living, standing member whose current town is the occupied one (the town the package started in, else the leader's now).
 	const blackboard::Package* running = board != nullptr && !board->current.empty() ? blackboard::find(*board, board->current) : nullptr;
 	if (running != nullptr && running->signalFunc == blackboard::kOccupyTown)

@@ -69,6 +69,11 @@ AreaSources AreaGatherer::sources() const
 	return { s.gameData, s.layouts, s.terrain, s.biomes, s.features, s.towns };
 }
 
+void AreaGatherer::addPlacement(const PlacedInstance& placed)
+{
+	state_->placed.push_back(placed);
+}
+
 AreaGeometry AreaGatherer::gather(ZoneCell min, ZoneCell max)
 {
 	State& s = *state_;

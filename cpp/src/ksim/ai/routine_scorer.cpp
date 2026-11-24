@@ -18,6 +18,7 @@
 #include "ksim/world/towncircle.hpp"
 
 #include "kworld/collision.hpp"
+#include "kworld/coords.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -43,6 +44,7 @@ namespace ksim {
 namespace {
 
 // How close to a turret's post the member stands to mount it (task ds/turret S3; the walk's arrival is within a few units, UNSURE).
+constexpr double kWorkReach = 250.0; // the Work pick of the goals whose finder is not decoded yet (214 / 221: the 250 u reach)
 constexpr double kMountReach = 12.0;
 // How often stepRoutines looks at the due members. A member's own cadence is Routine::nextScore (kScoreIntervalTicks).
 constexpr std::uint64_t kLookTicks = 5;
@@ -53,7 +55,6 @@ constexpr double kReach = 4.0;
 constexpr double kCatchSight = 60.0;
 // (216's route constants are world_resolvers.hpp kSearchPointsMin ... kSearchSnapReach: the same route runs for a world squad.)
 // Pretend labour works at a producer BUILDING within this of the home point (UNSURE: the data has no work-station marker of a town).
-constexpr double kWorkReach = 250.0;
 // Wardens watching one cage (183) each take their own spot round it: ring radius, ring step (more than a body's R = 8 apart) and the members per ring.
 constexpr double kWatchRing = 8.0;
 constexpr double kWatchRingStep = 6.0;
@@ -99,6 +100,9 @@ bool implemented(std::uint16_t task) noexcept
 	case routines::task::StaticGuardBuildingIndoors: // 38's twin (task CH group 3)
 	case routines::task::StayInHome:
 	case routines::task::SitOnThrone: // 255 (dt24_43 section 2c): 43's resolver on the home building's throne slot
+	case routines::task::WanderTown: // 37 / 47 / 51 (rwh.55, kenshi-k16.6.12.8): a general node of the home building
+	case routines::task::StandAtGeneralNode:
+	case routines::task::StandAtNode:
 	case routines::task::StaticGuardTown:
 	case routines::task::ManTurrets: // task CH turrets: the finder, the walk stands at the turret (no mounting yet)
 	case routines::task::TurretOnBuilding: // 222, the 234 player-job resolver body
@@ -171,8 +175,8 @@ bool exclusive(routines::SiteKind kind) noexcept
 	return kind == routines::SiteKind::GuardNode || kind == routines::SiteKind::TownNode || kind == routines::SiteKind::Bed
 		|| kind == routines::SiteKind::Table || kind == routines::SiteKind::Counter || kind == routines::SiteKind::Work
 		|| kind == routines::SiteKind::Cage || kind == routines::SiteKind::Turret || kind == routines::SiteKind::Disposal
-		|| kind == routines::SiteKind::Throne || kind == routines::SiteKind::Seat || kind == routines::SiteKind::BarSeat
-		|| kind == routines::SiteKind::ShopkeeperNode;
+		|| kind == routines::SiteKind::Throne || routines::isHomeSlot(kind) || kind == routines::SiteKind::BarSeat
+		|| kind == routines::SiteKind::ShopkeeperNode || kind == routines::SiteKind::GeneralNode;
 }
 
 routines::Site fromState(const state::RoutineSite& site)
@@ -505,6 +509,11 @@ void addLayoutFurniture(ResidentData& data, const World& world, flecs::world& ec
 			|| kind == routines::SiteKind::Throne || kind == routines::SiteKind::ShopkeeperNode)
 		{
 			pieces.push_back({kind, piece.x, piece.z, piece.y});
+		} else if (kind == routines::SiteKind::GeneralNode) {
+			// The node's facing: its orientation x NEGATIVE_UNIT_X (rwh.55 section 3, node+0xc0), in the layout frame.
+			const std::array<double, 3> face = routines::rotate({piece.qw, piece.qx, piece.qy, piece.qz}, {-1.0, 0.0, 0.0});
+			const double length = std::hypot(face[0], face[2]);
+			pieces.push_back({kind, piece.x, piece.z, piece.y, length > 0.0 ? face[0] / length : 0.0, length > 0.0 ? face[2] / length : 1.0});
 		} else if (kind == routines::SiteKind::Cage) {
 			// A cage itself is a hole in the mesh (like a bed): its site is the use node nearest the piece, a walkable spot beside it
 			// (OURS: the original's cage node is not decoded; the occupant is put there, 5.19).
@@ -526,6 +535,27 @@ void addLayoutFurniture(ResidentData& data, const World& world, flecs::world& ec
 			pieces.back().hasIn = true;
 			pieces.back().inX = piece.x;
 			pieces.back().inZ = piece.z;
+		} else if (routines::machineFunction(gameData, *record) != 0) {
+			// A machine piece (rwh.279): the holder walks to its approach point (the use node nearest the piece, as a cage's) and works facing the
+			// piece; a piece with no node is used from its own spot. The clip is the functionality's animation, else "stonemine" (OURS: the exe's default).
+			double x = piece.x;
+			double z = piece.z;
+			double best = 1.0e30;
+			for (const std::array<double, 3>& node : routines::useNodes(gameData, *record))
+			{
+				const std::array<double, 2> at = routines::pieceToLayout(piece, node);
+				const double d = std::hypot(at[0] - piece.x, at[1] - piece.z);
+				if (d < best)
+				{
+					best = d;
+					x = at[0];
+					z = at[1];
+				}
+			}
+			pieces.push_back({routines::SiteKind::Machine, x, z, piece.y, 0.0, 1.0, routines::functionClip(gameData, *record, routines::kClipOperateMachine), record->stringID});
+			pieces.back().hasIn = true;
+			pieces.back().inX = piece.x;
+			pieces.back().inZ = piece.z;
 		} else if (isChairPiece(gameData, *record)) {
 			chairs.push_back({piece.x, piece.z, piece.y, routines::rotate({piece.qw, piece.qx, piece.qy, piece.qz}, {0.0, 0.0, 1.0}),
 				chairFlags(gameData, *record), routines::functionClip(gameData, *record, routines::kClipSittingChair)});
@@ -543,7 +573,7 @@ void addLayoutFurniture(ResidentData& data, const World& world, flecs::world& ec
 	const auto inside = [&](const std::array<double, 3>& at) { return insideFootprint(*building, {at[0], at[2]}); };
 	std::vector<std::array<double, 2>> tables; // world positions of the kept tables, slot order
 	for (const routines::SiteKind kind : {routines::SiteKind::Table, routines::SiteKind::Counter, routines::SiteKind::GuardNode,
-		routines::SiteKind::Bed, routines::SiteKind::Cage, routines::SiteKind::Throne, routines::SiteKind::ShopkeeperNode})
+		routines::SiteKind::Bed, routines::SiteKind::Cage, routines::SiteKind::Throne, routines::SiteKind::Machine, routines::SiteKind::ShopkeeperNode, routines::SiteKind::GeneralNode})
 	{
 		for (const routines::Piece& piece : pieces)
 		{
@@ -562,6 +592,18 @@ void addLayoutFurniture(ResidentData& data, const World& world, flecs::world& ec
 			const double nodeY = kind == routines::SiteKind::Bed ? world3(bestHand, piece.x, piece.nodeY, piece.z)[1] : 0.0;
 			spec.pieces.push_back({kind, spec.yawCos * dx - spec.yawSin * dz, spec.yawSin * dx + spec.yawCos * dz, at[1],
 				spec.yawCos * fx - spec.yawSin * fz, spec.yawSin * fx + spec.yawCos * fz, piece.clip, piece.record, nodeY});
+			for (const routines::BedNode& node : piece.nodes)
+			{
+				// The same mapping as the piece itself: building-local, in the spec's frame.
+				const std::array<double, 3> nodeAt = world3(bestHand, node.x, node.y, node.z);
+				const std::array<double, 3> nodeAhead = world3(bestHand, node.x + node.faceX, node.y, node.z + node.faceZ);
+				const double ndx = nodeAt[0] - building->cx;
+				const double ndz = nodeAt[2] - building->cz;
+				const double nfx = nodeAhead[0] - nodeAt[0];
+				const double nfz = nodeAhead[2] - nodeAt[2];
+				spec.pieces.back().nodes.push_back({spec.yawCos * ndx - spec.yawSin * ndz, spec.yawSin * ndx + spec.yawCos * ndz, nodeAt[1] - spec.originY,
+					spec.yawCos * nfx - spec.yawSin * nfz, spec.yawSin * nfx + spec.yawCos * nfz});
+			}
 			if (piece.hasIn)
 			{
 				const std::array<double, 3> centre = world3(bestHand, piece.inX, piece.y, piece.inZ);
@@ -1036,6 +1078,73 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 		return true;
 	};
 
+
+	// The BuildingFinder_SpecialFunction accept over one home's interior parts (rwh.230 section 1, 1408cebe0): a part qualifies when its function
+	// bit is in the goal row's mask, it is built (a layout piece is), the town filter holds (a home's own parts: the home's town), the permission
+	// holds - the part's building is the member's faction's or an ally's, OR the member is a slave (slaveState 1; H on the branch, M on the
+	// predicate 140621230: OURS the ownership / allied test of the 153 ladder, UNSURE, oracle kenshi-rwh.279) - and no one else holds it
+	// (pickSite's claim test, which also keeps a part the member already holds). The pick is uniform at random over every match (1409fb020).
+	// The site kinds we have for a function: chairs (17) and thrones (24); parts with bits 1 / 3 / 4 / 7 / 10 have none yet (kenshi-k16.6.686).
+	const auto findSpecialFunction = [&](std::uint16_t goal, std::uint32_t mask, std::uint64_t key, Eval& out) -> bool
+	{
+		const routines::BuildingSites* building = residentData_->sites.find(key);
+		if (building == nullptr)
+			return false;
+		if (f.slaveState != 1)
+		{
+			const flecs::entity mine = f.faction != 0 ? ecs.entity(f.faction) : flecs::entity();
+			const state::FactionState* mineState = mine.is_valid() ? mine.get<state::FactionState>() : nullptr;
+			bool allowed = building->ownerFaction.empty() || (mineState != nullptr && building->ownerFaction == mineState->templateSid);
+			if (!allowed && mine.is_valid())
+				ecs.each([&](flecs::entity entity, const state::FactionState& faction)
+				{
+					allowed = allowed || (faction.templateSid == building->ownerFaction && factionRelation(*gameData_, entity, mine) >= FactionBook::kAlly);
+				});
+			if (!allowed)
+				return false;
+		}
+		struct Kind
+		{
+			routines::SiteKind kind;
+			std::int32_t function;
+		};
+		std::vector<std::pair<Kind, std::size_t>> found; // each matching kind with its free count
+		std::size_t total = 0;
+		for (const Kind kind : {Kind{routines::SiteKind::Seat, routines::kFunctionChair}, Kind{routines::SiteKind::Throne, routines::kFunctionThrone}, Kind{routines::SiteKind::Machine, 0}})
+		{
+			// Machine stands for every non-chair bit of the mask (function 0: any of them).
+			if (kind.function == 0 ? (mask & routines::kMaskMachine) == 0 : !routines::functionInMask(mask, kind.function))
+				continue;
+			if (const std::optional<SiteChoice> any = pickSite(r, id, goal, key, kind.kind, pickRoll, now, anchorX, anchorZ, std::nullopt, true))
+			{
+				found.emplace_back(kind, any->free);
+				total += any->free;
+			}
+		}
+		if (total == 0)
+			return false;
+		// One uniform index over every match, then the kind it falls in and the roll that makes pickSite take that index.
+		std::size_t index = std::min(total - 1, static_cast<std::size_t>(pickRoll * static_cast<double>(total)));
+		for (const auto& [kind, count] : found)
+		{
+			if (index >= count)
+			{
+				index -= count;
+				continue;
+			}
+			const std::optional<SiteChoice> pick = pickSite(r, id, goal, key, kind.kind, (static_cast<double>(index) + 0.5) / static_cast<double>(count),
+				now, anchorX, anchorZ, std::nullopt, true);
+			if (!pick)
+				return false;
+			out.site = pick->site;
+			out.x = pick->x;
+			out.z = pick->z;
+			out.y = pick->y;
+			return true;
+		}
+		return false;
+	};
+
 	// ---- the 153 / 239 bed resolver (dt29: 1408cfe00; TOWN_LIFE_SLICE 5.4, TQ9) ----
 	// worldres::bedLadder153 orders it: the home's beds, else the nearest allied designation-2 building, then designation 3, then any
 	// allied building with a bed, in the member's home town and the town it stands in only (a player faction's member scores them
@@ -1338,13 +1447,20 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 		}
 		return strangerKnown == 1;
 	};
+	// The player faction's roster (rwh.221 section 1, pass 2 of the 158 / 283 finder): our player's characters, as strangerIn counts them.
+	const auto eachPlayer = [&](const auto& visit)
+	{
+		for (const CombatArena::Member& m : combat_->members())
+			if (m.fighter.playerControlled)
+				visit(m.id, m.fighter);
+	};
 	// The shoo as a plan step for a goal blocked by a stranger: the chain of goal 158 (its own registry row), the stranger as the hand.
 	// UNSURE (dialogue_pacing, open): which building the original's shoo predicate resolves in a public shop; ours is the home building
 	// the stranger stands in.
 	const auto shooPlan = [&](Eval& e, std::uint16_t task, const state::Routine& routine) -> bool
 	{
 		const std::uint64_t strangerId = f.homeBuilding != 0
-			? worldres::shooStrangers283(f, sensorContext(), [&](std::uint64_t target) { return combat_->find(target); },
+			? worldres::shooStrangers283(f, sensorContext(), [&](std::uint64_t target) { return combat_->find(target); }, eachPlayer,
 				routine.goal == task ? routine.chainTarget : 0)
 			: 0;
 		if (strangerId == 0)
@@ -1510,10 +1626,12 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 			// [161 SEND_DIALOGUE_SIGNAL_WITHOUT_MOVING, the goal node], whose executor is the dialogue producer (dialogue_sim.cpp's
 			// shoo, event 9).
 			const std::uint64_t strangerId = f.homeBuilding != 0
-				? worldres::shooStrangers283(f, sensorContext(), [&](std::uint64_t target) { return combat_->find(target); },
+				? worldres::shooStrangers283(f, sensorContext(), [&](std::uint64_t target) { return combat_->find(target); }, eachPlayer,
 					r.goal == candidate.task ? r.chainTarget : 0)
 				: 0;
-			skip = strangerId == 0 || (candidate.task == routines::task::ShooStrangersPrivate && publicHome);
+			// A building open to the public has customers, not strangers (the dialogue road's same gate): no shoo goal in it (k16.6.664).
+			skip = strangerId == 0 || (candidate.task == routines::task::ShooStrangersPrivate && publicHome)
+				|| world_.openToPublic(f.homeBuilding, true);
 			if (!skip)
 			{
 				if (r.goal == candidate.task && ticksSince(now, r.since) >= kShooPatienceTicks)
@@ -1545,6 +1663,25 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 			// finder fails and the pair is blocked for 20 s (the exe's 0). Real pieces only: no synthetic throne.
 			found = findSite(candidate.task, homeKey, routines::SiteKind::Throne, e, std::nullopt, true) && planTownGoal(id, candidate.task, false).found();
 			break;
+		case routines::task::WanderTown:
+		case routines::task::StandAtGeneralNode:
+		case routines::task::StandAtNode:
+		{
+			// 37 / 47 / 51 (rwh.55 section 4, finders 140999a60 / 14099f280): the node DB's mode-1 query on the home building - a free node
+			// of its own (real layout pieces only), or the one I hold - then the plan's test (a 51 plans its walk, 67, first). The member
+			// stands on it and faces its stored direction (Task_StandAtNode start, node+0xc0); the claim is the node's reservation (node+0xf8),
+			// released when the goal ends. UNSURE: 37's district building (1409fc6c0) is not ported, the home building stands in.
+			found = findSite(candidate.task, homeKey, routines::SiteKind::GeneralNode, e, std::nullopt, true);
+			found = found && planTownGoal(id, candidate.task, false).found();
+			if (found)
+				if (const routines::SiteEntry* node = residentData_->sites.siteAt(e.site))
+				{
+					e.face = true;
+					e.faceX = e.x + node->faceX;
+					e.faceZ = e.z + node->faceZ;
+				}
+			break;
+		}
 		case routines::task::StaticGuardBuilding:
 		case routines::task::StaticGuardBuildingIndoors:
 		{
@@ -1697,6 +1834,10 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 									e.z = seats[k][1];
 									e.faceX = data.tableByKey.at(key).x;
 									e.faceZ = data.tableByKey.at(key).z;
+									// The chair's own storey: without it the placement snaps from the terrain to the nearest surface (an
+									// upper-storey bar's patron stood on the deck below, kenshi-k16.6.529).
+									if (const auto poses = data.seatPoses.find(key); poses != data.seatPoses.end() && k < poses->second.size())
+										e.y = poses->second[k].y;
 									found = true;
 								}
 							}
@@ -1963,7 +2104,11 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 					[&](const state::Routine& mine) { taken.insert(mine.chainTarget); });
 				victim = capture::nearest(id, f, sensorContext(), kCatchSight,
 					[&](std::uint64_t body) { return combat_->find(body); },
-					[&](std::uint64_t body) { return taken.count(body) != 0; });
+					[&](std::uint64_t body)
+					{
+						const auto blocked = worldTaskBlocks_.find({id, body}); // a body this member gave up on (carry.cpp's no-route end)
+						return taken.count(body) != 0 || (blocked != worldTaskBlocks_.end() && blocked->second > now);
+					});
 			}
 			skip = victim == 0;
 			if (!skip)
@@ -2097,7 +2242,11 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 					});
 				const std::uint64_t slave = worldres::carryWounded168(f, sensorContext(),
 					[&](std::uint64_t body) { return combat_->find(body); },
-					[&](std::uint64_t body) { return taken.count(body) != 0; });
+					[&](std::uint64_t body)
+					{
+						const auto blocked = worldTaskBlocks_.find({id, body}); // a body this member gave up on (carry.cpp's no-route end)
+						return taken.count(body) != 0 || (blocked != worldTaskBlocks_.end() && blocked->second > now);
+					});
 				skip = slave == 0;
 				if (!skip)
 				{
@@ -2325,9 +2474,12 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 			e.site = {routines::SiteKind::HomePoint, homeKey, 0};
 			e.x = homeSpot.x;
 			e.z = homeSpot.z;
-			// k16.6.30: a free chair of the home layout first (reserved like the bar's seats), else the member sits on the floor where it stands.
+			// rwh.203 / k16.6.513: 43's finder is the home building's Indoors slot, function mask 0x2049a (dt24_43 section 3) - bits 1, 3, 4, 7, 10
+			// and 17, of which the pieces we classify are the chairs (17; the rest: kenshi-k16.6.686). A free chair of the home layout is reserved like the bar's seats; a home
+			// with none has no slot, the finder returns 0 and the pair is blocked 20 s (a carrier escorting a captive keeps the squad's yard).
+			static_assert(routines::functionInMask(routines::kMaskGoal43, routines::kFunctionChair));
 			if (found && !escortsSlave)
-				findSite(candidate.task, homeKey, routines::SiteKind::Seat, e, std::nullopt, true);
+				found = findSpecialFunction(candidate.task, routines::kMaskGoal43, homeKey, e);
 			break;
 		}
 		if (skip)
@@ -2599,7 +2751,7 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 	// ---- move ----
 	const double toX = best->x;
 	const double toZ = best->z;
-	const bool atHome = goal == routines::task::StayInHome && best->site.kind != routines::SiteKind::Seat && std::hypot(f.x - (escortsSlave ? homeX : anchorX), f.z - (escortsSlave ? homeZ : anchorZ)) <= kHomeSettle;
+	const bool atHome = goal == routines::task::StayInHome && !routines::isHomeSlot(best->site.kind) && std::hypot(f.x - (escortsSlave ? homeX : anchorX), f.z - (escortsSlave ? homeZ : anchorZ)) <= kHomeSettle;
 	if (placement)
 	{
 		double x = toX;
@@ -2655,7 +2807,7 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 		}
 		++townStats_.placed;
 		// The stagger: members spread over the interval.
-		r.nextScore = now + routines::kScoreIntervalTicks + id % routines::kScoreIntervalTicks;
+		r.nextScore = now + scoreInterval(f) + id % scoreInterval(f);
 		member.set<state::Routine>(std::move(r));
 		return;
 	}
@@ -2710,8 +2862,7 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 		if (started)
 		{
 			f.clearRoute();
-			f.route = std::move(points);
-			f.routeNext = 0;
+			setRoute(f, std::move(points), navigation_.get(), body(f));
 			++f.routeVersion;
 			f.routeSeq = 0;
 			f.routeChase = false;
@@ -2791,8 +2942,13 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 				beginInteract(id, best->site.object, static_cast<std::uint8_t>(InteractAction::Use), 0, {}, false);
 		}
 	}
-	r.nextScore = now + routines::kScoreIntervalTicks;
+	r.nextScore = now + scoreInterval(f);
 	member.set<state::Routine>(std::move(r));
+}
+
+const routines::SiteEntry* Simulation::siteEntry(const routines::Site& site) const
+{
+	return residentData_ != nullptr ? residentData_->sites.siteAt(site) : nullptr;
 }
 
 const routines::LayoutLibrary* Simulation::interiorLayouts() const
@@ -2935,8 +3091,8 @@ std::optional<Simulation::Pose> Simulation::pose(std::uint64_t memberId) const
 			constexpr double kQuarter = 1.57079632679489662;
 			// The body lies on the use node itself, a few units above the floor (kinspect bed_seat_pose.md 2), not on the floor (the
 			// client drew it under the mattress).
-			const double poseY = bed->hasNodeY ? bed->nodeY : bed->y;
-			return Pose{bed->x, poseY, bed->z, std::atan2(bed->faceX, bed->faceZ) - (clip == routines::kClipSleepOnFloor ? kQuarter : 0.0), clip};
+			const routines::BedNode node = routines::bedNodeNear(*bed, f.x, f.z);
+			return Pose{node.x, node.y, node.z, std::atan2(node.faceX, node.faceZ) - (clip == routines::kClipSleepOnFloor ? kQuarter : 0.0), clip};
 		}
 		return Pose{f.x, f.y, f.z, f.yaw, std::string(routines::kClipSleepOnFloor)};
 	}
@@ -2949,6 +3105,8 @@ std::optional<Simulation::Pose> Simulation::pose(std::uint64_t memberId) const
 		// on the floor-sit clip ("sitting idle", on the male and female skeletons).
 		const routines::SiteEntry* chair = nullptr;
 		homeSitAt(i, &chair);
+		if (chair != nullptr && chair->site.kind == routines::SiteKind::Machine)
+			return Pose{chair->x, chair->hasY ? chair->y : f.y, chair->z, faceYaw, chair->clip};
 		if (chair != nullptr)
 			return Pose{chair->x, chair->hasY ? chair->y : f.y, chair->z, faceYaw, chair->clip.empty() ? std::string(routines::kClipSittingChair) : chair->clip};
 		return Pose{f.x, f.y, f.z, f.yaw, std::string(routines::kClipSittingIdle)};
@@ -2981,6 +3139,55 @@ const routines::SiteEntry* Simulation::bedOf(std::uint64_t id) const
 			if (routines::siteId(bed->site) == id)
 				return bed;
 	return nullptr;
+}
+
+const routines::SiteEntry* Simulation::cageOf(std::uint64_t key) const
+{
+	if (gameData_ == nullptr || combat_ == nullptr || world_.buildingSite(key) == nullptr)
+		return nullptr;
+	if (residentData_ == nullptr)
+		residentData_ = std::make_shared<ResidentData>(*gameData_);
+	if (residentData_->sites.find(key) == nullptr)
+	{
+		knowBuildingSites(*residentData_, world_);
+		indexBuilding(*residentData_, world_, const_cast<flecs::world&>(world_.ecs()), *gameData_, key); // as primeSiteIndex: the index is the only thing written
+	}
+	const routines::SiteEntry* first = nullptr;
+	for (const routines::SiteEntry* entry : residentData_->sites.sitesOf(key, routines::SiteKind::Cage))
+	{
+		if (!cageTaken(*entry))
+			return entry;
+		if (first == nullptr)
+			first = entry;
+	}
+	return first;
+}
+
+bool Simulation::cageTaken(const routines::SiteEntry& cage) const
+{
+	for (const CombatArena::Member& m : combat_->members())
+		if (m.fighter.cageBuilding == cage.site.object && m.fighter.cageSlot == cage.site.slot)
+			return true;
+	return false;
+}
+
+std::string Simulation::putInCageRefusal(std::uint64_t actor, std::uint64_t key) const
+{
+	const state::Fighter* who = combat_ != nullptr ? combat_->find(actor) : nullptr;
+	if (who == nullptr)
+		return "bad_target";
+	const state::Fighter* carried = who->carrying != 0 ? combat_->find(who->carrying) : nullptr;
+	// The exe's swap needs only that the character carries (1407f9e20); a down or carried actor cannot act, a corpse in the arms is
+	// refused as the bed's is (UNSURE: not decoded).
+	if (who->dead || who->unconscious || who->down || who->carriedBy != 0 || carried == nullptr || carried->dead)
+		return "not_allowed";
+	const routines::SiteEntry* cage = cageOf(key);
+	if (cage == nullptr)
+		return "bad_target";
+	if (cageTaken(*cage))
+		return "occupied";
+	// No lock test (UNSURE, deferred: playtesting): the lock is per building and the AI's put-in ignores it (a free slot of a locked cage building is fine).
+	return std::string();
 }
 
 std::string Simulation::sleepRefusal(std::uint64_t actor, std::uint64_t id) const
@@ -3127,9 +3334,9 @@ bool Simulation::homeSitAt(std::size_t i, const routines::SiteEntry** seat) cons
 	if (routine == nullptr || routine->goal != routines::task::StayInHome || f.dead || f.unconscious || f.down || f.asleep || f.walking()
 		|| f.carriedBy != 0 || f.carrying != 0 || f.target != 0 || !f.engaged.empty() || f.drive != state::DriveMode::Stop)
 		return false;
-	if (routine->target.kind == static_cast<std::uint8_t>(routines::SiteKind::Seat))
+	if (routines::isHomeSlot(static_cast<routines::SiteKind>(routine->target.kind)))
 	{
-		// A reserved chair: seated once at it (the walk ends within kReach of it); not yet there, the member stands.
+		// A reserved chair or machine: seated / at work once at it (the walk ends within kReach of it); not yet there, the member stands.
 		const routines::SiteEntry* chair = routineSite(routine->target);
 		if (chair == nullptr || std::hypot(f.x - chair->x, f.z - chair->z) > routines::kSeatTolerance)
 			return false;
@@ -3161,7 +3368,7 @@ bool Simulation::seatedAt(std::size_t i, double* faceYaw) const
 		if (!homeSitAt(i, &chair))
 			return false;
 		if (faceYaw != nullptr)
-			*faceYaw = chair != nullptr ? std::atan2(chair->faceX, chair->faceZ) : f.yaw;
+			*faceYaw = chair == nullptr ? f.yaw : chair->hasIn ? std::atan2(chair->inX - chair->x, chair->inZ - chair->z) : std::atan2(chair->faceX, chair->faceZ);
 		return true;
 	}
 	if (residentData_->seatsOfTable.empty() || routine == nullptr || routine->goal != routines::task::RelaxInTownPackage || f.dead || f.walking())
@@ -3240,7 +3447,7 @@ void Simulation::knowHomeSeats()
 	std::set<std::uint64_t> buildings;
 	ecs.each([&](const state::Routine& routine)
 	{
-		if (routine.target.kind == static_cast<std::uint8_t>(routines::SiteKind::Seat) && routine.target.object != 0)
+		if (routines::isHomeSlot(static_cast<routines::SiteKind>(routine.target.kind)) && routine.target.object != 0)
 			buildings.insert(routine.target.object);
 	});
 	if (buildings.empty())
@@ -3555,11 +3762,54 @@ std::optional<Simulation::SiteChoice> Simulation::pickSite(const state::Routine&
 	};
 	if (kind == routines::SiteKind::Work)
 	{
+		// The 189 / 190 finder (214 / 221 keep the 250 u reach: their finders are not decoded) is BuildingFinder_SpecialFunction over the town neighbourhood (rwh.230 section 3; 1408cadb0): the zone cells
+		// within +-1 of the character (1409fc450), the part-map prefilter and the accept both by the function mask 0x41a, the permission test
+		// (own / allied owner, or a slave) and the claim test (offer). A factionless mine reads function 27, outside the mask (getFunctionId).
+		// OURS: a producer is its own part (it has no layout parts yet); the +0x38 town filter and the player-town / slave gate wait on a
+		// producer -> town map (the cell window stands in for it).
+		const bool finderGoal = goal == routines::task::PretendLabour || goal == routines::task::PretendLabourPretend;
+		const state::Fighter* who = combat_ != nullptr ? combat_->find(id) : nullptr;
+		const kworld::ZoneCell around = kworld::zoneCellOf(who != nullptr ? who->x : anchorX, who != nullptr ? who->z : anchorZ);
+		const flecs::entity self = fighterEntity(id);
+		const state::Allegiance* allegiance = self.is_valid() ? self.get<state::Allegiance>() : nullptr;
+		const std::string mineSid = allegiance != nullptr ? allegiance->factionSid : std::string();
 		for (const ProducerSite& producer : world_.producerSites())
 		{
-			if (std::fabs(producer.x - anchorX) > kWorkReach || std::fabs(producer.z - anchorZ) > kWorkReach
-				|| std::hypot(producer.x - anchorX, producer.z - anchorZ) > kWorkReach)
+			if (!finderGoal)
+			{
+				if (std::hypot(producer.x - anchorX, producer.z - anchorZ) <= kWorkReach)
+					offer({routines::SiteKind::Work, producer.id, 0}, producer.x, producer.z);
 				continue;
+			}
+			const kworld::ZoneCell cell = kworld::zoneCellOf(producer.x, producer.z);
+			if (std::abs(cell.x - around.x) > 1 || std::abs(cell.z - around.z) > 1)
+				continue;
+			const kdata::Record* record = gameData_ != nullptr ? gameData_->find(producer.recordSid) : nullptr;
+			if (record == nullptr)
+				continue;
+			bool inMask = false;
+			for (std::int32_t function : routines::buildingFunctions(*gameData_, *record))
+			{
+				if (function == routines::kFunctionMine && producer.ownerFaction.empty())
+					function = routines::kFunctionMineNatural;
+				inMask = inMask || routines::functionInMask(routines::kMaskGoal190, function);
+			}
+			if (!inMask)
+				continue;
+			if (!producer.ownerFaction.empty() && (who == nullptr || who->slaveState != 1) && producer.ownerFaction != mineSid)
+			{
+				flecs::entity mine;
+				flecs::entity owner;
+				world_.ecs().each([&](flecs::entity entity, const state::FactionState& faction)
+				{
+					if (faction.templateSid == mineSid)
+						mine = entity;
+					if (faction.templateSid == producer.ownerFaction)
+						owner = entity;
+				});
+				if (!mine.is_valid() || !owner.is_valid() || factionRelation(*gameData_, owner, mine) < FactionBook::kAlly)
+					continue;
+			}
 			offer({routines::SiteKind::Work, producer.id, 0}, producer.x, producer.z);
 		}
 	} else {
@@ -3591,7 +3841,7 @@ std::optional<Simulation::SiteChoice> Simulation::pickSite(const state::Routine&
 			}
 		}
 	}
-	return SiteChoice{free[pick], where[pick][0], where[pick][1], heights[pick]};
+	return SiteChoice{free[pick], where[pick][0], where[pick][1], heights[pick], free.size()};
 }
 
 void Simulation::stepRoutines()
@@ -3701,13 +3951,13 @@ void Simulation::stepRoutines()
 		const bool chainedCarry = f.carrying != 0 && routine->chainTarget == f.carrying;
 		if (f.dead || f.unconscious || f.down || inFight(f) || f.carriedBy != 0 || (f.carrying != 0 && !chainedCarry) || f.playerControlled
 			|| (f.walking() && f.routeSeq != 0)
-			|| f.goal.kind != state::IndividualKind::None
+			|| f.goal.kind != state::IndividualKind::None || f.fleeing
 			|| entity.has<state::InteractTask>() || entity.has<state::DoorStep>() || (entity.has<state::CarryStep>() && !chainedCarry)
-			|| entity.has<state::TakeOut>() || routine->goal == routines::task::GatePost || arrestOrders_.count(members[i].id) != 0
+			|| entity.has<state::TakeOut>() || (routine->goal == routines::task::GatePost && squad.has<state::GateCrew>()) || arrestOrders_.count(members[i].id) != 0
 			|| talkHold != nullptr) // the player is talking to it: it stands still (state::TalkHold)
 		{
 			state::Routine r = *routine;
-			r.nextScore = now + routines::kScoreIntervalTicks;
+			r.nextScore = now + scoreInterval(f);
 			entity.set<state::Routine>(std::move(r));
 			// Fighting, being downed or carried, or any order wakes a sleeper (the bed's preconditions above catch the fight and the
 			// carry first; this is the rest).

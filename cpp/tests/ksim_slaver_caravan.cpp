@@ -41,6 +41,7 @@
 #endif
 
 namespace {
+int gIdle = 0; // extra idle ticks at the start of each fixture: a phase shift the outcome checks must survive
 
 using namespace ksim;
 
@@ -191,7 +192,7 @@ struct Game
 				sid = record->stringID;
 		}
 		sim->enqueue(Command::newGame(sid, "Tester", 1));
-		sim->run(3);
+		sim->run(3 + gIdle);
 		for (const CombatArena::Member& member : sim->combat()->members())
 		{
 			if (member.fighter.playerControlled)
@@ -481,6 +482,9 @@ void foodLoot(const std::string& bake)
 
 	Placed bandits = placeHostile(game, "46046-rebirth.mod", 3);
 	std::cout << "starving bandits " << bandits.members.size() << " members\n";
+	// A malnourished template starts at hunger 1.7 (k16.17.13.13), under stepAutoEat's 2.4: the looter would eat the Bread the tick it lifts it (k16.6.705). Fed, it keeps it in its pack.
+	for (const Person& p : bandits.members)
+		fighterOf(sim, p.id)->hunger = 3.0;
 	game.teleport(kSpawnX + 18.0, kSpawnZ);
 	sim.run(2);
 	sim.enqueue(Command::fighterAttack(state::Id{game.player}, state::Id{bandits.members.front().id}));
@@ -751,9 +755,13 @@ int main(int argc, char** argv)
 			return 77;
 		}
 		std::cout << std::unitbuf;
-		slaverCapture(argv[1]);
-		foodLoot(argv[1]);
-		caravanWithAi(argv[1]);
+		for (const int idle : {0, 3, 7})
+		{
+			gIdle = idle;
+			slaverCapture(argv[1]);
+			foodLoot(argv[1]);
+			caravanWithAi(argv[1]);
+		}
 		std::cout << "ksim_slaver_caravan: ok\n";
 		return 0;
 	}

@@ -12,6 +12,7 @@
 #include "ksim/world/weather.hpp"
 
 #include "kworld/gamedata.hpp"
+#include "kworld/coords.hpp"
 #include "kworld/towns.hpp"
 
 namespace ksim {
@@ -300,6 +301,27 @@ std::size_t Simulation::importCrimes(const std::map<std::uint64_t, state::CrimeR
 bool Simulation::placeFurnitureCage(const kworld::PlacedInstance& instance)
 {
 	return gameData_ != nullptr && world_.addFurnitureCage(*gameData_, instance);
+}
+
+Simulation::Stood Simulation::standBuildings(std::vector<kworld::PlacedInstance> placed)
+{
+	Stood stood;
+	std::vector<kworld::PlacedInstance> added;
+	for (kworld::PlacedInstance& one : placed)
+	{
+		const kdata::Record* record = gameData_ != nullptr ? gameData_->find(one.buildingID) : nullptr;
+		if (record == nullptr)
+			continue;
+		one.positionCell = one.cell = kworld::zoneCellOf(one.x, one.z);
+		one.scale = record->floatOr("scale", 1.0f);
+		one.hasScale = true;
+		if (world_.addPlacedBuilding(*gameData_, one))
+			added.push_back(std::move(one));
+	}
+	stood.placed = added.size();
+	if (!added.empty() && navigation_ != nullptr)
+		stood.nav = navigation_->standBuildings(added, &stood.navTiles);
+	return stood;
 }
 
 std::map<std::string, Simulation::ImportPlacement> Simulation::importPlacements()

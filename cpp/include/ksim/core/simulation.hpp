@@ -47,6 +47,7 @@
 #include "ksim/core/profile.hpp"
 #include "ksim/ai/jobs.hpp"
 #include "ksim/world/player_squads.hpp"
+#include "ksim/economy/machines.hpp"
 #include "ksim/economy/producers.hpp"
 #include "ksim/world/prospect.hpp"
 #include "ksim/world/region.hpp"
@@ -130,6 +131,9 @@ struct WorldRuntime
 	// The original's roads (kworld::RoadNetwork), loaded from the game data on the first long walk, or set by a test. Never saved.
 	std::shared_ptr<const kworld::RoadNetwork> roads_;
 	bool roadsTried_ = false;
+	double roadLookahead_ = 3.0;
+	struct RoadGoalStats { std::uint64_t goals = 0, offCentre = 0; double offSum = 0.0, offMax = 0.0; };
+	mutable RoadGoalStats roadGoalStats_;
 	// A move order that walks in legs (far goal, or a road): the true goal, the road markers still to visit, and where the planned route ends
 	// (LOCOMOTION.md D9). Runtime only: a loaded game's walker finishes the route it holds and stops.
 	struct FarOrder
@@ -139,12 +143,24 @@ struct WorldRuntime
 		double goalZ = 0.0;
 		std::optional<double> goalY;
 		std::vector<kworld::RoadNetwork::Marker> markers;
-		std::size_t next = 0; // the marker being walked to; markers.size() is the goal
+		std::size_t next = 0; // the marker the next leg is planned to; markers.size() is the goal
+		std::size_t cur = 0; // the marker the walker's route ends at while onMarker
+		bool onMarker = false; // the route is a whole leg to markers[cur]: handed over at the road's width, re-planned from the walker (rwh.268)
 		bool done = false; // the last leg is planned: nothing more to add
 		bool blocked = false; // the goal could not be routed: a 20 s blocked target, no more asks
 		std::uint64_t blockedUntil = 0;
 		std::uint32_t legs = 0; // legs planned so far (a clamp or a marker each)
 		std::uint32_t clamps = 0; // of them, clamped at a zone exit
+		double scale = 0.0; // road look-ahead radius in road widths (0 = the exe's marker-by-marker rule); set at the order's start
+		double lookR = 0.0; // look-ahead radius R in u for this order (scale x the route's median road width)
+		double radius = 0.0; // the look-ahead radius R of the leg being walked (xz u); 0 = exe rule
+		std::size_t lo = 0; // look-ahead: the route segment the walker has reached (never goes back)
+		double reachedArc = -1.0; // route arc length up to which the walker has been inside a point's zone
+		double tgtArc = -1.0; // route arc length of the target (the target only moves forward); -1 = none yet
+		double tgtX = 0.0; // look-ahead: the leg's target on the road route, and where it was planned from
+		double tgtZ = 0.0;
+		double planX = 0.0;
+		double planZ = 0.0;
 		bool restored = false; // loaded from a save: the walker's routeSource / clearWhy are transient, so the first step adopts it by routeSeq alone; runtime only
 	};
 	std::unordered_map<std::uint64_t, FarOrder> farOrders_;
@@ -292,7 +308,6 @@ struct WorldRuntime
 		double radius = 0.0; // inside this the walk is over
 	};
 	std::map<std::uint64_t, StandingRun> standingRun_; // member -> its standing goal's place (unsaved)
-	std::map<std::uint64_t, std::uint64_t> limbCooldown_; // member -> the tick 277's finder opens again (AI+0x318; saved: RunStates)
 	struct LimbPlay
 	{
 		double x = 0.0; // 278's current destination
@@ -318,6 +333,22 @@ public:
 	// The once-a-second passes spread over the second (OURS, k16.6.232): an id is stepped on the tick whose phase is id % kSquadIntervalTicks, so
 	// each squad / member keeps its 1 s period but a tick carries about 1/20 of the work, not all of it.
 	static constexpr bool inSlice(std::uint64_t now, std::uint64_t id) { return now % kSquadIntervalTicks == id % kSquadIntervalTicks; }
+	// Game speed is a command (k16.6.633): above 1 the decision cadences of NPCs not in a fight stretch by min(speed, 3), whole steps only
+	// (1.5 -> 1, 2 -> 2, 5 -> 3). Speed 1 leaves every cadence as it was. Not saved; the client re-sends it.
+	void setGameSpeed(double speed) noexcept;
+	double gameSpeed() const noexcept { return gameSpeed_; }
+	std::uint32_t cadenceScale() const noexcept { return cadence_; }
+	// The routine scorer's period for a member: stretched by the cadence scale unless it is a player character or in a fight.
+	std::uint64_t scoreInterval(const state::Fighter& f) const noexcept
+	{
+		return routines::kScoreIntervalTicks * (f.playerControlled || inFight(f) ? 1u : cadence_);
+	}
+	// inSlice at the scaled period; an exempt member (player faction, in a fight) keeps the plain second.
+	bool inSliceScaled(std::uint64_t now, std::uint64_t id, bool exempt) const noexcept
+	{
+		const std::uint64_t period = exempt ? kSquadIntervalTicks : kSquadIntervalTicks * cadence_;
+		return now % period == id % period;
+	}
 	static constexpr std::uint64_t kStrategicIntervalTicks = kTicksPerGameHour;
 
 	// Templates only, vanilla load order, no instances.
@@ -426,7 +457,7 @@ public:
 	// Builds the trees of the Full regions and frees the rest. enableLineOfSight, a player-areas change and the end of every
 	// tick (after the region engine's own tick, where the areas' Full set moves) call it; a tick that changes nothing keeps
 	// the pair cache.
-	void syncLineOfSight();
+	void syncLineOfSight(bool spread = false); // `spread`: at most one new region's hull trees a tick (the per-tick call)
 	// A new full-detail character: an instance holding `fighter`, owned by the arena.
 	// A fighter that is not in a building (`building` 0) and not carried is placed by its position (buildingAt).
 	flecs::entity spawnFighter(state::Fighter fighter);
@@ -473,6 +504,8 @@ public:
 	flecs::entity spawnItemNode(state::ItemNode node);
 	// The interiors.level layouts, loaded on first use; nullptr when there are none (routine_scorer.cpp).
 	const routines::LayoutLibrary* interiorLayouts() const;
+	// The scorer's site index entry of a site (position, facing); null before the index knows the building.
+	const routines::SiteEntry* siteEntry(const routines::Site& site) const;
 	// A storage building: the Container component and its contents (a state::Inventory, all carried) on one new instance.
 	flecs::entity spawnContainer(state::Container container, state::Inventory contents);
 	// The reason an equip order (SIMLINK order 62) is refused, "" when it is fine: "bad_target" (not an item the character has
@@ -726,11 +759,19 @@ public:
 		std::uint8_t workers = 0, maxWorkers = 0;
 		double efficiency = 0.0, maxEfficiency = 0.0;
 		double quality = 1.0;
+		double powerValue = 0.0; // the BUILDING's `power output` (negative = consumption); machines only
 		std::uint32_t version = 0;
 	};
 	std::vector<BuildingView> playerBuildings() const;
 	// The BUILDING row of a producer (any owner, owner 0 = wild) for the focus panel (SIMLINK Order 87); nullopt when `id` is no producer.
 	std::optional<BuildingView> producerView(std::uint64_t id) const;
+	// The BUILDING row (SIMLINK "BUILDING", kind 4 / 12 / 3 join) of a placed machine, any owner: a producer's own view while its entity
+	// exists, else built from the data (workers 0). `mounted` = a turret somebody mans. nullopt: a producer with no entity yet.
+	std::optional<BuildingView> machineView(const MachineSite& site, bool mounted) const;
+	// The BUILDING row of a placed container (World ContainerSite; INTERACTABLE kind 3, id = the entity's Id), any owner; nullopt when `id` is none.
+	std::optional<BuildingView> containerView(std::uint64_t id) const;
+	// The machine record of every placed machine BUILDING (machines.hpp), in placement order; the inspect panel's fields (kenshi-gzto).
+	std::vector<machines::Record> machineRecords() const;
 	// Construction hours of a placed building at the current Ka (buildings.hpp buildHours); 0 for an unknown one.
 	double buildHoursOf(std::uint64_t building) const;
 	// The ground height under a point (the full map's terrain), nullopt without game data or the heightmap.
@@ -950,6 +991,8 @@ public:
 		bool operator==(const CharStats&) const = default;
 	};
 	CharStats charStats(std::uint64_t id) const;
+	// The stat the body's bulk reads (CHAR_APPEARANCE "muscle", rwh.240 section 3): max(strength, weapon smith, armour smith); 1 if unknown.
+	double bodyBulkStat(std::uint64_t id) const;
 	// Called from inside tick() for every pick-up and finished or failed interaction. Observation only.
 	void setInteractObserver(std::function<void(const InteractEvent&)> observer) { interactObserver_ = std::move(observer); }
 	// A crime the player should hear of (SIMLINK events 51 and 52). Called from inside tick(). Observation only.
@@ -1082,6 +1125,10 @@ public:
 		double z = 0.0;
 	};
 	std::size_t importPromote(flecs::entity squad, const std::vector<ImportSpot>& spots, bool snap);
+	// An order names a character that is a member of a token squad (no Fighter yet; an imported hostile the pass has not built, kenshi-k16.6.679):
+	// its squad is built now, as the pass would (residents or world squad), so the order can reach it. True when the id has a Fighter afterwards;
+	// false for an unknown id, a corpse-less dead one, or a squad whose ground is not on the loaded mesh (the streaming brings it first).
+	bool promoteForOrder(std::uint64_t id);
 	void importDone();
 	// Stage 3a, the world-wide state (save_import.hpp), between ticks; each lands where our own save keeps it and queues no event (a load is not a conquest).
 	// importTownIndex: the TownState of every 0-townlist placement of the level, by placement instance id; a placement with no TownState of ours (a town
@@ -1114,6 +1161,18 @@ public:
 	std::map<std::string, ImportPlacement> importPlacements();
 	// A placed building the loaded zones lack (the save's runtime-spawned Peeler Machine, kenshi-cym.28): World::addFurnitureCage. Before the first AI tick.
 	bool placeFurnitureCage(const kworld::PlacedInstance& instance);
+	// A building the zone files do not carry stands in the world (kenshi-k16.7.125): the placement, its door and building sites (World::addPlacedBuilding)
+	// and, on a native mesh, its collision and a patch bake of the tiles it covers (MeshNavigator::standBuilding). One path for a save's own building and
+	// for a construction. `placed` needs buildingID, instanceID, x, y (world), z and the quaternion; the cell and scale are filled here.
+	struct Stood
+	{
+		std::size_t placed = 0; // in the world's placements
+		std::size_t nav = 0; // with collision and a patch bake done
+		std::size_t navTiles = 0; // tiles replaced
+	};
+	Stood standBuilding(kworld::PlacedInstance placed) { return standBuildings({std::move(placed)}); }
+	// Several at once (one zone bake per zone, not per building).
+	Stood standBuildings(std::vector<kworld::PlacedInstance> placed);
 	bool importTownInfo(state::EntityRef town, const state::TownInfo& info, const std::string& replacement);
 	state::EntityRef importExtraTown(const state::ExtraTown& town);
 	void importFactionStanding(state::EntityRef faction, std::int32_t rank, double globalTrust, std::vector<state::FactionState::Trust> trust);
@@ -1226,6 +1285,14 @@ public:
 	// The town goal scorer (routine_scorer.cpp, TOWN_LIFE_SLICE 5.3, T3b2). On by default; off, a promoted resident only stands on its ring
 	// (the T3b1 layer, which ksim_town_fighters pins). Not saved: a setting of the process.
 	void setTownScorer(bool on) noexcept { townScorer_ = on; }
+	// Road look-ahead (kenshi-k16.6.720, user direction on k16.6.719): a far order's road follower walks straight to the furthest road-route point within
+	// R = scale x the road's width of the walker, to the zone (kRoadZone) round it, instead of marker by marker. 0 = the exe's marker rule (the walked-path
+	// compare only). Read when an order starts. Default 3.
+	void setRoadLookahead(double widths) noexcept { roadLookahead_ = widths; }
+	double roadLookahead() const noexcept { return roadLookahead_; }
+	// Look-ahead goals planned so far, how many landed off the target's centre, the sum and max of the shift (u); runtime only.
+	const RoadGoalStats& roadGoalStats() const noexcept { return roadGoalStats_; }
+	static constexpr double kRoadZone = 25.0; // a road point is "about the area you want to be in": reaching within it is arrival
 	// Turret manning (task ds/turret S3): the 149 / 222 finders see the world's turret placements and a gunner mounts one. Off by default: a town
 	// with turrets then sends its guards to them (the exe's 149 does), which moves ksim_town_bar / ksim_slaver_caravan / ksim_capture_live, so
 	// the switch is ksim's to flip. Not saved: a setting of the process.
@@ -1235,6 +1302,9 @@ public:
 	// Not saved: a setting of the process.
 	void setOffscreenMedical(bool on) noexcept { offscreenMedical_ = on; }
 	bool offscreenMedical() const noexcept { return offscreenMedical_; }
+	// Whether the member's goal list (its role in the squad's applied package) holds 58 JOB_MEDIC: the only members that treat a downed ally
+	// (rwh.204 / dt45). Any kit-carrier treats itself (269). Not for a member whose squad has no board.
+	bool canTreatAllies(flecs::entity member);
 	// world.offscreen_fights (COMBAT_OPTIONS.md 9, k16.6.46): two hostile tokens (neither built) that meet fight a stats roll, once a game hour per
 	// pair; the loser's half falls and it routs (token_fights.cpp). Off (the original: nothing happens off-screen). Not saved: a setting of the
 	// process (the pair clock is not saved either).
@@ -1305,6 +1375,9 @@ public:
 	// of flecs entity ids and of the worker thread count; pending commands
 	// are not state yet.
 	std::uint64_t stateHash() const;
+#if KSIM_DEV
+	std::vector<StatePart> stateParts() const; // dev: stateHash's input per instance and component (k16.6.390)
+#endif
 
 	// Marks (or clears) a building as a skin peeler by hand: the data names it by a BUILDING_FUNCTIONALITY record ("skin peeler", a mod's, in
 	// rebirth.mod), which a test world without that mod lacks. OURS.
@@ -1315,6 +1388,10 @@ public:
 	// Whether a cage building's door is locked: its warden squad locked its cages (195; OURS - one flag per squad), unless a lock task opened it
 	// since the last prisoner went in. 207 / 256 / 133's precondition isDoorLocked = 0.
 	bool cageDoorLocked(std::uint64_t cageBuilding) const;
+	// The lock fields of the shackles `wearer` has on (their ARMOUR record's `lock level` / `hardness`; lock_tasks.cpp).
+	const kdata::Record* shackleRecord(std::uint64_t wearer) const;
+	double shackleLockLevel(std::uint64_t wearer) const;
+	double shackleHardness(std::uint64_t wearer) const;
 	// ---- the lock tasks (lock_tasks.cpp; task ds/shackles-locks) ----
 	// One Lock model for a cage and for worn shackles (door_plan.hpp; dt24_picklock section 8): `open` is the unlocked/broken state, the
 	// timer is the picking timer shared by every picker, `hardness` the work value the cut drains (lock +4, dt24_shackles section 2).
@@ -1431,18 +1508,31 @@ public:
 	// The talk goals 102 / 159 / 164 / 165 (talk_goals.cpp): the Routine naming the hand `target`; false for another goal, an unable member or a
 	// target that is gone. world_tasks.cpp's executor runs it.
 	bool orderTalkGoal(std::uint64_t id, std::uint16_t goal, std::uint64_t target);
+	// 280 RUN_AWAY_FORCED (DA_RUN_AWAY): the member runs from `from`, taking no fight; a Routine goal 280, executed by stepRunAwayGoals. False
+	// for a player character, a downed one, no navmesh or no way to run at all.
+	bool orderRunAwayGoal(std::uint64_t id, std::uint64_t from);
+	std::uint16_t routineGoalOf(std::uint64_t id) const
+	{
+		const state::Routine* r = fighterEntity(id).get<state::Routine>();
+		return r != nullptr ? r->goal : 0;
+	}
+	// The point `id`'s 280 run holds; false when it has no 280 Routine.
+	bool runAwayPoint(std::uint64_t id, double& x, double& z) const
+	{
+		const auto run = runAway_.find(id);
+		if (run == runAway_.end())
+			return false;
+		x = run->second.x;
+		z = run->second.z;
+		return true;
+	}
 	// 278's run: the destination it holds and how many it has picked (the start point is the first). {0, 0} / 0 when it has none.
 	std::pair<double, double> limbPlayDestination(std::uint64_t id) const
 	{
 		const auto found = limbPlay_.find(id);
 		return found == limbPlay_.end() ? std::pair<double, double>{0.0, 0.0} : std::pair<double, double>{found->second.x, found->second.z};
 	}
-	// 277's cooldown (the tick its finder opens again) and the 209 / 210 wait's seconds left: 0 when the member has none.
-	std::uint64_t limbCooldownUntil(std::uint64_t id) const
-	{
-		const auto found = limbCooldown_.find(id);
-		return found == limbCooldown_.end() ? 0 : found->second;
-	}
+	// The 209 / 210 wait's seconds left: 0 when the member has none.
 	double alarmDwellLeft(std::uint64_t id) const
 	{
 		const auto found = alarmDwell_.find(id);
@@ -1524,6 +1614,7 @@ private:
 	// Plans the next leg of `order` from `from`: skips road nodes that cannot be routed (Skip road node), advances the marker when the leg is
 	// not clamped. False: the goal's leg is not routable (order.blocked is set by the caller).
 	bool planFarLeg(const state::Fighter& f, FarOrder& order, const knav::Position& from, Route& leg) const;
+	bool planRoadLookahead(const state::Fighter& f, FarOrder& order, const knav::Position& from, Route& leg) const;
 	void ensureRoads();
 	// After the combat step: advances the door steps (state::DoorStep) and stops walkers at shut doors on their route
 	// (interact.hpp, DOORS.md section 6).
@@ -1637,7 +1728,7 @@ private:
 	// The singleton exists only around an encode: it is removed again after the write and after a load, so the state hash of a running
 	// world and of the same world loaded agree (the Boards are runtime state, not hashed).
 	// The same pair carries the arrest orders (state::ArrestStates, v109): restoreBoards rebuilds arrestOrders_ from the singleton.
-	// And limbCooldown_, limbPlay_, alarms_ and alarmDwell_ (state::RunStates, v110).
+	// And limbPlay_, alarms_ and alarmDwell_ (state::RunStates, v110).
 	void syncBoardStates() const;
 	void dropBoardStates() const;
 	void restoreBoards();
@@ -1655,6 +1746,10 @@ private:
 	// (promoteResidents), and those of a squad that left Full or routine mode go back to the token (demoteResidents); a dead resident
 	// loses its Routine and its reservation (TOWN_LIFE_SLICE 5.3, T3b1).
 	void stepResidents();
+	// The squads a stepResidents pass chose to promote and has not built: kPromotesPerTick of them (ResidentData::queued).
+	void promoteQueued();
+	std::size_t promoteSquadsPerTick_ = routines::kPromotesPerTick; // derived (the test knob below)
+	std::uint64_t promoteMembersPerTick_ = routines::kPromoteMembersPerTick;
 	// After stepResidents (routine_scorer.cpp), every kLookTicks: the town goal scorer for every promoted resident whose nextScore is due.
 	void stepRoutines();
 	// 140345620, the get-out-of-bed action shared by 116 / 208 / 257 (dt24_208 section 2): the sleeper is up, its bed claim released and its
@@ -1707,6 +1802,13 @@ public:
 	// site id (routines::siteId) names, or nullptr. The site index holds the town buildings' layouts, so a player bed is one
 	// of those (a real bed piece; a synthetic yard bed has no id: it is not furniture to order).
 	const routines::SiteEntry* bedOf(std::uint64_t id) const;
+	// Order 60 on a cage building's key (kenshi-k16.6.739): the building's first free cage slot, else its first slot (taken), else nullptr
+	// (no cage there). `cageTaken` says whether a character is caged in that slot.
+	const routines::SiteEntry* cageOf(std::uint64_t key) const;
+	bool cageTaken(const routines::SiteEntry& cage) const;
+	// The carrier's put-in order on a cage key: "" yes, else an event 10 word (not_allowed: not carrying a live body, or down; occupied: no free slot;
+	// bad_target: no cage there). The lock is not tested (per building; the AI's put-in ignores it).
+	std::string putInCageRefusal(std::uint64_t actor, std::uint64_t key) const;
 	// Whether `actor` may lie in the bed `id` names now: "" yes, else an event 10 word, "occupied" / "bad_target" / "not_allowed"
 	// (UNSURE: the exe's own words). A bed is occupied while any other character's routine targets it, asleep or walking to it.
 	std::string sleepRefusal(std::uint64_t actor, std::uint64_t id) const;
@@ -1756,7 +1858,7 @@ public:
 	// The shared weapon plan steps (task ds/sheathe; GATES_CARRY_STATIC "peaceful tasks"): 7 UNEQUIP_WEAPON puts the weapon in the hands into
 	// the pack (true = one moved), 6 EQUIP_WEAPON takes the first carried weapon into the hands (its record sid, "" = none moved). Both leave
 	// the player's characters and an animal's natural weapon alone. weaponInHands is the hasWeaponEquipped atom, as planHomebase reads it.
-	bool sheatheWeapon(std::uint64_t id);
+	bool sheatheWeapon(std::uint64_t id, bool player = false); // player: a player character too (the exe's operate start sheathes whoever it is, rwh.272)
 	// A fighter in a fight keeps its weapon in hand (k16.6.181): a target, a technique, a swing / block / stumble in progress or an attacker
 	// engaged on it. The scorer yields to it and 7 UNEQUIP_WEAPON refuses it, so the draw / sheathe cannot flicker between two targets.
 	static bool inFight(const state::Fighter& f);
@@ -1779,6 +1881,8 @@ private:
 public:
 	// A scenario file with player characters: marks the player faction so stepPlayerAreas keeps the area (and the nav tiles) on them as they walk.
 	void markPlayerFactionLive();
+	// Tests: the per-tick promotion budget (squads, members) in place of routines::kPromotesPerTick / kPromoteMembersPerTick, to keep a queue in flight.
+	void setPromoteBudget(std::size_t squads, std::uint64_t members) { promoteSquadsPerTick_ = squads; promoteMembersPerTick_ = members; }
 private:
 	// corpses.cpp, before dropGoneFighters: decay of dead characters (corpses.hpp, ARCHITECTURE.md "Corpses"; state::CorpseDecay, save v54).
 	void stepCorpses();
@@ -1786,7 +1890,11 @@ private:
 	// (RegionEngine::areas), loaded and dropped at a tick boundary. Called after the commands, after stepPlayerAreas (before anyone is built or
 	// routed on the new areas), when the navigation is enabled and after a load. While there are no areas the mesh keeps what it holds. Derived,
 	// never saved: a load rebuilds it from the saved PlayerAreas.
-	void syncNavCoverage();
+	// `spread`: the per-tick call, which loads at most kNavZonesPerTick missing zones (nearest to the player first) and drops the zones no area
+	// wants; the rest of a promotion follows on the next ticks. The travel's heading also asks for the zones ahead (prefetch). Without it
+	// (a load, a command that moved the areas, enabling the navigation) everything wanted is loaded now.
+	void syncNavCoverage(bool spread = false);
+	static constexpr std::size_t kNavZonesPerTick = 1;
 	// The doors and containers of the zones the mesh holds and has not furnished yet get their entities (never twice: spawnMeshDoors skips a key
 	// that has one). `furnishedZones_` is reset by a load, whose entities come from the save.
 	void furnishNavCoverage();
@@ -1831,6 +1939,7 @@ private:
 	void stepGateBinding();
 	// Once a second after it (gatecrew.cpp): a crew at full detail: guards on the gate's slots, the rest off duty on the town scorer (rwh.207).
 	void stepGateCrewPosts();
+	std::vector<int> postSlots(flecs::entity squad, const std::vector<std::pair<std::uint64_t, flecs::entity>>& members); // gatecrew.cpp
 	// Applies an inventory order (commit) or only judges it; the reason as checkInventoryOrder.
 	std::string runInventoryOrder(const InventoryOrder& order, bool commit);
 	// Applies a squad order (commit) or only judges it; the reason as checkSquadOrder (player_squads.cpp).
@@ -1935,7 +2044,7 @@ private:
 	// there is nothing more to do (no kit, nothing to treat).
 	bool treat(std::uint64_t medic, std::uint64_t patient);
 	// treat() on bodies the caller holds, `dt` game seconds (medical.cpp); the off-screen medical step runs it on the stored members.
-	bool treatBodies(state::Fighter& medic, state::Fighter& patient, bool self, state::Inventory* inventory, bool& taken, double dt) const;
+	bool treatBodies(state::Fighter& medic, state::Fighter& patient, bool self, state::Inventory* inventory, bool& taken, double dt, std::uint64_t aidTick = ~std::uint64_t{0}) const;
 	// Off-screen medical step (stored_medical.cpp, k16.6.52; behind setOffscreenMedical): once a game minute, the stored members of a world squad
 	// bleed, clot, wake, die and are bandaged by a conscious squadmate, with the in-detail functions (updateMedical, treatBodies), then stored again
 	// as the difference from their template; a member back to its template loses its record.
@@ -2047,6 +2156,7 @@ public:
 		double x = 0.0;
 		double z = 0.0;
 		std::optional<double> y;
+		std::size_t free = 0; // how many sites of the kind were free to pick from
 	};
 	bool cageTaken(const routines::Site& site) const;
 	std::optional<SiteChoice> pickSite(const state::Routine& r, std::uint64_t id, std::uint16_t goal, std::uint64_t key, routines::SiteKind kind,
@@ -2223,7 +2333,17 @@ private:
 	// stepIndividualGoals carries out the individual goals (individual_goals.cpp) and ends them.
 	void stepIndividualGoals();
 	bool walkGoal(std::uint64_t id, state::Fighter& f, double x, double z);
-	bool rerollFlee(std::uint64_t id, state::Fighter& f);
+	bool rerollFlee(std::uint64_t id, state::Fighter& f, double& outX, double& outZ);
+	bool fleePoint(std::uint64_t id, const state::Fighter& f, const state::Fighter& from, double& x, double& z) const;
+	void stepRunAwayGoals(); // individual_goals.cpp: 280 RUN_AWAY_FORCED (a Routine named by orderRunAwayGoal)
+	void endRunAway(std::uint64_t id);
+	struct RunAwayRun
+	{
+		double x = 0.0; // the point it runs to (re-rolled when idle or near)
+		double z = 0.0;
+		std::uint64_t until = 0; // OURS: the exe's 280 has no end
+	};
+	std::map<std::uint64_t, RunAwayRun> runAway_; // member -> its 280 run (unsaved: a loaded game's run ends)
 public:
 	// An individual goal (individual_goals.cpp, DIALOGUE.md 5 step 6b; the dialogue effects give them): replaces the character's task with
 	// the goal. False when it does not apply (down, a player character, the target gone, no home).
@@ -2260,6 +2380,23 @@ private:
 	std::unique_ptr<LineOfSight> los_; // the per-region collision hulls (task AZ); null until enabled
 	void maybeEnableLineOfSight(); // enables it once the game data, the region grid and the world's placements are all there
 	void refreshLineOfSightHook(); // the arena's perception::Environment::lineOfSight, or null when LOS is off
+	bool navCoverageNow_ = false; // a SetPlayerAreas command ran this tick: the next syncNavCoverage loads everything (teleport); derived
+	double travelX_ = 0.0, travelZ_ = 0.0; // the first player area's centre at the last stepPlayerAreas pass, and the unit heading since (prefetch); derived
+	double headX_ = 0.0, headZ_ = 0.0;
+	bool travelKnown_ = false;
+	// What a v126 save held of the region promotion's work in flight (RunStates), read by reload and used by the first resident pass, syncNavCoverage and
+	// syncLineOfSight that follow; empty = nothing saved: those load everything wanted at once.
+	struct PromotionSaved
+	{
+		std::vector<state::RunStates::Promotion> queue;
+		bool nav = false;
+		std::vector<std::uint32_t> zones;
+		std::vector<std::uint32_t> furnished;
+		bool los = false;
+		std::vector<std::uint32_t> regions;
+	};
+	PromotionSaved promotionSaved_;
+	void readPromotionSaved();
 	std::set<int> furnishedZones_; // zone indices whose doors and containers were spawned (furnishNavCoverage); derived
 	std::shared_ptr<const CombatData> combatData_;
 	std::vector<flecs::entity_t> combatEntities_; // parallel to the arena's members
@@ -2290,7 +2427,7 @@ private:
 		std::uint8_t cause = 0;
 		bool sent = false;
 	};
-	std::map<std::uint64_t, CaughtAct> caughtActs_; // per thief while its theft record lives (wire bookkeeping, not saved)
+	std::map<std::uint64_t, CaughtAct> caughtActs_; // per thief while its theft record lives (wire bookkeeping, not saved: restore() seeds it sent from the loaded theft records)
 	std::function<void(const DismissEvent&)> dismissObserver_;
 	std::function<void(const crime::DialogueEvent&)> dialogueObserver_;
 	std::map<int, std::uint64_t> dialogueCounts_;
@@ -2374,6 +2511,7 @@ private:
 	bool offscreenFights_ = false;
 	FightStats fightStats_;
 	bool turretManning_ = false;
+	bool barTablesDue_ = false; // enableAi set it: the next tick attaches the bar tables, so no squad step runs without them
 	bool barBookKnown_ = false; // the book was rebuilt from the loaded claims by the first trader table step (a game with no combat never calls enableCombat's rebuild)
 	mutable std::shared_ptr<struct ResidentData> residentData_;
 	// characterSquads, called every tick by each session: cached queries (an ecs.each builds one per call)
@@ -2430,6 +2568,8 @@ private:
 	std::pair<std::uint16_t, std::uint64_t> planEngineer(std::uint64_t id) const;
 	mutable std::shared_ptr<struct BuildingGeometry> buildingGeometry_;
 	double buildSpeed_ = 1.0;
+	double gameSpeed_ = 1.0;
+	std::uint32_t cadence_ = 1; // min(floor(gameSpeed_), 3), at least 1
 	mutable std::shared_ptr<struct DiscoveryData> discoveryData_;
 	std::vector<std::pair<const void*, std::function<void(const std::shared_ptr<const prospect::Result>&)>>> prospectObservers_;
 	std::shared_ptr<const std::string> pristine_; // the markPristine save

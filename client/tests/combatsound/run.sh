@@ -9,6 +9,7 @@
 # probed on a throwaway server: a probe on the measured server would spend the world's only hit before the measured client exists
 # (kenshi-k16.2.315).
 set -u
+export KCLIENT_FRAMELOG=hud	# the "hud" log lines this test parses are opt-in (kenshi-jvhw)
 . "$(dirname "${BASH_SOURCE[0]}")/../need_data.sh"
 . "$(dirname "${BASH_SOURCE[0]}")/../charids.sh"
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

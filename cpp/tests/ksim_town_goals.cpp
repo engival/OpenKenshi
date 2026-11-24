@@ -161,7 +161,9 @@ void taskTableChecks()
 		&& phaseOfTask(task::TurretOnBuilding) == TownPhase::Post, "222 runs the 234 finder body at the post phase");
 	check(taskInfo(234) == nullptr && !runsGoal(234), "234 is a player job: no AI task row");
 	check(taskInfo(154)->use == TaskUse::Never && taskInfo(117)->use == TaskUse::Never && taskInfo(193)->use == TaskUse::Never
-		&& taskInfo(37)->use == TaskUse::Never && taskInfo(24)->use == TaskUse::Never, "the five dead values are Never");
+		&& taskInfo(24)->use == TaskUse::Never, "the four dead values are Never (37 is modelled since kenshi-k16.6.12.8)");
+	check(taskInfo(37)->use == TaskUse::Modelled && taskInfo(47)->use == TaskUse::Modelled && taskInfo(51)->use == TaskUse::Modelled,
+		"37 / 47 / 51 are modelled: the node DB's general nodes");
 	check(taskInfo(999) == nullptr && !runsGoal(999), "an unlisted task is unmodelled, not an error");
 }
 
@@ -401,8 +403,9 @@ void dataIds(const kdata::GameData& data)
 	check(kind("Round table") == SiteKind::Table && kind("barrelTable") == SiteKind::Table, "function 16 is a table (Round table, barrelTable)");
 	check(kind("Shop Counter Large old") == SiteKind::Counter && kind("Shop Counter Old") == SiteKind::Counter, "function 9 is a shop counter");
 	check(kind("Node Guardpost") == SiteKind::GuardNode, "node type 2 (Node Guardpost) is a guard node");
-	check(kind("Node Shopkeeper") == SiteKind::None && kind("Node Generaal ") == SiteKind::None && kind("Node Turret") == SiteKind::None && kind("Node Use") == SiteKind::None,
-		"the Shopkeeper, General, Defensive / Turret and Use nodes are not guard nodes");
+	check(kind("Node Shopkeeper") == SiteKind::None && kind("Node Turret") == SiteKind::None && kind("Node Use") == SiteKind::None,
+		"the Shopkeeper, Defensive / Turret and Use nodes are not guard nodes");
+	check(kind("Node Generaal ") == SiteKind::GeneralNode, "the General node (type 1) is the GeneralNode kind, not a guard node (kenshi-k16.6.12.8)");
 	check(kind("Old Stool") == SiteKind::None, "a stool (function 17) is not a site");
 	std::size_t beds = 0;
 	for (const kdata::Record* record : data.byType(0))

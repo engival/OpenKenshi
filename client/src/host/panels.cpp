@@ -1260,7 +1260,7 @@ ui::HudBuildingInfo machine_panel()
 {
 	ui::HudBuildingInfo b;
 	const simlink::Interactable* t = app.panelProducer ? app.sim.thing(app.panelProducer) : nullptr;
-	if (!t || (t->kind != simlink::Interactable::kProducer && t->kind != simlink::Interactable::kContainer)) { return b; }
+	if (!t || (!t->machineLike() && t->kind != simlink::Interactable::kContainer)) { return b; }
 	b.valid = true;
 	b.id = app.panelProducer;
 	b.name = app.sim.nameOf(t->record, app.chars);
@@ -1289,7 +1289,17 @@ ui::HudBuildingInfo machine_panel()
 			}
 			if (sums.size() > 3) { line.text = "+" + std::to_string(sums.size() - 3) + " more"; b.buttons.push_back(line); }
 		}
-		if (t->maxHealth > 0)
+		// a placed container's BUILDING row (SIMLINK "Machines and containers of any owner", kenshi-v31x): its Condition; a layout piece has no row, so the thing's own
+		const simlink::SimLinkDecoder::Building* crow = app.sim.building(app.panelProducer);
+		if (crow && crow->maxHp > 0)
+		{
+			ui::HudBuildingBar bar;
+			bar.label = "Condition";
+			bar.value = std::to_string((int)crow->hp);
+			bar.fraction = std::clamp(crow->hp / crow->maxHp, 0.0f, 1.0f);
+			b.bars.push_back(bar);
+		}
+		else if (t->maxHealth > 0)
 		{
 			ui::HudBuildingBar bar;
 			bar.label = "Condition";
@@ -1300,8 +1310,19 @@ ui::HudBuildingInfo machine_panel()
 		b.stats.push_back({ "Workers:", "-" });
 		return b;
 	}
-	// Everything else is the producer's BUILDING row (order 87's focus row, k16.19.8.2): a value the row has not brought yet is "-", never derived.
-	const simlink::SimLinkDecoder::Building* rec = app.sim.focusBuilding();
+	// Everything else is the machine's BUILDING row: a producer's is order 87's focus row (k16.19.8.2), a kind 12 machine's streams with its INTERACTABLE
+	// (SIMLINK "Machines and containers of any owner", kenshi-v31x, same id). A value the row has not brought yet is "-", never derived.
+	const simlink::SimLinkDecoder::Building* rec = t->kind == simlink::Interactable::kMachine ? app.sim.building(app.panelProducer) : app.sim.focusBuilding();
+	if (t->kind == simlink::Interactable::kMachine && t->hasMachine && (t->input || t->machineOutput))
+	{
+		// a converter shows what it turns into what (the data's `consumes` / `produces`, the wire's input and output strids)
+		const std::string in = t->input ? app.sim.nameOf(t->input, app.chars) : "-", out = t->machineOutput ? app.sim.nameOf(t->machineOutput, app.chars) : "-";
+		ui::HudBuildingButton recipe;
+		recipe.tag = true;
+		recipe.id = "recipe";
+		recipe.text = in + " > " + out;
+		b.buttons.push_back(recipe);
+	}
 	// HealthText (hud_building.md): section 7's status, the producer row's three being 0 Working, 5 Output full and 6 No workers
 	if (rec)
 	{
@@ -1361,6 +1382,14 @@ ui::HudBuildingInfo machine_panel()
 			bar.label = "Power";
 			bar.value = std::to_string((int)rec->powerSupplied);
 			bar.fraction = std::clamp(rec->powerSupplied / rec->powerDemand, 0.0f, 1.0f);
+			b.bars.push_back(bar);
+		}
+		else if (rec->powerValue < 0)	// a consumer with no grid on the wire (SIMLINK BUILDING: negative powerValue shows Inactive, kenshi-v31x)
+		{
+			ui::HudBuildingBar bar;
+			bar.label = "Power";
+			bar.value = "Inactive";
+			bar.fraction = 0;
 			b.bars.push_back(bar);
 		}
 	}

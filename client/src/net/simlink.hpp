@@ -93,7 +93,7 @@ namespace simlink
 	// INTERACTABLE (SIMLINK 6): a door or a ground item; leaves with event 11
 	struct Interactable
 	{
-		enum Kind : uint8_t { kDoor = 1, kItem = 2, kContainer = 3, kProducer = 4, kBed = 5 };	// container / producer: contents are an INVENTORY under its id
+		enum Kind : uint8_t { kDoor = 1, kItem = 2, kContainer = 3, kProducer = 4, kBed = 5, kMachine = 12 };	// container / producer: contents are an INVENTORY under its id
 		enum State : uint8_t { kOpen = 0, kClosed = 1, kLocked = 2, kBroken = 3 };	// broken: bashed in, open for good
 		enum ProdState : uint8_t { kFull = 1, kWorking = 2, kIdle = 3 };	// a producer's state (MINE_SELL_SLICE 3.1)
 		uint64_t id = 0;
@@ -127,6 +127,14 @@ namespace simlink
 		// an older server (no tail) or for every other item. The tint is the wire's, never a client guess (SIMLINK "Tail, kind 2 severed limb only")
 		float limbSkin[3] = { 0, 0, 0 }, limbBlood[3] = { 0, 0, 0 }, limbScale[3] = { 1, 1, 1 };
 		bool hasLimb = false;
+		// machine tail (kind 12, sim kenshi-k16.5.26, SIMLINK "Machine (kind 12)"), after the ownership tail: machineKind 1 converter, 2 power, 3 turret,
+		// 4 furnace; mstate 0 idle / 1 running (the header's `state` repeats it); input / output the converter's first `consumes` / `produces` ITEM
+		// (0 none); turret = the key CHAR_DYNAMIC's mounted tail and event 49 carry (a turret only). hasMachine false from a server without the tail.
+		uint8_t machineKind = 0, mstate = 0;
+		uint32_t input = 0, machineOutput = 0;
+		uint64_t turret = 0;
+		bool hasMachine = false;
+		bool machineLike() const { return kind == kProducer || kind == kMachine; }	// picks, panels and RMB through the one machine path (kenshi-v31x)
 	};
 	// INVENTORY (SIMLINK 6): what a player character or a container owns (a container's entries are all slot 0); slot 0 carried, 1 wielded, 2 + n worn in ARMOUR slot n
 	struct Inventory

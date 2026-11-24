@@ -83,6 +83,14 @@ int main()
 		const knav::NavMesh meshBefore = bake(stripped);
 		const knav::NavQuery after(meshAfter);
 		const knav::NavQuery before(meshBefore);
+		// The dune check reads a bake without the upper floors and stairs: the building's convex mask hull keeps those (the Longhouse's stair at
+		// x 68289-68326, z -71181..-71108 rises through the dune's height: its top surface is real floor, kenshi-rwh.282), and only terrain polygons count here.
+		std::vector<kworld::WorldShape> noUpper;
+		for (const kworld::WorldShape& shape : all)
+			if (!shape.upperPart)
+				noUpper.push_back(shape);
+		const knav::NavMesh meshGround = bake(noUpper);
+		const knav::NavQuery groundOnly(meshGround);
 
 		// (a) the pick on the floor is on the mesh, and reachable from outside through the door
 		knav::Point floor{};
@@ -140,7 +148,7 @@ int main()
 				++dune;
 				knav::Point out;
 				const knav::Point at = { static_cast<float>(x), static_cast<float>(y), static_cast<float>(z) };
-				duneAfter += after.nearestPoint(at, { 1.0f, 1.5f, 1.0f }, out);
+				duneAfter += groundOnly.nearestPoint(at, { 1.0f, 1.5f, 1.0f }, out);
 				duneBefore += before.nearestPoint(at, { 1.0f, 1.5f, 1.0f }, out);
 			}
 		std::cout << "dune samples inside the volume: " << dune << ", on the mesh after " << duneAfter << ", before " << duneBefore << "\n";

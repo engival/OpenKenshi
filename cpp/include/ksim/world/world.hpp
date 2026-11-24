@@ -8,6 +8,8 @@
 // changes only via Simulation's command queue (ARCHITECTURE.md "Layering").
 
 #include "ksim/core/detail.hpp"
+#include "ksim/dev/test_phases.hpp"
+#include "ksim/economy/machines.hpp"
 #include "ksim/core/state.hpp"
 #include "ksim/core/templates.hpp"
 #include "kworld/zones.hpp"
@@ -288,6 +290,21 @@ struct ProducerSite
 	double boxMaxZ = 0.0;
 };
 
+// A placed BUILDING that is a machine (machines.hpp kindOf: producer, converter, power, turret, furnace), foliage excepted. The sim's
+// machine record (Simulation::machineRecords) is made from it. Derived from the game data, not saved.
+struct MachineSite
+{
+	std::string recordSid;
+	std::string ownerFaction; // the placement's `owner faction ID`, "" = none
+	double x = 0.0;
+	double y = 0.0;
+	double z = 0.0;
+	std::uint64_t producerId = 0; // the ProducerSite's id when the machine is one too, else 0
+	std::uint64_t id = 0; // the wire id: producerId for a producer (kind 4), else machines::kMachineIdBase + the index in machineSites()
+	std::uint64_t key = 0; // kworld::doorKey(placementId): what a turret's mounted tail and event 49 name
+	std::uint32_t info = 0; // the index into machineInfos()
+};
+
 // A placed production BUILDING of any class (economy.hpp, TOWN_LIFE_SLICE 7.3): a farm, a mine, a stone camp, a well, the NPC
 // converter set. Every placement whose BUILDING has a functionality that `produces`, with or without `consumes`, but not a natural
 // deposit (`is foliage`, the MINING rocks: ProducerSite's territory). Derived from the game data, not saved.
@@ -323,7 +340,7 @@ public:
 	World& operator=(World&&) noexcept = default;
 	World(const World&) = delete;
 	World& operator=(const World&) = delete;
-	~World() { queries_.clear(); } // the cached queries (each) go before the world
+	~World() { KSIM_TEARDOWN_BEGIN(); queries_.clear(); } // the cached queries (each) go before the world
 
 	// Reads the four game-data files in documented order, builds every
 	// prefab and relationship, then places all zone building instances.
@@ -372,6 +389,8 @@ public:
 	const std::vector<DepositSite>& depositSites() const noexcept { return depositSites_; }
 	// Every placed producer BUILDING (deposits, mines, ...), in placement order.
 	const std::vector<ProducerSite>& producerSites() const noexcept { return producerSites_; }
+	const std::vector<MachineSite>& machineSites() const noexcept { return machineSites_; }
+	const machines::Static& machineInfo(const MachineSite& site) const noexcept { return machineInfos_[site.info]; }
 	// Every placed BUILDING that produces anything (farm, mine, converter), in placement order: the economy's camps (7.3).
 	const std::vector<ProductionSite>& productionSites() const noexcept { return productionSites_; }
 	// Every placed disposal machine (functionality function 11: 137's pot), in placement order.
@@ -390,6 +409,9 @@ public:
 	// Adds a placement the zone files of the loaded data do not carry (a save's runtime-spawned furniture, a test's): when its BUILDING is a cage
 	// itself (function 8: a Peeler Machine, a prisoner post) it becomes a one-point site, like a zone's own. False for any other building.
 	bool addFurnitureCage(const kdata::GameData& gameData, const kworld::PlacedInstance& instance);
+	// Adds a building placement the zone files do not carry (a save's player town, a construction): the placement, its entity, its door sites and
+	// its building site, as placeBuildings gives a zone's own. False when its BUILDING record is unknown or the instance id is already placed.
+	bool addPlacedBuilding(const kdata::GameData& gameData, const kworld::PlacedInstance& instance);
 	// The site with this key (BuildingSite::key), or null: the placement key Simulation::buildingAt and Fighter::building use.
 	// A map over buildingSites_, built on first use.
 	const BuildingSite* buildingSite(std::uint64_t buildingKey) const;
@@ -463,6 +485,7 @@ private:
 
 	// The cached queries of `each`. Declared BEFORE ecs_ so a move-assignment frees the old queries while the old world is alive; the
 	// destructor clears them first for the same reason.
+	KSIM_TEARDOWN_END_MEMBER // dev: stops the teardown clock after ecs_ is gone (first member = destroyed last)
 	mutable std::unordered_map<std::type_index, std::shared_ptr<void>> queries_;
 	flecs::world ecs_;
 	std::unordered_map<std::string, flecs::entity> prefabs_;
@@ -472,6 +495,8 @@ private:
 	std::vector<ContainerSite> containerSites_;
 	std::vector<DepositSite> depositSites_;
 	std::vector<ProducerSite> producerSites_;
+	std::vector<MachineSite> machineSites_;
+	std::vector<machines::Static> machineInfos_; // one per machine BUILDING record, MachineSite::info indexes it
 	std::vector<ProductionSite> productionSites_;
 	std::vector<DisposalSite> disposalSites_;
 	std::vector<GateSite> gateSites_;

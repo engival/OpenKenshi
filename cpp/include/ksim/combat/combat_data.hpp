@@ -282,6 +282,11 @@ struct CombatSettings
 	double hitReachPerDistance = 0.28;
 	// Combat updates per Simulation tick (the arena step is tick / substeps).
 	int substeps = 1;
+	// Arena strides (kenshi-k16.6.636, k16.6.607 item 5): a member is updated every `stride` arena steps with dt = stride x step. The fight tier
+	// (a target, targeted, engaged, a hit list, a clip, stumble / KO, a carry, an order, a gunner) steps at fightStride, everyone else at idleStride.
+	// 1 / 1 = every member every step, bit-identical to before. Phases are (phase step + id) % stride, so nothing but the tier flag is per member.
+	int fightStride = 1;
+	int idleStride = 1;
 	// Testing only (ksim_server --stealth N): >= 0 sets the Stealth skill of every NEW_GAME character (the sneak run check).
 	double newGameStealth = -1.0;
 };
@@ -337,6 +342,9 @@ public:
 	};
 	std::unordered_map<std::string, std::size_t, RaceKeyHash, std::equal_to<>> raceIndex;
 	std::unordered_map<std::string, ItemInfo> items; // ITEM records by stringID
+	// The random character-name lists (data/namesM.txt + namesMF.txt, namesF.txt + namesMF.txt; kenshi-rwh.247). Empty when the
+	// files are missing (the original then gives an empty name).
+	std::vector<std::string> namesMale, namesFemale;
 
 	const ItemInfo* item(const std::string& sid) const noexcept
 	{

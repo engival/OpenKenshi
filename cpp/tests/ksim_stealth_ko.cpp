@@ -89,7 +89,7 @@ int main()
 			victim.x = 0.0;
 			victim.z = 0.0;
 			victim.yaw = victimYaw;
-			victim.diceSeed = 777;
+			victim.diceSeed = 777 + key; // the victim's scan phase hangs on its key too: the keys cover both the roll and where the scans fall in the approach
 			victim.attention = 0.5;
 			arena->add(1, std::move(assassin));
 			arena->add(2, std::move(victim));

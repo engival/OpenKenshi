@@ -219,6 +219,10 @@ private:
 	std::map<std::string, std::unique_ptr<CollisionModel>> models_; // null = unreadable
 };
 
+// The planes (nx, ny, nz, d; inside: n . p <= d) of the ONE convex hull of every point of the given interior-mask shapes
+// (CollisionLibrary::addInteriorMask): the mask volume of NAVMESH_GENERATOR.md section 0. Empty with fewer than 4 points.
+std::vector<std::array<float, 4>> interiorMaskHull(const std::vector<WorldShape>& mask);
+
 // World placement of one model: pos + R(qw, qx, qy, qz) * (scale * v).
 void placeModel(const CollisionModel& model, const std::array<double, 3>& pos,
 	const std::array<double, 4>& quatWxyz, double scale, NavUse use, bool fill,

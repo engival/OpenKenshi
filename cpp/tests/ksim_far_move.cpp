@@ -65,6 +65,8 @@ struct Walk
 	std::size_t emptyTicks = 0; // order held, route spent, walker not at the goal
 	std::uint32_t bumps = 0; // routeVersion changes
 	double peak = 0.0;
+	// The corridor of each route as installed (kenshi-e9s9.5: the point portals and the bytes they save, 52 B a portal):
+	std::size_t installs = 0, routePoints = 0, portals = 0, pointPortals = 0, pointRuns = 0;
 	std::uint32_t legs = 0; // legs planned (the held order's count, the largest seen)
 };
 
@@ -84,6 +86,7 @@ int main(int argc, char** argv)
 		scenario_rig::Rig rig(file, world);
 		Simulation& sim = rig.sim;
 		sim.newWorld();
+		sim.setRoadLookahead(0.0); // the exe's handover is what this test measures (rwh.268); the look-ahead is ksim_road_lookahead's
 		sim.run(1);
 		const scenario::Placed placed = scenario::apply(sim, *rig.gameData, *rig.combatData, rig.context, file, 1);
 		test::require(!placed.players.empty(), "gate_heft places no player");
@@ -121,6 +124,19 @@ int main(int argc, char** argv)
 					sim.run(1);
 					f = fighterOf(sim, id);
 					w.bumps += f->routeVersion != lastVersion;
+					if (f->routeVersion != lastVersion)
+					{
+						++w.installs;
+						w.routePoints += f->route.size();
+						w.portals += f->portals.size();
+						std::size_t run = 0;
+						for (const state::RoutePortal& p : f->portals)
+						{
+							w.pointPortals += p.isPoint();
+							run = p.isPoint() ? run + 1 : 0;
+							w.pointRuns += run == 2;
+						}
+					}
 					lastVersion = f->routeVersion;
 					w.peak = std::max(w.peak, f->forwardSpeed);
 					if (const auto* held = sim.farOrder(id))
@@ -190,9 +206,15 @@ int main(int argc, char** argv)
 			const double median = roads.empty() ? -1.0 : roads[roads.size() / 2];
 			std::cout << "ksim_far_move: walked " << w.walked << " u of " << straight << " straight (" << w.walked / straight << "x, exe 1.28x), "
 				<< w.zones << " zone borders, " << w.seconds << " s, ended " << off << " u from the click, median " << median << " u from the road (exe 37 u)\n";
+			std::cout << "ksim_far_move: road factor used " << sim.roadFactor(id) << " (faction road preference, exe 0.7 for the Nameless)\n";
 			std::cout << "ksim_far_move: peak " << w.peak << " u/s, slow ticks " << w.slowTicks << ", reversals " << w.reversals << ", empty-route ticks "
 				<< w.emptyTicks << ", routeVersion bumps " << w.bumps << ", legs " << w.legs << ", zones " << w.zones << '\n';
-			test::require(w.slowTicks == 0, std::to_string(w.slowTicks) + " ticks under a quarter speed during the far walk (a leg handover braked it)");
+			std::cout << "ksim_far_move: corridors installed " << w.installs << ", route points " << w.routePoints << ", portals " << w.portals << ", point portals "
+				<< w.pointPortals << ", runs of 2+ point portals " << w.pointRuns << ", " << (w.installs ? static_cast<double>(w.pointPortals) * 52.0 / w.installs : 0.0)
+				<< " B a corridor in point portals\n";
+			// The exe's handover (rwh.268) cuts a road corner and takes it by the velocity slew: a sharp one dips under a quarter of the peak for a tick or two
+			// (v cos(theta/2)); a brake to nothing at a marker would be dozens of ticks.
+			test::require(w.slowTicks <= 6, std::to_string(w.slowTicks) + " ticks under a quarter speed during the far walk (a leg handover braked it)");
 			test::require(w.bumps <= w.legs + 8, std::to_string(w.bumps) + " routeVersion bumps for " + std::to_string(w.legs) + " legs");
 			test::require(w.reversals == 0, std::to_string(w.reversals) + " facing reversals during the far walk");
 			test::require(w.emptyTicks == 0, std::to_string(w.emptyTicks) + " ticks with the order held and no route");

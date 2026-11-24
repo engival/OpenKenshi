@@ -100,17 +100,10 @@ void main()
 		const vec3 tlo = min(ta, tb), thi = max(ta, tb);
 		float t0 = max(max(tlo.x, tlo.y), max(tlo.z, 0.0));
 		float t1 = min(min(thi.x, thi.y), min(thi.z, dist));
-		// the floor cut (kenshi-jj3.26.11): the air above the cut height belongs to the floors the cut hides, so the march stops at that plane (probe index y); 1e9 = not cut
+		// the floor cut (kenshi-jj3.26.11): the SUN's air above the cut height belongs to the floors the cut hides, so the sun term is zero there (probe index y; 1e9 = not cut). The lamp cones
+		// are not clipped: a lamp is drawn only when its floor is shown, so its cone belongs to the shown air even when the camera or the lamp stands above the plane (kenshi-nun5: the ray
+		// clip at the plane removed every cone seen from above the plane, and the Hub bar's lamp hangs above it)
 		const float cut_g = vol_m[i * 8 + 7].x;
-		if (cut_g < 1e8)
-		{
-			if (abs(gd.y) < 1e-6) { if (g0.y > cut_g) { continue; } }
-			else
-			{
-				const float tc = (cut_g - g0.y) / gd.y;
-				if (gd.y > 0.0) { t1 = min(t1, tc); } else { t0 = max(t0, tc); }
-			}
-		}
 		if (t1 <= t0 || inf.y <= 0.0) { continue; }
 		const float dt = (t1 - t0) / float(steps);
 		for (int k = 0; k < steps; k++)
@@ -129,7 +122,7 @@ void main()
 			const float gate = smoothstep(0.55, 0.85, enclosure);
 			if (view)
 			{
-				vis_sum += (dbg_enc ? 0.0 : forced ? 1.0 : shadow_air(dir * t)) * dt;
+				vis_sum += (dbg_enc || g.y > cut_g ? 0.0 : forced ? 1.0 : shadow_air(dir * t)) * dt;
 				enc_sum += enclosure * dt;
 				w_sum += w * dt;
 				gate_sum += w * gate * dt;
@@ -137,7 +130,7 @@ void main()
 				len_sum += dt;
 				continue;
 			}
-			const float sunv = !sun_on ? 0.0 : forced ? 1.0 : shadow_air(dir * t);
+			const float sunv = !sun_on || g.y > cut_g ? 0.0 : forced ? 1.0 : shadow_air(dir * t);
 			const float density = (shaft.x + shaft.y * gate) * w;
 			const float seg = exp(-density * dt);
 			if (lamp_n > 0)
@@ -148,7 +141,9 @@ void main()
 				{
 					const int i = lamp_i[j];
 					const vec4 lp = pl[4 * i], lcol = pl[4 * i + 1], ls = pl[4 * i + 3];
-					const vec3 dl = lp.xyz - rel;
+					// the cone leaves the bulb, not the LIGHT record's position (kenshi-ac8f: that is up in the cord for the Hub's lamps, so the cone began above the shade): the position moved down the
+					// axis by the beam drop (pl[4 i + 2].w, the fixture mesh's extent along the axis; the surface light keeps the record's position)
+					const vec3 dl = lp.xyz + pl[4 * i + 2].xyz * pl[4 * i + 2].w - rel;
 					const float dd = length(dl);
 					if (dd > lp.w) { continue; }
 					const vec3 l = dl / max(dd, 1e-4);

@@ -22,7 +22,7 @@ using namespace ksim;
 
 namespace {
 
-constexpr double kRadius = 2.6; // the human's pathfind footprint (CombatData::pathRadius)
+constexpr double kRadius = 4.0; // merged Greenlander pathfind footprint (findings/navrun_static.md:46; 2.6 is the base file alone)
 
 struct Spot { double x, z; };
 

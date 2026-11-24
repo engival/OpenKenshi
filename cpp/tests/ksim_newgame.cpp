@@ -1212,10 +1212,13 @@ int main(int argc, char** argv)
 					const std::size_t head = static_cast<std::size_t>(std::find(heads.begin(), heads.end(), s.head) - heads.begin());
 					test::require(c.dec.str(a.race) == s.race && a.sex == s.female && a.head == head && c.dec.str(a.hair) == s.hair && c.dec.str(a.beard) == s.beard
 						&& c.dec.str(a.hairColour) == s.hairColour && a.skin == s.skin && c.dec.str(a.name) == s.name, when + ": the wire look of member " + std::to_string(k));
-					test::require(a.body.size() == s.sliders.size() + 1, when + ": the body list holds the sliders and the stance");
-					for (std::size_t i = 0; i < s.sliders.size(); ++i)
+					// k16.6.568 layout (SIMLINK.md "Body keys"): the sliders, then "Idle stance", then "muscle" last; "strong" is not sent.
+					const std::size_t nb = s.sliders.size();
+					test::require(a.body.size() == nb + 2, when + ": the body list holds the sliders, the stance and muscle");
+					for (std::size_t i = 0; i < nb; ++i)
 						test::require(c.dec.str(a.body[i].first) == s.sliders[i].first && a.body[i].second == s.sliders[i].second, when + ": slider " + s.sliders[i].first);
-					test::require(c.dec.str(a.body.back().first) == "Idle stance" && a.body.back().second == static_cast<float>(s.stance), when + ": the idle stance rides in the body list");
+					test::require(c.dec.str(a.body[nb].first) == "Idle stance" && a.body[nb].second == static_cast<float>(s.stance), when + ": the idle stance rides in the body list");
+					test::require(c.dec.str(a.body[nb + 1].first) == "muscle" && a.body[nb + 1].second >= -0.2405075f, when + ": muscle rides last, at or above the stat-1 bulk");
 				}
 			};
 			checkLook("new game");

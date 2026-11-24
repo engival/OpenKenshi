@@ -354,6 +354,33 @@ void Simulation::stepDialogue(std::uint64_t now, TalkProbe* probe)
 					dialogue_->push(shoo);
 				}
 			}
+			// The plan road (rwh.221 sections 2 / 3): the shoo plan step 161 Task_TalktoPlayer re-sends EV 9 to the goal's hand (the 158 /
+			// 283 finder's occupancy scan, no sighting needed) while the plan runs. Same gates and pacing as the sighting road above (a
+			// record's shoo and this one share a key). UNSURE: 140335e00 sends 0x11 instead of 9 when the house is locked and the target
+			// not friendly; ours sends nothing then and leaves the intruder event to crime.cpp's trespass sensor.
+			const state::Routine* plan = fighterEntity(observerId).get<state::Routine>();
+			const bool planClosing = plan != nullptr && (plan->goal == routines::task::LockAllMyDoors
+				|| plan->goal == routines::task::LockDoorsStayOutside || plan->goal == routines::task::GoHomeToBedSecure);
+			if (plan != nullptr && plan->chainTarget != 0 && ownBuilding && !observer.houseLocked
+				&& (planClosing || ((plan->goal == routines::task::ShooStrangers || plan->goal == routines::task::ShooStrangersPrivate)
+					&& !openToPublic(observer.building))))
+			{
+				const state::Fighter* hand = combat_->find(plan->chainTarget);
+				if (hand != nullptr && usable(*hand) && hand->building == observer.building)
+				{
+					const double rel = relation(observerSide, sideOf(plan->chainTarget));
+					if (rel > crime::kHostileRelation && rel < crime::kFriendlyRelation
+						&& dialogue_->due(DialogueSystem::fireKey(kKindShoo, observerId, plan->chainTarget), now, kShooTicks))
+					{
+						DialogueEvent shoo;
+						shoo.event = ev::ShooFromMyBuilding;
+						shoo.speaker = observerId;
+						shoo.target = plan->chainTarget;
+						shoo.tick = now;
+						dialogue_->push(shoo);
+					}
+				}
+			}
 		}
 	}
 	if (probe == nullptr && dialogue_->queued() == 0 && ecs.count<state::Conversation>() == 0)
@@ -706,18 +733,19 @@ void Simulation::stepDialogue(std::uint64_t now, TalkProbe* probe)
 		{
 			if (data_ == nullptr)
 				return false;
-			// The exe reads only the first list entry, by its ITEM record's `item function` (the loader's line+0x1b0), and compares
-			// it with each inventory item's function (item+0x124) in the flat main inventory only (carried entries: not worn gear, not a backpack's contents).
-			if (ids.empty())
-				return false;
-			const kdata::Record* listed = data_->find(book_.sidOf(ids.front()));
-			if (listed == nullptr)
-				return false;
-			const std::int32_t function = listed->intOr("item function", 0);
-			const auto pred = [&](const state::InventoryEntry& entry)
+			// rwh.213: the exe reads only the first list entry's item function (item+0x124). Function 0 (Luxury Goods...) is
+			// no constraint at all: the line passes for any target, empty hands included, with no retarget.
+			const kdata::Record* first = ids.empty() ? nullptr : data_->find(book_.sidOf(ids.front()));
+			const std::int32_t wanted = first != nullptr ? first->intOr("item function", 0) : 0;
+			if (wanted == 0)
+			{
+				member = target;
+				return true;
+			}
+			const auto pred = [&](const state::InventoryEntry& entry) // the main flat inventory only, not the backpack
 			{
 				const kdata::Record* record = data_->find(entry.itemSid);
-				return entry.slot == state::Inventory::kCarried && record != nullptr && record->intOr("item function", 0) == function;
+				return entry.slot == state::Inventory::kCarried && record != nullptr && record->intOr("item function", 0) == wanted;
 			};
 			return squadHolds(target, member, pred, false);
 		}
@@ -841,6 +869,21 @@ void Simulation::stepDialogue(std::uint64_t now, TalkProbe* probe)
 				}
 			}
 			return best;
+		}
+
+		bool squadBusy(std::uint64_t id) const override
+		{
+			if (sim_.combat_->find(id) == nullptr)
+				return false;
+			const flecs::entity squad = sim_.fighterEntity(id).target<state::MemberOf>();
+			if (!squad.is_valid())
+				return false;
+			for (const std::uint64_t mate : squadOf_(squad).members)
+			{
+				if (busy(mate))
+					return true;
+			}
+			return false;
 		}
 
 		bool busy(std::uint64_t id) const override
@@ -1400,7 +1443,7 @@ void Simulation::stepDialogue(std::uint64_t now, TalkProbe* probe)
 				break;
 			}
 			case 34: // DA_RUN_AWAY: task 280 RUN_AWAY_FORCED from T (step 6b); UNSURE: the AGGRESSOR tag on T is not kept
-				applied = haveTarget && giveIndividualGoal(voice, state::IndividualKind::Flee, talk.target);
+				applied = haveTarget && orderRunAwayGoal(voice, talk.target);
 				break;
 			case 7: // DA_GO_HOME: task 19 GO_HOMEBUILDING (needs T, step 6b); UNSURE: the AGGRESSOR tag on T is not kept
 				applied = haveTarget && giveIndividualGoal(voice, state::IndividualKind::GoHome, talk.target);
@@ -1703,7 +1746,7 @@ void Simulation::stepDialogue(std::uint64_t now, TalkProbe* probe)
 	};
 	// New events: a picked root opens a conversation (a speaker that started one earlier in this step drops the rest). The player's talk
 	// to a busy speaker opens the running conversation's interrupt root in its place; a talk that opens nothing is nothing_to_say.
-	for (DialoguePick pick : dialogue_->step(adapter, now))
+	dialogue_->step(adapter, now, [&](DialoguePick& pick)
 	{
 		const bool talked = pick.event.event == kEvPlayerTalkToMe;
 		if (talked && pick.result == DialoguePick::Result::Busy && combat_->find(pick.event.speaker) != nullptr)
@@ -1721,7 +1764,7 @@ void Simulation::stepDialogue(std::uint64_t now, TalkProbe* probe)
 					cutShort(old.voice);
 				finish(entity, old, 2);
 				dialogue_->push(pick.event);
-				continue;
+				return;
 			}
 			if (root != kNoIndex && running->replies.empty())
 			{
@@ -1739,14 +1782,14 @@ void Simulation::stepDialogue(std::uint64_t now, TalkProbe* probe)
 		{
 			if (talked)
 				nothingToSay(pick.event.target, pick.event.speaker);
-			continue;
+			return;
 		}
 		const flecs::entity entity = fighterEntity(pick.event.speaker);
 		if (entity.has<state::Conversation>())
 		{
 			if (talked)
 				nothingToSay(pick.event.target, pick.event.speaker);
-			continue;
+			return;
 		}
 		state::Conversation talk;
 		talk.target = pick.event.target;
@@ -1756,11 +1799,11 @@ void Simulation::stepDialogue(std::uint64_t now, TalkProbe* probe)
 		if (talked)
 			talkSeqs_.erase(pick.event.target);
 		if (tradeEnded.erase(pick.event.speaker) != 0)
-			continue; // a root line that opened the trade ended its conversation (no menu, nothing kept)
+			return; // a root line that opened the trade ended its conversation (no menu, nothing kept)
 		if (talk.voice == pick.event.speaker)
 			offer(pick.event.speaker, talk, pick.dialogue, pick.line);
 		entity.set<state::Conversation>(std::move(talk));
-	}
+	});
 }
 
 } // namespace ksim

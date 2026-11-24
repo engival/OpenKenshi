@@ -1,0 +1,11 @@
+# bark_chase walk (kenshi-jtnm rework): the user's kenshi-1js4 run 1 on a headless client: the newgame Wanderer (id 41249, @Wanderer@ when it differs) gets a far move order from the Hub to
+# Stack's west gate (-56300,-13188; Stack is placed at -56047,-13188) and the sim runs fast. Holy Nation paladins meet him on the way; the client's `speech:` lines (with `tick N`) are the bubble log;
+# `dump chars` every 600 frames shows who is where. run_walk.sh fills SHOTS (a shot every SHOT_EVERY frames) and OUTDIR.
+280 dump chars
+300 select id=@Wanderer@
+310 set simspeed ${SIMSPEED}
+320 move -56300 -13188
+DUMPS
+MOVES
+SHOTS
+${QUIT} quit

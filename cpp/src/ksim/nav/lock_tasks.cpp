@@ -24,16 +24,38 @@ namespace ksim {
 
 namespace {
 
-// The shackles' own lock: level 20 / work value (hardness) 20, read live on a worn pair of Hive Prisoner Shackles (rwh62_victim_cage_escape_live.md
-// section 7: pick 201 opened a level-20 lock; brute force needed > 3 x 20). The item record's `is locked` flag carries no level or work value that
-// we load, so these are the cited finding, not data. item22_static.md's "lock level 5" is not this field (unexplained; the live level is 20).
-constexpr double kShackleLockLevel = 20.0;
-constexpr double kShackleHardness = 20.0;
 constexpr int kEventUnlockSuccess = 0x0d; // EV_UNLOCK_MY_CAGE_OR_SHACKLES (dt24_picklock section 7.3)
 constexpr int kEventUnlockAttempt = 0x0e; // EV_UNLOCK_MY_CAGE_ATTEMPT
 constexpr int kEventReleased = 0x2e; // posted by Task_ReleasePrisoner (item28 b6)
 constexpr std::int32_t kItemFunctionTool = 9; // ITEM `item function` 9 TOOL (GAMEDATA_SCHEMA); the exe's hasTools evaluator is not decoded (UNSURE)
 
+}
+
+// The worn shackles' own lock, from their ARMOUR record: `lock level` (the pick roll) and `hardness` (the cut / brute work value, lock +4)
+// (rwh205_shackle_lock_fields.md; the item factory builds the Lock from them). The plain and Hive Prisoner Shackles are 20 / 20.0; the Faulty
+// ones 5 / 10.0. The fallbacks are the schema defaults (GAMEDATA_SCHEMA).
+const kdata::Record* Simulation::shackleRecord(std::uint64_t wearer) const
+{
+	const flecs::entity entity = gameData_ != nullptr ? fighterEntity(wearer) : flecs::entity();
+	const state::Inventory* held = entity.is_valid() ? entity.get<state::Inventory>() : nullptr;
+	if (held != nullptr)
+		for (const state::Inventory::Entry& entry : held->items)
+			if (entry.slot == state::Inventory::kArmourBase + 9)
+				if (const kdata::Record* record = gameData_->find(entry.itemSid); record != nullptr && record->boolOr("is locked", false))
+					return record;
+	return gameData_ != nullptr ? gameData_->find("SHACKLES") : nullptr;
+}
+
+double Simulation::shackleLockLevel(std::uint64_t wearer) const
+{
+	const kdata::Record* record = shackleRecord(wearer);
+	return record != nullptr ? std::clamp(record->intOr("lock level", 20), 0, 100) : 20.0;
+}
+
+double Simulation::shackleHardness(std::uint64_t wearer) const
+{
+	const kdata::Record* record = shackleRecord(wearer);
+	return record != nullptr ? static_cast<double>(record->floatOr("hardness", 20.0f)) : 20.0;
 }
 
 bool Simulation::shacklesWorn(std::uint64_t wearer) const
@@ -168,13 +190,14 @@ bool Simulation::lockProgress(std::uint64_t id, TaskProgressRow& row) const
 			row.kind = 1;
 			row.progress = static_cast<float>(std::clamp(own->elapsed / own->interval, 0.0, 1.0));
 			row.rate = static_cast<float>(1.0 / own->interval);
-			row.value = static_cast<float>(pickChance(kShackleLockLevel, f->skills.lockpicking));
+			row.value = static_cast<float>(pickChance(shackleLockLevel(victim), f->skills.lockpicking));
 			return true;
 		}
-		const double left = own->hardness < 0.0 ? kShackleHardness : own->hardness;
+		const double full = shackleHardness(victim);
+		const double left = own->hardness < 0.0 ? full : own->hardness;
 		row.kind = 7;
-		row.progress = static_cast<float>(std::clamp(1.0 - left / kShackleHardness, 0.0, 1.0));
-		row.rate = static_cast<float>(cutRate(f->skills.strength) / kShackleHardness);
+		row.progress = static_cast<float>(std::clamp(1.0 - left / full, 0.0, 1.0));
+		row.rate = static_cast<float>(cutRate(f->skills.strength) / full);
 		row.value = static_cast<float>(left);
 		return true;
 	}
@@ -279,15 +302,16 @@ Simulation::LockStep Simulation::stepLockTask(std::uint64_t id, std::uint16_t ta
 	// ---- the lock itself: a cage (76 / 285 / 286) or a pair of shackles (201 / 185 / 186) ----
 	const bool shackles = task == routines::task::PickLockOnShackles || task == routines::task::CutShackles || task == routines::task::BruteForceShackles;
 	LockRecord* lock = nullptr;
-	double level = kShackleLockLevel;
+	double level = 0.0;
 	std::uint64_t building = 0;
 	if (shackles)
 	{
 		if (!shacklesWorn(targetId))
 			return LockStep::Done; // no shackles: flagTaskDone / nothing to cut
 		lock = &lockEnsure(true, targetId);
+		level = shackleLockLevel(targetId);
 		if (lock->hardness < 0.0)
-			lock->hardness = kShackleHardness;
+			lock->hardness = shackleHardness(targetId);
 	} else {
 		building = target->cageBuilding;
 		if (building == 0)
@@ -423,10 +447,10 @@ Simulation::ShackleLockView Simulation::shackleLock(std::uint64_t wearer) const
 	const LockRecord* lock = lockFind(true, wearer);
 	view.worn = true;
 	view.locked = lock == nullptr || !lock->open;
-	view.level = kShackleLockLevel;
-	view.maxHardness = kShackleHardness;
-	view.hardness = lock != nullptr && lock->hardness >= 0.0 ? lock->hardness : kShackleHardness;
-	view.chance = pickChance(kShackleLockLevel, f->skills.lockpicking);
+	view.level = shackleLockLevel(wearer);
+	view.maxHardness = shackleHardness(wearer);
+	view.hardness = lock != nullptr && lock->hardness >= 0.0 ? lock->hardness : view.maxHardness;
+	view.chance = pickChance(view.level, f->skills.lockpicking);
 	view.canCut = carriesKit(wearer, kItemFunctionTool);
 	view.canBreak = bruteBreaks(f->skills.strength, view.hardness);
 	return view;
@@ -448,6 +472,15 @@ std::string Simulation::orderShackleAction(std::uint64_t actor, std::uint64_t we
 {
 	if (std::string reason = checkShackleAction(actor, wearer, action); !reason.empty())
 		return reason;
+	// A pick (15 / 18) whose chance is at the floor is unplannable, like a door pick (rwh.178 precondition 167): accepted, then
+	// dropped with nothing changed (no walk, no event 13). The gate reads the raw stat; the roll's caged-picker penalty stays in stepLockTask.
+	if (action == kPickShacklesAction || action == kPickCageAction)
+	{
+		const state::Fighter* picker = combat_->find(actor);
+		const double level = action == kPickCageAction ? cageLockLevel(wearer) : shackleLockLevel(wearer);
+		if (!sufficientLockSkill(level, picker->skills.lockpicking, false))
+			return {};
+	}
 	// A replacing order, as order 60 is: the running interact, the queue and the follow task end.
 	cancelOrders(actor);
 	state::Fighter* f = combat_->find(actor);

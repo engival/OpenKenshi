@@ -1,5 +1,5 @@
 // kenshi-k16.6.254: the Slaver caravan of scenarios/cage_prisoner.kscen is spawned inside Heft. A trade_circuit squad that starts in a town gets the
-// same stay as one that walks in (TOWN_LIFE_SLICE 4.2), so within the arrival window its members are on a real routine (bar hangout: relax / shopping /
+// same stay as one that walks in (package 63477), so within the arrival window its members are on a real routine (bar hangout: relax / shopping /
 // patrol), not 141 FOLLOW_SQUADLEADER at score 0, and the boss decides too. Needs the world navmesh bake (argv[1], exit 77 without the Heft region).
 #include "ksim/core/simulation.hpp"
 
@@ -29,13 +29,11 @@ int main(int argc, char** argv)
 			std::cout << "ksim_caravan_idle: SKIPPED: needs the world navmesh bake with the Heft region (pass its directory)\n";
 			return 77;
 		}
-		scenario_rig::Rig rig(file, world);
+		// Seed 1: the caravan's first step comes before the first interval's table attach (the bug of k16.6.390: it idled where it stood); argv[2] another seed.
+		scenario_rig::Rig rig(file, world, std::nullopt, argc > 2 ? std::stoull(argv[2]) : 1);
 		Simulation& sim = rig.sim;
 		sim.newWorld();
 		sim.run(1);
-		// Re-pinned for kenshi-k16.7.118: the 856 containers / item nodes / doors the mesh furnishes no longer take ids from the main counter, so the
-		// squads' ids dropped by that many. The bar-package roll hangs on the squad id, so the id the pin was made at (the old one) is kept by hand.
-		ecsOf(sim).get_mut<state::Ids>()->next += 856;
 		const scenario::Placed placed = scenario::apply(sim, *rig.gameData, *rig.combatData, rig.context, file, 3);
 		const std::uint64_t bossId = placed.idOf.at(3);
 		const state::Fighter* boss = sim.combat()->find(bossId);
@@ -58,7 +56,8 @@ int main(int argc, char** argv)
 		const double walked = std::hypot(seated->x - startX, seated->z - startZ);
 		test::require(walked > 500.0, "the boss walked to the bar (" + std::to_string(walked) + " u from the Longhouse)");
 		const state::GroupAI* ai = squad.get<state::GroupAI>();
-		test::require(ai->goal == state::GoalKind::Idle && ai->until > sim.clockTick(), "at the table the squad idles until the departure, not before");
+		test::require(ai->goal == state::GoalKind::Idle && ai->until > sim.clockTick(), "goal " + std::to_string(static_cast<int>(ai->goal)) + " until " + std::to_string(ai->until)
+			+ " now " + std::to_string(sim.clockTick()) + " walked " + std::to_string(walked) + " staying " + std::to_string(trip->staying) + ": at the table the squad idles until the departure, not before");
 		std::cout << "boss walked " << walked << " u to the table, stay " << trip->stayHours << " h\n";
 		std::cout << "ksim_caravan_idle ok\n";
 		return 0;

@@ -1,7 +1,11 @@
 // Offline navmesh bake: knav_bake [--out FILE] [--threads N] [--zones X0 Z0 X1 Z1]
 // Defaults to the Hub and its neighbours (zone cells 19..21 x 31..33).
+// Results are cached by input (tools/knav_bake_cache.hpp): KNAV_BAKE_CACHE=DIR or --cache DIR (--no-cache = off).
 // World bake: knav_bake --world DIR [--regions RX0 RZ0 RX1 RZ1] [--threads N]
 // writes DIR/region_RX_RZ.knav for each region of 4 x 4 zones (default all 16 x 16).
+
+#include "knav_bake_cache.hpp"
+#include "knav_bake_srchash.h"
 
 #include "knav/area.hpp"
 #include "knav/native.hpp"
@@ -21,7 +25,11 @@
 #include <iomanip>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
+
+// Bump when the bake's output can change without a source change (an input outside the hashed sources).
+constexpr int kBakeRecipeVersion = 2;
 
 namespace {
 
@@ -197,6 +205,7 @@ int bakeWorld(const std::string& dataDir, const std::string& dir, const int (&re
 				traceSeeds(world.mesh(), *trace, seedsDef, terrain, area, min, max);
 
 			const std::string path = dir + "/" + knav::regionFileName(rx, rz);
+			std::filesystem::remove(path); // may be a read-only hard link into the bake cache: never write through it
 			world.mesh().save(path);
 			tiles += world.mesh().tiles().size();
 			polys += world.mesh().polyCount();
@@ -210,10 +219,55 @@ int bakeWorld(const std::string& dataDir, const std::string& dir, const int (&re
 	}
 	std::cout << "total: " << tiles << " tiles, " << polys << " polys, " << bytes << " bytes, gather "
 		<< gatherSeconds << " s, bake " << bakeSeconds << " s on " << threads << " thread(s)\n";
-	if (knav::bandlessTiles() > 0)
-		std::cout << "WARNING: " << knav::bandlessTiles() << " tile(s) over " << knav::kMaxPolysPerTile
-			<< " polygons baked without the wall band (no Area::Edge there), " << knav::erodedTiles()
-			<< " of them eroded (still over it)\n";
+	knav::printBakeProfile(std::cout);
+	return 0;
+}
+
+// The Hub-sized single-file bake.
+int bakeSingle(const std::string& dataDir, const std::string& out, kworld::ZoneCell min, kworld::ZoneCell max, int threads, float radius,
+	bool prune)
+{
+	const auto seconds = secondsSince;
+auto start = Clock::now();
+	const auto terrain = kworld::Heightmap::open(dataDir + "/newland/land/fullmap.tif");
+	const knav::AreaGeometry area = knav::gatherArea(dataDir, terrain, min, max);
+	std::cout << "gather: " << seconds(start) << " s, " << area.buildings.size() << " buildings, "
+		<< area.foliage->size() << " foliage shapes\n";
+
+	knav::NavConfig config = knav::configForZones(min, max);
+	config.agentRadius = radius;
+	start = Clock::now();
+	knav::NavWorld world(config, terrain, area.foliage);
+	for (const knav::AreaBuilding& building : area.buildings)
+		world.setBuilding(building.id, building.shapes, building.nav);
+	if (prune)
+		setSeeds(world, knav::readSeedsDef(knav::native::navtilesDir(dataDir)), terrain, area, min, max);
+	world.bakeAll(threads);
+	const double bakeSeconds = seconds(start);
+	const knav::NavMesh& mesh = world.mesh();
+	std::filesystem::remove(out); // may be a read-only hard link into the bake cache: never write through it
+	mesh.save(out);
+
+	const auto& c = area.coverage;
+	std::cout << "bake: " << bakeSeconds << " s on " << threads << " thread(s)\n"
+		<< "tiles: " << mesh.tiles().size() << " of " << config.tilesX * config.tilesZ
+		<< ", polys: " << mesh.polyCount() << ", cache: " << std::filesystem::file_size(out)
+		<< " bytes (" << out << ")\n"
+		<< "building placements: " << c.placements << ": " << c.placementsWithCollision
+		<< " with collision, " << c.placementsRenderOnly << " render mesh only, "
+		<< c.placementsNoGeometry << " no geometry, " << c.placementsMissingTarget << " missing target\n"
+		<< "parts: " << c.parts << ": " << c.partsWithCollision << " collision, "
+		<< c.partsRenderOnly << " render only (skipped), " << c.partsNoGeometry << " none, "
+		<< c.partsFlagged << " passable/no-collision, " << c.partsFileUnreadable << " unreadable file, "
+		<< c.partsRuinRemoved << " ruin upper floors\n"
+		<< "path modes: ignore " << c.pathModes[0] << ", projected " << c.pathModes[1]
+		<< ", obstacle " << c.pathModes[2] << ", walkable " << c.pathModes[3]
+		<< "; gateways " << c.gatewayPlacements << "\n"
+		<< "doors: " << c.doors << " placed, " << c.doorsWithoutCollision << " without collision; "
+		<< mesh.doorKeys().size() << " have polygons in the mesh\n"
+		<< "foliage instances: " << c.foliageInstances << ", with collision: " << c.foliageWithCollision << " (walkable " << c.foliageWalkable
+		<< "), navmesh cutters " << c.foliageCutters << "\n"
+		<< "interior furniture: " << c.furniture << " pieces, " << c.furnitureWithCollision << " with collision\n";
 	knav::printBakeProfile(std::cout);
 	return 0;
 }
@@ -228,6 +282,7 @@ int main(int argc, char** argv)
 	int threads = 4;
 	float radius = knav::NavConfig{}.agentRadius;
 	bool prune = true;
+	std::string cacheRoot = std::getenv("KNAV_BAKE_CACHE") ? std::getenv("KNAV_BAKE_CACHE") : KNAV_BAKE_CACHE_DEFAULT;
 	std::optional<knav::Point> trace;
 	knav::BakeTuning tuning;
 	kworld::ZoneCell min{ 19, 31 };
@@ -247,6 +302,10 @@ int main(int argc, char** argv)
 				static_cast<float>(std::atof(argv[i + 3])) };
 			i += 3;
 		}
+		else if (arg == "--cache" && i + 1 < argc)
+			cacheRoot = argv[++i];
+		else if (arg == "--no-cache")
+			cacheRoot.clear();
 		else if (arg == "--no-prune")
 			prune = false;
 		else if (arg == "--no-flat")
@@ -301,52 +360,50 @@ int main(int argc, char** argv)
 	try
 	{
 		knav::setBakeTuning(tuning);
-		const auto seconds = secondsSince;
 		const std::string dataDir = KENSHI_DATA;
 
-		if (!worldDir.empty())
-			return bakeWorld(dataDir, worldDir, regions, threads, radius, prune, trace);
-
-		auto start = Clock::now();
-		const auto terrain = kworld::Heightmap::open(dataDir + "/newland/land/fullmap.tif");
-		const knav::AreaGeometry area = knav::gatherArea(dataDir, terrain, min, max);
-		std::cout << "gather: " << seconds(start) << " s, " << area.buildings.size() << " buildings, "
-			<< area.foliage->size() << " foliage shapes\n";
-
-		knav::NavConfig config = knav::configForZones(min, max);
-		config.agentRadius = radius;
-		start = Clock::now();
-		knav::NavWorld world(config, terrain, area.foliage);
-		for (const knav::AreaBuilding& building : area.buildings)
-			world.setBuilding(building.id, building.shapes, building.nav);
-		if (prune)
-			setSeeds(world, knav::readSeedsDef(knav::native::navtilesDir(dataDir)), terrain, area, min, max);
-		world.bakeAll(threads);
-		const double bakeSeconds = seconds(start);
-		const knav::NavMesh& mesh = world.mesh();
-		mesh.save(out);
-
-		const auto& c = area.coverage;
-		std::cout << "bake: " << bakeSeconds << " s on " << threads << " thread(s)\n"
-			<< "tiles: " << mesh.tiles().size() << " of " << config.tilesX * config.tilesZ
-			<< ", polys: " << mesh.polyCount() << ", cache: " << std::filesystem::file_size(out)
-			<< " bytes (" << out << ")\n"
-			<< "building placements: " << c.placements << ": " << c.placementsWithCollision
-			<< " with collision, " << c.placementsRenderOnly << " render mesh only, "
-			<< c.placementsNoGeometry << " no geometry, " << c.placementsMissingTarget << " missing target\n"
-			<< "parts: " << c.parts << ": " << c.partsWithCollision << " collision, "
-			<< c.partsRenderOnly << " render only (skipped), " << c.partsNoGeometry << " none, "
-			<< c.partsFlagged << " passable/no-collision, " << c.partsFileUnreadable << " unreadable file, "
-			<< c.partsRuinRemoved << " ruin upper floors\n"
-			<< "path modes: ignore " << c.pathModes[0] << ", projected " << c.pathModes[1]
-			<< ", obstacle " << c.pathModes[2] << ", walkable " << c.pathModes[3]
-			<< "; gateways " << c.gatewayPlacements << "\n"
-			<< "doors: " << c.doors << " placed, " << c.doorsWithoutCollision << " without collision; "
-			<< mesh.doorKeys().size() << " have polygons in the mesh\n"
-			<< "foliage instances: " << c.foliageInstances << ", with collision: " << c.foliageWithCollision << " (walkable " << c.foliageWalkable
-			<< "), navmesh cutters " << c.foliageCutters << "\n"
-			<< "interior furniture: " << c.furniture << " pieces, " << c.furnitureWithCollision << " with collision\n";
-		knav::printBakeProfile(std::cout);
+		if (!cacheRoot.empty() && !trace)
+		{
+			// Thread count and the output path do not change the bytes (knav_bake_threads).
+			std::ostringstream key;
+			key << "recipe " << kBakeRecipeVersion << "\nsrc " << KNAV_BAKE_SRC_HASH << "\ndata " << dataDir << " "
+				<< knavcache::dataStamp(dataDir) << "\nradius " << radius << " prune " << prune << "\ntuning " << tuning.flatTiles << " "
+				<< static_cast<int>(tuning.ledge) << " " << static_cast<int>(tuning.partition) << " " << tuning.detailSampleCells << "\n";
+			if (!worldDir.empty())
+				key << "world " << regions[0] << " " << regions[1] << " " << regions[2] << " " << regions[3] << "\n";
+			else
+				key << "zones " << min.x << " " << min.z << " " << max.x << " " << max.z << "\n";
+#if KSIM_DEV
+			// Test hook for the .failed path (kenshi-k16.15.45): KNAV_BAKE_TEST_FAIL=throw|exit makes the bake fail after some output.
+			const char* const injected = std::getenv("KNAV_BAKE_TEST_FAIL");
+			if (injected)
+				key << "test-fail " << injected << "\n";
+#endif
+			return knavcache::cached(cacheRoot, key.str(),
+				[&](const std::filesystem::path& data) {
+#if KSIM_DEV
+					if (injected)
+					{
+						for (int i = 0; i < 60; ++i)
+							std::cout << "bake progress line " << i << "\n";
+						std::cerr << "injected failure\n";
+						if (std::string(injected) == "throw")
+							throw std::runtime_error("injected bake error");
+						return 3;
+					}
+#endif
+					return worldDir.empty() ? bakeSingle(dataDir, (data / "bake.knav").string(), min, max, threads, radius, prune)
+						: bakeWorld(dataDir, data.string(), regions, threads, radius, prune, trace);
+				},
+				[&](const std::filesystem::path& data) {
+					if (!worldDir.empty())
+						knavcache::linkTree(data, worldDir);
+					else
+						knavcache::linkFile(data / "bake.knav", out);
+				});
+		}
+		return worldDir.empty() ? bakeSingle(dataDir, out, min, max, threads, radius, prune)
+			: bakeWorld(dataDir, worldDir, regions, threads, radius, prune, trace);
 	} catch (const std::exception& e) {
 		std::cerr << "knav_bake: " << e.what() << "\n";
 		return 1;

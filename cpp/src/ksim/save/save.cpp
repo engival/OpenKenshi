@@ -419,6 +419,47 @@ std::vector<std::uint8_t> encodeState(const flecs::world& ecs)
 	return encodeStateAt(ecs, kSaveVersion);
 }
 
+#if KSIM_DEV
+std::vector<StatePart> stateParts(const flecs::world& ecs)
+{
+	std::vector<std::pair<std::uint64_t, flecs::entity_t>> instances;
+	ecs.each([&instances](flecs::entity entity, const state::Id& id)
+	{
+		if (producerSaved(entity))
+			instances.emplace_back(id.value, entity.id());
+	});
+	std::sort(instances.begin(), instances.end());
+	std::unordered_map<flecs::entity_t, std::uint32_t> index;
+	for (std::size_t i = 0; i < instances.size(); ++i)
+		index.emplace(instances[i].second, static_cast<std::uint32_t>(i));
+	std::vector<StatePart> parts;
+	for (const auto& [id, raw] : instances)
+	{
+		const flecs::entity entity(ecs.c_ptr(), raw);
+		forEachType(state::SavedComponents{}, [&]<typename T>(std::size_t bit)
+		{
+			if (bit >= componentKinds(kSaveVersion))
+				return;
+			const T* value = entity.get<T>();
+			if (value == nullptr)
+				return;
+			std::vector<std::uint8_t> bytes;
+			Encoder out(bytes, &index);
+			out.version = kSaveVersion;
+			T::fields(out, *value);
+			std::uint64_t hash = kFnvOffset;
+			for (const std::uint8_t byte : bytes)
+			{
+				hash ^= byte;
+				hash *= kFnvPrime;
+			}
+			parts.push_back({id, std::string(T::kName), hash});
+		});
+	}
+	return parts;
+}
+#endif
+
 std::uint64_t stateHash(const flecs::world& ecs, std::uint32_t version)
 {
 	std::uint64_t hash = kFnvOffset;

@@ -171,8 +171,13 @@ void testStay(Game& game)
 	for (int tick = 0; tick < 24000 && !(occupied && threw); ++tick)
 	{
 		sim.run(1);
-		if (state::Fighter* f = fighterOf(sim, humanId); f != nullptr && !f->dead && occupied)
-			f->unconscious = true; // held down once the stay began: nothing in this test heals or wakes it
+		// rwh.228 s2: the assault ends only when no hostile of its target set stands conscious in the town, so the player is held down from the
+		// moment the assault runs (a stand-in for the raiders beating him; nothing in this test heals or wakes him).
+		if (state::Fighter* f = fighterOf(sim, humanId); f != nullptr && !f->dead && assaulted)
+		{
+			f->koTimer = 1.0e9; // the knockout timer would wake him within a tick
+			f->unconscious = true;
+		}
 		assaulted = assaulted || board->current == assaultSid;
 		if (board->current == occupySid && !occupied)
 		{

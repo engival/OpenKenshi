@@ -1,10 +1,8 @@
 // The individual goals (docs/DIALOGUE.md 5, step 6b): the orders a dialogue effect gives one character, carried out here so that the routines
 // and the squad AI (which yield to a running goal) do not overwrite them. kinspect `findings/dlgtasks_static.md` (10671bd) decoded the tasks.
 //
-//   Flee      DA_RUN_AWAY, task 280 Task_Runaway on the speaker: runs (and takes no fight, CombatArena pickTarget) to a point 2000..2400
-//             past the target, on the line from it (exe: from the centroid of its known threats; ours: the target alone, UNSURE). Ends there,
-//             or when knocked down. The exe then wanders to random points 1000..1400 away and never ends the task by itself (a new order
-//             does); ours ends at the point, or after kFleeTicks, since nothing else would ever give the NPC its next order.
+//   (280 DA_RUN_AWAY is no individual goal any more: orderRunAwayGoal puts RUN_AWAY_FORCED in the member's Routine, like 164 / 19, and
+//   stepRunAwayGoals runs it: away from the threats' centroid, takes no fight (Fighter::fleeing), re-rolls, ends after kFleeTicks.)
 //   GoHome    DA_GO_HOME, task 19 GO_HOMEBUILDING: walks to the squad's home building (SquadInstance home point), else to its home town.
 //             Ends inside the home building (exe isAtHome) or within kArrive of the town point. No home at all: not given (exe: impossible).
 //             The exe has no timer; ours ends after kGoHomeTicks.
@@ -19,7 +17,10 @@
 #include "ksim/core/clock.hpp"
 #include "ksim/core/rng.hpp"
 
+#include "kworld/roadfixups.hpp"
+
 #include <cmath>
+#include <iostream>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -40,8 +41,8 @@ std::shared_ptr<const kworld::RoadNetwork> sharedRoadNetwork(const std::string& 
 	auto [slot, fresh] = cache.emplace(dataDir, nullptr);
 	if (fresh)
 	{
-		try { slot->second = std::make_shared<const kworld::RoadNetwork>(kworld::RoadNetwork::load(dataDir)); }
-		catch (const std::exception&) {}
+		try { slot->second = std::make_shared<const kworld::RoadNetwork>(kworld::RoadNetwork::load(dataDir, kworld::defaultRoadFixupsPath())); }
+		catch (const std::exception& e) { std::cerr << "ksim: no road network: " << e.what() << "\n"; }
 	}
 	return slot->second;
 }
@@ -223,9 +224,10 @@ bool Simulation::walkGoal(std::uint64_t id, state::Fighter& f, double x, double 
 	if (!route.found || route.points.empty() || std::hypot(route.points.back().x - f.x, route.points.back().z - f.z) <= kNoProgress)
 		return false;
 	f.clearRoute();
+	std::vector<state::RoutePoint> points;
 	for (std::size_t p = 0; p < route.points.size(); ++p)
-		f.route.push_back({route.points[p].x, route.heights[p], route.points[p].z});
-	f.routeNext = 0;
+		points.push_back({route.points[p].x, route.heights[p], route.points[p].z});
+	setRoute(f, std::move(points), navigation_.get(), body(f));
 	++f.routeVersion;
 	f.routeSeq = 0;
 	f.routeChase = false;
@@ -233,6 +235,96 @@ bool Simulation::walkGoal(std::uint64_t id, state::Fighter& f, double x, double 
 	f.routeTries = 0;
 	mirrorFighter(id);
 	return true;
+}
+
+// Task_Runaway::start: the destination is 2000..2400 past the centroid of the runner's threats, on the line from it through the runner; the
+// runner's own position when it has none (then straight along the heading). OURS/UNSURE for 280: with no aggressor the order's target stands
+// in for the centroid (existing behaviour; the exe uses its own position).
+bool Simulation::fleePoint(std::uint64_t id, const state::Fighter& f, const state::Fighter& from, double& x, double& z) const
+{
+	double cx = 0.0;
+	double cz = 0.0;
+	std::uint64_t nearest = 0;
+	if (threatsOf(*combat_, id, f, cx, cz, nearest) == 0)
+	{
+		cx = from.x;
+		cz = from.z;
+	}
+	const double dx = f.x - cx;
+	const double dz = f.z - cz;
+	const double d = std::hypot(dx, dz);
+	RngStream dice(streamSeed(streamSeed(streamSeed(seed_, kGoalStream), static_cast<std::size_t>(id)), static_cast<std::size_t>(clockTick())));
+	const double reach = kFleeMin + kFleeSpread * dice.uniform01();
+	x = cx + (d > 1.0 ? dx / d : std::sin(f.yaw)) * reach;
+	z = cz + (d > 1.0 ? dz / d : std::cos(f.yaw)) * reach;
+	return true;
+}
+
+// 280 RUN_AWAY_FORCED (DA_RUN_AWAY) as an order-named Routine (kenshi-k16.6.12.5; the route of 164 / 19): the member's Routine names the goal and
+// the one fled from, stepRunAwayGoals runs it. A replace=1 order: the current task ends first (Character::giveOrder 1405d20d0).
+bool Simulation::orderRunAwayGoal(std::uint64_t id, std::uint64_t target)
+{
+	state::Fighter* f = combat_ != nullptr ? combat_->find(id) : nullptr;
+	const state::Fighter* from = combat_ != nullptr ? combat_->find(target) : nullptr;
+	if (!upright(f) || f->playerControlled || navigation_ == nullptr || !upright(from) || target == id)
+		return false;
+	RunAwayRun run;
+	fleePoint(id, *f, *from, run.x, run.z);
+	CombatArena::endFollow(*f);
+	combat_->dropTarget(id); // a walking NPC never re-picks, so a fight it held would run under the walk
+	f->clearRoute();
+	f->hold = false;
+	f->orderTarget = 0;
+	f->asleep = false;
+	f->goal = state::IndividualGoal{};
+	if (!walkGoal(id, *f, run.x, run.z) && !rerollFlee(id, *f, run.x, run.z))
+	{
+		mirrorFighter(id);
+		return false;
+	}
+	run.until = clockTick() + kFleeTicks; // OURS: nothing else would give the NPC its next order
+	runAway_[id] = run;
+	f->fleeing = true;
+	state::Routine routine;
+	routine.goal = routines::task::RunAwayForced;
+	routine.since = clockTick();
+	routine.chainTarget = target;
+	routine.plan = {routines::task::RunAwayForced};
+	routine.nextScore = clockTick() + 100000; // the scorer does not re-score the member while the goal runs; endGoalRoutine hands it back
+	fighterEntity(id).set<state::Routine>(std::move(routine));
+	mirrorFighter(id);
+	return true;
+}
+
+// Task_Runaway never ends at its point: a new random one when idle or within 200 u of it. 280 has no end of its own in the exe (ours: kFleeTicks).
+void Simulation::stepRunAwayGoals()
+{
+	if (combat_ == nullptr || runAway_.empty())
+		return;
+	const std::uint64_t now = clockTick();
+	std::vector<std::uint64_t> running;
+	for (const auto& [id, run] : runAway_)
+		running.push_back(id);
+	for (const std::uint64_t id : running)
+	{
+		state::Fighter* f = combat_->find(id);
+		const state::Routine* routine = f != nullptr ? fighterEntity(id).get<state::Routine>() : nullptr;
+		RunAwayRun& run = runAway_[id];
+		bool done = routine == nullptr || routine->goal != routines::task::RunAwayForced || !upright(f) || f->playerControlled || now >= run.until;
+		if (!done && now % kGoalLookTicks == 0 && (!moving(*f) || std::hypot(f->x - run.x, f->z - run.z) <= kRerollNear))
+			done = !rerollFlee(id, *f, run.x, run.z);
+		if (done)
+			endRunAway(id);
+	}
+}
+
+void Simulation::endRunAway(std::uint64_t id)
+{
+	runAway_.erase(id);
+	if (state::Fighter* f = combat_->find(id))
+		f->fleeing = false;
+	endGoalRoutine(id, routines::task::RunAwayForced);
+	mirrorFighter(id);
 }
 
 bool Simulation::giveIndividualGoal(std::uint64_t id, state::IndividualKind kind, std::uint64_t target)
@@ -246,32 +338,12 @@ bool Simulation::giveIndividualGoal(std::uint64_t id, state::IndividualKind kind
 	const std::uint64_t now = clockTick();
 	switch (kind)
 	{
-	case state::IndividualKind::Flee:
 	case state::IndividualKind::RunAway:
 	{
 		const state::Fighter* from = combat_->find(target);
-		if (!upright(from) || target == id)
+		if (!upright(from) || target == id || !fleePoint(id, *f, *from, goal.x, goal.z))
 			return false;
-		// Task_Runaway::start: the destination is 2000..2400 past the centroid of the runner's threats, on the line from it through the
-		// runner; the runner's own position when it has none (then straight along the heading). OURS/UNSURE for 280: with no aggressor
-		// the dialogue's target stands in for the centroid (existing behaviour; the exe uses its own position).
-		double cx = 0.0;
-		double cz = 0.0;
-		std::uint64_t nearest = 0;
-		if (threatsOf(*combat_, id, *f, cx, cz, nearest) == 0)
-		{
-			cx = from->x;
-			cz = from->z;
-		}
-		const double dx = f->x - cx;
-		const double dz = f->z - cz;
-		const double d = std::hypot(dx, dz);
-		RngStream dice(streamSeed(streamSeed(streamSeed(seed_, kGoalStream), static_cast<std::size_t>(id)), static_cast<std::size_t>(now)));
-		const double reach = kFleeMin + kFleeSpread * dice.uniform01();
-		goal.x = cx + (d > 1.0 ? dx / d : std::sin(f->yaw)) * reach;
-		goal.z = cz + (d > 1.0 ? dz / d : std::cos(f->yaw)) * reach;
-		// a 280 is timed (OURS: nothing else would give the NPC its next order); a 35 ends with the aggression
-		goal.until = kind == state::IndividualKind::Flee ? now + kFleeTicks : std::numeric_limits<std::uint64_t>::max();
+		goal.until = std::numeric_limits<std::uint64_t>::max(); // a 35 ends with the aggression
 		break;
 	}
 	case state::IndividualKind::Summoned:
@@ -306,7 +378,7 @@ bool Simulation::giveIndividualGoal(std::uint64_t id, state::IndividualKind kind
 	}
 	// A replace=1 order: the current task ends first (Character::giveOrder 1405d20d0).
 	CombatArena::endFollow(*f);
-	if (kind == state::IndividualKind::Flee || kind == state::IndividualKind::RunAway)
+	if (kind == state::IndividualKind::RunAway)
 		combat_->dropTarget(id); // a walking NPC never re-picks, so a fight it held would run under the walk
 	f->clearRoute();
 	f->hold = false;
@@ -314,7 +386,7 @@ bool Simulation::giveIndividualGoal(std::uint64_t id, state::IndividualKind kind
 	f->asleep = false;
 	f->goal = goal;
 	// 35 is the plan step under 32: with no way to run at all there is no step, and 32 stays with the fight (the caller's goal)
-	if (kind == state::IndividualKind::RunAway && !walkGoal(id, *f, goal.x, goal.z) && !rerollFlee(id, *f))
+	if (kind == state::IndividualKind::RunAway && !walkGoal(id, *f, goal.x, goal.z) && !rerollFlee(id, *f, goal.x, goal.z))
 	{
 		f->goal = state::IndividualGoal{};
 		return false;
@@ -325,7 +397,7 @@ bool Simulation::giveIndividualGoal(std::uint64_t id, state::IndividualKind kind
 
 // The re-target helper (GOG 0x3361c0): a random xz direction, 1000..1400 u from the runner, no bias away from the threats. Tries a few draws
 // (a point with no route is skipped); false when none works, so the caller ends the goal instead of leaving a stuck runner holding it.
-bool Simulation::rerollFlee(std::uint64_t id, state::Fighter& f)
+bool Simulation::rerollFlee(std::uint64_t id, state::Fighter& f, double& outX, double& outZ)
 {
 	const std::uint64_t now = clockTick();
 	RngStream dice(streamSeed(streamSeed(streamSeed(streamSeed(seed_, kGoalStream), 1), static_cast<std::size_t>(id)), static_cast<std::size_t>(now)));
@@ -337,8 +409,8 @@ bool Simulation::rerollFlee(std::uint64_t id, state::Fighter& f)
 		const double z = f.z + std::cos(a) * reach;
 		if (walkGoal(id, f, x, z))
 		{
-			f.goal.x = x;
-			f.goal.z = z;
+			outX = x;
+			outZ = z;
 			return true;
 		}
 	}
@@ -366,20 +438,16 @@ void Simulation::stepIndividualGoals()
 		double toZ = goal.z;
 		switch (goal.kind)
 		{
-		case state::IndividualKind::Flee:
 		case state::IndividualKind::RunAway:
 		{
 			// Task_Runaway never ends at its point: it picks a new random one when idle or within 200 u of it. 35 ends when nobody is
-			// aggressing against the runner any more (nobody targets it); 280 has no end of its own (ours: kFleeTicks).
-			if (goal.kind == state::IndividualKind::RunAway)
-			{
-				double cx = 0.0;
-				double cz = 0.0;
-				std::uint64_t nearest = 0;
-				done = done || threatsOf(*combat_, id, f, cx, cz, nearest) == 0;
-			}
+			// aggressing against the runner any more (nobody targets it).
+			double cx = 0.0;
+			double cz = 0.0;
+			std::uint64_t nearest = 0;
+			done = done || threatsOf(*combat_, id, f, cx, cz, nearest) == 0;
 			if (!done && now % kGoalLookTicks == 0 && (!moving(f) || std::hypot(f.x - goal.x, f.z - goal.z) <= kRerollNear))
-				done = !rerollFlee(id, f);
+				done = !rerollFlee(id, f, f.goal.x, f.goal.z);
 			break;
 		}
 		case state::IndividualKind::Summoned:
@@ -407,7 +475,7 @@ void Simulation::stepIndividualGoals()
 			break;
 		}
 		// A walk that ended short is planned again; one with no way on ends the goal (it must not wait for ever).
-		const bool runs = goal.kind == state::IndividualKind::Flee || goal.kind == state::IndividualKind::RunAway; // re-rolled above
+		const bool runs = goal.kind == state::IndividualKind::RunAway; // re-rolled above
 		if (!done && !runs && !f.walking() && now % kGoalLookTicks == 0)
 			done = !walkGoal(id, f, toX, toZ);
 		if (done)

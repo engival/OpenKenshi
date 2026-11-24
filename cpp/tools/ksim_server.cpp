@@ -2,6 +2,7 @@
 // stop flag, the crash recorder and the exit code.
 
 #include "ksim/server_main.hpp"
+#include "knav/navmesh.hpp"
 
 #include "kutil/crashlog.hpp"
 
@@ -26,6 +27,7 @@ int main(int argc, char** argv)
 	ksim::ServerConfig options;
 	if (const int code = ksim::parseServerArgs(argc, argv, options); code >= 0)
 		return code;
+	knav::setSlicedComponents(true); // no whole-mesh label build on the tick thread (kenshi-k16.6.699)
 	// A crash leaves a report with the signal, the sim tick (the number a replay names), a backtrace and the maps (kutil/crashlog.hpp,
 	// shared with kclient). No HOME, no default directory: --crash-dir still installs it.
 	{

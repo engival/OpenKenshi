@@ -252,8 +252,8 @@ int main()
 		check(!body.target<state::MemberOf>().is_valid() && !body.has<state::Routine>() && !body.has<state::MemberRole>() && !body.has<state::Jobs>(),
 			"the recruit left its NPC squad: no MemberOf, Routine, MemberRole or Jobs");
 		const state::Fighter& f = world.f(world.recruit);
-		check(f.playerControlled && f.team == 0 && f.faction == 0 && f.squad == ((std::uint64_t{1} << 62) | world.recruit),
-			"the recruit is a player member: playerControlled, team 0, no faction, a squad of its own");
+		check(f.playerControlled && f.team == 0 && f.faction != 0 && f.faction == world.f(world.player).faction && f.squad == ((std::uint64_t{1} << 62) | world.recruit),
+			"the recruit is a player member: playerControlled, team 0, the player faction's real id (never 0, the factionless), a squad of its own");
 		const state::Allegiance* side = body.get<state::Allegiance>();
 		check(side != nullptr && side->factionSid == w.nameless, "the recruit's allegiance is the player faction");
 		const DialogueCoverage& cov = world.sim->dialogue()->coverage();

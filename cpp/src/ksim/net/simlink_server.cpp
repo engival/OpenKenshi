@@ -24,7 +24,6 @@ using Clock = std::chrono::steady_clock;
 constexpr std::size_t kMaxOutbound = 64u << 20; // a client that stops reading is dropped
 constexpr double kMenuGraceSeconds = 30.0; // DIALOGUE.md 13.3: the session grace (MULTIPLAYER 2c default) before a lone menu ends
 constexpr int kFlushGraceMs = 2000; // after ERROR: time the client gets to read it before the close
-constexpr double kBehindLimit = 1.0; // wall seconds of lag after which pacing resyncs
 
 [[noreturn]] void fail(const std::string& what, const std::string& reason)
 {
@@ -346,8 +345,13 @@ void SimLinkServer::run(const std::atomic<bool>& stop)
 		if (!ctx_.pausedNow())
 		{
 			const auto t = Clock::now();
-			if (std::chrono::duration<double>(t - due).count() > kBehindLimit)
-				due = t;
+			const double lag = std::chrono::duration<double>(t - due).count();
+			if (lag > 0.0)
+			{
+				const double keep = catchUpLag(lag, interval, perSnapshot, ctx_.speed > 1);
+				if (keep != lag)
+					due = t - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(keep));
+			}
 			const auto sending = [&] { return client.fd != kutil::net::kNoSocket && client.initialSent && client.session->ready() && !client.closeAfterFlush; };
 			int pending = 0;
 			const auto sendSnapshot = [&]

@@ -130,20 +130,43 @@ int main(int argc, char** argv)
 			if (member.id > *std::max_element(placed.players.begin(), placed.players.end()))
 				raiders.insert(member.id);
 		test::require(raiders.size() == 11, "the scenario places eleven raiders (got " + std::to_string(raiders.size()) + ")");
-		sim.run(8 * 20);
+		// The claim is "within 8 s": latch the first tick a raider holds goal 16 on the player. At 8 s the label has often moved on: once an
+		// ally fights the player, goal 15 (protect allies) outranks 16 in joinGoal, so the end state is 15 or 16 (32 for a raider that is
+		// itself struck), not 16 alone.
+		bool tookSixteen = false;
+		for (int tick = 0; tick < 8 * 20; ++tick)
+		{
+			sim.run(1);
+			for (const std::uint64_t id : raiders)
+			{
+				const state::Fighter& f = *sim.combat()->find(id);
+				tookSixteen = tookSixteen || (f.target != 0 && isPlayer(placed, f.target) && f.combatGoal == routines::task::AttackEnemies);
+			}
+		}
 		std::size_t onPlayer = 0;
+		std::size_t idle = 0;
+		std::size_t wrongGoal = 0;
 		std::size_t routineLabel = 0;
 		for (const std::uint64_t id : raiders)
 		{
 			const state::Fighter& f = *sim.combat()->find(id);
 			const Simulation::CharStats stats = sim.charStats(id);
-			if (f.target != 0 && isPlayer(placed, f.target) && f.combatGoal == routines::task::AttackEnemies)
+			if (f.target == 0)
+				++idle;
+			else if (isPlayer(placed, f.target))
+			{
 				++onPlayer;
+				const std::uint16_t g = f.combatGoal;
+				if (g != routines::task::AttackEnemies && g != routines::task::ProtectAllies && g != routines::task::SelfPreservation)
+					++wrongGoal;
+			}
 			if (f.target != 0 && stats.goalEnum != f.combatGoal)
 				++routineLabel;
 		}
-		std::printf("on sight: %zu of 11 raiders on the player under goal 16 after 8 s, %zu fighting under another label\n", onPlayer, routineLabel);
-		test::require(onPlayer >= 1, "bar_lure_hostile: no raider took goal 16 on the visible player within 8 s");
+		std::printf("on sight: goal 16 taken within 8 s: %d; after 8 s %zu of 11 raiders on the player, %zu idle, %zu under another goal, %zu fighting under another label\n",
+			tookSixteen ? 1 : 0, onPlayer, idle, wrongGoal, routineLabel);
+		test::require(tookSixteen, "bar_lure_hostile: no raider took goal 16 on the visible player within 8 s");
+		test::require(onPlayer >= 1 && idle == 0 && wrongGoal == 0, "bar_lure_hostile: after 8 s every raider is fighting, and those on the player hold goal 16, 15 or 32");
 		test::require(routineLabel == 0, "a fighting raider reports its routine goal instead of the fight's");
 
 		// 2. Being targeted.

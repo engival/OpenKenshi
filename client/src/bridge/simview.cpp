@@ -18,8 +18,8 @@
 using namespace simlink;
 
 // kenshi-k16.2.237.10 (user 2026-11-18, A/B): drive.facing = travel turns the drawn body of the driven character to its direction of travel and plays the
-// forward walk / run; the movement, the sim heading and the wire are as in camera. Display only (the presentation layer may render off the server's heading).
-static const cfg::Text kDriveFacing{ cfg::Group{ "Direct drive" }, "drive.facing", "camera", { "camera", "travel" }, "Direct drive: camera = the body faces the camera's heading (strafe and backpedal clips); travel = the body turns to its direction of travel and walks forward, strafe / backward / mouse are camera-relative (display only, movement unchanged)" };
+// forward walk / run; the movement, the sim heading and the wire are as in camera. Default travel since kenshi-k16.2.237.17 (user 2026-11-23: camera still needs animation work; kept as a setting). Display only (the presentation layer may render off the server's heading).
+static const cfg::Text kDriveFacing{ cfg::Group{ "Direct drive" }, "drive.facing", "travel", { "camera", "travel" }, "Direct drive: travel (default) = the body turns to its direction of travel and walks forward, strafe / backward / mouse are camera-relative (display only, movement unchanged); camera = the body faces the camera's heading (strafe and backpedal clips, which still look off)" };
 // kenshi-k16.1.3 (run flicker): the legs' speed blends from the previous sample segment's velocity into the current one's, so it is continuous
 // rather than a step a tick; then the original's own filter (below) runs on it.
 static const cfg::Bool kVelBlend{ cfg::Group{ "Locomotion" }, "anim.vel_blend", true, "Locomotion: the legs' speed blends between consecutive sample segments, continuous instead of stepping once a tick (0 = the current pair's velocity alone)" };
@@ -43,7 +43,7 @@ static const cfg::Float kSlopTau{ cfg::Group{ "Locomotion" }, "anim.slop_tau", 0
 // (the full-detail bounds decide that): a character inside the bounds and inside this circle is sent at full detail, so a radius that reaches the
 // buildings the walk already draws brings a town's residents in with the town instead of ~2.7 km later (measured on the Stack approach: the
 // bounds covered the town at 4.74 km, the residents were only sent at 3.34 km with 2000). A change resends the interest at once.
-static const cfg::Float kInterestRadiusCfg{ cfg::Group{ "Character loading" }, "render.interest_radius", 2000.0, 200.0, 20000.0, "The radius (u) of the SET_INTEREST filter the camera sends: characters inside it and inside the full-detail bounds are sent and drawn (2000 = the old fixed value, SIMLINK 5)" };
+static const cfg::Float kInterestRadiusCfg{ cfg::Group{ "Character loading" }, "render.interest_radius", 4000.0, 200.0, 20000.0, "The radius (u) of the SET_INTEREST filter the camera sends: characters inside it and inside the full-detail bounds are sent and drawn (4000 = the bounds' edge, the earliest the sim has a town's residents; 2000 = the old fixed value, SIMLINK 5)" };
 // The run file's three case lines (kenshi-k16.2.264.1). The user's 2026-11-15 walk into Outpost s-IV: "running in place ... movement spurts every
 // second or two", the body gone indoors while its tag drew, and nothing in the run file. kN: how long the wire's own position must stand still while
 // the legs walk before that is a stall. kX: how far the drawn y may sit off the wire's y; the deck blend is 4 u wide by design, so a placement error
@@ -545,11 +545,33 @@ void SimView::cueSounds(const Characters& chars, const Event& e, const std::set<
 	}
 }
 
-Characters::Spec SimView::specOf(uint64_t id, const Characters& chars) const
+// The wire's kFlagLowDetail, for a character that is not the player's own (those are always full, SIMLINK 5) (kenshi-9mw3)
+#ifdef KCLIENT_DEV_TOOLS
+// Dev (kenshi-9mw3): 1 draws every character that is not the player's own as a low-detail figure, as if the wire flagged it, so the cross-fade to the full build
+// can be shot at any distance by setting it back to 0 (a real crossing happens at the bounds, kilometres from the camera). 0 = the wire (the product behaviour).
+static const cfg::Int kLowForce{ cfg::Group{ "Simulation", "", "Debug" }, "sim.low_force", 0, 0, 1, "Dev: 1 draws every non-player character as a low-detail figure (the loading stand-in, idle); setting it back to 0 runs the cross-fade to the full build" };
+static bool isLowWire(const Character& c) { return !(c.cur.flags & kPlayer) && ((c.cur.flags & kLowDetail) || kLowForce.get() != 0); }
+#else
+static bool isLowWire(const Character& c) { return (c.cur.flags & kLowDetail) && !(c.cur.flags & kPlayer); }
+#endif
+
+Characters::Spec SimView::specOf(uint64_t id, const Characters& chars, bool low) const
 {
 	const Character& c = dec_.chars.at(id);
 	Characters::Spec s;
 	const Appearance& a = c.look;
+	if (low)
+	{
+		// A low-detail figure (kenshi-9mw3): the race body in the idle pose and nothing the wire does not send for it (no look, gear or motion); the
+		// loading stand-in is what draws it (Spec::lowDetail), and the full build replaces it when the wire drops the flag.
+		s.id = id;
+		s.race = chars.nameOf(dec_.str(a.race));
+		s.female = a.sex != 0;
+		s.loco = true;
+		s.move = 0;
+		s.lowDetail = true;
+		return s;
+	}
 	s.id = id;	// the log lines' name for it (Characters::label: "41253 Greenlander")
 	s.player = (c.cur.flags & kPlayer) != 0;	// the dev stand-in hold skips the squad (kenshi-k16.2.258.1)
 	s.race = chars.nameOf(dec_.str(a.race));
@@ -752,12 +774,12 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 			// one already shown (a look change rebuilds it) blocks as before, so it never blinks out
 			const auto was = old.find(id);
 			const bool arriving = worldReset || was == old.end() || was->second.index < 0;
-			if (!defer) { ready = !kCharDefer.get() || !arriving || chars.texturesReady(specOf(id, chars)); }
+			if (!defer) { ready = !kCharDefer.get() || !arriving || chars.texturesReady(specOf(id, chars, isLowWire(dec_.chars.at(id)))); }
 			else if (ahead < kLookahead)
 			{
 				// the textures decode on the workers while earlier characters are built; one whose decode is still running waits for a later frame
 				CPUSTAGE_ACC("sim.rebuild.ready");	// the lookahead's spec, prefetch and readiness (kenshi-k16.2.205.12.77)
-				const Characters::Spec ps = specOf(id, chars);
+				const Characters::Spec ps = specOf(id, chars, isLowWire(dec_.chars.at(id)));
 				{ CPUSTAGE_ACC("sim.rebuild.prefetch"); chars.prefetch(ps); }
 				{ CPUSTAGE_ACC("sim.rebuild.isready"); ready = chars.texturesReady(ps); }
 				ahead++;
@@ -775,7 +797,8 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 			sl.version = c.look.version;
 			chars.hull(chars.nameOf(dec_.str(c.look.race)), sl.hull);
 			std::string err;
-			const Characters::Spec s = specOf(id, chars);
+			sl.low = isLowWire(c);
+			const Characters::Spec s = specOf(id, chars, sl.low);
 			sl.severed = s.severed;
 			// a race body still decoding (the squad is not held by the readiness check above): no error, the character is added on a later frame
 			bool notReady = false;
@@ -794,7 +817,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 			{
 				if (slots_.count(id) || (dec_.chars.at(id).cur.flags & kPlayer)) { continue; }
 				if (++seen > 2 * kLookahead) { break; }
-				if (const Characters::Spec ws = specOf(id, chars); chars.warm(ws)) { CPUSTAGE_NOTE("warm id %llu %s", (unsigned long long)id, ws.race.c_str()); break; }
+				if (const Characters::Spec ws = specOf(id, chars, isLowWire(dec_.chars.at(id))); chars.warm(ws)) { CPUSTAGE_NOTE("warm id %llu %s", (unsigned long long)id, ws.race.c_str()); break; }
 			}
 		}
 	}
@@ -810,6 +833,26 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 	// carriers first: a carried character's `carry me` needs its carrier's spec carrying already (Characters::add). A live character is also
 	// rebuilt when the wire flips its drawn bit or swaps the weapon (kenshi-h2v.11.5.2): the weapon mesh moves hand <-> its sheathed attach and
 	// the idle / upper-body records change with the hands (characters.cpp handsFit); the original has no sheathe clip, so the pose just changes.
+	// A low-detail figure whose character goes full detail (the wire drops kFlagLowDetail): the full build replaces it once its textures are
+	// decoded; the figure's stand-in clock and cover carry over (Characters::swapIn), so the full look cross-fades in (render.char_fade's cover and
+	// the stand-in's switch) and the figure never blinks out. The same time budget as the adds bounds the builds of a frame.
+	{
+		const auto t0 = std::chrono::steady_clock::now();
+		int built = 0;
+		for (const uint64_t id : order_)
+		{
+			Slot& sl = slots_[id];
+			if (!sl.low || sl.index < 0 || isLowWire(dec_.chars.at(id))) { continue; }
+			const Characters::Spec full = specOf(id, chars);
+			chars.prefetch(full);
+			if (!chars.texturesReady(full)) { continue; }
+			if (built > 0 && std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() > kAddBudgetMs.get()) { break; }
+			std::string err;
+			CPUSTAGE_ACC("sim.add.lowfull");
+			if (chars.replace((size_t)sl.index, full, err)) { sl.low = false; sl.severed = full.severed; built++; if (std::getenv("KLOWLOG")) { evlog::add("lowdetail", tick_, id, "to full detail"); } }
+			else { charError("build", tick_, id, err); sl.low = false; }
+		}
+	}
 	for (const uint64_t id : order_)
 	{
 		Slot& sl = slots_[id];
@@ -917,7 +960,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		// kenshi-k16.2.237.10 (MINE: a half turn in 0.15 s; no turn speed in the data used): drive.facing = travel. While the character is the direct-drive
 		// one (setDriven: the follow camera on a player, moving or not) the body eases to the travel direction (the prediction's velocity, the wire's when
 		// the prediction is off or settled); still, it keeps its last facing. In combat (swings and blocks follow the sim heading), when the mode is
-		// camera, or on leaving direct drive, it eases back to the sim yaw and releases. Nothing is posed here.
+		// camera (the setting), or on leaving direct drive, it eases back to the sim yaw and releases. Nothing is posed here.
 		{
 			constexpr double kHalfTurn = 0.15, kMoving = 3.0;
 			const bool driven = id == drivenId_ && !posed;
@@ -1220,6 +1263,15 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		for (int k = 0; k < 3; k++) { sl.pos[k] = p[k]; }
 		sl.yaw = yaw;
 		if (sl.index < 0) { continue; }
+		if (sl.low && isLowWire(c))
+		{
+			// a low-detail figure (kenshi-9mw3): the idle pose at the last snapshot position, no motion, action or state the wire does not send for it
+			Characters::Spec& ls = chars.live((size_t)sl.index);
+			for (int k = 0; k < 3; k++) { ls.pos[k] = p[k]; }
+			ls.yaw = byaw;
+			ls.move = ls.moveSim = ls.wireMove = ls.strafe = 0;
+			continue;
+		}
 		const bool fresh = !sl.seen;	// its first drawn frame: there is no pose to fall from (one that enters already down is snapped)
 		sl.seen = true;
 		// KO / dead: the game ragdolls (PhysX), we have no physics; MINE: the skeleton's face-down `crawl idle down`, frozen, blended into over the fall
@@ -1615,13 +1667,13 @@ void SimView::answers()
 		if (e.kind == 41)
 		{
 			speech_[e.a] = { e.str, tick_, e.amount, e.b, e.dir };
-			printf("speech: %llu to %llu: \"%s\" (%s / %s, %.1f s%s%s)\n", (unsigned long long)e.a, (unsigned long long)e.b, dec_.str(e.str).c_str(), dec_.str(e.ref[0]).c_str(), dec_.str(e.ref[1]).c_str(), e.amount, e.dir & 2 ? ", interjection" : "", e.dir & 8 ? ", large" : e.dir & 16 ? ", important" : "");
+			printf("speech: %llu to %llu: \"%s\" (%s / %s, %.1f s%s%s) tick %llu\n", (unsigned long long)e.a, (unsigned long long)e.b, dec_.str(e.str).c_str(), dec_.str(e.ref[0]).c_str(), dec_.str(e.ref[1]).c_str(), e.amount, e.dir & 2 ? ", interjection" : "", e.dir & 8 ? ", large" : e.dir & 16 ? ", important" : "", (unsigned long long)e.tick);
 			continue;
 		}
 		if (e.kind == 42)
 		{
 			speech_.erase(e.a);
-			printf("speech_end: %llu\n", (unsigned long long)e.a);
+			printf("speech_end: %llu tick %llu\n", (unsigned long long)e.a, (unsigned long long)e.tick);
 			continue;
 		}
 		if (e.kind == 43)	// reply_menu: the decoder keeps it in menus

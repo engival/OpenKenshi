@@ -170,6 +170,9 @@ Result measure(const kdata::GameData& gd, const std::shared_ptr<const CombatData
 				if (other <= id)
 					continue;
 				const state::Fighter& g = *arena.find(other);
+				// A KO'd or dead body is a ragdoll: the uprights never read it (task AW, separate()), so a lunge may cross it. The capture's 6.98 u is between standing attackers.
+				if (f.unconscious || f.dead || g.unconscious || g.dead)
+					continue;
 				const double p = std::hypot(f.x - g.x, f.z - g.z);
 				if (p < out.minPair)
 				{
@@ -235,7 +238,7 @@ int main(int argc, char** argv)
 		std::size_t nonEngaged = 0;
 		for (const Result& r : results)
 			nonEngaged += r.hitsNonEngaged;
-		test::require(nonEngaged <= 1, std::to_string(nonEngaged) + " hits by attackers outside the engaged list (capture: 0 of 22)");
+		test::require(nonEngaged == 0, std::to_string(nonEngaged) + " hits by attackers outside the engaged list (capture: 0 of 22)");
 		return 0;
 	} catch (const std::exception& e) {
 		std::cerr << "FAIL: " << e.what() << "\n";

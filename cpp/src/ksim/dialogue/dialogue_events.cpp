@@ -679,6 +679,17 @@ struct DialogueSystem::Selection
 				if (interjectorSlot)
 				{
 					voice = speaker.id;
+				} else if (line.speaker >= 3 && line.speaker <= 5) {
+					// A T_INTERJECTOR line below a line of the owner's (46913 -> 46914 -> 46915 of 'shopkeep holy shoo'): the conversation
+					// goes on with the mate that interjected, the squad mate the interjection node picks (UNSURE: the exe keeps the mate on the
+					// conversation; ours asks the same question again, which gives the same mate while nobody moves).
+					const std::uint64_t mateId = world.interjector(speaker.id);
+					if (mateId == 0)
+					{
+						++cov().interjectionsSkipped;
+						continue;
+					}
+					voice = mateId;
 				} else if (!able || line.speaker < 1 || (line.speaker > 2 && line.speaker != 7)
 					|| (line.speaker == 2 && !target->playerFaction)) {
 					++cov().replyLinesSkipped;
@@ -755,7 +766,7 @@ DialoguePick DialogueSystem::evaluate(const DialogueWorld& world, const Dialogue
 			forcedLog_("forced " + std::string(book_->sidOf(book_->dialogue(forced_).sid)) + ": speaker " + std::to_string(event.speaker) + " target "
 				+ std::to_string(event.target) + " " + dialogueEventName(event.event) + " tick " + std::to_string(event.tick) + ": " + what);
 	};
-	if (world.busy(event.speaker))
+	if (world.busy(event.speaker) || (event.event != ev::PlayerTalkToMe && world.squadBusy(event.speaker)))
 	{
 		if (forcedSpeaker)
 			report("busy (in a conversation)");
@@ -1015,7 +1026,7 @@ DialogueSystem::Speech DialogueSystem::speech(std::uint32_t index, std::uint64_t
 	return out;
 }
 
-std::vector<DialoguePick> DialogueSystem::step(const DialogueWorld& world, std::uint64_t tick)
+std::vector<DialoguePick> DialogueSystem::step(const DialogueWorld& world, std::uint64_t tick, const std::function<void(DialoguePick&)>& commit)
 {
 	std::vector<DialoguePick> picks;
 	std::sort(queue_.begin(), queue_.end(), [](const DialogueEvent& a, const DialogueEvent& b)
@@ -1028,7 +1039,9 @@ std::vector<DialoguePick> DialogueSystem::step(const DialogueWorld& world, std::
 	});
 	std::vector<DialogueEvent> keep;
 	std::size_t used = 0;
-	for (const DialogueEvent& event : queue_)
+	const std::vector<DialogueEvent> events = std::move(queue_); // `commit` may push: those wait for the next step
+	queue_.clear();
+	for (const DialogueEvent& event : events)
 	{
 		if (tick > event.tick && tick - event.tick > kMaxAgeTicks)
 		{
@@ -1047,8 +1060,10 @@ std::vector<DialoguePick> DialogueSystem::step(const DialogueWorld& world, std::
 		++used;
 		picks.push_back(evaluate(world, event));
 		log_.push_back(picks.back());
+		if (commit)
+			commit(picks.back());
 	}
-	queue_ = std::move(keep);
+	queue_.insert(queue_.begin(), keep.begin(), keep.end());
 	while (log_.size() > kLogCap)
 		log_.pop_front();
 	return picks;

@@ -97,6 +97,9 @@ bool isTargetDown(const state::Fighter& f);
 // How near the use point a character must stand to act (xz units; 3D height within kInteractReachY). UNSURE: a guess.
 inline constexpr double kInteractReach = 12.0;
 inline constexpr double kInteractReachY = 30.0;
+// The vertical half of the reach rule (rwh127 s2: isAtOrCanReachTarget): |dy| < 10, or < 35 on the same floor (ours: the walkable ground counts as one
+// floor). A body a storey up or down is out of reach: the actor walks (or gives up), it never strips or lifts it through the floor.
+inline constexpr double kBodyReachY = 35.0;
 // A producer's: its arrival is horizontal only (MQ9); this keeps a mine from being worked through a floor or from a cliff top.
 // UNSURE: the value is ours (the iron deposit's walkable ring lies 10-36 above its use point).
 inline constexpr double kProducerReachY = 80.0;
@@ -156,10 +159,13 @@ enum class InteractKind : std::uint8_t
 	Container = 4, // a storage building (state::Container); loot takes all
 	Producer = 5, // a mine, deposit or drill (state::Producer, producers.hpp); use works it
 	Bed = 6, // a real layout bed (Simulation::bedOf): just after a site id (routines::siteId); action 9 sleeps in it
+	Cage = 7, // a cage building's key (Simulation::cageOf): a carrier's order on it, any action, is the put-in (exe 1407f9e20: N -> 0x6c)
 };
 
 // How close a sleeper must stand to a bed's use point (UNSURE: the exe's own reach is not measured).
 inline constexpr double kReachBed = 4.0;
+// How close a carrier must stand to a cage's walk spot to put its body in (OURS, as the planner's put-in reach: functionalityReach).
+inline constexpr double kReachCage = 6.0;
 
 struct InteractTarget;
 

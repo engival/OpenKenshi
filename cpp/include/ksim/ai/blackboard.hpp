@@ -131,7 +131,7 @@ struct Situation
 {
 	int owned = 0; // Platoon+0x148, the Ownerships set's size (kinspect rwh.8): the slaver packages start at >= 1 and finish at 0
 	bool platoonReady = true; // 1407ac7b0, the platoon condition (meaning UNSURE: read as "fit to act"); patrol and assault end when false
-	int engagedMembers = 0; // living members with a target (vf+0x118 > 0): PassingByTownAssault finishes, leading on, at kAssaultEngaged
+	int engagedMembers = 0; // living members inside a town (vf+0x118 > 0, the zone id; rwh.228): PassingByTownAssault finishes, leading on, at kAssaultEngaged
 	bool assaultTown = false; // PassingByTownAssault should-start: a town not allied, past its cooldown, leader alive, objects near
 	bool targetsGone = true; // every object the assault selected is gone
 	bool leaderAlive = true; // OccupyTown: the platoon leader is alive

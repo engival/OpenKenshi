@@ -106,8 +106,8 @@ struct WildernessSlotCensus
 class WildernessSpawner
 {
 public:
-	// Builds the slots from game data; gameData must outlive the spawner.
-	WildernessSpawner(const kdata::GameData& gameData, std::string_view dataDir);
+	// Builds the slots from game data, judging world states against `ecs`'s facts; gameData must outlive the spawner.
+	WildernessSpawner(const kdata::GameData& gameData, std::string_view dataDir, const flecs::world& ecs);
 	~WildernessSpawner();
 	WildernessSpawner(const WildernessSpawner&) = delete;
 	WildernessSpawner& operator=(const WildernessSpawner&) = delete;

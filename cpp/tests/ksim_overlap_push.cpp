@@ -184,6 +184,7 @@ int main(int argc, char** argv)
 		const Result runBase = pass(data, gd, nav, sid, 2, false);
 		const Result run = pass(data, gd, nav, sid, 2, true);
 		const Result walk = pass(data, gd, nav, sid, 0, true);
+		const Result walkBase = pass(data, gd, nav, sid, 0, false);
 		std::printf("run: overlapped %d moved %d move %.2f-%.2f cos %.2f time %.2f (alone %.2f) lateral %.2f\n", run.overlapped, run.moved, run.minMove, run.maxMove, run.minRadial, run.time, runBase.time, run.lateral);
 		std::printf("walk: overlapped %d moved %d move %.2f-%.2f cos %.2f lateral %.2f\n", walk.overlapped, walk.moved, walk.minMove, walk.maxMove, walk.minRadial, walk.lateral);
 		test::require(run.overlapped >= 3, "fewer than 3 overlapped bodies");
@@ -193,7 +194,10 @@ int main(int argc, char** argv)
 		test::require(run.moved * 100 >= run.overlapped * 10 && run.moved * 100 <= run.overlapped * 60, "the run-speed pushed share is outside 10-60 % (live 29 %)");
 		test::require(run.minMove >= 0.3 && run.maxMove <= 8.0 && run.minRadial > 0.8, "a run-speed push is outside 0.3-8 u or not radial");
 		test::require(std::fabs(run.time - runBase.time) <= 0.15, "the crowd changed the runner's time");
-		test::require(run.lateral <= 1.0 && walk.lateral <= 1.0, "the runner was deflected");
+		// The deflection the crowd adds, over what the walker's own line does with no crowd: the corridor walk cuts and pushes off the route's bends (PATH_WALK.md, kenshi-e9s9.23:
+		// 3.6 u off the planned polyline alone), which is not the crowd's doing (kenshi-e9s9.36).
+		std::printf("lateral alone: run %.2f walk %.2f\n", runBase.lateral, walkBase.lateral);
+		test::require(run.lateral <= runBase.lateral + 1.0 && walk.lateral <= walkBase.lateral + 1.0, "the crowd deflected the runner");
 		std::cout << "ksim_overlap_push ok\n";
 		return 0;
 	} catch (const std::exception& e)

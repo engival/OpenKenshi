@@ -78,6 +78,7 @@ struct Rig
 	std::uint32_t seq = 100;
 	std::vector<std::vector<std::uint8_t>> wire; // every write, frame by frame (decoded too)
 	std::size_t buildingFrames = 0; // BUILDING frames seen since the last clearFrames
+	std::set<std::uint64_t> ambient; // the machine / container rows (kenshi-k16.5.26) the first connect sent, whoever owns them: not player buildings
 
 	static CombatSettings settings()
 	{
@@ -105,6 +106,9 @@ struct Rig
 		sim.enableNavigation(nav);
 		squad = ks::spawnSquad(sim, *gd, *data, context);
 		connect();
+		for (const auto& [id, b] : dec.buildings)
+			ambient.insert(id);
+		buildingFrames = 0;
 	}
 
 	void feed(const std::vector<std::uint8_t>& bytes)
@@ -174,7 +178,8 @@ struct Rig
 	{
 		std::set<std::uint64_t> ids;
 		for (const auto& [id, b] : dec.buildings)
-			ids.insert(id);
+			if (ambient.count(id) == 0)
+				ids.insert(id);
 		return ids;
 	}
 

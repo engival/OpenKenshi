@@ -36,6 +36,7 @@
 #endif
 
 namespace {
+int gIdle = 0; // extra idle ticks at the start of each fixture: a phase shift the outcome checks must survive
 
 using namespace ksim;
 
@@ -132,7 +133,7 @@ struct Game
 				sid = record->stringID;
 		}
 		sim->enqueue(Command::newGame(sid, "Tester", 1));
-		sim->run(3);
+		sim->run(3 + gIdle);
 		for (const CombatArena::Member& member : sim->combat()->members())
 		{
 			if (member.fighter.playerControlled)
@@ -392,7 +393,11 @@ int main(int argc, char** argv)
 			return 77;
 		}
 		std::cout << std::unitbuf;
-		deliver(argv[1]);
+		for (const int idle : {0, 3, 7})
+		{
+			gIdle = idle;
+			deliver(argv[1]);
+		}
 		std::cout << "ksim_slaver_deliver: ok\n";
 		return 0;
 	}

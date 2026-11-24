@@ -393,6 +393,36 @@ int main()
 		std::cout << "reopen: closed gate " << openSeconds << " s, locked gate +3.33 s; foreign crew and no crew leave it shut; "
 			<< doors.stats().crewReopens << " reopens\n";
 
+		// kenshi-k16.6.665 (rwh.209 / rwh.224): a gate the player shut (the interact close's end state: state::Door locked for an `always
+		// locks` gate, else closed) is unlocked and opened again by its crew within the unlock + open time, nothing else involved.
+		{
+			const std::uint64_t key = owned->crew.gate;
+			flecs::entity doorEntity;
+			simulation.world().ecs().each([&](flecs::entity entity, const state::Door& door) { if (door.key == key) doorEntity = entity; });
+			if (!doorEntity.is_valid()) // the test's navigator has no mesh doors: the gate's interactable as spawnMeshDoors makes it
+			{
+				state::Door fresh;
+				fresh.key = key;
+				fresh.state = 0;
+				fresh.gate = true;
+				fresh.alwaysLocks = siteData(key).alwaysLocks;
+				fresh.moveSpeed = siteData(key).moveSpeed;
+				doorEntity = simulation.spawnDoor(fresh);
+			}
+			test::require(doorEntity.get<state::Door>()->state == 0, "the crewed gate's door is not open");
+			state::Door shutDoor = *doorEntity.get<state::Door>();
+			shutDoor.state = shutDoor.alwaysLocks ? 2 : 1;
+			++shutDoor.version;
+			doorEntity.set<state::Door>(shutDoor);
+			runSeconds(simulation, 1.2);
+			test::require(doorEntity.get<state::Door>()->state == shutDoor.state, "the crew reopened a player-closed gate at once");
+			const double wanted = openSeconds + (shutDoor.state == 2 ? 3.33 : 0.0);
+			runSeconds(simulation, wanted + 1.5);
+			test::require(doorEntity.get<state::Door>()->state == 0,
+				"the crew did not reopen a player-closed gate within " + std::to_string(wanted + 2.7) + " s");
+			std::cout << "player close: gate " << key << (shutDoor.state == 2 ? " locked" : " closed") << ", reopened by its crew within " << wanted + 2.7 << " s\n";
+		}
+
 		// Nothing closes a gate: the owner of a crewed gate loses a town (it defends), a hostile raid may come; the book is calm.
 		{
 			const flecs::entity_t owner = entityOf(simulation, doors.townOf(owned->crew.gate)).get<state::TownState>()->owner.id;

@@ -1001,7 +1001,9 @@ visual states to choose from.
   - Away from players, a courier is a squad on the road graph at strategic
     level carrying an "event #n" tag, so news in transit costs almost nothing.
   - Factions and towns act on what they believe, not on what is true.
-- **Guards notice what you carry.** The original scans only the walking
+- **Guards notice what you carry.** PARKED future fix (kenshi-w2k.5); current behaviour is the original's as is (user 2026-11-21): only
+  Task_Kidnapping (order 246) sets the kidnap flag, a plain lift sets nothing and records no crime. The rule below is the intended fix.
+  The original scans only the walking
   character, so a player can pick up a jailed ally and carry them out of
   town unchallenged (user, 2026-10-30). Carrying is also how bounties are
   legitimately delivered. Rule (user): the **prisoner flag** decides, not

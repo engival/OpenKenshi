@@ -1,0 +1,22 @@
+# bark_chase walk_attack (kenshi-jtnm rework): the 1js4 walk to Stack, then the user's chase: the Wanderer walks east along the road to the Holy Sentinel patrol (6 Holy Sentinels at -54800,-13100 outdoors,
+# ids 4013.. on this tree), hits one in front of the others (crime witnessed, the 'HN guards witness crime' roots) and runs back west to Stack's gate; the squad chases. Frames are the headless client's (~45 / s),
+# the far walk takes ~9600 frames at simspeed 2, REORDER re-issues the move so the leg handover does not stall it (kenshi-k16.6.537). SENTINEL is the attacked id.
+280 dump chars
+300 select id=@Wanderer@
+310 set simspeed ${SIMSPEED}
+320 move -56300 -13188
+DUMPS
+MOVES
+11000 move -54900 -13100
+11600 move -54900 -13100
+12200 move -54900 -13100
+12800 dump chars
+12800 camera view -55300 1150 -13100 0 -35 330
+13000 attack id=4013
+13200 attack id=4013
+13500 move -56300 -13188
+14100 move -56300 -13188
+14700 move -56300 -13188
+15300 move -56300 -13188
+SHOTS
+${QUIT} quit

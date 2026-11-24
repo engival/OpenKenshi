@@ -721,12 +721,15 @@ const std::vector<TaskRow>& table()
 			row.preCount = 1;
 			out.push_back(row);
 		}
-		// 25 FIRST_AID_ORDER -> Task_FirstAid (dt24): no preconditions of its own (the task arms its own walk to the target); its
-		// only state effect is clearing needsFirstAid. Code: the executor's first aid interact in world_tasks.cpp.
+		// 25 FIRST_AID_ORDER -> Task_FirstAid (dt24): the one precondition modelled is hasWeaponEquipped = 0 (rwh250: it is on task 25's
+		// pre list, not on goal 58's row, so 58 plans [7, 25]); the task arms its own walk to the target. Its only state effect is
+		// clearing needsFirstAid. Code: the executor's first aid interact in world_tasks.cpp.
 		{
 			TaskRow row;
 			row.task = kFirstAidOrder;
 			row.name = "FIRST_AID_ORDER";
+			row.pre[0] = {Sym::HasWeaponEquipped, false};
+			row.preCount = 1;
 			row.eff[0] = {Sym::NeedsFirstAid, false};
 			row.effCount = 1;
 			out.push_back(row);
@@ -835,7 +838,8 @@ const std::vector<TaskRow>& table()
 			row.name = "OPERATE_MACHINERY";
 			row.pre[0] = {Sym::IsMachineOutputFull, false};
 			row.pre[1] = {Sym::IsMachineInputInvalid, false};
-			row.preCount = 2;
+			row.pre[2] = {Sym::HasWeaponEquipped, false}; // rwh.272: the plan row carries hasWeaponEquipped = 0, so 7 goes in front
+			row.preCount = 3;
 			row.eff[0] = {Sym::IsWorking, true};
 			row.effCount = 1;
 			out.push_back(row);
@@ -1160,8 +1164,9 @@ const std::vector<TaskRow>& table()
 				else if (spec.task == kLockDoorFromOutside) row.eff[row.effCount++] = {Sym::DoorLockedOutside, true};
 				out.push_back(row);
 			}
-			// The bash: BASH_DOOR 81 / BASH_DOOR_HERE 287 / BASH_DOOR_PLAYER_ORDER 226 and BASH_GATE 123 (the fortification gate's, with the 8-mate
-			// crowd limit) all need hasWeaponEquipped = 1 (the planner equips one).
+			// The bash: the planner's rows BASH_DOOR 81 / BASH_DOOR_HERE 287 / BASH_GATE 123 (the fortification gate's, with the 8-mate crowd limit)
+			// need hasWeaponEquipped = 1 (the planner equips one). BASH_DOOR_PLAYER_ORDER 226 is the player's direct order: no precondition on the
+			// hands, it bashes with fists as with a katana (rwh.235, live).
 			for (const DoorRow& spec : {DoorRow{kBashDoor, "BASH_DOOR", false}, DoorRow{kBashDoorHere, "BASH_DOOR_HERE", true},
 					 DoorRow{kBashDoorOrder, "BASH_DOOR_PLAYER_ORDER", false}, DoorRow{kBashGate, "BASH_GATE", false}})
 			{
@@ -1171,7 +1176,7 @@ const std::vector<TaskRow>& table()
 				row.orderOnly = spec.task == kBashDoorOrder;
 				row.pre[row.preCount++] = {Sym::DoorBashable, true};
 				if (spec.task == kBashGate) row.pre[row.preCount++] = {Sym::GateBashOpen, true};
-				row.pre[row.preCount++] = {Sym::HasWeaponEquipped, true}; // rows 81 / 123 / 226 / 287 / 290 all carry hasWeaponEquipped = 1 (rwh.199)
+				if (!row.orderOnly) row.pre[row.preCount++] = {Sym::HasWeaponEquipped, true}; // planner rows 81 / 123 / 287 / 290: hasWeaponEquipped = 1 (rwh.199)
 				atDoor(row, spec.here);
 				row.eff[row.effCount++] = {Sym::DoorIsOpen, true}; // a broken door is open; the lock needs no separate step
 				out.push_back(row);

@@ -580,7 +580,7 @@ std::string Simulation::runChangeSquad(std::uint64_t character, std::uint64_t sq
 		fighter->hold = false;
 		fighter->playerControlled = true;
 		fighter->team = 0;
-		fighter->faction = 0;
+		fighter->faction = handle.id; // the player faction's real id: 0 is the factionless (wild animals), which faction-equality ally tests would read as allies
 		fighter->squad = (std::uint64_t{1} << 62) | character;
 		fighter->attacksNeutrals = false;
 		fighter->uniqueSquad = false;

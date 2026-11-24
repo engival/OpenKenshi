@@ -53,9 +53,8 @@ int main()
 		const std::int32_t groupType = kworld::itemTypeByName("BIOME_GROUP");
 		const std::int32_t townType = kworld::itemTypeByName("TOWN");
 
-		flecs::world scratch;
-		RngStream unused(1);
-		const SquadBuilder judge(scratch, data, unused);
+		worldstate::Facts facts; // the game's own
+		worldstate::collectStatuses(sim.world().ecs(), facts);
 
 		// squad template -> colours of the BIOME_GROUPs that list it
 		std::map<std::string, std::set<std::uint32_t>> allowed;
@@ -66,7 +65,7 @@ int main()
 			forEachRef(*group, "nests", [&](const kdata::RefEntry& nestEntry)
 			{
 				const kdata::Record* nest = data.find(nestEntry.targetID);
-				if (nest == nullptr || nest->type != townType || !judge.worldStateHolds(*nest))
+				if (nest == nullptr || nest->type != townType || !worldstate::listHolds(data, facts, *nest))
 					return; // a nest whose own `world state` fails is no source
 				for (const char* list : {"residents", "default resident", "bar squads", "roaming squads"})
 					forEachRef(*nest, list, [&](const kdata::RefEntry& entry) { allowed[entry.targetID].insert(colour); });

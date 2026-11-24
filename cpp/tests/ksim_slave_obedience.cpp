@@ -41,6 +41,8 @@ using namespace ksim;
 namespace
 {
 
+constexpr std::uint64_t kWakeTicks = 600; // the cuffed slave is woken this long after the cuff
+
 // `rowGone`: order 77 deletes the 187 row the tick the player is cuffed (the control run).
 // Returns whether the player took the graft goal (false: it was carried the whole time - a downed slave is carried, and a carried one is no free member).
 bool play(const std::uint64_t seed, const bool rowGone)
@@ -94,8 +96,24 @@ bool play(const std::uint64_t seed, const bool rowGone)
 	test::require(sim.combat()->find(kPlayer)->obedient, "the cuffed player holds its 187 row" + tag);
 	// The capture's first aid runs, then the slave is up and follows (a downed slave is carried, and a carried one is no free member: seeds where it is
 	// still carried after 8000 ticks show nothing here).
+	// The waking is forced, not left to the fight: since k16.6.614 moved the stream no seed (1-12, 100, 101, 103; KSIM_SEEDS survey, k16.6.677) has
+	// the slave wake inside the window. After kWakeTicks the slave's KO timer is let run out and its wounds closed (what the aid does); the carry step's
+	// own wake path then puts it down and the follow (171) starts through the sim, nothing else is written.
+	const std::uint64_t cuffTick = sim.clockTick();
 	for (int i = 0; i < 8000; ++i)
 	{
+		if (sim.clockTick() >= cuffTick + kWakeTicks)
+		{
+			state::Fighter& woken = *const_cast<state::Fighter*>(sim.combat()->find(kPlayer));
+			if (woken.unconscious || woken.down)
+			{
+				woken.koTimer = 0.0;
+				woken.koLatch = false;
+				woken.blood = woken.maxBloodRace;
+				for (state::FighterPart& part : woken.parts)
+					part.health = part.maxHealth;
+			}
+		}
 		const state::Fighter& slave = *sim.combat()->find(kPlayer);
 		if (slave.carriedBy == 0 && !slave.unconscious && !slave.down && slave.followTarget != 0)
 			break;
@@ -189,7 +207,10 @@ int main()
 		// The furniture ring (k16.7.89) moves the fight: KSIM_SEEDS sweep of 1..12 with it (2026-11-18): only seed 1 is freed inside the window and grafts;
 		// 4 and 5 are still carried (down) when the walk is over.
 		// Recipe 30's ring (k16.7.95) moved the fights again (KSIM_SEEDS survey 2026-11-19, kenshi-k16.7.104): of 1-12, 100, 101, 103 only seed 12 is freed inside the window and grafts.
-		for (const std::uint64_t seed : {std::uint64_t{12}})
+		// k16.6.495 (goal 16 on the strict FRESH flag, hold-join through plan 13) moved the fights again (KSIM_SEEDS 1-6, 2026-11-21): only seed 5 grafts.
+		// k16.7.118 (furniture off the squads' Id counter, every squad Id moved) moved them once more: of 1-7 only seed 5 grafts (KSIM_SEEDS survey 2026-11-21,
+		// kenshi-k16.6.655); 12 no longer does.
+		for (const std::uint64_t seed : {std::uint64_t{5}})
 		{
 			grafted += play(seed, false) ? 1 : 0;
 			play(seed, true);

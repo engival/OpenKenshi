@@ -237,6 +237,14 @@ void patrolTown(const std::string& bake)
 			continue;
 		++legs;
 		farthest = std::max({farthest, std::fabs(me->route.back().x - town.x), std::fabs(me->route.back().z - town.z)});
+		// kenshi-k16.6.599: a world squad's town patrol with no enemy is a plain walk: no combat mode, no sneak, strolling (the wire
+		// says speed mode Walk, writeDynamic), whatever the mover default speed mode is.
+		if (me->target == 0)
+		{
+			test::require(!sim.combatMode(*me), "a patrol with no target is not in combat mode");
+			test::require(!me->sneak, "a patrol does not sneak");
+			test::require(me->strolling, "a patrol on 36 strolls (walk gait) with no enemy");
+		}
 	}
 	std::cout << "  " << legs << " leg routes, farthest " << farthest << " u from the town centre (limit " << half << ")\n";
 	test::require(legs > 0, "the patroller drew legs");

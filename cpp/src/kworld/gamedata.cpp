@@ -20,7 +20,7 @@ kdata::GameData loadMergedGameData(const LoadOrder& order)
 	{
 		auto bytes = detail::readFile(entry.path);
 		auto file = kdata::parse(bytes, entry.name);
-		merged.apply(file);
+		merged.apply(std::move(file));
 	}
 	return merged;
 }

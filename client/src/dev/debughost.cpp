@@ -642,6 +642,13 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 			double tc;
 			if (cx.buildings.propRay(id, from, dir, tc)) { printf("pick container %llu box at t %.3f from-layout %d\n", (unsigned long long)id, tc, cx.buildings.propFromLayout(id) ? 1 : 0); }
 		}
+		for (const auto& [id, th] : sim.things())	// machines (kind 4 / 12): the distance into the placement's boxes and into its drawn triangles (kenshi-wsbz)
+		{
+			if (!th.machineLike()) { continue; }
+			double tb, td;
+			const bool box = cx.buildings.propRay(id, from, dir, tb), drawn = cx.buildings.propRay(id, from, dir, td, true);
+			if (box || drawn) { printf("pick machine %llu box t %.3f drawn t %.3f\n", (unsigned long long)id, box ? tb : -1.0, drawn ? td : -1.0); }
+		}
 		if (cx.buildings.focus() >= 0) { printf("pick focus %s\n", cx.buildings.describe((uint32_t)cx.buildings.focus()).c_str()); }
 		return true;
 	}
@@ -711,6 +718,18 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 		}
 		return true;
 	}
+	if (a.size() == 1 && a[0] == "lowdetail")	// dump lowdetail: every kFlagLowDetail character on the wire (id, newest sample tick and position, ticks since the sample before it = the squad rate, samples held, whether it is drawn as the low figure) and the count of full ones; stdout (kenshi-9mw3)
+	{
+		size_t low = 0, full = 0;
+		for (const auto& [id, ch] : sim.decoder().chars)
+		{
+			if (!(ch.cur.flags & simlink::kLowDetail)) { full++; continue; }
+			low++;
+			printf("low %llu tick %llu at %.0f %.0f gap %lld samples %d\n", (unsigned long long)id, (unsigned long long)ch.cur.tick, ch.cur.pos[0], ch.cur.pos[2], ch.samples > 1 ? (long long)ch.cur.tick - (long long)ch.prev.tick : -1LL, ch.samples);
+		}
+		printf("lowdetail: %zu low, %zu full, %zu drawn\n", low, full, chars.size());
+		return true;
+	}
 	if (a.size() == 1 && a[0] == "bounds")	// dump bounds: the full-detail bounds the sim last sent (DETAIL_BOUNDS, SIMLINK 6): box count, each box and its centre; stdout
 	{
 		const auto& boxes = sim.decoder().bounds;
@@ -727,6 +746,7 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 				sim.decoder().str(t.owner).c_str(), sim.foreign(id) ? " FOREIGN" : "", t.lockLevel, sim.decoder().str(t.model).c_str(), t.yaw);
 			if (t.kind == simlink::Interactable::kItem || t.kind == simlink::Interactable::kContainer) { printf("  drawn y %.2f (wire %.2f, terrain %.2f)\n", sim.thingY(id, t), t.pos[1], cx.hm ? cx.hm->height(t.pos[0], t.pos[2]) : 0.0); }	// the ring / square / pick sphere's y (kenshi-k16.2.412.4)
 			if (t.kind == simlink::Interactable::kBed) { printf("  bed building %llu furniture %u \"%s\" occupant %llu version %u use %.3f %.3f %.3f\n", (unsigned long long)t.building, t.furniture, sim.decoder().str(t.furniture).c_str(), (unsigned long long)t.occupant, t.version, t.use[0], t.use[1], t.use[2]); }
+			if (t.kind == simlink::Interactable::kMachine) { double pbl[3] = {}, pbh[3] = {}, dbl[3] = {}, dbh[3] = {}; cx.buildings.propBox(id, pbl, pbh); cx.buildings.propBox(id, dbl, dbh, 0, true); const simlink::SimLinkDecoder::Building* mr = sim.building(id); printf("  machine kind %u state %u input \"%s\" output \"%s\" turret %llu tail %d row %d status %d flags %u pick-mesh %d pbox %.1f %.1f %.1f %.1f %.1f %.1f dbox %.1f %.1f %.1f %.1f %.1f %.1f\n", (unsigned)t.machineKind, (unsigned)t.mstate, sim.nameOf(t.input, chars).c_str(), sim.nameOf(t.machineOutput, chars).c_str(), (unsigned long long)t.turret, (int)t.hasMachine, mr ? 1 : 0, mr ? (int)mr->status : -1, mr ? (unsigned)mr->flags : 0u, cx.buildings.propInstance(id) >= 0 ? 1 : 0, pbl[0], pbl[1], pbl[2], pbh[0], pbh[1], pbh[2], dbl[0], dbl[1], dbl[2], dbh[0], dbh[1], dbh[2]); }
 			if (t.kind == simlink::Interactable::kContainer) { printf("  container building %llu piece %u%s drawn %d piece-instance %d from-layout %d\n", (unsigned long long)t.building, (unsigned)t.piece, t.hasPiece ? "" : " (no tail)", cx.buildings.propInstance(id) >= 0 ? 1 : 0, cx.buildings.layoutPieceInstance(t.building, t.piece), cx.buildings.propFromLayout(id) ? 1 : 0); }
 		}
 		return true;
@@ -985,13 +1005,13 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 	if (a.size() == 1 && a[0] == "machine")	// dump machine: the focus panel's producer, its wire fields, its BUILDING row and its panel's lines (k16.19.7.1, k16.19.8.2; stdout)
 	{
 		const simlink::Interactable* t = cx.panelProducer ? sim.thing(cx.panelProducer) : nullptr;
-		if (!t || t->kind != simlink::Interactable::kProducer) { printf("machine: no producer panel; the window %llu is %s\n", (unsigned long long)cx.machine, cx.machine ? "open" : "closed"); }
+		if (!t || (!t->machineLike() && t->kind != simlink::Interactable::kContainer)) { printf("machine: no producer panel; the window %llu is %s\n", (unsigned long long)cx.machine, cx.machine ? "open" : "closed"); }
 		else
 		{
 			printf("machine %llu \"%s\" record \"%s\": state %u, output \"%s\" %u/%u, operators %u/%u, rate %.4f/s\n", (unsigned long long)t->id, sim.nameOf(t->record, chars).c_str(),
 				sim.decoder().str(t->record).c_str(), t->state, sim.nameOf(t->output, chars).c_str(),
 				t->count, t->cap, t->operators, t->maxOperators, t->rate);
-			if (const simlink::SimLinkDecoder::Building* row = sim.focusBuilding())
+			if (const simlink::SimLinkDecoder::Building* row = t->kind == simlink::Interactable::kMachine ? sim.building(t->id) : sim.focusBuilding())
 			{
 				printf("  row %llu owner %llu status %u workers %u/%u efficiency %.2f maxEfficiency %.2f hp %.1f/%.1f quality %.2f version %u\n", (unsigned long long)row->id,
 					(unsigned long long)row->owner, (unsigned)row->status, (unsigned)row->workers, (unsigned)row->maxWorkers, (double)row->efficiency,
@@ -1001,6 +1021,8 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 			printf("  buildings map has the focus row: %d (%zu rows)\n", (int)(sim.decoder().buildings.count(cx.panelProducer) != 0), sim.decoder().buildings.size());
 			const ui::HudBuildingInfo b = cx.machinePanel();
 			printf("  panel \"%s\" faction \"%s\" status \"%s\"\n", b.name.c_str(), b.faction.c_str(), b.status.c_str());
+			for (const ui::HudLine& l : b.state) { printf("  state %s %s\n", l.label.c_str(), l.value.c_str()); }
+			for (const ui::HudBuildingButton& l : b.buttons) { printf("  line %s\n", l.text.c_str()); }
 			for (const ui::HudLine& l : b.stats) { printf("  stat %s %s %s\n", l.label.c_str(), l.value.c_str(), l.colour.c_str()); }
 			for (const ui::HudBuildingBar& bar : b.bars) { printf("  bar %s %s %d%%\n", bar.label.c_str(), bar.value.c_str(), (int)(bar.fraction * 100)); }
 		}

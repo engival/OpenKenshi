@@ -293,6 +293,8 @@ struct Options
 	bool ai = true; // --no-ai: the characters are plain fighters (no squad AI, residents' routines or world carry), the first version of this tool
 	bool optional = false;
 	bool traceDeaths = false; // --trace-deaths: one DEATH line per death (blood, bleed rate, wounds, every part), stdout
+	int fightStride = 1; // --fight-stride N / --idle-stride N: CombatSettings::fightStride / idleStride (arena strides, kenshi-k16.6.636)
+	int idleStride = 1;
 	double medicalClock = 0.0; // --medical-clock X: CombatSettings::medicalClock for this run (0 = the default)
 	bool check = false; // --check: exit 1 unless every run really fought and settled
 	bool traceAll = false; // --trace-all: --trace plus the state changes of every character
@@ -319,6 +321,8 @@ RunLog runOne(const Options& options, const kworld::LoadOrder& order, std::share
 		combatData = CombatData::build(*gameData, KENSHI_DATA);
 	CombatSettings settings;
 	settings.substeps = 2;
+	settings.fightStride = options.fightStride;
+	settings.idleStride = options.idleStride;
 	if (options.medicalClock > 0.0)
 		settings.medicalClock = options.medicalClock;
 	sim.enableCombat(combatData, settings);
@@ -794,6 +798,10 @@ int main(int argc, char** argv)
 				options.maxSeconds = std::stod(argv[++i]);
 			else if (arg == "--mods" && hasValue)
 				options.mods = argv[++i];
+			else if (arg == "--fight-stride" && hasValue)
+				options.fightStride = std::stoi(argv[++i]);
+			else if (arg == "--idle-stride" && hasValue)
+				options.idleStride = std::stoi(argv[++i]);
 			else if (arg == "--no-trigger")
 				options.trigger = false;
 			else if (arg == "--trace-all")

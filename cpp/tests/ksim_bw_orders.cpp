@@ -207,7 +207,7 @@ std::vector<std::uint64_t> chaseSeedList()
 		}
 		return seeds;
 	}
-	return {1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12}; // the first kChaseSamples seeds that roll a 5+ member squad; seed 6 never engages (0 of 6 target the player), so it is no chase sample
+	return {1, 2, 3, 4, 5, 7, 8, 10, 11, 12}; // the first kChaseSamples seeds that roll a 5+ member squad (today 1, 2, 4, 5, 10: 3, 7 and 8 roll 3-4); seed 9 never engages because the world rolled a second wilderness squad (slave hunters, template 18919) 600 u from the den and the bandits fight it instead of the player 385 u away (all 5 targets are its members; they end 2300 u off); seed 6 never engages either (0 of 6), so neither is a chase sample
 }
 
 double chase(Game& game, std::uint64_t squadId, std::vector<std::string>& failures)

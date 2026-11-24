@@ -417,6 +417,55 @@ void testTrip(const kworld::LoadOrder& order, const std::shared_ptr<const Combat
 	std::cout << "trip ok: shop " << shopBefore << " -> " << shopAfter << ", shopper " << mineBefore << " -> " << mineAfter << "\n";
 }
 
+// ---- bar tables on the first tick after enableAi (k16.7.117) ----
+
+// Staying traders and how many of them hold a table, counted after `ticks`.
+std::pair<int, int> stayingTraders(Simulation& sim)
+{
+	int staying = 0;
+	int tabled = 0;
+	ecsOf(sim).each([&](flecs::entity squad, const state::TraderTrip& trip) {
+		if (!trip.staying)
+			return;
+		++staying;
+		const state::SquadRoutine* routine = squad.get<state::SquadRoutine>();
+		if (routine != nullptr && routine->barTable != 0)
+			++tabled;
+	});
+	return {staying, tabled};
+}
+
+void testFirstSecond(const kworld::LoadOrder& order, const std::shared_ptr<const CombatData>& combat)
+{
+	// A new game: the traders that stay-select in the first second get a table (none steps without the hook).
+	Simulation fresh = newGame(order);
+	enable(fresh, combat);
+	fresh.run(Simulation::kSquadIntervalTicks);
+	const auto [staying, tabled] = stayingTraders(fresh);
+	std::cout << "first second: " << staying << " staying traders, " << tabled << " with a bar table\n";
+	test::require(staying > 0, "a new game has staying traders in its first second");
+	test::require(tabled > 0, "an in-town trader that stay-selects in the first second has a table");
+
+	// A save at a tick that is not a multiple of 20: the loaded run equals the straight one through the next 19 ticks and beyond.
+	const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_shopping_first.save";
+	Simulation straight = newGame(order);
+	enable(straight, combat);
+	straight.run(7);
+	test::require(straight.clockTick() % 20 != 0, "the save tick is not a multiple of 20");
+	const std::uint64_t split = straight.stateHash();
+	straight.saveGame(path);
+	Simulation loaded = Simulation::loadGame(KENSHI_DATA, order, path, false, nullptr, RegionConfig{});
+	test::require(loaded.stateHash() == split, "load gives the saved hash");
+	enable(loaded, combat);
+	for (int chunk = 0; chunk < 8; ++chunk)
+	{
+		straight.run(10);
+		loaded.run(10);
+		test::require(loaded.stateHash() == straight.stateHash(), "a save between bar-table ticks loads equal to the straight run (chunk " + std::to_string(chunk) + ")");
+	}
+	std::remove(path.c_str());
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -432,6 +481,7 @@ int main(int argc, char** argv)
 		testResolver();
 		testTakeOne(combat);
 		testTrip(order, combat);
+		testFirstSecond(order, combat);
 	} catch (const std::exception& e) {
 		std::cerr << "ksim_shopping: FAILED: " << e.what() << "\n";
 		return 1;

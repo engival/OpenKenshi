@@ -113,6 +113,11 @@ public:
 	}
 	// A far goal (its zone not loaded) is walked one zone at a time: the route ends at the exit of the walker's zone (clamped), the caller asks again
 	// from there (MeshNavigator::routeFarFrom, kenshi-k16.6.482). The default is routeFor.
+	// The portal corridor of a final route's points (PATH_WALK.md 3a): empty = none known (setRoute then lays a point portal at every point).
+	virtual std::vector<state::RoutePortal> corridorFor(const std::vector<state::RoutePoint>&, Body) const { return {}; }
+	// The doors a corridor crosses that are not locked now: a walker on this route keeps going through them when they lock (rwh.231 c3a, rwh.244;
+	// the lock refuses a plan, not a walk under way). A door locked at the plan is not in it: the walker stops there as before.
+	virtual std::vector<std::uint64_t> openDoorsOn(const std::vector<state::RoutePortal>&) const { return {}; }
 	virtual Route farRouteFor(const Traveller& who, double fromX, double fromZ, double toX, double toZ) const
 	{
 		return routeFor(who, fromX, fromZ, toX, toZ);
@@ -166,6 +171,7 @@ struct NavStats
 	// radius-0 retries combat's routeForBody made after a body route failed (kenshi-k16.7.62).
 	std::array<std::uint64_t, 6> routeFailures{};
 	std::uint64_t routeClearanceNodes = 0;
+	std::uint64_t routeNegativeHits = 0; // routeFrom calls answered from the no-route cache (kenshi-k16.6.627)
 	std::uint64_t radiusZeroRetries = 0;
 	std::uint64_t localCalls = 0; // bounded Detour search
 	std::uint64_t localFound = 0;
@@ -197,7 +203,7 @@ struct NavStats
 // corrupt one is deleted, logged and rebuilt, never a crash and never a silent fallback (MeshNavigator::openNative).
 struct NativeCacheOptions
 {
-	// The cache root. Empty: KENSHI_NAV_CACHE, else $XDG_CACHE_HOME/kenshi-sim/navmesh (default ~/.cache/kenshi-sim/navmesh).
+	// The cache root. Empty: nativeCacheRoot() (KENSHI_NAV_CACHE, $XDG_CACHE_HOME, %LOCALAPPDATA%, %APPDATA%, then ~/.cache).
 	std::string dir;
 	// false: no cache at all (ksim_server --no-nav-cache): nothing is read or written.
 	bool enabled = true;
@@ -207,7 +213,15 @@ struct NativeCacheOptions
 	// Probe only (ksim_nav_islands --oracle, kenshi-k16.7.53): skip the stale-tile check, so the mesh is the shipped navtiles as
 	// converted, the original's own, with no rebake. nativeReport() then has no decisions.
 	bool shippedOnly = false;
+	// The bake sources' hash in the tree name (KNAV_BAKE_SRC_HASH, kenshi-k16.7.161). Empty = the one compiled in; a test injects one.
+	std::string bakeSrcHash;
 };
+// The default cache root from an environment lookup (getenv-like, null = unset): KENSHI_NAV_CACHE, else
+// $XDG_CACHE_HOME/kenshi-sim/navmesh, else %LOCALAPPDATA%/kenshi-sim/navmesh, else %APPDATA%/..., else
+// $HOME/.cache/kenshi-sim/navmesh. Empty when none is set. (The Windows variables come before HOME: under Wine/Proton HOME is a
+// Unix path.) The lookup is a parameter so a test fakes the environment.
+std::string nativeCacheRoot(const std::function<const char*(const char*)>& env);
+
 struct NativeCacheStats
 {
 	std::size_t regionHits = 0; // a converted region read from the cache
@@ -217,6 +231,10 @@ struct NativeCacheStats
 	std::size_t filesWritten = 0;
 	std::size_t bytesWritten = 0;
 	std::size_t loadFailures = 0; // corrupt, truncated or another version: deleted, logged and rebuilt
+	// Where the time went (the startup stage line): hashing the shipped tiles for the region keys, reading cache entries,
+	// and converting / rebaking on a miss (the write included).
+	double keySeconds = 0, readSeconds = 0, convertSeconds = 0;
+	std::size_t keyFiles = 0, keyBytes = 0, readFiles = 0, readBytes = 0;
 };
 
 // One navmesh (a bake of a few zones, or a `knav_bake --out` cache file) and the movement step on
@@ -236,6 +254,8 @@ public:
 
 	bool covers(double x, double z) const override;
 	Route route(double fromX, double fromZ, double toX, double toZ) const override;
+	std::vector<state::RoutePortal> corridorFor(const std::vector<state::RoutePoint>& points, Body body) const override;
+	std::vector<std::uint64_t> openDoorsOn(const std::vector<state::RoutePortal>& portals) const override;
 	Route farRouteFor(const Traveller& who, double fromX, double fromZ, double toX, double toZ) const override;
 	std::optional<state::GroundPoint> nearestWalkable(double x, double z, double reach, double radius = 0.0) const override;
 	// The free run beyond (x, z) at height y along the unit direction (dirX, dirZ): how far a body of `radius` can go on before it stops fitting (a wall within
@@ -322,6 +342,9 @@ public:
 	// is stale (Simulation::routeRetry, LOCOMOTION.md 9 D8).
 	std::uint64_t doorPaints() const noexcept { return doorPaints_; }
 
+	// Swaps navmesh tiles in place (a tile patch); the revision change drops the no-route cache.
+	void replaceTiles(const std::vector<knav::TileCoord>& removed, std::vector<knav::BakedTile> added) const { mesh_.replaceTiles(removed, std::move(added)); }
+	const NavStats& stats() const noexcept { return stats_; }
 	const knav::NavMesh& mesh() const noexcept { return mesh_; }
 	const knav::Walker& walker() const noexcept { return walker_; }
 
@@ -336,6 +359,11 @@ public:
 	const std::string& nativeCacheDir() const noexcept { return cacheTree_; }
 	// The one line per open: the hits and misses and the bytes written, so a cold start is visible.
 	void logNativeCache() const;
+	// The cache root keeps only the newest `keep` recipe trees (direct children named w<digits>_<hex>, by mtime; the tree in use is
+	// touched first, so it is always among them). The others are removed whole and logged, one line each; nothing outside `root`
+	// is touched. Called by openNative (kNativeCacheKeep); public for the test. Returns the removed names.
+	static std::vector<std::string> pruneCacheRoot(const std::string& root, const std::string& inUse, std::size_t keep,
+		const std::function<void(const std::string&)>& log = {});
 
 	// The same coverage over the game's SHIPPED navtiles instead of a bake: each region is converted to Detour tiles in memory
 	// the first time a zone of it is wanted (the knav_native conversion, NAVMESH_CACHE.md "Runtime mesh"). A converted region is
@@ -382,10 +410,14 @@ public:
 		// The tiles this decision replaced with our bake: the zone's whole square for a rebaked zone, the interior's own
 		// square in a fresh one. A polygon in one of them is ours, not the original's (ksim_nav_islands' source column).
 		std::vector<knav::TileCoord> rebaked;
+		// The tiles of a stale unit whose shipped mesh agrees with our rebake (knav/navgeom.hpp): the shipped tile stays, our bake is
+		// dropped (kenshi-k16.7.128). Never in `rebaked`.
+		std::vector<knav::TileCoord> agreed;
 	};
 	struct NativeStaleStats
 	{
 		std::size_t zonesShipped = 0;
+		std::size_t zonesForestOnly = 0; // counted in zonesShipped too: the hash differs by the forest word alone, the shipped tile is kept
 		std::size_t zonesRebaked = 0; // a stale zone hash
 		std::size_t zonesNotComputable = 0; // rebaked without a verdict
 		std::size_t interiorsShipped = 0;
@@ -394,6 +426,8 @@ public:
 		std::size_t interiorChildOrder = 0; // ... of the not computable: children whose gather order is unknown
 		std::size_t interiorUnpaired = 0; // ... no placement for the uid
 		std::size_t interiorUnjoined = 0; // ... a layout not in interiors.level
+		std::size_t tilesAgreed = 0; // tiles of stale units that kept the shipped mesh (the rebake agreed with it)
+		std::size_t tilesRebaked = 0; // tiles of stale units that took our rebake
 		std::size_t zonesScanned = 0; // zones decided so far (lazily: a zone is decided when a coverage wants it)
 		double checkMs = 0.0; // the hashes
 		double bakeMs = 0.0; // the rebakes
@@ -438,8 +472,28 @@ public:
 	// tests/ksim_nav_cache_canary.cpp). Needs openNative.
 	static std::uint32_t nativeCacheRecipe();
 	std::uint64_t bakedZoneDigest(kworld::ZoneCell zone) const;
+	// Our fresh bake of one zone's tiles, uncached (knav_stalegeom's calibration). Needs openNative.
+	std::vector<knav::BakedTile> rebakeZone(kworld::ZoneCell zone) const { return bakeNativeZone(zone); }
+
+	// A building the zone files do not carry (a save's player town, a construction): the one path that gives it collision and nav. Its
+	// placement joins the gatherer, the zone is baked with our recipe and the tiles the building's shapes cover (clipped to its zone,
+	// one tile of margin) replace the mesh's, now when the zone is resident and whenever it comes back. Needs openNative; false
+	// when the mesh is not native or the placement has no collision. `tiles` (when given) receives how many tiles were replaced.
+	bool standBuilding(const kworld::PlacedInstance& placed, std::size_t* tiles = nullptr) const;
+	// Several at once: one zone gather and one bake per zone they fall in. Returns how many had collision; `tiles` the tiles replaced.
+	std::size_t standBuildings(const std::vector<kworld::PlacedInstance>& placed, std::size_t* tiles = nullptr) const;
+	std::size_t stoodBuildings() const noexcept { return stood_.size(); }
 
 private:
+	struct StoodBuilding
+	{
+		kworld::ZoneCell zone;
+		std::vector<knav::TileRect> rects;
+		std::vector<knav::BakedTile> tiles;
+	};
+	void applyStood(const std::vector<kworld::ZoneCell>& zones) const;
+	mutable std::vector<StoodBuilding> stood_;
+
 	// The stale check's inputs, loaded once by openNative (the gatherer loads the game data the audit and the rebake
 	// both read; declaration order matters: the hash source refers into the gatherer, the gatherer into the terrain).
 	void openNativeData();
@@ -462,7 +516,7 @@ private:
 	const kdata::GameData* sharedGameData_ = nullptr; // openNative: the caller's game data (not owned)
 	bool nativeSource_ = false;
 	NativeCacheOptions cacheOptions_;
-	std::string cacheTree_; // <root>/w<recipe>_<worldKey> (openNative); empty = no cache
+	std::string cacheTree_; // <root>/w<recipe>_<srcHash>_<worldKey> (openNative); empty = no cache
 	mutable NativeCacheStats cacheStats_;
 	std::unique_ptr<kworld::Heightmap> terrain_;
 	std::unique_ptr<kworld::AreaGatherer> gatherer_;
@@ -482,11 +536,32 @@ private:
 	mutable NavStats stats_; // routeFrom's calls and time, for the tick profiler; the failure counters run in every build
 	Route routeFromUntimed(const knav::Position& from, double toX, double toZ, std::optional<double> toY, bool planned, Body body,
 		bool straighten, bool clickGoal) const;
+	// The no-route cache (routeFromUntimed): failed NoRoute plans by start poly, goal poly and body, dropped when the mesh revision changes.
+	struct NoRouteKey
+	{
+		int sx, sz; int sp; int gx, gz; int gp; float radius, water; std::uint8_t mode;
+		auto operator<=>(const NoRouteKey&) const = default;
+	};
+	struct NoRouteEntry { Route route; std::size_t pathFailure; };
+	static constexpr std::size_t kNoRouteMax = 4096;
+	static constexpr std::uint64_t kNoRouteLife = 20000; // route calls before the cache is dropped anyway
+	mutable std::map<NoRouteKey, NoRouteEntry> negative_;
+	mutable std::uint64_t negRevision_ = 0;
+	mutable std::uint64_t negAge_ = 0;
 	// The connected sets of the mesh for the planner (rebuilt lazily when the mesh revision changes).
 	mutable knav::RouteSets routeSets_;
 	knav::Walker walker_;
 	knav::NavQuery query_;
 };
+
+// THE route installer (PATH_WALK.md 3a, kenshi-e9s9.4): every writer of a fighter's route calls this with the final points. Installs `points` as
+// f.route with `next` as routeNext, derives the corridor from them (a point portal at every point when `nav` is null or knows no corridor) and puts
+// portalNext in step. Nothing else about the route (version, flags, seq) changes: the caller keeps those. An empty list clears the corridor too.
+void setRoute(state::Fighter& f, std::vector<state::RoutePoint> points, const Navigator* nav, Body body = {}, std::uint32_t next = 0);
+// The corridor of f.route again (a load, a stale ref), keeping routeNext.
+void rebuildCorridor(state::Fighter& f, const Navigator* nav, Body body = {});
+// portalNext := the first portal whose route point is routeNext or later (the corridor stays in step with routeNext; cheap: a forward scan).
+void syncPortalNext(state::Fighter& f) noexcept;
 
 // knav navmesh regions of a `knav_bake --world DIR` bake plus the coarse graph
 // built over them.

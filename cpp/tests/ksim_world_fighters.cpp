@@ -446,6 +446,13 @@ void scenario(const kworld::LoadOrder& order, const std::shared_ptr<const Combat
 	// The fight is on and the squad stops being eligible (it is given a trade trip: the same effect as the area moving off it, but at an
 	// exact moment): it stays built for as long as a member is in a fight within range, then goes once the fight is over.
 	scene.hostile.squad.add<state::TraderTrip>();
+	// The check is about the squad's lifetime, not the player's: a hostile squad of 8 knocks an ordinary body out in ~29 ticks and ends the fight
+	// it is meant to watch. A body that outlasts the window keeps the fight on.
+	for (state::FighterPart& part : const_cast<state::Fighter&>(*sim.combat()->find(scene.start.player)).parts)
+	{
+		part.maxHealth = 100000.0;
+		part.health = part.maxHealth;
+	}
 	std::size_t retained = 0;
 	for (int i = 0; i < 100; ++i)
 	{
@@ -613,11 +620,13 @@ void idlePlayer(const kworld::LoadOrder& order, const std::shared_ptr<const Comb
 		<< " u in 2 game-min, target " << after.target << "\n";
 	test::require(after.target == 0, "the idle player does not join a fight it is not part of");
 	test::require(moved < 20.0, "the idle player stands still while someone else fights 800 u away");
-	// Attacked at melee: SELF_PRESERVATION (goal 32), the player turns on its attacker.
+	// Attacked: SELF_PRESERVATION (goal 32), the player turns on its attacker. The attacker starts 30 u out and the order is given before it
+	// closes: a hostile squad member next to the player lands its own blow first (a heavy one staggers the player for 4.6 s, and a staggered body
+	// picks no target), which is a different claim from "an attacked player fights back".
 	const std::uint64_t attacker = idOf(hostile.members.back());
 	{
 		state::Fighter& f = const_cast<state::Fighter&>(*sim.combat()->find(attacker));
-		f.x = after.x + 2.0;
+		f.x = after.x + 30.0;
 		f.z = after.z;
 		f.y = sim.groundHeight(f.x, f.z).value_or(f.y);
 		f.clearRoute();
@@ -627,7 +636,7 @@ void idlePlayer(const kworld::LoadOrder& order, const std::shared_ptr<const Comb
 	for (int i = 0; i < 100 && sim.combat()->find(start.player)->target != attacker; ++i)
 		sim.run(1);
 	test::require(sim.combat()->find(start.player)->target == attacker, "an attacked player fights back (SELF_PRESERVATION, goal 32)");
-	std::cout << "idle player: attacked at melee, the player targets its attacker " << attacker << "\n";
+	std::cout << "idle player: attacked, the player targets its attacker " << attacker << "\n";
 }
 
 // The player can attack anyone outside its party (user report 2026-11-04, seen live in the client). Fighter::team is a combat grouping (worldTeam:

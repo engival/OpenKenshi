@@ -292,6 +292,32 @@ void sitter()
 	std::cout << "  275: the sitter sheathed through the shared step\n";
 }
 
+// rwh250: hasWeaponEquipped = 0 is on task 25's pre list, not goal 58's row, so 58 plans [7, 25, 58] with a drawn weapon and [25, 58] without.
+void medicPlan()
+{
+	struct Medic final : goap::World
+	{
+		bool drawn = false;
+		bool holds(goap::Sym sym, std::uint64_t, double, double) const override
+		{
+			return sym == goap::Sym::NeedsFirstAid || (sym == goap::Sym::HasWeaponEquipped && drawn); // the wounded patient needs aid
+		}
+	} medic;
+	const auto tasks = [](const goap::Plan& plan)
+	{
+		std::vector<std::uint16_t> out;
+		for (const goap::Step& step : plan.steps)
+			if (const goap::TaskRow* row = goap::rowOf(step.task); row == nullptr || !row->hasGoalState)
+				out.push_back(step.task);
+		return out;
+	};
+	medic.drawn = true;
+	test::require(tasks(goap::plan(medic, routines::task::FirstAid, 7, 0.0, 0.0)) == std::vector<std::uint16_t>{7, 25}, "58 with a drawn weapon does not plan [7, 25]");
+	medic.drawn = false;
+	test::require(tasks(goap::plan(medic, routines::task::FirstAid, 7, 0.0, 0.0)) == std::vector<std::uint16_t>{25}, "58 with no weapon drawn does not plan [25]");
+	std::cout << "  58: plans [7, 25] drawn, [25] unarmed\n";
+}
+
 } // namespace
 
 int main()
@@ -301,6 +327,7 @@ int main()
 		const kworld::LoadOrder order = kworld::vanillaLoadOrder(KENSHI_DATA);
 		Simulation sim = newGame(order);
 		const std::shared_ptr<const CombatData> combat = CombatData::build(*sim.gameData(), KENSHI_DATA);
+		medicPlan();
 		sleepers(order, combat);
 		sitter();
 		std::cout << "ksim_sheathe: ok\n";

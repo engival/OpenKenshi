@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <functional>
 #include <optional>
+#include <vector>
 
 namespace knav {
 
@@ -131,6 +132,53 @@ double cornerSpeed(double turn, double accel, double clearance) noexcept;
 // A near-straight corner is no limit (+inf).
 double arcCornerSpeed(double turn, double accel, double clearance) noexcept;
 
+// The per-tick funnel (PATH_WALK.md 3b step 1, kenshi-e9s9.5): apex = (px, pz), the portals from `first` on (each with lx, lz, rx, rz: left and right as
+// seen walking, x east, z north), then the goal (gx, gz) as a last point portal. The scan stops at the first closing of the funnel. `index` is the portal
+// the corner is an end of (portals.size() = the goal), `left` which end it is; `goal` = the funnel sees the goal.
+struct FunnelCorner
+{
+	double x = 0.0;
+	double z = 0.0;
+	std::size_t index = 0;
+	bool left = false;
+	bool goal = false;
+};
+template <typename Portal>
+FunnelCorner firstCorner(const std::vector<Portal>& portals, std::size_t first, double px, double pz, double gx, double gz) noexcept
+{
+	// turn(a, b) < 0 for a valid funnel with a the left edge and b the right.
+	const auto turn = [](double ax, double az, double bx, double bz) { return ax * bz - az * bx; };
+	const std::size_t count = portals.size();
+	if (first >= count)
+		return {gx, gz, count, false, true};
+	double lx = portals[first].lx - px, lz = portals[first].lz - pz, rx = portals[first].rx - px, rz = portals[first].rz - pz;
+	std::size_t li = first, ri = first;
+	for (std::size_t i = first + 1; i <= count; ++i)
+	{
+		const double nlx = (i < count ? portals[i].lx : gx) - px, nlz = (i < count ? portals[i].lz : gz) - pz;
+		const double nrx = (i < count ? portals[i].rx : gx) - px, nrz = (i < count ? portals[i].rz : gz) - pz;
+		if (turn(rx, rz, nrx, nrz) >= 0.0) // the new right end is inside (left of) the right edge: tighten, unless it crosses the left edge
+		{
+			if (turn(lx, lz, nrx, nrz) < 0.0 || (lx == 0.0 && lz == 0.0))
+			{
+				rx = nrx; rz = nrz; ri = i;
+			} else {
+				return {px + lx, pz + lz, li, true, li == count};
+			}
+		}
+		if (turn(lx, lz, nlx, nlz) <= 0.0) // the new left end is inside (right of) the left edge
+		{
+			if (turn(nlx, nlz, rx, rz) < 0.0 || (rx == 0.0 && rz == 0.0))
+			{
+				lx = nlx; lz = nlz; li = i;
+			} else {
+				return {px + rx, pz + rz, ri, false, ri == count};
+			}
+		}
+	}
+	return {gx, gz, count, false, true};
+}
+
 class Walker
 {
 public:
@@ -140,27 +188,31 @@ public:
 
 	// Moves by (dx, dz) in the xz plane, sliding along the mesh boundary. y is the mesh surface
 	// height where it ends: the navmesh point is the sim's y everywhere (no terrain snap; the client places the body, k16.8.31).
-	StepResult step(const Position& from, double dx, double dz) const;
+	// `radius` above 0 is the body's: a hop never ends nearer a mesh wall (an edge with no neighbour: a prop's cut-out, a building wall) than the
+	// body's radius, or than the start was when it began nearer, so a move leaves the clearance the query convention owes the body (no baked
+	// ring, kenshi-k16.7.129); the hop that would is cut short at the largest fraction that keeps it, and the step is `blocked`.
+	// `crossing`: the doors the route was planned through (NavQuery::slide).
+	StepResult step(const Position& from, double dx, double dz, double radius = 0.0, const std::vector<DoorKey>& crossing = {}) const;
 
 	// Direct drive for dt seconds at `speed` units/s along `heading` (radians, 0 = +z, increasing
 	// towards +x, as the sim's yaw). Backward moves against the heading at kBackpedalFactor of the
 	// speed; the facing is the caller's business. `strafe` (-1 left, +1 right of the heading, i.e. -x at heading 0, SIMLINK order 20) adds a sideways
 	// move at kStrafeFactor, the whole normalised by driveLocal; Stop with a strafe is a pure sidestep. `speed` is the gait speed.
-	StepResult drive(const Position& from, Drive mode, double heading, double speed, double dt, int strafe = 0) const;
+	StepResult drive(const Position& from, Drive mode, double heading, double speed, double dt, int strafe = 0, double radius = 0.0) const;
 
 	// The same with the gait ramp: `forwardSpeed` (signed, units/s along the facing; negative when backing up) is ramped
 	// towards the gait speed (towards -gait x kBackpedalFactor backward; Stop zeroes it at once) and the step is taken at the new
 	// speed. `forwardSpeed` is then the speed along the move direction (gait x the length of driveLocal), negative with a
 	// backward component. The server and a predicting client both call this.
 	StepResult drive(const Position& from, Drive mode, double heading, double gait, double& forwardSpeed, double dt,
-		double accel = kGaitAcceleration, int strafe = 0) const;
+		double accel = kGaitAcceleration, int strafe = 0, double radius = 0.0) const;
 
 	// Follows a route (any indexable sequence of points with .x and .z) for `distance` units of
 	// path from waypoint `next`, which advances past every waypoint reached. Stops early when
 	// blocked. A waypoint counts as reached when the step lands on it, so the route's end is
 	// reached exactly, not approximately.
 	template <typename Route>
-	StepResult follow(const Position& from, const Route& route, std::size_t& next, double distance) const
+	StepResult follow(const Position& from, const Route& route, std::size_t& next, double distance, double radius = 0.0, const std::vector<DoorKey>& crossing = {}) const
 	{
 		StepResult result;
 		result.at = from;
@@ -171,7 +223,7 @@ public:
 			const double toGo = std::hypot(dx, dz);
 			if (toGo <= distance)
 			{
-				const StepResult hop = step(result.at, dx, dz);
+				const StepResult hop = step(result.at, dx, dz, radius, crossing);
 				result.onMesh = hop.onMesh;
 				result.at = hop.at;
 				result.moved += hop.moved;
@@ -185,7 +237,7 @@ public:
 				distance -= toGo;
 				++next;
 			} else {
-				const StepResult hop = step(result.at, dx / toGo * distance, dz / toGo * distance);
+				const StepResult hop = step(result.at, dx / toGo * distance, dz / toGo * distance, radius, crossing);
 				result.onMesh = hop.onMesh;
 				result.at = hop.at;
 				result.moved += hop.moved;

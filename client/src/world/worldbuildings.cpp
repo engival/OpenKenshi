@@ -429,7 +429,7 @@ bool WorldBuildings::partWorldBox(const BuildingInstance& b, uint32_t k, double 
 }
 
 // The world box of everything a prop draws (the union of its parts' boxes, this frame), grown by `grow`. False: no such prop, or no part of it draws.
-bool WorldBuildings::propBox(uint64_t id, double lo[3], double hi[3], double grow) const
+bool WorldBuildings::propBox(uint64_t id, double lo[3], double hi[3], double grow, bool pickableOnly) const
 {
 	const int index = propInstance(id);
 	if (index < 0) { return false; }
@@ -438,7 +438,7 @@ bool WorldBuildings::propBox(uint64_t id, double lo[3], double hi[3], double gro
 	for (uint32_t k = 0; k < b.partCount; k++)
 	{
 		double plo[3], phi[3];
-		if (!partWorldBox(b, k, plo, phi)) { continue; }
+		if ((pickableOnly && !partPickable(data_.parts[data_.partRefs[b.firstPart + k]])) || !partWorldBox(b, k, plo, phi)) { continue; }
 		for (int a = 0; a < 3; a++) { lo[a] = any ? std::min(lo[a], plo[a]) : plo[a]; hi[a] = any ? std::max(hi[a], phi[a]) : phi[a]; }
 		any = true;
 	}
@@ -460,7 +460,8 @@ std::string WorldBuildings::propReport(uint64_t id) const
 		double lo[3], hi[3];
 		if (!partWorldBox(b, k, lo, hi)) { continue; }
 		char line[256];
-		snprintf(line, sizeof line, "  part %u box %.3f %.3f %.3f - %.3f %.3f %.3f\n", k, lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+		const BuildingPartDef& def = data_.parts[data_.partRefs[b.firstPart + k]];
+		snprintf(line, sizeof line, "  part %u box %.3f %.3f %.3f - %.3f %.3f %.3f kind %d pickable %d blackCap %d marker %d material %d walkable %d\n", k, lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], (int)def.kind, (int)partPickable(def), (int)def.blackCap, (int)def.marker, (int)def.materialType, (int)def.walkable);
 		out += line;
 	}
 	return out;

@@ -391,6 +391,7 @@ void select(int road, int k)
 
 bool on() { return kRoads.get(); }
 void toggle() { kRoads.set(!kRoads.get()); }
+void setOn(bool v) { kRoads.set(v); }
 
 roadribbons::Frame ribbons(const std::string& dataDir, const kworld::Heightmap& hm)
 {

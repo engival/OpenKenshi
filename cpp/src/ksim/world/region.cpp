@@ -36,6 +36,14 @@ std::pair<std::uint64_t, double> stepAngle(std::uint64_t state)
 	return {stream.state(), angle};
 }
 
+// A game started by NEW_GAME (a player faction with a start-off) or a scenario file with player characters: the camera focus is an area too.
+std::optional<state::ViewFocus> viewInArea(flecs::world& ecs, const std::vector<state::GroundPoint>& centres)
+{
+	bool started = false;
+	ecs.each([&](const state::PlayerFaction& faction) { started = started || !faction.startoff.empty(); });
+	return started ? cameraFocus(ecs, centres) : std::nullopt;
+}
+
 double clampWorld(double value)
 {
 	if (value < kworld::kWorldMin)
@@ -339,7 +347,8 @@ void RegionEngine::rebuild(flecs::world& ecs)
 		squadOut_.resize(prevSquads_.size());
 	}
 	const state::PlayerAreas* players = ecs.get<state::PlayerAreas>();
-	deriveAreas(players != nullptr ? players->centres : std::vector<state::GroundPoint>{});
+	const std::vector<state::GroundPoint> centres = players != nullptr ? players->centres : std::vector<state::GroundPoint>{};
+	deriveAreas(centres, viewInArea(ecs, centres));
 
 	// Collect first: adding Mover while iterating would move tables.
 	std::vector<std::pair<std::uint64_t, flecs::entity_t>> positioned;
@@ -407,7 +416,7 @@ void RegionEngine::setPlayerAreas(flecs::world& ecs,
 	const std::vector<state::GroundPoint>& centres)
 {
 	ecs.set<state::PlayerAreas>(state::PlayerAreas{centres});
-	deriveAreas(centres);
+	deriveAreas(centres, viewInArea(ecs, centres));
 
 	// Promotion/demotion is a component value change, applied outside the
 	// phases; the boundary diff would not see it, so mirror it here.
@@ -432,29 +441,65 @@ bool RegionEngine::setGroupCentre(std::int32_t group, double x, double z)
 	return true;
 }
 
-void RegionEngine::deriveAreas(const std::vector<state::GroundPoint>& centres)
+std::optional<state::ViewFocus> cameraFocus(flecs::world& ecs, const std::vector<state::GroundPoint>& centres)
 {
-	std::vector<Area> areas;
+	// No client camera (headless, a scenario): the original's camera sits on the player's characters, so the first one stands in for it.
+	if (const state::ViewFocus* view = ecs.get<state::ViewFocus>())
+		return *view;
+	if (!centres.empty())
+		return state::ViewFocus{centres.front().x, centres.front().z};
+	return std::nullopt;
+}
+
+std::vector<std::vector<std::int32_t>> RegionEngine::areaSets(const std::vector<state::GroundPoint>& centres, const std::optional<state::ViewFocus>& view, double box) const
+{
+	// The original's loaded-zone rule (rwh.202 section 3): the zones a +-characterBox box round each player character overlaps, plus the
+	// 3x3 block round the camera focus zone (areaRadiusRegions).
+	std::vector<std::vector<std::int32_t>> sets;
 	for (const state::GroundPoint& point : centres)
+		sets.push_back(boxRegions(clampWorld(point.x), clampWorld(point.z), box));
+	if (view)
 	{
-		const std::int32_t centre = regionOf(clampWorld(point.x), clampWorld(point.z));
-		const std::int32_t cx = centre % regionsPerAxis_;
-		const std::int32_t cz = centre / regionsPerAxis_;
-		Area area;
-		for (int dz = -config_.areaRadiusRegions; dz <= config_.areaRadiusRegions;
-			++dz)
+		const std::int32_t centre = regionOf(clampWorld(view->x), clampWorld(view->z));
+		std::vector<std::int32_t> block;
+		for (int dz = -config_.areaRadiusRegions; dz <= config_.areaRadiusRegions; ++dz)
 		{
-			for (int dx = -config_.areaRadiusRegions;
-				dx <= config_.areaRadiusRegions; ++dx)
+			for (int dx = -config_.areaRadiusRegions; dx <= config_.areaRadiusRegions; ++dx)
 			{
-				const int rx = cx + dx;
-				const int rz = cz + dz;
-				if (rx < 0 || rz < 0 || rx >= regionsPerAxis_
-					|| rz >= regionsPerAxis_)
-					continue;
-				area.regions.push_back(rx + regionsPerAxis_ * rz);
+				const int rx = centre % regionsPerAxis_ + dx;
+				const int rz = centre / regionsPerAxis_ + dz;
+				if (rx >= 0 && rz >= 0 && rx < regionsPerAxis_ && rz < regionsPerAxis_)
+					block.push_back(rx + regionsPerAxis_ * rz);
 			}
 		}
+		sets.push_back(std::move(block));
+	}
+	return sets;
+}
+
+std::set<std::int32_t> RegionEngine::loadedZones(const std::vector<state::GroundPoint>& centres, const std::optional<state::ViewFocus>& view, double box) const
+{
+	std::set<std::int32_t> zones;
+	for (const std::vector<std::int32_t>& set : areaSets(centres, view, box < 0.0 ? config_.characterBox : box))
+		zones.insert(set.begin(), set.end());
+	return zones;
+}
+
+std::set<std::int32_t> RegionEngine::fullZones() const
+{
+	std::set<std::int32_t> zones;
+	for (const Area& area : areas_)
+		zones.insert(area.regions.begin(), area.regions.end());
+	return zones;
+}
+
+void RegionEngine::deriveAreas(const std::vector<state::GroundPoint>& centres, const std::optional<state::ViewFocus>& view)
+{
+	std::vector<Area> areas;
+	for (std::vector<std::int32_t>& set : areaSets(centres, view, config_.characterBox))
+	{
+		Area area;
+		area.regions = std::move(set);
 		std::sort(area.regions.begin(), area.regions.end());
 		if (!area.regions.empty())
 			areas.push_back(std::move(area));

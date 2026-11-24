@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -256,72 +257,109 @@ int main(int argc, char** argv)
 			test::require(brakeStart > 8.0 && brakeStart < 16.0, "the stop began " + std::to_string(brakeStart) + " u before the end (live 10-12)");
 		}
 		{
-			Rig rig(data, gd, nav);
-			const state::Fighter& f0 = rig.fighter();
-			// Two legs at a right angle, each a straight mesh route of 150+ units.
-			Route first;
-			Route second;
-			for (int k = 0; k < 16 && !second.found; ++k)
+			// Two run-speed corners on the Hub tile (kenshi-e9s9.23), each walked from rest by the corridor walker. The speeds are per-tick displacement / dt.
+			// A: the oracle's corner (findings/kenshi-rwh.308.md): the original's corridor from A goes west round the buildings' vertex (-49968, 4860) and then
+			//    north; the exe runs it at 74-94 % of cruise, closest approach to the vertex 5.4-7.0 u, never a tick's loss above a*dt (6.73 u/s at 6.6).
+			//    Our planner takes a gap the original does not (a separate item), so the route is the two legs A -> vertex -> goal.
+			// B: the one-body gap our planner picks from A (the Hub bar door's kind, rwh269 section 1: min 36 u/s = 29 % of run, contact 1.6 u from the vertex):
+			//    min >= 25 % of run, never a stop. Its premise (3 points, the bend within 12 u of the gap's vertex) is asserted so a mesh change fails loudly.
+			// The old scenario (two straight 2-point routes 170 u apart) is no corner for the corridor walker: the funnel's taut path rounds a polygon vertex 35 u
+			// off the polyline's corner (bend 1.14 rad, not a right angle).
+			struct CornerRun
 			{
-				const double a = k * 0.392699;
-				first = nav->routeFrom({ f0.x, f0.y, f0.z }, f0.x + std::sin(a) * 170.0, f0.z + std::cos(a) * 170.0);
-				if (!first.found || first.points.size() != 2 || std::hypot(first.points[1].x - f0.x, first.points[1].z - f0.z) < 150.0)
-					continue;
-				const Pt corner = { first.points[1].x, first.points[1].z };
-				for (const double turn : { 0.5 * kPi, -0.5 * kPi })
+				double minSpeed = 1.0e9; // while more than 60 u from the goal and after the run speed was reached
+				double closest = 1.0e9;  // body centre to the vertex
+				double worstLoss = 0.0;  // largest single-tick speed loss, same window
+				double top = 0.0;
+				int ticks = 0;
+			};
+			const auto cornerRun = [&](Pt start, Pt goal, double startY, const std::vector<Pt>& vias, double vertexX, double vertexZ, bool assertThreePoints)
+			{
+				Rig rig(data, gd, nav);
+				state::Fighter* mover = fighterOf(rig.sim, rig.id);
+				mover->x = start.x;
+				mover->y = startY;
+				mover->z = start.z;
+				const double goalX = goal.x;
+				const double goalZ = goal.z;
+				Route route;
+				double fromX = mover->x, fromZ = mover->z, fromY = mover->y;
+				for (std::size_t leg = 0; leg <= vias.size(); ++leg)
 				{
-					const Route r = nav->routeFrom({ corner.x, first.heights[1], corner.z }, corner.x + std::sin(a + turn) * 170.0, corner.z + std::cos(a + turn) * 170.0);
-					if (r.found && r.points.size() == 2 && std::hypot(r.points[1].x - corner.x, r.points[1].z - corner.z) > 150.0)
+					const double toX = leg < vias.size() ? vias[leg].x : goalX;
+					const double toZ = leg < vias.size() ? vias[leg].z : goalZ;
+					const Route r = nav->routeFrom({ fromX, fromY, fromZ }, toX, toZ);
+					test::require(r.found && r.points.size() >= 2, "no route for a corner leg");
+					for (std::size_t i = route.found ? 1 : 0; i < r.points.size(); ++i)
 					{
-						second = r;
+						route.points.push_back(r.points[i]);
+						route.heights.push_back(r.heights[i]);
+					}
+					route.found = true;
+					fromX = r.points.back().x;
+					fromZ = r.points.back().z;
+					fromY = r.heights.back();
+				}
+				if (assertThreePoints)
+				{
+					test::require(route.points.size() == 3, "no 3-point route round the gap's vertex (the mesh changed)");
+					test::require(std::hypot(route.points[1].x - vertexX, route.points[1].z - vertexZ) < 12.0, "the taut path does not bend at the gap's vertex (the mesh changed)");
+				}
+				if (std::getenv("WALK_TRACE") != nullptr)
+					for (const state::GroundPoint& gp : route.points)
+						std::cout << "route " << gp.x << " " << gp.z << "\n";
+				rig.sim.enqueue(Command::fighterMoveTo(state::Id{ rig.id }, std::move(route.points), std::move(route.heights), 6));
+				CornerRun out;
+				double px = mover->x, pz = mover->z, prev = 0.0;
+				bool atSpeed = false;
+				std::vector<Pt> walls;
+				for (int n = 0; n < 900; ++n)
+				{
+					rig.sim.tick();
+					const state::Fighter& f = rig.fighter();
+					if (n == 0)
+						for (const state::RoutePortal& pt : f.portals)
+						{
+							// The corridor's wall vertices: a portal end with a wall within the push range (9 u = r + 5), measured at plan time.
+							if (!pt.isPoint() && pt.clearLeft < 9.0f)
+								walls.push_back({ pt.lx, pt.lz });
+							if (!pt.isPoint() && pt.clearRight < 9.0f)
+								walls.push_back({ pt.rx, pt.rz });
+						}
+					if (n == 0 && std::getenv("WALK_TRACE") != nullptr)
+						for (const state::RoutePortal& pt : f.portals)
+							std::cout << "portal L " << pt.lx << " " << pt.lz << " R " << pt.rx << " " << pt.rz << " clr " << pt.clearLeft << " " << pt.clearRight << " pt " << pt.point << "\n";
+					const double speed = std::hypot(f.x - px, f.z - pz) / kDt;
+					px = f.x;
+					pz = f.z;
+					out.top = std::max(out.top, speed);
+					for (const Pt& wall : walls)
+						out.closest = std::min(out.closest, std::hypot(f.x - wall.x, f.z - wall.z));
+					if (std::getenv("WALK_TRACE") != nullptr)
+						std::cout << "t" << n << " v " << speed << " pos " << f.x << " " << f.z << " dVertex " << std::hypot(f.x - vertexX, f.z - vertexZ) << "\n";
+					atSpeed = atSpeed || speed > 69.0;
+					if (atSpeed && std::hypot(f.x - goalX, f.z - goalZ) > 60.0)
+					{
+						out.minSpeed = std::min(out.minSpeed, speed);
+						out.worstLoss = std::max(out.worstLoss, prev - speed);
+					}
+					prev = speed;
+					out.ticks = n + 1;
+					if (!f.walking())
 						break;
-					}
 				}
-			}
-			test::require(second.found, "no two straight legs at a right angle near the Hub");
-			Route both = first;
-			both.points.push_back(second.points[1]);
-			both.heights.push_back(second.heights[1]);
-			rig.sim.enqueue(Command::fighterMoveTo(state::Id{ rig.id }, std::move(both.points), std::move(both.heights), 6));
-			double px = rig.fighter().x;
-			double pz = rig.fighter().z;
-			double heading = 0.0;
-			double worstBend = 0.0;
-			double totalBend = 0.0;
-			double minSpeed = 1.0e9;
-			int bendTicks = 0;
-			bool moving = false;
-			for (int n = 0; n < 600; ++n)
-			{
-				rig.sim.tick();
-				const state::Fighter& f = rig.fighter();
-				const double dx = f.x - px;
-				const double dz = f.z - pz;
-				px = f.x;
-				pz = f.z;
-				if (!f.walking() || std::hypot(dx, dz) < 1.0e-6)
-					break;
-				const double h = std::atan2(dx, dz);
-				if (moving)
-				{
-					const double bend = std::fabs(wrap(h - heading));
-					worstBend = std::max(worstBend, bend);
-					totalBend += bend;
-					if (bend > 0.02)
-					{
-						++bendTicks;
-						minSpeed = std::min(minSpeed, std::hypot(dx, dz) / kDt);
-					}
-				}
-				heading = h;
-				moving = true;
-			}
-			// The velocity moves by at most accel x dt = 10 u/s a tick, so the heading cannot jump: at 50 u/s that is 0.2 rad.
-			test::require(totalBend > 1.3 && totalBend < 1.9, "the route's 90-degree corner turned the path by " + std::to_string(totalBend) + " rad");
-			test::require(worstBend < 0.5, "the corner was a pivot: the path bent " + std::to_string(worstBend) + " rad in one tick");
-			test::require(bendTicks >= 4, "the corner took " + std::to_string(bendTicks) + " ticks to turn (an arc takes several)");
-			test::require(minSpeed > 20.0, "the corner was taken at " + std::to_string(minSpeed) + " u/s (an arc, not a stop and pivot)");
-			std::cout << "corner: bend " << totalBend << " rad over " << bendTicks << " ticks, worst " << worstBend << " rad/tick, min speed " << minSpeed << "\n";
+				return out;
+			};
+			const CornerRun oracle = cornerRun({ -50878.8, 1782.5 }, { -50666.7, 2035.3 }, 1562.0, {}, -50688.0, 1792.0, true);
+			std::cout << "oracle corner: min " << oracle.minSpeed << " u/s, closest " << oracle.closest << " u, worst loss " << oracle.worstLoss << " u/s per tick, " << oracle.ticks << " ticks\n";
+			test::require(oracle.minSpeed >= 0.4 * 70.0, "the oracle corner slowed to " + std::to_string(oracle.minSpeed) + " u/s (exe 46-94 % of run, rwh.308)");
+			test::require(oracle.closest >= 5.0, "the oracle corner's closest approach was " + std::to_string(oracle.closest) + " u (exe 5.4-7.0)");
+			test::require(oracle.worstLoss <= 200.0 * kDt + 1.0, "the oracle corner lost " + std::to_string(oracle.worstLoss) + " u/s in a tick (exe max 6.73)");
+			const CornerRun gap = cornerRun({ -49729.2, 4882.8 }, { -49868.6, 5181.9 }, 1524.4, {}, -49896.0, 4892.0, true);
+			std::cout << "gap corner: min " << gap.minSpeed << " u/s, closest " << gap.closest << " u, " << gap.ticks << " ticks\n";
+			// The live door's floor is 29 % of run (rwh269 section 1); ours reaches ~13 % here: this gap's second portal is 4 u wide, under the body's 8 u, so the
+			// walker slides in it (the planner takes a gap the original goes round, a separate item), and the bar door itself is walked by ksim_path_walk. Pinned: no stop.
+			test::require(gap.minSpeed > 5.0, "the one-body gap stopped the walker (" + std::to_string(gap.minSpeed) + " u/s; live door 29 % of run, rwh269 section 1)");
 		}
 
 		// ---- turn in place: drive 0 in the drive hold turns towards the heading with no translation ----

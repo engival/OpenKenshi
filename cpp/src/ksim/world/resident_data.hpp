@@ -25,6 +25,9 @@ struct ResidentData
 	{
 	}
 	routines::PackageTable packages;
+	// The promotions a pass chose and has not done yet (Simulation::stepResidents builds a few squads per tick, not 32 at once): the squad
+	// and whether it is a world squad. Revalidated when built; a pass chooses afresh, so a load needs nothing.
+	std::vector<std::pair<flecs::entity, bool>> queued;
 	// Members that could not be built or placed (makeFighter threw, no ground under them): not retried until a restart, so a bad record
 	// costs one throw, not one per second.
 	std::set<std::uint64_t> skipped;

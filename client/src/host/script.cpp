@@ -372,6 +372,16 @@ void exec_cmd(const Cmd& c)
 		e.mouse_y = r.y + r.h * 0.5f;
 		event(&e);
 	}
+	else if (c.op == "camera" && a.size() == 7 && a[0] == "view")	// camera view X Y Z YAW PITCH DIST: the free camera DIST (world units) back from the point X,Y,Z along its look direction (yaw 0 looks toward -z; pitch in degrees, negative looks down), so the point lands mid-screen (kenshi-wsbz)
+	{
+		const double yaw = atof(a[4].c_str()) * 3.14159265358979 / 180.0, pitch = atof(a[5].c_str()) * 3.14159265358979 / 180.0, d = atof(a[6].c_str());
+		free_camera();
+		app.yaw = yaw;
+		app.pitch = pitch;
+		app.pos[0] = atof(a[1].c_str()) - std::sin(yaw) * std::cos(pitch) * d;
+		app.pos[1] = atof(a[2].c_str()) - std::sin(pitch) * d;
+		app.pos[2] = atof(a[3].c_str()) + std::cos(yaw) * std::cos(pitch) * d;
+	}
 	else if (c.op == "camera" && a.size() >= 2 && a[0] == "thing")	// camera thing NAME... | id=N: 45 u south of and 35 u above the named interactable (or that id), looking down at it (it lands mid-screen)
 	{
 		std::string text;
@@ -934,7 +944,7 @@ void exec_cmd(const Cmd& c)
 		else
 		{
 			Pick p; p.id = t->id;
-			p.kind = t->kind == simlink::Interactable::kDoor ? Pick::Door : t->kind == simlink::Interactable::kBed ? Pick::Bed : t->kind == simlink::Interactable::kProducer ? Pick::Producer : t->kind == simlink::Interactable::kContainer ? Pick::Container : Pick::Item;
+			p.kind = t->kind == simlink::Interactable::kDoor ? Pick::Door : t->kind == simlink::Interactable::kBed ? Pick::Bed : t->machineLike() ? Pick::Producer : t->kind == simlink::Interactable::kContainer ? Pick::Container : Pick::Item;
 			fputs(hints::format_hover(hints::hints_for(p, hints_context())).c_str(), stdout);
 		}
 	}
@@ -986,7 +996,7 @@ void exec_cmd(const Cmd& c)
 		Pick p;
 		const uint64_t num = strtoull(text.c_str(), nullptr, 10);
 		const simlink::Interactable* th = num ? app.sim.thing(num) : nullptr;
-		if (th) { p.id = num; p.kind = th->kind == simlink::Interactable::kContainer ? Pick::Container : th->kind == simlink::Interactable::kProducer ? Pick::Producer : th->kind == simlink::Interactable::kDoor ? Pick::Door : th->kind == simlink::Interactable::kBed ? Pick::Bed : Pick::Item; }
+		if (th) { p.id = num; p.kind = th->kind == simlink::Interactable::kContainer ? Pick::Container : th->machineLike() ? Pick::Producer : th->kind == simlink::Interactable::kDoor ? Pick::Door : th->kind == simlink::Interactable::kBed ? Pick::Bed : Pick::Item; }
 		else if (const uint64_t id = named_character(text)) { p.id = id; p.kind = Pick::Character; }
 		const hints::Context ctx = hints_context();
 		const hints::Action* row = nullptr;

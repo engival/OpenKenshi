@@ -17,9 +17,13 @@
 #include "kworld/gamedata.hpp"
 
 #include "knav/native.hpp"
+#include "knav/navmesh.hpp"
 
 #include "test_util.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -88,6 +92,28 @@ int main()
 		test::require(hub.decision.stored == 0xc9ebf91d && hub.decision.ours == 0xf847e471,
 			"the Hub's stored/recomputed zone hashes are not c9ebf91d/f847e471");
 		test::require(hub.interiors.empty(), "the Hub's interiors are decided on their own beside a zone rebake");
+		test::require(hub.agreed.size() == 21 && hub.rebaked.size() == 303, "the Hub does not split 21 agreed / 303 rebaked tiles: "
+			+ std::to_string(hub.agreed.size()) + " / " + std::to_string(hub.rebaked.size()));
+		// Staleness by agreement (kenshi-k16.7.128): a shipped tile only agrees if it joins: the Bar's tile has our surface bridging two shipped rooms, so it is rebaked.
+		{
+			knav::native::StoredHashes unused;
+			for (const knav::native::Mesh& mesh : knav::native::loadTile(knav::native::navtilesDir(KENSHI_DATA), 20, 32, &unused))
+			{
+				if (mesh.info.rfind("600815", 0) != 0)
+					continue;
+				const knav::NavConfig config = knav::configForWorldZones({ 20, 32 }, { 20, 32 });
+				double x = 0.0, z = 0.0;
+				for (const std::array<double, 3>& v : mesh.vertices)
+				{
+					x += v[0] / static_cast<double>(mesh.vertices.size());
+					z += v[2] / static_cast<double>(mesh.vertices.size());
+				}
+				const knav::TileCoord bar{ static_cast<int>(std::floor((x - config.originX) / config.tileSize)),
+					static_cast<int>(std::floor((z - config.originZ) / config.tileSize)) };
+				test::require(std::find(hub.agreed.begin(), hub.agreed.end(), bar) == hub.agreed.end(),
+					"the Bar's tile, which our rebake bridges, is kept shipped");
+			}
+		}
 
 		// A fresh zone in the same region: its two bare interiors match the stored hashes and stay shipped.
 		nav->setCoverage({ { 23, 33 } });
@@ -125,6 +151,7 @@ int main()
 		test::require(interior.decision.reason == "stale hash", "zone 38,22's interior rebake is not a stale hash");
 		test::require(interior.decision.stored == 0xc2d8cc6a && interior.decision.ours == 0x92dd6d72,
 			"zone 38,22's interior stored/recomputed hashes are not c2d8cc6a/92dd6d72");
+		test::require(stale.agreed.empty() && stale.rebaked.size() == 3, "zone 38,22's interior tiles are not 0 agreed / 3 rebaked");
 
 		const MeshNavigator::NativeStaleStats& stats = nav->nativeStaleStats();
 		test::require(stats.zonesScanned >= 5, "too few zones were decided"); // the check is lazy: only wanted zones
@@ -133,6 +160,7 @@ int main()
 		test::require(stats.interiorsRebaked >= 1, "too few stale interiors counted");
 		test::require(stats.interiorsNotComputable >= 1 && stats.interiorChildOrder >= 1,
 			"the child-order fallback is not counted");
+		test::require(stats.tilesAgreed >= 21 && stats.tilesRebaked >= 303, "the agreement tile counters do not add up");
 		test::require(stats.bakeMs > 0.0 && stats.checkMs >= 0.0, "the check/bake time is not recorded");
 		// No silent fallback: every conversion leaves a line with the counts.
 		test::require(log.size() >= 4, "the loader did not log its conversions");

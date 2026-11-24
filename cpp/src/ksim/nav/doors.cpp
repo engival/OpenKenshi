@@ -335,21 +335,7 @@ void DoorSystem::crewsReopen(flecs::world& ecs, std::uint64_t tick)
 		double seconds = tuning_.crewOpenFraction / std::max(gate->moveSpeed, 1.0e-6);
 		if (entry.state == 2)
 		{
-			const flecs::entity owner(ecs.c_ptr(), gateTowns_[gate->town].entity);
-			const state::TownState* town = owner.get<state::TownState>();
-			bool mine = false;
-			if (crew->second != 0)
-			{
-				const flecs::entity crewFaction(ecs.c_ptr(), crew->second);
-				if (!gate->ownerFaction.empty())
-				{
-					const state::FactionState* faction = crewFaction.get<state::FactionState>();
-					mine = faction != nullptr && faction->templateSid == gate->ownerFaction;
-				} else {
-					mine = town != nullptr && town->owner.id == crew->second;
-				}
-			}
-			if (!mine)
+			if (!crewUnlocks(ecs, *gate, crew->second))
 				continue;
 			seconds += tuning_.crewUnlockSeconds;
 		}
@@ -373,6 +359,68 @@ void DoorSystem::crewsReopen(flecs::world& ecs, std::uint64_t tick)
 		ecs.set<state::DoorOverrides>(std::move(overrides));
 }
 
+bool DoorSystem::crewUnlocks(flecs::world& ecs, const Gate& gate, flecs::entity_t crewFaction) const
+{
+	if (crewFaction == 0)
+		return false;
+	const flecs::entity faction(ecs.c_ptr(), crewFaction);
+	if (!gate.ownerFaction.empty())
+	{
+		const state::FactionState* state = faction.get<state::FactionState>();
+		return state != nullptr && state->templateSid == gate.ownerFaction;
+	}
+	const flecs::entity owner(ecs.c_ptr(), gateTowns_[gate.town].entity);
+	const state::TownState* town = owner.get<state::TownState>();
+	return town != nullptr && town->owner.id == crewFaction;
+}
+
+// A gate the player (or any interaction) closed is a state::Door the command overrides never see: its crew unlocks it (a locked door,
+// only the door's faction) and opens it again after the same unlock + open time (rwh.209 / rwh.224: goal 180's precondition poll rebuilds
+// 121 -> 78 -> 72; nothing observes the close itself).
+void DoorSystem::crewsReopenDoors(flecs::world& ecs, std::uint64_t tick)
+{
+	if (ecs.count<state::GateCrew>() == 0)
+	{
+		closedSince_.clear();
+		return;
+	}
+	std::unordered_map<std::uint64_t, flecs::entity_t> crewed; // gate key -> a crew faction
+	ecs.each([&](const state::Id&, const state::SquadInstance& squad, const state::GateCrew& crew)
+	{
+		crewed.emplace(crew.gate, squad.faction.id);
+	});
+	std::unordered_map<std::uint64_t, std::uint64_t> still;
+	ecs.each([&](flecs::entity entity, const state::Door& door)
+	{
+		if (door.state != 1 && door.state != 2)
+			return;
+		const auto crew = crewed.find(door.key);
+		const auto gate = std::lower_bound(gates_.begin(), gates_.end(), door.key,
+			[](const Gate& g, std::uint64_t key) { return g.key < key; });
+		if (crew == crewed.end() || gate == gates_.end() || gate->key != door.key)
+			return;
+		const auto started = closedSince_.find(door.key);
+		const std::uint64_t since = started != closedSince_.end() ? started->second : tick;
+		still.emplace(door.key, since);
+		double seconds = tuning_.crewOpenFraction / std::max(gate->moveSpeed, 1.0e-6);
+		if (door.state == 2)
+		{
+			if (!crewUnlocks(ecs, *gate, crew->second))
+				return;
+			seconds += tuning_.crewUnlockSeconds;
+		}
+		if (ticksSince(tick, since) < static_cast<std::uint64_t>(std::ceil(seconds / kTickSeconds)))
+			return;
+		state::Door* open = entity.get_mut<state::Door>();
+		open->state = 0;
+		++open->version;
+		entity.modified<state::Door>();
+		still.erase(door.key);
+		++stats_.crewReopens;
+	});
+	closedSince_ = std::move(still);
+}
+
 void DoorSystem::sync(flecs::world& ecs, std::uint64_t tick, const std::vector<TownSite>& towns,
 	const Navigator* navigator)
 {
@@ -380,6 +428,7 @@ void DoorSystem::sync(flecs::world& ecs, std::uint64_t tick, const std::vector<T
 	if (!tuning_.enabled)
 		return;
 	crewsReopen(ecs, tick);
+	crewsReopenDoors(ecs, tick);
 	syncOverrides(ecs, navigator, true);
 }
 

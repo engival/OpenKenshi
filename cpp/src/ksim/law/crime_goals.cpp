@@ -210,6 +210,8 @@ void Simulation::stepCrimeGoals()
 	const auto& members = combat_->members();
 	for (std::size_t i = 0; i < members.size(); ++i)
 	{
+		if (!members[i].due)
+			continue; // (kenshi-k16.6.639)
 		flecs::entity actor = ecsMutable().entity(combatEntities_[i]);
 		const state::Routine* current = actor.get<state::Routine>();
 		if (current == nullptr)
@@ -257,7 +259,7 @@ void Simulation::stepCrimeGoals()
 			if (goal == routines::task::InvestigateAlarmsAlliesOnly)
 				noticeAlliesNear(id);
 			double& left = alarmDwell_.try_emplace(id, alarm::kDwellSeconds).first->second;
-			left -= kTickSeconds;
+			left -= members[i].dueTicks * kTickSeconds;
 			if (left > 0.0)
 				continue;
 			std::ostringstream line;

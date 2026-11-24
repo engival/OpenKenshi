@@ -279,16 +279,21 @@ void caughtStealing(const Data& w)
 		const std::uint64_t thief = rig.add(w.nameless, 9, 0, 0.0, 60.0, 3.14159265, true);
 		rig.tick(20 * 3);
 		bool allNamed = true;
+		std::size_t before = 0;
 		for (int act = 1; act <= 8; ++act)
 		{
 			const std::uint64_t box = rig.steal(thief, w.holy, 0.0);
 			rig.tick(20 * 5);
 			rig.sim->forgiveCrime(thief, w.holy); // the record ends (a watching witness keeps it alive otherwise): the act is over
 			rig.tick(20);
-			allNamed = allNamed && sent.size() == static_cast<std::size_t>(act) && sent.back().who == thief && sent.back().other == guard
-				&& sent.back().container == box; // 51 names the container, caught or landed
+			// A failed roll sends cause 0 for the thief at once (witness 0); the witness's own sighting still sends cause 1, naming the
+			// witness and the container, once. A landed take sends only the witness's.
+			const std::size_t n = sent.size() - before;
+			allNamed = allNamed && (n == 1 || n == 2) && sent.back().who == thief && sent.back().cause == 1 && sent.back().other == guard
+				&& sent.back().container == box && (n == 1 || (sent[before].cause == 0 && sent[before].other == 0 && sent[before].container == 0));
+			before = sent.size();
 		}
-		check(allNamed, "each of 8 takes at thievery 0, caught or landed, sends exactly one EVENT 51 (" + std::to_string(sent.size()) + ")");
+		check(allNamed, "each of 8 takes at thievery 0: the witness's one EVENT 51 names it and the container, a failed roll adds cause 0 first (" + std::to_string(sent.size()) + ")");
 	}
 	// A lockpick seen: cause 2, the picked container, once although the crime is reported every tick.
 	{
@@ -302,6 +307,35 @@ void caughtStealing(const Data& w)
 		rig.tick(20 * 10);
 		check(sent.size() == 1 && sent[0].who == thief && sent[0].other == guard && sent[0].cause == 2 && sent[0].container == box,
 			"a seen lockpick sends EVENT 51 once with cause 2 (" + std::to_string(sent.size()) + ")");
+	}
+	// A save and load mid-act. The save holds no "a witness saw it" bit; a committed record (a witness reacted, the bounty went in) is
+	// derived as announced, any other loaded act is pending: the first witness after the load names it. (watched: seen before the save.)
+	for (const bool watched : {false, true})
+	{
+		Rig rig(w);
+		std::vector<Event> sent;
+		rig.sim->setCrimeObserver([&](const Event& e) { sent.push_back(e); });
+		const std::uint64_t guard = rig.add(w.holy, 1, 1, 0.0, 0.0, watched ? 0.0 : 3.14159265, false);
+		const std::uint64_t thief = rig.add(w.nameless, 9, 0, 0.0, 60.0, 3.14159265, true);
+		rig.tick(20 * 3);
+		rig.steal(thief, w.holy, 100.0); // thievery 100: the take lands, no roll event
+		rig.tick(watched ? 20 * 5 : 1);
+		const state::CrimeRecord* held = rig.sim->crimeRecord(thief);
+		check(held != nullptr && held->crime == cr::kTheft && held->committed == watched, std::string("a record is pending at the save, committed ") + (watched ? "yes" : "no"));
+		const std::size_t seen = sent.size();
+		std::ostringstream out;
+		rig.sim->save(out);
+		std::istringstream in(out.str());
+		Simulation restored = Simulation::restore(World::empty(), in, RegionConfig{}, true);
+		restored.setGameData(w.gd);
+		restored.enableCombat(w.data, rig.settings);
+		std::vector<Event> resent;
+		restored.setCrimeObserver([&](const Event& e) { resent.push_back(e); });
+		const_cast<state::Fighter*>(restored.combat()->find(guard))->yaw = 0.0; // now it sees the thief
+		restored.run(20 * 12);
+		check(watched ? seen == 1 && resent.empty() : seen == 0 && resent.size() == 1 && resent[0].who == thief && resent[0].other == guard && resent[0].cause == 1,
+			std::string(watched ? "an act announced before a save is not announced again" : "an unannounced act is announced once by its first witness after the load")
+			+ " (" + std::to_string(seen) + " before, " + std::to_string(resent.size()) + " after)");
 	}
 }
 
@@ -652,6 +686,41 @@ void lawEnforcementCarry(const Data& w)
 	}
 }
 
+// kenshi-k16.6.669: the original's rule as is. A player's plain lift (order 225, not 246; the rig has no navigation, so it goes through orderArrest) of a stranger or of a prisoner sets no captive flag and
+// records no crime 15 on the carrier. (The parked fix that would flag it is kenshi-w2k.5.)
+void plainPlayerLift(const Data& w)
+{
+	for (const bool prisoner : {false, true})
+	{
+		Rig rig(w);
+		const std::uint64_t player = rig.add(w.nameless, 9, 0, 0.0, 6.0, 0.0, true);
+		const std::uint64_t victim = rig.add(prisoner ? w.nameless : w.cities, 4, 0, 0.0, 0.0, 0.0, false);
+		state::Fighter& body = rig.f(victim);
+		body.unconscious = true;
+		body.koTimer = 600.0;
+		if (prisoner)
+		{
+			body.slaveState = 1;
+			body.captorSid = w.cities;
+		}
+		rig.tick(20 * 3);
+		check(rig.sim->orderArrest(player, victim, goap::kLiftPersonPlayerOrder), "the player's lift order (225) is accepted");
+		bool carried = false;
+		bool flagged = false;
+		for (int i = 0; i < 20 * 20; ++i)
+		{
+			rig.tick();
+			carried = carried || rig.f(victim).carriedBy == player;
+			flagged = flagged || rig.f(victim).captive;
+		}
+		const char* who = prisoner ? "a prisoner" : "a stranger";
+		check(carried, std::string("the player lifted ") + who);
+		check(!flagged, std::string("a plain lift of ") + who + " sets no captive flag");
+		const state::CrimeRecord* record = rig.sim->crimeRecord(player);
+		check(record == nullptr || record->crime != cr::kKidnapping, std::string("a plain lift of ") + who + " records no crime 15");
+	}
+}
+
 void expiry(const Data& w)
 {
 	Rig rig(w);
@@ -993,6 +1062,7 @@ int main()
 		lootBody(w);
 		carryInspection(w);
 		lawEnforcementCarry(w);
+		plainPlayerLift(w);
 		expiry(w);
 		saveLoad(w);
 		twoPlayers(w);

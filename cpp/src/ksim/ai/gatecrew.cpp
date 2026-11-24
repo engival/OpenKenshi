@@ -5,8 +5,12 @@
 #include "ksim/world/interact.hpp"
 #include "ksim/nav/navigator.hpp"
 #include "ksim/core/simulation.hpp"
+#include "ksim/core/rng.hpp"
+#include "ksim/ai/routines.hpp"
+#include "ksim/economy/trader.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <set>
@@ -21,6 +25,76 @@ namespace ksim {
 // STAND_AT_NODE guards on the slots (gateStandPoint), one member per spot, each a Routine on task 51 (routines::task::GatePost: busy for the follower,
 // never scored). Members beyond the fifth are off duty (rwh.207): a Routine with no goal, so the town scorer runs the package's 38 / 157 for them
 // (stepRoutines scores a GateCrew squad without a SquadRoutine) and they rotate. A member that dies shifts the rest up.
+// The post holders of a crew (rwh.207 s3: the members rotate between goal 38, a post on the gate's own nodes, and 157, a town node,
+// so who holds a post changes). `members` is the living crew by Id, the sergeant first; returns per member its post slot (1..4) or 0
+// (leader slot 0 for the sergeant). The first rotation epoch is the spawn layout (the first four guards by Id). In later epochs each
+// guard draws 38 with the package's 38 / (38 + 157) weight (75 / 25 in "Gate guard -no turrets") and the first four 38-draws (by draw)
+// hold the posts. A holder that stays keeps its slot; a new one takes a free slot. UNSURE: the rotation period (rwh.207: "every few
+// game minutes", min-duration 0.1 + rand x 0.5 h for 38); ours is a fixed kGateRotationTicks.
+std::vector<int> Simulation::postSlots(flecs::entity squad, const std::vector<std::pair<std::uint64_t, flecs::entity>>& members)
+{
+	std::vector<int> slot(members.size(), 0);
+	if (members.empty())
+		return slot;
+	double w38 = 75.0;
+	double w157 = 25.0;
+	if (const routines::CompiledPackage* package = appliedPackage(squad))
+	{
+		double a = 0.0;
+		double b = 0.0;
+		for (const routines::Candidate& c : routines::candidatesAt(*package, routines::Role::Squad, std::fmod(trader::gameHours(clockTick()), 24.0)))
+		{
+			if (c.task == routines::task::StaticGuardBuilding)
+				a += c.weight;
+			else if (c.task == routines::task::StaticGuardTown)
+				b += c.weight;
+		}
+		if (a + b > 0.0)
+		{
+			w38 = a;
+			w157 = b;
+		}
+	}
+	const double p38 = w38 / (w38 + w157);
+	const std::uint64_t epoch = clockTick() / kGateRotationTicks;
+	std::vector<std::pair<double, std::size_t>> holders; // (draw, member index)
+	for (std::size_t index = 1; index < members.size(); ++index)
+	{
+		if (epoch == 0)
+		{
+			holders.emplace_back(static_cast<double>(index), index);
+			continue;
+		}
+		RngStream dice(streamSeed(streamSeed(streamSeed(seed_, kGateRotationStream), static_cast<std::size_t>(members[index].first)), static_cast<std::size_t>(epoch)));
+		const double draw = dice.uniform01();
+		if (draw < p38)
+			holders.emplace_back(draw, index);
+	}
+	std::sort(holders.begin(), holders.end());
+	if (holders.size() > static_cast<std::size_t>(kGateMemberSlots))
+		holders.resize(kGateMemberSlots);
+	std::array<bool, kGateMemberSlots + 1> taken{};
+	slot[0] = 0;
+	for (const auto& [draw, index] : holders)
+		if (const state::Routine* r = members[index].second.get<state::Routine>();
+			r != nullptr && r->goal == routines::task::GatePost && r->target.slot >= 1 && r->target.slot <= kGateMemberSlots && !taken[r->target.slot])
+		{
+			slot[index] = r->target.slot;
+			taken[r->target.slot] = true;
+		}
+	int next = 1;
+	for (const auto& [draw, index] : holders)
+	{
+		if (slot[index] != 0)
+			continue;
+		while (taken[next])
+			++next;
+		slot[index] = next;
+		taken[next] = true;
+	}
+	return slot;
+}
+
 void Simulation::stepGateCrewPosts()
 {
 	if (combat_ == nullptr || combat_->empty() || navigation_ == nullptr || clockTick() % kGateCrewIntervalTicks != 0)
@@ -46,6 +120,7 @@ void Simulation::stepGateCrewPosts()
 				members.emplace_back(id.value, member);
 		});
 		std::sort(members.begin(), members.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+		const std::vector<int> slotOf = postSlots(squad, members);
 		for (std::size_t index = 0; index < members.size(); ++index)
 		{
 			const auto& [id, member] = members[index];
@@ -59,7 +134,7 @@ void Simulation::stepGateCrewPosts()
 					member.remove<state::Routine>();
 				}
 			}
-			const std::optional<GateStand> stand = gateStandPoint(*site, static_cast<int>(index));
+			const std::optional<GateStand> stand = index != 0 && slotOf[index] == 0 ? std::nullopt : gateStandPoint(*site, slotOf[index]);
 			if (!stand)
 			{
 				if (index == 0) // not reached: index 0 always has a stand point
@@ -71,27 +146,35 @@ void Simulation::stepGateCrewPosts()
 					off.nextScore = clockTick();
 					member.set<state::Routine>(std::move(off));
 				} else if (routine->goal == routines::task::GatePost) {
-					state::Routine off = *routine; // a guard shifted down the list: the scorer takes it from here
+					state::Routine off = *routine; // a post holder handed its post over: the scorer takes it from here
 					off.goal = 0;
+					off.target = {};
 					off.nextScore = clockTick();
 					member.set<state::Routine>(std::move(off));
 				}
 				continue;
 			}
-			if (index != 0 && (routine == nullptr || routine->goal != routines::task::GatePost))
+			if (index != 0 && (routine == nullptr || routine->goal != routines::task::GatePost || routine->target.slot != slotOf[index]))
 			{
+				const bool arriving = routine == nullptr || routine->goal != routines::task::GatePost;
 				routineBook_.release(id);
 				state::Routine post;
 				post.since = clockTick();
 				post.goal = routines::task::GatePost;
+				post.target.slot = static_cast<std::uint16_t>(slotOf[index]);
 				post.nextScore = ~std::uint64_t(0);
 				member.set<state::Routine>(std::move(post));
+				if (arriving) // taking a post over from the scorer's walk: drop that route, the post's walk replaces it
+					if (state::Fighter* walker = combat_->find(id); walker != nullptr && walker->walking() && walker->routeSeq == 0)
+						walker->clearRoute();
 			}
 			state::Fighter& f = *combat_->find(id);
 			if (f.unconscious || f.down || f.target != 0 || f.carriedBy != 0 || f.carrying != 0 || f.walking()
 				|| member.has<state::InteractTask>() || member.has<state::DoorStep>() || member.has<state::CarryStep>())
 				continue;
-			const auto spot = navigation_->walker().snap({stand->x, f.y, stand->z}, 40.0);
+			// The spot's own height is the sergeant's: a guard coming back from town stands on another level than the landing.
+			const state::Fighter* sergeant = combat_->find(members[0].first);
+			const auto spot = navigation_->walker().snap({stand->x, sergeant != nullptr ? sergeant->y : f.y, stand->z}, 40.0);
 			if (!spot || std::hypot(f.x - spot->x, f.z - spot->z) <= kGatePostReach)
 				continue;
 			const Route route = routeRetry(id, f, spot->x, spot->z, spot->y, true);
@@ -99,9 +182,10 @@ void Simulation::stepGateCrewPosts()
 				continue;
 			f.clearRoute();
 			f.followTarget = 0; // the squad's follow keeps a guard by the leader: the post is its task now
+			std::vector<state::RoutePoint> points;
 			for (std::size_t p = 0; p < route.points.size(); ++p)
-				f.route.push_back({route.points[p].x, route.heights[p], route.points[p].z});
-			f.routeNext = 0;
+				points.push_back({route.points[p].x, route.heights[p], route.points[p].z});
+			setRoute(f, std::move(points), navigation_.get(), body(f));
 			++f.routeVersion;
 			f.routeSeq = 0;
 			f.routeChase = false;

@@ -107,6 +107,20 @@ InteractTarget findInteractTarget(const flecs::world& ecs, const CombatArena* ar
 		target.boxMinZ = producer.boxMinZ;
 		target.boxMaxZ = producer.boxMaxZ;
 	});
+	if (target.kind == InteractKind::None && sim != nullptr)
+	{
+		// A cage building's key (order 60 by a carrier, kenshi-k16.6.739): the walk goes to the cage's walk spot.
+		if (const routines::SiteEntry* cage = sim->cageOf(id))
+		{
+			target.kind = InteractKind::Cage;
+			target.id = id;
+			target.x = cage->x;
+			target.y = cage->hasY ? cage->y : 0.0;
+			target.z = cage->z;
+			target.reach = kReachCage;
+			target.reachStopped = 2.0 * kReachCage;
+		}
+	}
 	return target;
 }
 
@@ -203,6 +217,10 @@ flecs::entity characterWithId(const flecs::world& ecs, std::uint64_t id)
 std::string checkInteract(const flecs::world& ecs, const CombatArena& arena, std::uint64_t actor, const InteractTarget& target,
 	std::uint8_t action, std::uint8_t flags, const kdata::GameData* data, const Simulation* sim)
 {
+	// The exe's carry swap (1407f9e20): a carrier's order on a built cage becomes PUT_IN_CAGE whatever the action was; a cage is no
+	// other order's target (no use-cage here), so anyone not carrying is refused.
+	if (target.kind == InteractKind::Cage)
+		return sim != nullptr ? sim->putInCageRefusal(actor, target.id) : std::string("unsupported");
 	switch (static_cast<InteractAction>(action))
 	{
 	case InteractAction::Open:
@@ -1191,8 +1209,7 @@ void Simulation::beginInteract(std::uint64_t id, std::uint64_t target, std::uint
 	f->clearRoute();
 	if (!route.empty())
 	{
-		f->route = std::move(route);
-		f->routeNext = 0;
+		setRoute(*f, std::move(route), navigation_.get(), body(*f));
 		++f->routeVersion;
 		f->routeSeq = seq;
 		f->routeApproach = approach;
@@ -1287,8 +1304,7 @@ void Simulation::stepOrderQueues()
 			for (std::size_t k = 0; k < route.points.size(); ++k)
 				points.push_back({route.points[k].x, route.heights[k], route.points[k].z});
 			fighter.clearRoute();
-			fighter.route = std::move(points);
-			fighter.routeNext = 0;
+			setRoute(fighter, std::move(points), navigation_.get(), body(fighter));
 			++fighter.routeVersion;
 			fighter.routeSeq = next.seq;
 			fighter.routeSource = state::Fighter::PlanSource::Order; // a queued move order, as the replacing one (simulation.cpp)
@@ -1945,6 +1961,9 @@ void Simulation::stepDoorSteps()
 	});
 	for (std::size_t i = 0; i < members.size(); ++i)
 	{
+		if (!members[i].due)
+			continue; // (kenshi-k16.6.639)
+		const double dt = members[i].dueTicks * kTickSeconds; // the time since its last pass
 		const std::uint64_t id = members[i].id;
 		flecs::entity actor = ecs.entity(combatEntities_[i]);
 		state::Fighter& fighter = *combat_->find(id);
@@ -1963,8 +1982,10 @@ void Simulation::stepDoorSteps()
 				if (resume && !step.route.empty())
 				{
 					fighter.clearRoute();
-					fighter.route = step.route;
+					fighter.route = step.route; // the stashed corridor comes back with it (3e), not re-derived
 					fighter.routeNext = step.routeNext;
+					fighter.portals = step.portals;
+					fighter.portalNext = step.portalNext;
 					++fighter.routeVersion;
 					fighter.routeSeq = step.routeSeq;
 					fighter.routeApproach = step.routeApproach;
@@ -2004,7 +2025,7 @@ void Simulation::stepDoorSteps()
 				if (isForeignOwner(world_.ecs(), id, box->ownerSid))
 					{ reportCrime(id, crime::kBurglary, box->ownerSid, 0); noteCaughtAct(id, 2, step.door); }
 				LockTimer lock{box->lockElapsed, box->lockInterval, box->lockAttempts};
-				const PickTick tick = tickLock(lock, kTickSeconds, pickChance(box->lockLevel, fighter.skills.lockpicking), box->key, id);
+				const PickTick tick = tickLock(lock, dt, pickChance(box->lockLevel, fighter.skills.lockpicking), box->key, id);
 				box->lockElapsed = lock.elapsed;
 				box->lockInterval = lock.interval;
 				box->lockAttempts = lock.attempts;
@@ -2073,12 +2094,12 @@ void Simulation::stepDoorSteps()
 					break;
 				}
 			};
-			step.remaining -= kTickSeconds;
+			step.remaining -= dt;
 			bool running = true;
 			switch (step.phase)
 			{
 			case 4: // waiting for a door the actor may not open
-				step.waited += kTickSeconds;
+				step.waited += dt;
 				if (door->state == 0 || door->state == 3)
 				{
 					end(InteractEvent::kDone, true);
@@ -2088,7 +2109,7 @@ void Simulation::stepDoorSteps()
 				} else if (step.waited >= kDoorWaitCap) {
 					end(InteractEvent::kUnreachable, false); // the walk is given up; the AI plans again
 					running = false;
-				} else if (static_cast<std::int64_t>(step.waited) != static_cast<std::int64_t>(step.waited - kTickSeconds)) {
+				} else if (static_cast<std::int64_t>(step.waited) != static_cast<std::int64_t>(step.waited - dt)) {
 					// Once a second the wait plans again: a gate crew may have thinned out, a weapon may have been picked up.
 					startPlan(decide(id, fighter, *door, step.door), *door);
 					if (step.phase != 4)
@@ -2293,6 +2314,8 @@ void Simulation::stepDoorSteps()
 			}
 			step.route = fighter.route;
 			step.routeNext = fighter.routeNext;
+			step.portals = fighter.portals;
+			step.portalNext = fighter.portalNext;
 			step.routeSeq = fighter.routeSeq;
 			step.routeApproach = fighter.routeApproach;
 			fighter.clearRoute(state::Fighter::kClearDoorStep);
@@ -2310,6 +2333,8 @@ void Simulation::stepInteractions()
 	const auto& members = combat_->members();
 	for (std::size_t i = 0; i < members.size(); ++i)
 	{
+		if (!members[i].due)
+			continue; // (kenshi-k16.6.639)
 		const flecs::entity actor = ecs.entity(combatEntities_[i]);
 		const state::InteractTask* found = actor.get<state::InteractTask>();
 		if (found == nullptr)
@@ -2396,6 +2421,24 @@ void Simulation::stepInteractions()
 			continue;
 		}
 		flecs::entity entity(ecs.c_ptr(), target.entity);
+		if (target.kind == InteractKind::Cage)
+		{
+			// THE PUT-IN (PUT_IN_CAGE 0x6c): the AI's own imprison (combat/carry.cpp kPutInCage), the cage locks with the body in it.
+			state::Fighter* carrier = combat_->find(members[i].id);
+			const routines::SiteEntry* cage = cageOf(task.target);
+			if (carrier == nullptr || cage == nullptr || carrier->carrying == 0)
+			{
+				finish(InteractEvent::kRefused);
+				continue;
+			}
+			carrier->clearRoute();
+			carrier->forwardSpeed = 0.0;
+			carrier->lateralSpeed = 0.0;
+			imprison(members[i].id, carrier->carrying, *cage);
+			mirrorFighter(members[i].id);
+			finish(InteractEvent::kDone);
+			continue;
+		}
 		switch (static_cast<InteractAction>(task.action))
 		{
 		case InteractAction::Open:
@@ -2518,6 +2561,9 @@ void Simulation::stepInteractions()
 					knav::kTurnRate, kTickSeconds);
 			if (std::find(producer.operators.begin(), producer.operators.end(), members[i].id) == producer.operators.end())
 			{
+				// Task_OperateMachine start (14035b430) sheathes first, unconditionally, and the stop never redraws (rwh.272 answers 2a/2b/3b);
+				// the planner's 7 covers the NPC routes, a direct interact order lands here.
+				sheatheWeapon(members[i].id, true);
 				producer.operators.push_back(members[i].id);
 				producer.since[members[i].id] = clockTick();
 				++producer.version;

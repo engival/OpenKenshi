@@ -2,6 +2,7 @@
 
 #include "kworld/error.hpp"
 #include "kworld/gamedata.hpp"
+#include "kworld/roadfixups.hpp"
 #include "kworld/zones.hpp"
 #include "io.hpp"
 #include "le.hpp"
@@ -10,6 +11,9 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <sstream>
 #include <limits>
 #include <map>
 #include <queue>
@@ -48,7 +52,12 @@ RoadNetwork::Road readRoad(const kdata::Record& record)
 	RoadNetwork::Road road;
 	findInt(record, "start", road.start);
 	findInt(record, "end", road.end);
+	road.sid = record.stringID;
+	for (const kdata::FieldBool& flag : record.bools)
+		if (flag.key == "hidden")
+			road.hidden = flag.value;
 	road.length = findFloat(record, "length");
+	road.width = findFloat(record, "width");
 	std::map<long, const kdata::Instance*> byIndex;
 	for (const kdata::Instance& instance : record.instances)
 	{
@@ -151,23 +160,31 @@ RoadNetwork RoadNetwork::fromRoads(std::vector<Road> roads)
 	RoadNetwork net;
 	for (Road& road : roads)
 		if (road.markers.size() >= 2 && road.length > 0.0)
+		{
+			for (Marker& m : road.markers)
+				m.width = road.width;
 			net.roads_.push_back(std::move(road));
+		}
 	return net;
 }
 
-RoadNetwork RoadNetwork::load(std::string_view dataDir)
+namespace {
+
+struct Source
+{
+	int rank;
+	std::string layer;
+	std::filesystem::path path;
+};
+
+// The leveldata.level files of a data dir in load order (zone layer rank, then name).
+std::vector<Source> roadSources(std::string_view dataDir)
 {
 	namespace fs = std::filesystem;
 	const fs::path root = fs::absolute(fs::path(dataDir)) / "newland";
 	std::error_code error;
 	if (!fs::is_directory(root / "leveldata", error))
 		throw Error("roads: no leveldata directory at " + (root / "leveldata").string());
-	struct Source
-	{
-		int rank;
-		std::string layer;
-		fs::path path;
-	};
 	std::vector<Source> sources;
 	if (fs::is_regular_file(root / "leveldata.level", error))
 		sources.push_back({zoneLayerRank("."), ".", root / "leveldata.level"});
@@ -183,6 +200,46 @@ RoadNetwork RoadNetwork::load(std::string_view dataDir)
 		}
 	}
 	std::sort(sources.begin(), sources.end(), [](const Source& a, const Source& b) { return a.rank != b.rank ? a.rank < b.rank : a.layer < b.layer; });
+	return sources;
+}
+
+constexpr std::uint64_t kFnvOffset = 14695981039346656037ull;
+constexpr std::uint64_t kFnvPrime = 1099511628211ull;
+
+std::uint64_t fnv(std::uint64_t hash, const void* data, std::size_t size)
+{
+	const auto* bytes = static_cast<const std::uint8_t*>(data);
+	for (std::size_t i = 0; i < size; ++i)
+	{
+		hash ^= bytes[i];
+		hash *= kFnvPrime;
+	}
+	return hash;
+}
+
+} // namespace
+
+RoadInputStamp roadInputStamp(std::string_view dataDir)
+{
+	RoadInputStamp stamp;
+	stamp.hash = kFnvOffset;
+	for (const Source& source : roadSources(dataDir))
+	{
+		const auto bytes = detail::readFile(source.path.string());
+		RoadInputStamp::Layer layer{source.layer, bytes.size(), fnv(kFnvOffset, bytes.data(), bytes.size())};
+		const std::uint8_t zero = 0;
+		stamp.hash = fnv(stamp.hash, layer.layer.data(), layer.layer.size());
+		stamp.hash = fnv(stamp.hash, &zero, 1);
+		stamp.hash = fnv(stamp.hash, &layer.size, sizeof(layer.size)); // little-endian host
+		stamp.hash = fnv(stamp.hash, &layer.hash, sizeof(layer.hash));
+		stamp.layers.push_back(std::move(layer));
+	}
+	return stamp;
+}
+
+RoadNetwork RoadNetwork::load(std::string_view dataDir, std::string_view fixupsPath)
+{
+	const std::vector<Source> sources = roadSources(dataDir);
 	const std::int32_t roadType = itemTypeByName("ROAD");
 	std::map<std::string, Road> byId;
 	for (const Source& source : sources)
@@ -195,7 +252,39 @@ RoadNetwork RoadNetwork::load(std::string_view dataDir)
 	}
 	std::vector<Road> roads;
 	for (auto& [id, road] : byId)
+	{
+		road.id = id;
 		roads.push_back(std::move(road));
+	}
+	if (!fixupsPath.empty())
+	{
+		// A bad table never takes routing down: a missing file or an unusable header warns and loads the roads unpatched; a bad row is skipped.
+		RoadFixupTable table;
+		std::ifstream in{std::string(fixupsPath), std::ios::binary};
+		std::ostringstream text;
+		text << in.rdbuf();
+		try
+		{
+			if (!in)
+				throw Error("road fixups: cannot read " + std::string(fixupsPath));
+			table = parseRoadFixups(text.str());
+		}
+		catch (const Error& e) { std::cerr << "roads: WARNING " << fixupsPath << ": " << e.what() << " - roads load UNPATCHED\n"; }
+		for (const std::string& bad : table.errors)
+			std::cerr << "roads: WARNING " << fixupsPath << ": " << bad << " - row skipped\n";
+		const std::vector<RoadFixupResult> results = applyRoadFixups(roads, table.rows);
+		for (std::size_t i = 0; i < results.size(); ++i)
+		{
+			const RoadFixup& row = table.rows[i];
+			const RoadFixupResult& result = results[i];
+			if (!result.applied)
+				std::cerr << "roads: fixup row " << i + 1 << " (" << row.road << " #" << row.index << ") skipped: " << result.why << "\n";
+			else if (row.op != FixupOp::Mark)
+				std::cerr << "roads: fixup " << row.road << " #" << row.index << ' ' << (row.op == FixupOp::Move ? "move" : row.op == FixupOp::Insert ? "insert" : "delete")
+					<< " (" << result.before.x << ", " << result.before.z << ") -> (" << result.after.x << ", " << result.after.z << "), road length "
+					<< result.lengthBefore << " -> " << result.lengthAfter << "\n";
+		}
+	}
 	return fromRoads(std::move(roads));
 }
 
@@ -327,6 +416,8 @@ std::vector<Marker> RoadNetwork::route(double fromX, double fromZ, double toX, d
 			appendMarkers(markers, roads_[e.road], e.a, e.b);
 	}
 	markers.push_back(out.point);
+	markers.front().width = roads_[in.road].width;
+	markers.back().width = roads_[out.road].width;
 	// Drop the repeats at joints (a point twice in a row).
 	markers.erase(std::unique(markers.begin(), markers.end(), [](const Marker& a, const Marker& b) { return a.x == b.x && a.z == b.z; }), markers.end());
 	return markers;

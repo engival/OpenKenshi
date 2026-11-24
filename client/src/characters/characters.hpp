@@ -42,6 +42,9 @@ public:
 		// The sim character this spec draws (SimView::specOf): the client's log lines print it beside the race, as the sim's own lines do
 		// (`character 4679`). 0: not a sim character (the anim lab, the creator), and the lines then name the race alone.
 		uint64_t id = 0;
+		// A low-detail figure (the wire's kFlagLowDetail, kenshi-9mw3): a minimal build (race body only, idle) held in the loading stand-in until the full
+		// build replaces it (SimView), whose switch is then the cross-fade. Never the player's.
+		bool lowDetail = false;
 		bool player = false;	// the player's own squad (the wire's kPlayer): the dev stand-in hold leaves it out (dev.standin_hold)
 		std::string race = "Greenlander";
 		bool female = false;

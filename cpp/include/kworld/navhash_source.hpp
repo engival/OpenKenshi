@@ -142,4 +142,10 @@ StaleVerdict staleVerdict(std::optional<std::uint32_t> stored, std::optional<std
 // A short name for the reason a unit could not be verified ("no stored hash", "child gather order", ...).
 const char* staleReason(NavHashSource::Basis basis);
 
+// A zone whose hash differs from the shipped tile's but that folds no building: only the forest word can differ, and our
+// tree placement is the approximated part (NAVHASH.md), while the shipped tile is the original's own mesh. The loader keeps
+// that tile instead of a rebake that redoes the trees only (kenshi-k16.7.74; the rebakes scored 86.7% covered / 15.1% surplus
+// against the tile they replaced, "Shipped-tile gate"). The shipped-tile gate uses the same predicate.
+bool forestOnlyStale(std::optional<std::uint32_t> stored, const NavHashSource::ZoneHashes& ours);
+
 } // namespace kworld

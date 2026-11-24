@@ -20,6 +20,7 @@
 #include "kworld/towns.hpp"
 
 #include <algorithm>
+#include <unordered_set>
 #include <cmath>
 #include <iostream>
 #include <set>
@@ -54,7 +55,8 @@ const kdata::Record* producerFunctionality(const kdata::GameData& data, const kd
 		if (entry.v0 == kdata::kReferenceRemoved)
 			continue;
 		const kdata::Record* function = data.find(entry.targetID);
-		if (function != nullptr && hasLive(*function, "produces") && !hasLive(*function, "consumes"))
+		// A furnace (function 14) is a machine row of its own (kind 12, machines.hpp), not a producer: no operator, a container's contents.
+		if (function != nullptr && function->intOr("function", 0) != 14 && hasLive(*function, "produces") && !hasLive(*function, "consumes"))
 			return function;
 		return nullptr;
 	}
@@ -186,9 +188,11 @@ double statOf(const state::FighterSkills& skills, std::int32_t statUsed) noexcep
 	return statRef(const_cast<state::FighterSkills&>(skills), statUsed);
 }
 
-double powerFraction(const Spec& spec) noexcept
+double powerFraction(const Spec&) noexcept
 {
-	return spec.maxOperators > 0 ? 1.0 : 0.0;
+	// HOOK: no power grid yet (BUILDINGS_SLICE section 6), so every machine counts as fully powered; an automatic one
+	// (maxOperators 0) runs on its own at rate x richness x 1 (kenshi-gzto: the original shows it Working, Workers "-").
+	return 1.0;
 }
 
 double operatorProgress(const Spec& spec, double richness, const state::FighterSkills& skills) noexcept
@@ -398,7 +402,8 @@ std::optional<Simulation::BuildingView> Simulation::producerView(std::uint64_t i
 	v.x = producer->x;
 	v.y = producer->y;
 	v.z = producer->z;
-	v.status = producer->prodState == 1 ? buildings::kOutputFull : producer->prodState == 2 ? buildings::kWorking : buildings::kNoWorkers;
+	// A fully automatic producer (no operator slot) that is not full reads Working (the original's Workers "-", kenshi-k16.5.26).
+	v.status = producer->prodState == 1 ? buildings::kOutputFull : producer->prodState == 2 || producer->maxOperators == 0 ? buildings::kWorking : buildings::kNoWorkers;
 	v.flags = 1; // built
 	v.progress = 1.0;
 	v.maxHp = buildings::maxHp(*record);
@@ -473,8 +478,10 @@ void Simulation::stepProducers()
 				if (!navigation_->covers(site.x, site.z))
 					return;
 				// A foliage rock cuts its footprint out of the navmesh: its origin snaps to the rock's edge.
-				const auto spot = navigation_->walker().snap({site.x, site.y, site.z},
-					std::max(producers::kUseSnap, 0.6 * std::hypot(site.boxMaxX - site.boxMinX, site.boxMaxZ - site.boxMinZ)));
+				const bool bounded = site.boxMaxX > site.boxMinX;
+				const auto spot = navigation_->walker().snap({site.x, site.y, site.z}, bounded
+					? std::max(producers::kUseSnap, 0.6 * std::hypot(site.boxMaxX - site.boxMinX, site.boxMaxZ - site.boxMinZ))
+					: producers::kPlacementSnap);
 				if (!spot)
 				{
 					producerOffMesh_.insert(site.id);
@@ -487,6 +494,50 @@ void Simulation::stepProducers()
 		};
 		for (const ProducerSite& site : world_.producerSites())
 			consider(site);
+		// The furnaces (function 14): a container entity under the machine's wire id (machines.hpp kMachineIdBase), made once near a player;
+		// its contents are the INVENTORY of kind 12. Never dropped: what is put in stays (a saved game keeps the entity and its id).
+		std::unordered_set<std::uint64_t> furnaces;
+		ecs.each([&](const state::Id& id, const state::Container&)
+		{
+			if (id.value >= machines::kMachineIdBase)
+				furnaces.insert(id.value);
+		});
+		for (const MachineSite& site : world_.machineSites())
+		{
+			if (world_.machineInfo(site).kind != machines::Kind::Furnace || furnaces.count(site.id) != 0 || !near(site.x, site.z, producers::kMaterialiseRadius))
+				continue;
+			state::Container box;
+			box.key = site.key;
+			box.building = site.key;
+			box.recordSid = site.recordSid;
+			box.ownerSid = site.ownerFaction;
+			box.x = box.useX = site.x;
+			box.y = box.useY = site.y;
+			box.z = box.useZ = site.z;
+			if (navigation_ != nullptr)
+			{
+				if (!navigation_->covers(site.x, site.z))
+					continue;
+				if (const auto spot = navigation_->walker().snap({site.x, site.y, site.z}, producers::kUseSnap))
+				{
+					box.useX = spot->x;
+					box.useY = spot->y;
+					box.useZ = spot->z;
+				}
+			}
+			state::Inventory contents;
+			contents.version = 1;
+			const grid::Size size = grid::Rules(*gameData_).buildingSize(site.recordSid);
+			if (size.w > 0 && size.h > 0)
+			{
+				contents.gridW = static_cast<std::uint8_t>(std::min(size.w, 255));
+				contents.gridH = static_cast<std::uint8_t>(std::min(size.h, 255));
+			}
+			flecs::entity entity = ecs.entity();
+			entity.set<state::Id>(state::Id{site.id});
+			entity.set<state::Container>(std::move(box));
+			entity.set<state::Inventory>(std::move(contents));
+		}
 		// The wild deposits: foliage meshes with a `building type`, generated per zone cell around each player character.
 		std::set<std::pair<int, int>> cells;
 		for (const auto& [px, pz] : players)
@@ -569,13 +620,14 @@ void Simulation::stepProducers()
 			double dp = 0.0;
 			for (const std::uint64_t id : producer.operators)
 				dp += producers::operatorProgress(*spec, producer.richness, combat_->find(id)->skills);
-			// A fully automatic producer (maxOperators 0, a drill). A player's needs power: HOOK, it stalls until the power grid
-			// (BUILDINGS_SLICE section 6) feeds powerFraction. An NPC's runs unpowered and produces nothing (user, 2026-11-03: the
+			// A fully automatic producer (maxOperators 0: drill, Well II). A player's runs on its own at rate x richness x power
+			// (HOOK: powerFraction is 1 until the power grid, BUILDINGS_SLICE section 6); no worker, so no skill term (UNSURE: the
+			// original's skill term for an automatic machine is not decoded). An NPC's produces nothing (user, 2026-11-03: the
 			// original's NPC drills cheat the power and make no goods).
 			const bool automatic = spec->maxOperators == 0;
 			const bool npcDrill = automatic && std::find(playerSids.begin(), playerSids.end(), producer.ownerSid) == playerSids.end();
 			if (automatic && !npcDrill)
-				dp += producers::operatorProgress(*spec, producer.richness, state::FighterSkills{});
+				dp += producers::powerFraction(*spec) * producer.richness * producers::baseProgressPerTick(*spec);
 			// XP for the governing skill, per operator, every tick the order runs (a stalled producer trains too).
 			for (const std::uint64_t id : producer.operators)
 			{

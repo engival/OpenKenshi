@@ -294,6 +294,7 @@ const Characters::Char* Characters::shownOf(const Char& c) const
 // objects are doing, so the stand-in and the switch can be seen live and in a script. The player's own squad is never held (the bead's text).
 bool Characters::standinHeld(const Char& c) const
 {
+	if (c.spec.lowDetail && !c.replaced) { return true; }	// a low-detail figure stays the plain stand-in, with render.loading_standin off too: its minimal build is a bare body (kenshi-9mw3, kenshi-bqkd)
 #ifdef KCLIENT_DEV_TOOLS
 	if (c.replaced || standin_ == kStandinOff) { return false; }
 	const double hold = kStandinHold.get();
@@ -306,7 +307,7 @@ bool Characters::standinHeld(const Char& c) const
 
 int Characters::standinStage(const Char& c) const
 {
-	if (standin_ == kStandinOff || c.replaced || !c.body) { return 0; }
+	if (c.replaced || !c.body || (standin_ == kStandinOff && !c.spec.lowDetail)) { return 0; }
 	if (standinHeld(c) || c.fadeAge < 0) { return 1; }	// held, or its GPU objects are still in the stream lane: the stand-in whole
 	if (c.fadeAge < kStandinShape) { return 2; }
 	if (c.fadeAge < kStandinShape + kStandinColour) { return 3; }

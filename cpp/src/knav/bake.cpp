@@ -15,6 +15,7 @@
 #include <iomanip>
 #include <ostream>
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -24,6 +25,7 @@
 #include <string>
 #include <thread>
 #include <type_traits>
+#include <utility>
 
 namespace knav {
 
@@ -42,13 +44,11 @@ constexpr float kStairSlopeDegrees = 55.0f;
 
 // Heightmap samples per terrain mesh vertex: 2 = the game's 36-unit height lattice.
 constexpr int kTerrainStride = 2;
-// A doorway's polygons: the door's footprint grown by this much, so the mat a traveller crosses is
-// the door's thickness plus twice the margin deep (about the agent radius plus a voxel each side).
-constexpr float kDoorMargin = 8.0f;
 // The mat gives back what the house hull's fill took, from this far under the door's floor: a stair that climbs into the doorway keeps its
 // slope across the mat's margin (tan 55 degrees, kStairSlopeDegrees), so a bare agent climb cut the run's upper spans away and left a gap between
 // the stair and the doorway (Heft Longhouse, kenshi-k16.6.229).
-constexpr float kMatStairDrop = kDoorMargin * 1.43f;
+constexpr float kMatMargin = 8.0f; // the give-back mat only (the door area itself is the exact door box, kenshi-k16.7.129)
+constexpr float kMatStairDrop = kMatMargin * 1.43f;
 // Recast area ids are Area + 1 (0 is "null"); the doors of one tile take the ids after the last
 // Area, in key order, so two doors that touch stay two regions. 63 is Recast's largest id.
 constexpr int kFirstDoorArea = static_cast<int>(Area::Edge) + 2;
@@ -68,8 +68,6 @@ std::atomic<bool> gProfile{ std::getenv("KNAV_PROFILE") != nullptr };
 std::array<std::atomic<std::uint64_t>, StCount> gStageNs{};
 std::atomic<std::uint64_t> gProfileTiles{ 0 };
 std::atomic<std::uint64_t> gFlatTiles{ 0 };
-std::atomic<std::uint64_t> gBandlessTiles{ 0 };
-std::atomic<std::uint64_t> gErodedTiles{ 0 };
 BakeTuning gTuning;
 
 struct Lap
@@ -279,9 +277,28 @@ void splitOverlappingRegions(rcCompactHeightfield& chf)
 }
 
 // A use node's reach: the spans this close to a prop's own use node stay walkable through the prop's body clearance.
-constexpr float kUseReach = 4.0f;
-constexpr int kGapCells = 4; // the least free lane (cells, 4 u) a furniture ring leaves between two blockers: the mesh is the walker's centre space already (walls eroded by the 4 u radius), and a 1-cell lane collapses in the contour simplification
 
+
+// Dev side table (kenshi-k16.6.383): the cells the prop ring hands back (gap lanes, stairs, use-node spare), recorded only while a test asks.
+std::atomic<bool> gRecordExempt{ false };
+std::mutex gExemptMutex;
+std::vector<ExemptCell> gExempt;
+
+void recordExempt(const rcCompactHeightfield& chf, const rcConfig& cfg, const std::vector<unsigned int>& spans, char kind)
+{
+	if (!gRecordExempt.load() || spans.empty())
+		return;
+	const std::set<unsigned int> wanted(spans.begin(), spans.end());
+	const std::lock_guard<std::mutex> lock(gExemptMutex);
+	for (int z = 0; z < chf.height; ++z)
+		for (int x = 0; x < chf.width; ++x)
+		{
+			const rcCompactCell& cell = chf.cells[x + z * chf.width];
+			for (unsigned int i = cell.index; i < cell.index + static_cast<unsigned int>(cell.count); ++i)
+				if (wanted.count(i) != 0)
+					gExempt.push_back({ cfg.bmin[0] + (static_cast<float>(x) + 0.5f) * cfg.cs, cfg.bmin[1] + static_cast<float>(chf.spans[i].y) * cfg.ch, cfg.bmin[2] + (static_cast<float>(z) + 0.5f) * cfg.cs, kind });
+		}
+}
 
 constexpr float kRockMaxSpan = 750.0f; // a shell wider than this (either axis) is cut per triangle height (kenshi-k16.7.59)
 
@@ -577,10 +594,78 @@ TileInput gatherTile(const NavConfig& c, const kworld::Heightmap& terrain,
 
 // The Detour tile of a finished polygon mesh: door polygons are split out and the area ids shifted
 // back (Recast's area 0 is "null"), and each polygon gets its area's flag bit.
+// Polygons between the stair limit (55) and this are real stair quads at the mesh's coarse vertex lattice (dropping them at 55 opened 40 door-sweep
+// gaps); a quad that bridges storeys is far steeper.
+constexpr float kBridgeSlopeDegrees = 72.0f;
+constexpr bool kDropSteepPolys = false; // report only: dropping them opened door-sweep gaps (kenshi-k16.7.129 close report)
+
+// A polygon whose own plane is steeper than the stair limit is no surface (a quad whose corners lie on different storeys): reported per
+// tile and left out of the tile (kenshi-k16.7.129). Neighbour indices are renumbered; a link to a dropped polygon becomes a wall.
+void dropSteepPolys(const rcConfig& cfg, rcPolyMesh& pmesh, rcPolyMeshDetail& dmesh, int tx, int tz)
+{
+	const float minUp = std::cos(kBridgeSlopeDegrees * 3.14159265f / 180.0f);
+	const int nvp = pmesh.nvp;
+	std::vector<int> remap(static_cast<std::size_t>(pmesh.npolys), -1);
+	int kept = 0;
+	for (int i = 0; i < pmesh.npolys; ++i)
+	{
+		const unsigned short* poly = &pmesh.polys[static_cast<std::size_t>(i) * nvp * 2];
+		int n = 0;
+		while (n < nvp && poly[n] != RC_MESH_NULL_IDX)
+			++n;
+		bool steep = false;
+		for (int k = 2; k < n && !steep; ++k)
+		{
+			float p[3][3];
+			const unsigned short ids[3] = { poly[0], poly[k - 1], poly[k] };
+			for (int j = 0; j < 3; ++j)
+			{
+				p[j][0] = static_cast<float>(pmesh.verts[ids[j] * 3]) * cfg.cs;
+				p[j][1] = static_cast<float>(pmesh.verts[ids[j] * 3 + 1]) * cfg.ch;
+				p[j][2] = static_cast<float>(pmesh.verts[ids[j] * 3 + 2]) * cfg.cs;
+			}
+			float a[3], b[3];
+			for (int j = 0; j < 3; ++j) { a[j] = p[1][j] - p[0][j]; b[j] = p[2][j] - p[0][j]; }
+			// the vertices sit on the voxel lattice: a height difference is good to one cell height
+			a[1] = std::copysign(std::max(0.0f, std::fabs(a[1]) - cfg.ch), a[1]);
+			b[1] = std::copysign(std::max(0.0f, std::fabs(b[1]) - cfg.ch), b[1]);
+			const float nx = a[1] * b[2] - a[2] * b[1], ny = a[2] * b[0] - a[0] * b[2], nz = a[0] * b[1] - a[1] * b[0];
+			const float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+			steep = len > 1e-6f && std::fabs(ny) / len < minUp;
+		}
+		if (!steep)
+			remap[static_cast<std::size_t>(i)] = kept++;
+	}
+	if (kept == pmesh.npolys || kept == 0)
+		return;
+	std::fprintf(stderr, "knav bake: tile %d,%d: %d polygon(s) steeper than %.0f degrees%s\n", tx, tz, pmesh.npolys - kept, kBridgeSlopeDegrees, kDropSteepPolys ? " not written" : "");
+	if (!kDropSteepPolys)
+		return;
+	for (int i = 0; i < pmesh.npolys; ++i)
+	{
+		const int to = remap[static_cast<std::size_t>(i)];
+		if (to < 0)
+			continue;
+		unsigned short* dst = &pmesh.polys[static_cast<std::size_t>(to) * nvp * 2];
+		const unsigned short* src = &pmesh.polys[static_cast<std::size_t>(i) * nvp * 2];
+		std::copy(src, src + nvp * 2, dst);
+		for (int k = nvp; k < nvp * 2; ++k)
+			if (dst[k] != RC_MESH_NULL_IDX && !(dst[k] & 0x8000))
+				dst[k] = remap[dst[k]] < 0 ? RC_MESH_NULL_IDX : static_cast<unsigned short>(remap[dst[k]]);
+		pmesh.areas[to] = pmesh.areas[i];
+		pmesh.flags[to] = pmesh.flags[i];
+		if (pmesh.regs)
+			pmesh.regs[to] = pmesh.regs[i];
+		std::copy(dmesh.meshes + i * 4, dmesh.meshes + i * 4 + 4, dmesh.meshes + to * 4);
+	}
+	pmesh.npolys = kept;
+}
+
 std::optional<BuiltTile> finishTile(const NavConfig& c, const rcConfig& cfg, rcPolyMesh& pmesh,
-	const rcPolyMeshDetail& dmesh, const std::vector<kworld::DoorKey>& tileDoors, int tx, int tz)
+	rcPolyMeshDetail& dmesh, const std::vector<kworld::DoorKey>& tileDoors, int tx, int tz)
 {
 	BuiltTile built;
+	dropSteepPolys(cfg, pmesh, dmesh, tx, tz);
 	for (int i = 0; i < pmesh.npolys; ++i)
 	{
 		const int id = pmesh.areas[i];
@@ -723,15 +808,6 @@ std::optional<BuiltTile> buildFlatTile(const NavConfig& c, const rcConfig& cfg, 
 	return finishTile(c, cfg, *pmesh, *dmesh, {}, tx, tz);
 }
 
-// What becomes of the spans within the agent radius of a wall. Edge is the bake; a tile it takes past kMaxPolysPerTile is
-// baked again with Land, then with Eroded (the pre-v9 bake, which fits every tile of the world).
-enum class WallBand
-{
-	Edge, // Area::Edge, its own polygons
-	Land, // no band: one surface
-	Eroded // cut, as Recast's erosion leaves it
-};
-
 // Terrain inside a building's interior volume is not part of the mesh (BUILDING `interior terrain` 0, WorldShape::carveTerrain; kenshi-rwh.90): the
 // terrain spans whose surface lies inside one of the volume's convex boxes are unlinked, before the shapes go in, so a sunk building's floor stands alone and joins
 // the door instead of hiding under the dune. Terrain height and collision elsewhere are untouched. One pass per distinct volume.
@@ -816,9 +892,11 @@ public:
 		}
 	}
 
-	// The highest triangle surface at (x, z) within [y - below, y + above]; false when there is none.
-	bool height(float x, float z, float y, float below, float above, float& out) const
+	// The highest triangle surface at (x, z) within [y - below, y + above]; false when there is none. With `prefer` (not NaN) the
+	// surface nearest that height instead (the one the polygon's other corners are on), and none further than `within` from it.
+	bool height(float x, float z, float y, float below, float above, float& out, float prefer = std::nanf(""), float within = 1e30f) const
 	{
+		const bool near = !std::isnan(prefer);
 		const int bx = static_cast<int>((x - x0_) / bin_);
 		const int bz = static_cast<int>((z - z0_) / bin_);
 		if (bx < 0 || bz < 0 || bx >= nx_ || bz >= nz_)
@@ -840,7 +918,11 @@ public:
 			if (l0 < -kEdge || l1 < -kEdge || l2 < -kEdge)
 				continue;
 			const float top = l0 * a[1] + l1 * b[1] + l2 * c[1];
-			if (top < y - below || top > y + above || (found && top <= out))
+			if (top < y - below || top > y + above)
+				continue;
+			if (near && std::fabs(top - prefer) > within)
+				continue;
+			if (found && (near ? std::fabs(top - prefer) >= std::fabs(out - prefer) : top <= out))
 				continue;
 			out = top;
 			found = true;
@@ -862,6 +944,7 @@ private:
 	std::vector<std::vector<int>> bins_;
 };
 
+constexpr float kStairReach = 5.0f; // 2.83 u cell diagonal x tan 55 deg, and one voxel
 constexpr int kHeightSteps = 10; // polygon vertex heights in 1/10 voxel after the exact-height pass
 
 // Puts the tile's polygon and detail vertices on the walkable collision (see HeightOracle). Returns the voxel height the Detour data
@@ -873,6 +956,7 @@ float refineHeights(const rcConfig& cfg, const HeightOracle& oracle, rcPolyMesh&
 	const float fine = cfg.ch / static_cast<float>(kHeightSteps);
 	if ((pmesh.bmax[1] - pmesh.bmin[1]) / fine > 60000.0f)
 		return cfg.ch; // a tile too tall for 16-bit steps keeps the voxel heights
+	std::vector<char> resolved(static_cast<std::size_t>(pmesh.nverts), 0);
 	for (int i = 0; i < pmesh.nverts; ++i)
 	{
 		unsigned short* v = &pmesh.verts[i * 3];
@@ -880,9 +964,68 @@ float refineHeights(const rcConfig& cfg, const HeightOracle& oracle, rcPolyMesh&
 		const float wz = pmesh.bmin[2] + static_cast<float>(v[2]) * cfg.cs;
 		float y = pmesh.bmin[1] + static_cast<float>(v[1]) * cfg.ch;
 		float exact = 0.0f;
-		if (oracle.height(wx, wz, y, below, above, exact))
+		const bool found = oracle.height(wx, wz, y, below, above, exact);
+		if (found)
 			y = exact;
 		v[1] = static_cast<unsigned short>(std::lround((y - pmesh.bmin[1]) / fine));
+		resolved[static_cast<std::size_t>(i)] = found;
+	}
+	// A Recast vertex takes the highest voxel column round it, so on a steep surface (a stair) it sits up to a cell diagonal's rise over
+	// its polygon's face, out of the narrow window (kenshi-k16.7.127). A vertex the narrow window missed searches down by the steepest
+	// baked slope's rise over a cell diagonal and takes the surface nearest the mean of the resolved corners it shares a polygon with;
+	// none resolved: it keeps its height.
+	const float reach = kStairReach;
+	const float climb = static_cast<float>(cfg.walkableClimb) * cfg.ch;
+	std::vector<char> onDoor(static_cast<std::size_t>(pmesh.nverts), 0); // a door polygon's corner keeps the voxel height the mat was built on
+	for (int p = 0; p < pmesh.npolys; ++p)
+		if (pmesh.areas[p] >= kFirstDoorArea)
+			for (int j = 0; j < pmesh.nvp && pmesh.polys[p * pmesh.nvp * 2 + j] != RC_MESH_NULL_IDX; ++j)
+				onDoor[pmesh.polys[p * pmesh.nvp * 2 + j]] = 1;
+	// A polygon that shares a corner with a door polygon keeps its heights too: the way out of the doorway stays at the mat's height (a
+	// widened pick on the Squin Bar's outer step cut its entrance off, kenshi-k16.7.127).
+	const std::vector<char> doorCorner = onDoor;
+	for (int p = 0; p < pmesh.npolys; ++p)
+	{
+		const unsigned short* poly = &pmesh.polys[p * pmesh.nvp * 2];
+		bool touches = false;
+		for (int j = 0; j < pmesh.nvp && poly[j] != RC_MESH_NULL_IDX; ++j)
+			touches = touches || doorCorner[poly[j]];
+		for (int j = 0; touches && j < pmesh.nvp && poly[j] != RC_MESH_NULL_IDX; ++j)
+			onDoor[poly[j]] = 1;
+	}
+	for (int pass = 0; pass < 2; ++pass)
+	{
+		std::vector<float> sum(static_cast<std::size_t>(pmesh.nverts), 0.0f);
+		std::vector<int> count(static_cast<std::size_t>(pmesh.nverts), 0);
+		for (int p = 0; p < pmesh.npolys; ++p)
+		{
+			const unsigned short* poly = &pmesh.polys[p * pmesh.nvp * 2];
+			for (int j = 0; j < pmesh.nvp && poly[j] != RC_MESH_NULL_IDX; ++j)
+				for (int k = 0; k < pmesh.nvp && poly[k] != RC_MESH_NULL_IDX; ++k)
+					if (j != k && resolved[poly[k]])
+					{
+						sum[poly[j]] += pmesh.bmin[1] + static_cast<float>(pmesh.verts[poly[k] * 3 + 1]) * fine;
+						++count[poly[j]];
+					}
+		}
+		bool any = false;
+		for (int i = 0; i < pmesh.nverts; ++i)
+		{
+			if (resolved[static_cast<std::size_t>(i)] || onDoor[static_cast<std::size_t>(i)] || !count[static_cast<std::size_t>(i)])
+				continue;
+			unsigned short* v = &pmesh.verts[i * 3];
+			const float wx = pmesh.bmin[0] + static_cast<float>(v[0]) * cfg.cs;
+			const float wz = pmesh.bmin[2] + static_cast<float>(v[2]) * cfg.cs;
+			const float y = pmesh.bmin[1] + static_cast<float>(v[1]) * fine;
+			float exact = 0.0f;
+			if (!oracle.height(wx, wz, y, reach, above, exact, sum[static_cast<std::size_t>(i)] / static_cast<float>(count[static_cast<std::size_t>(i)]), climb))
+				continue;
+			v[1] = static_cast<unsigned short>(std::lround((exact - pmesh.bmin[1]) / fine));
+			resolved[static_cast<std::size_t>(i)] = 2; // resolved by a widened search: feeds the next pass
+			any = true;
+		}
+		if (!any)
+			break;
 	}
 	std::vector<char> supported(static_cast<std::size_t>(dmesh.nverts), 0);
 	for (int i = 0; i < dmesh.nverts; ++i)
@@ -895,11 +1038,23 @@ float refineHeights(const rcConfig& cfg, const HeightOracle& oracle, rcPolyMesh&
 			supported[static_cast<std::size_t>(i)] = 1;
 		}
 	}
+	// The first detail vertices of a polygon are its corners: a corner the widened search moved takes the same height, so the detail
+	// surface meets the polygon's corners there (kenshi-k16.7.127).
+	for (int p = 0; p < pmesh.npolys; ++p)
+	{
+		const unsigned short* poly = &pmesh.polys[p * pmesh.nvp * 2];
+		const unsigned int* meta = &dmesh.meshes[p * 4];
+		for (int j = 0; j < pmesh.nvp && poly[j] != RC_MESH_NULL_IDX; ++j)
+			if (resolved[poly[j]] == 2)
+			{
+				dmesh.verts[(meta[0] + static_cast<unsigned int>(j)) * 3 + 1] = pmesh.bmin[1] + static_cast<float>(pmesh.verts[poly[j] * 3 + 1]) * fine;
+				supported[meta[0] + static_cast<unsigned int>(j)] = 1;
+			}
+	}
 	// A polygon's contour overhangs the edge it was simplified from, and Recast fills a detail vertex there from the nearest span of any
-	// layer under it: a slab's edge band over a stair well got a vertex at the stair's height, a skirt 22 u down that a walker stands on
+	// layer under it: a slab's edge over a stair well got a vertex at the stair's height, a skirt 22 u down that a walker stands on
 	// and falls off (the Hub bar stair, kenshi-k16.8.41). A detail vertex that the oracle found no collision under, and which is further than the agent's climb outside its polygon's own corner
-	// heights, on a wall-band polygon whose corners are level to within the climb, takes the nearest corner height.
-	const float climb = static_cast<float>(cfg.walkableClimb) * cfg.ch;
+	// heights, on a polygon whose corners are level to within the climb, takes the nearest corner height.
 	for (int p = 0; p < pmesh.npolys; ++p)
 	{
 		const unsigned short* poly = &pmesh.polys[p * pmesh.nvp * 2];
@@ -911,8 +1066,8 @@ float refineHeights(const rcConfig& cfg, const HeightOracle& oracle, rcPolyMesh&
 			lo = std::min(lo, y);
 			hi = std::max(hi, y);
 		}
-		if (hi - lo > climb || pmesh.areas[p] != static_cast<unsigned char>(static_cast<int>(Area::Edge) + 1))
-			continue; // a sloped polygon (a stair, a hillside) keeps what its samples say; only a wall band overhangs a drop
+		if (hi - lo > climb)
+			continue; // a sloped polygon (a stair, a hillside) keeps what its samples say; only a level one overhangs a drop
 		const unsigned int* meta = &dmesh.meshes[p * 4];
 		for (unsigned int k = 0; k < meta[1]; ++k)
 		{
@@ -927,7 +1082,7 @@ float refineHeights(const rcConfig& cfg, const HeightOracle& oracle, rcPolyMesh&
 
 std::optional<BuiltTile> buildTile(const NavConfig& c,
 	const kworld::Heightmap& terrain, const std::vector<const kworld::WorldShape*>& shapes,
-	int tx, int tz, WallBand band = WallBand::Edge)
+	int tx, int tz)
 {
 	rcConfig cfg{};
 	cfg.cs = c.cellSize;
@@ -1140,7 +1295,7 @@ std::optional<BuiltTile> buildTile(const NavConfig& c,
 		{
 			if (shape->use != kworld::NavUse::Door)
 				continue;
-			footprint(*shape, hull, kDoorMargin);
+			footprint(*shape, hull, kMatMargin);
 			if (!hull.empty())
 				rcMarkConvexPolyArea(&ctx, hull.data(), static_cast<int>(hull.size() / 3),
 					shape->min[1] - c.agentClimb - kMatStairDrop, shape->min[1] + c.agentHeight, 1, *chf);
@@ -1249,7 +1404,7 @@ std::optional<BuiltTile> buildTile(const NavConfig& c,
 		{
 			if (shape->use != kworld::NavUse::Door || shape->door != tileDoors[k])
 				continue;
-			footprint(*shape, hull, kDoorMargin);
+			footprint(*shape, hull, kMatMargin); // not the exact box: at 0, 1 or 4 u the door sweep loses 8-12 legs (the 4014 TwoStorey doors); at 8 u one
 			if (!hull.empty())
 				rcMarkConvexPolyArea(&ctx, hull.data(), static_cast<int>(hull.size() / 3),
 					shape->min[1] - c.agentClimb, shape->min[1] + c.agentHeight,
@@ -1257,156 +1412,28 @@ std::optional<BuiltTile> buildTile(const NavConfig& c,
 		}
 	}
 	lap(StDoors);
-	// The wall band: what erosion by the agent radius would remove stays, dry land in it becoming Area::Edge (its own
-	// polygons; water and doors keep their areas).
-	const std::vector<unsigned char> beforeErode(chf->areas, chf->areas + chf->spanCount);
-	if (!rcErodeWalkableArea(&ctx, cfg.walkableRadius, *chf))
-		return std::nullopt;
-	constexpr unsigned char kLandId = static_cast<unsigned char>(Area::Land) + 1;
-	for (int i = 0; band != WallBand::Eroded && i < chf->spanCount; ++i)
-	{
-		const unsigned char was = beforeErode[static_cast<std::size_t>(i)];
-		if (chf->areas[i] == RC_NULL_AREA && was != RC_NULL_AREA)
-			chf->areas[i] = was == kLandId && band == WallBand::Edge ? static_cast<unsigned char>(static_cast<int>(Area::Edge) + 1) : was;
-	}
-	// Props (closed Obstacle / Projected solids, cut above) get a hard body clearance: their footprint grown by the agent
-	// radius is null, not the walkable Edge band, so a body centre never stands within a body's radius of a barrel or a
-	// counter (kenshi-k16.7.89; the original keeps bodies out by physics collision). Walls keep the Edge band; a door's
-	// own area wins over a prop's grown footprint, and so do the spans within reach of the prop's own use nodes (a bed's
-	// or a counter's user stands there).
+	// One clearance convention (kenshi-k16.7.129): no wall band and no prop ring. The walker's radius is applied by the
+	// query (findDistanceToWall, portal clearance), as on the shipped tiles. A prop's own footprint is cut at its exact outline;
+	// a door's area wins over it.
 	{
 		const std::vector<unsigned char> beforeProps(chf->areas, chf->areas + chf->spanCount);
-		std::vector<unsigned int> stairs;
 		for (const kworld::WorldShape* shape : in.shapes)
 		{
 			if (!propClearanceShape(*shape))
 				continue;
-			const bool projected = shape->use == kworld::NavUse::Projected;
-			// A cell is marked when its centre is inside the hull, so an unmarked cell can reach half a cell into the ring:
-			// grow by that, so the mesh edge keeps the full clearance (the 1 u clearance is under the 2 u cell).
-			propClearanceHull(*shape, kFurnitureBodyClearance + 0.5f * c.cellSize, hull);
+			propClearanceHull(*shape, 0.0f, hull);
 			if (hull.empty())
 				continue;
-			const float bottom = projected ? in.bmin[1] - 1.0f : shape->min[1] - c.cellHeight;
-			const float top = projected ? in.bmax[1] + 1.0f : shape->max[1] + 2 * c.cellHeight;
-			rcMarkConvexPolyArea(&ctx, hull.data(), static_cast<int>(hull.size() / 3), bottom, top, RC_NULL_AREA, *chf);
-		}
-		for (const kworld::WorldShape* shape : in.shapes)
-		{
-			if (!shape->useNodes || !propClearanceShape(*shape))
-				continue;
-			for (const auto& node : *shape->useNodes)
-			{
-				const int x0 = std::max(0, static_cast<int>(std::floor((node[0] - kUseReach - cfg.bmin[0]) / cfg.cs)));
-				const int x1 = std::min(chf->width - 1, static_cast<int>(std::floor((node[0] + kUseReach - cfg.bmin[0]) / cfg.cs)));
-				const int z0 = std::max(0, static_cast<int>(std::floor((node[2] - kUseReach - cfg.bmin[2]) / cfg.cs)));
-				const int z1 = std::min(chf->height - 1, static_cast<int>(std::floor((node[2] + kUseReach - cfg.bmin[2]) / cfg.cs)));
-				for (int z = z0; z <= z1; ++z)
-					for (int x = x0; x <= x1; ++x)
-					{
-						const float dx = cfg.bmin[0] + (static_cast<float>(x) + 0.5f) * cfg.cs - node[0];
-						const float dz = cfg.bmin[2] + (static_cast<float>(z) + 0.5f) * cfg.cs - node[2];
-						if (dx * dx + dz * dz > kUseReach * kUseReach)
-							continue;
-						const rcCompactCell& cell = chf->cells[x + z * chf->width];
-						for (unsigned int i = cell.index; i < cell.index + static_cast<unsigned int>(cell.count); ++i)
-						{
-							const float py = cfg.bmin[1] + static_cast<float>(chf->spans[i].y) * cfg.ch;
-							if (std::fabs(py - node[1]) <= c.agentClimb + c.agentHeight)
-								chf->areas[i] = beforeProps[i];
-						}
-					}
-			}
-		}
-		// The use-node spare opens the clearance ring, never the furniture's own footprint (a user stands beside it).
-		for (const kworld::WorldShape* shape : in.shapes)
-		{
-			if (!shape->useNodes || !propClearanceShape(*shape))
-				continue;
 			const bool projected = shape->use == kworld::NavUse::Projected;
-			propClearanceHull(*shape, 0.5f * c.cellSize, hull); // the footprint plus the raster margin: a cell is marked by its centre
-			if (!hull.empty())
-				rcMarkConvexPolyArea(&ctx, hull.data(), static_cast<int>(hull.size() / 3), projected ? in.bmin[1] - 1.0f : shape->min[1] - c.cellHeight,
-					projected ? in.bmax[1] + 1.0f : shape->max[1] + 2 * c.cellHeight, RC_NULL_AREA, *chf);
+			rcMarkConvexPolyArea(&ctx, hull.data(), static_cast<int>(hull.size() / 3), projected ? in.bmin[1] - 1.0f : shape->min[1] - c.cellHeight,
+				projected ? in.bmax[1] + 1.0f : shape->max[1] + 2 * c.cellHeight, RC_NULL_AREA, *chf);
 		}
-		// The ring never narrows a gap between two blockers (furniture footprints, walls) below the walker's width: along each axis, a
-		// run of spans between two blockers that was wide enough before the ring but keeps fewer than kGapCells free after it gets ring
-		// spans back (low side first) until it keeps that many. A narrower gap stays as the ring left it (kenshi-k16.7.102).
-		{
-			const std::vector<unsigned char> ringAreas(chf->areas, chf->areas + chf->spanCount);
-			std::copy(beforeProps.begin(), beforeProps.end(), chf->areas);
-			for (const kworld::WorldShape* shape : in.shapes)
-			{
-				if (!propClearanceShape(*shape))
-					continue;
-				propClearanceHull(*shape, 0.5f * c.cellSize, hull);
-				if (!hull.empty())
-					rcMarkConvexPolyArea(&ctx, hull.data(), static_cast<int>(hull.size() / 3), shape->use == kworld::NavUse::Projected ? in.bmin[1] - 1.0f : shape->min[1] - c.cellHeight,
-						shape->use == kworld::NavUse::Projected ? in.bmax[1] + 1.0f : shape->max[1] + 2 * c.cellHeight, RC_NULL_AREA, *chf);
-			}
-			std::vector<unsigned char> blocked(static_cast<std::size_t>(chf->spanCount));
-			for (int i = 0; i < chf->spanCount; ++i)
-				blocked[static_cast<std::size_t>(i)] = chf->areas[i] == RC_NULL_AREA;
-			std::copy(ringAreas.begin(), ringAreas.end(), chf->areas);
-			const int limit = kGapCells + 2; // a longer run is wide enough as it is
-			std::vector<int> run;
-			for (int z = 0; z < chf->height; ++z)
-				for (int x = 0; x < chf->width; ++x)
-				{
-					const rcCompactCell& cell = chf->cells[x + z * chf->width];
-					for (unsigned int i = cell.index; i < cell.index + static_cast<unsigned int>(cell.count); ++i)
-					{
-						if (chf->areas[i] != RC_NULL_AREA || blocked[i])
-							continue;
-						for (int axis = 0; axis < 2; ++axis)
-						{
-							// Walk to the blockers on both sides along dirs `axis` and `axis + 2`; an open end (a longer run, a ledge) skips the run.
-							run.assign(1, static_cast<int>(i));
-							bool bounded = true;
-							for (int side = 0; side < 2 && bounded; ++side)
-							{
-								const int dir = axis + 2 * side;
-								int at = static_cast<int>(i), ax = x, az = z;
-								std::vector<int> half;
-								for (int step = 0;; ++step)
-								{
-									const rcCompactSpan& span = chf->spans[at];
-									if (step > limit || rcGetCon(span, dir) == RC_NOT_CONNECTED)
-										break;
-									ax += rcGetDirOffsetX(dir);
-									az += rcGetDirOffsetY(dir);
-									at = static_cast<int>(chf->cells[ax + az * chf->width].index) + rcGetCon(span, dir);
-									if (blocked[static_cast<std::size_t>(at)])
-										break;
-									half.push_back(at);
-								}
-								if (static_cast<int>(half.size()) > limit)
-									bounded = false;
-								else if (side == 0)
-									run.insert(run.begin(), half.rbegin(), half.rend());
-								else
-									run.insert(run.end(), half.begin(), half.end());
-							}
-							int free = 0;
-							for (const int j : run)
-								free += chf->areas[j] != RC_NULL_AREA;
-							if (!bounded || free >= kGapCells || static_cast<int>(run.size()) < kGapCells)
-								continue;
-							for (std::size_t k = 0; k < run.size() && free < kGapCells; ++k)
-								if (chf->areas[run[k]] == RC_NULL_AREA)
-								{
-									chf->areas[run[k]] = beforeProps[static_cast<std::size_t>(run[k])];
-									++free;
-								}
-						}
-					}
-				}
-		}
+		std::vector<unsigned int> stairs;
 		// A stair or ramp is never cut by a ring: a span the ring nulled stays walkable where the surface around it (same
 		// storey, within the ring's reach) rises or falls by more than the step height, so a furniture ring cannot slice a
 		// stair into a gap the walker falls through (k16.7.89, fight_levels at the Hub bar stair).
 		{
-			const int reach = static_cast<int>(std::ceil((kFurnitureBodyClearance + c.cellSize) / c.cellSize)) + 1;
+			const int reach = static_cast<int>(std::ceil((c.cellSize) / c.cellSize)) + 1;
 			const int storey = static_cast<int>(0.5f * c.agentHeight / c.cellHeight);
 			for (int z = 0; z < chf->height; ++z)
 				for (int x = 0; x < chf->width; ++x)
@@ -1438,6 +1465,7 @@ std::optional<BuiltTile> buildTile(const NavConfig& c,
 				}
 			for (const unsigned int i : stairs)
 				chf->areas[i] = beforeProps[i];
+			recordExempt(*chf, cfg, stairs, 's');
 		}
 		for (int i = 0; i < chf->spanCount; ++i)
 			if (beforeProps[static_cast<std::size_t>(i)] >= kFirstDoorArea)
@@ -1470,45 +1498,11 @@ std::optional<BuiltTile> buildTile(const NavConfig& c,
 		|| contours->nconts == 0)
 		return std::nullopt;
 	lap(StContours);
-	// A wall-band (Edge) piece whose contour simplifies away (under 3 vertices: a strip one or two cells wide, which the watershed cuts
-	// into small pieces beside a Land strip) leaves no polygon, and the mesh wall moves in by the band's width. Such a piece is
-	// relabelled Land and the regions and contours are built again: it joins the Land region beside it (kenshi-k16.7.71).
-	{
-		constexpr unsigned char kEdgeId = static_cast<unsigned char>(Area::Edge) + 1;
-		std::vector<char> hasContour(RC_BORDER_REG, 0);
-		for (int ci = 0; ci < contours->nconts; ++ci)
-			if (contours->conts[ci].nverts >= 3)
-				hasContour[contours->conts[ci].reg] = 1;
-		bool relabelled = false;
-		for (int i = 0; i < chf->spanCount; ++i)
-		{
-			const unsigned short region = chf->spans[i].reg;
-			if (region != 0 && !(region & RC_BORDER_REG) && chf->areas[i] == kEdgeId && !hasContour[region])
-			{
-				chf->areas[i] = static_cast<unsigned char>(static_cast<int>(Area::Land) + 1);
-				relabelled = true;
-			}
-		}
-		if (relabelled)
-		{
-			if (!rcBuildDistanceField(&ctx, *chf) || !rcBuildRegions(&ctx, *chf, cfg.borderSize, cfg.minRegionArea, cfg.mergeRegionArea))
-				return std::nullopt;
-			splitOverlappingRegions(*chf);
-			contours.reset(rcAllocContourSet());
-			if (!rcBuildContours(&ctx, *chf, cfg.maxSimplificationError, cfg.maxEdgeLen, *contours) || contours->nconts == 0)
-				return std::nullopt;
-		}
-	}
 	PolyMeshPtr pmesh(rcAllocPolyMesh());
 	if (!rcBuildPolyMesh(&ctx, *contours, cfg.maxVertsPerPoly, *pmesh) || pmesh->npolys == 0)
 		return std::nullopt;
-	// A 32-bit dtPolyRef has no bit to spare (kMaxPolysPerTile): a tile over it goes one step down WallBand. Counted
-	// (bandlessTiles, erodedTiles); knav_bake prints them.
-	if (band != WallBand::Eroded && pmesh->npolys > kMaxPolysPerTile)
-	{
-		++(band == WallBand::Edge ? gBandlessTiles : gErodedTiles);
-		return buildTile(c, terrain, shapes, tx, tz, band == WallBand::Edge ? WallBand::Land : WallBand::Eroded);
-	}
+	if (pmesh->npolys > kMaxPolysPerTile) // a 32-bit dtPolyRef has no bit to spare
+		return std::nullopt;
 	lap(StPolyMesh);
 	DetailPtr dmesh(rcAllocPolyMeshDetail());
 	if (!rcBuildPolyMeshDetail(&ctx, *pmesh, *chf, cfg.detailSampleDist, cfg.detailSampleMaxError, *dmesh))
@@ -1560,6 +1554,19 @@ void propClearanceHull(const kworld::WorldShape& shape, float radius, std::vecto
 	footprint(shape, out, radius, true);
 }
 
+void recordExemptCells(bool on)
+{
+	gRecordExempt = on;
+	const std::lock_guard<std::mutex> lock(gExemptMutex);
+	gExempt.clear();
+}
+
+std::vector<ExemptCell> takeExemptCells()
+{
+	const std::lock_guard<std::mutex> lock(gExemptMutex);
+	return std::exchange(gExempt, {});
+}
+
 void setBakeTuning(const BakeTuning& tuning)
 {
 	gTuning = tuning;
@@ -1576,16 +1583,6 @@ BakeTuning bakeTuning()
 std::uint64_t flatTilesBaked()
 {
 	return gFlatTiles;
-}
-
-std::uint64_t bandlessTiles()
-{
-	return gBandlessTiles;
-}
-
-std::uint64_t erodedTiles()
-{
-	return gErodedTiles;
 }
 
 void setBakeProfile(bool on)

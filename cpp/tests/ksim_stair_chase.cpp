@@ -149,14 +149,17 @@ int main(int argc, char** argv)
 			double stairMin = 1.0e9;
 			std::array<double, 2> last{0.0, 0.0};
 			bool seen = false;
-			int lastStop = -1000; // the last tick it stood nearly still while on the player (a jam, a brawl in its way)
-			bool restarted = false; // it reached the stairs less than kRestartTicks after such a stop: its speed there is the ramp out of the standstill
+			int lastStart = -1000; // the last tick it began a new chase walk (the route came up) from a standstill
+			bool hadRoute = false;
+			int lastStumble = -1000; // the last tick it staggered on the stairs
+			bool restarted = false; // it reached the stairs less than kRestartTicks after starting a new walk from a standstill: its speed there is the ramp out of it
 		};
 		// The run speed of the raiders when the chase starts: a leg wound taken in the brawl on the way lowers it, and the stair speed is measured while they still run at it.
 		const double run = sim.combat()->runSpeed(*sim.combat()->find(*raiders.begin()));
 		// Seconds-worth of ticks: a chaser at its footwork ramp (k16.8.24) takes about 5 s to get from a standstill to its run, so a stair run that begins
 		// within that of a stop measures the ramp, not the stairs (the jam at the stairwell foot, kenshi-k16.7.110 trace).
 		constexpr int kRestartTicks = 20 * 5;
+		constexpr int kRecoverTicks = 20 * 2; // the ramp out of a stagger
 		std::map<std::uint64_t, Chaser> chasers;
 		for (int tick = 0; tick < 20 * 14; ++tick)
 		{
@@ -170,15 +173,23 @@ int main(int argc, char** argv)
 				c.seen = true;
 				if (f.target != playerId || f.dead || f.unconscious)
 					continue;
-				if (v < 0.15 * run)
-					c.lastStop = tick;
+				// A new walk is a route that comes up on a body standing nearly still. A combat stumble or a recoil stop on a live route is not one: the
+				// test asks whether the stairs can be climbed, and a raider that is hit, recovers and climbs proves that (kenshi-e9s9.18).
+				if (f.routeChase && !c.hadRoute && v < 0.15 * run)
+					c.lastStart = tick;
+				c.hadRoute = f.routeChase;
 				if (f.building == 0)
 				{
 					++c.flat.ticks;
 					c.flat.sum += v;
 					c.plateau = std::max(c.plateau, v);
 				} else if (f.y > 1086.0 && f.y < 1139.0 && f.z < -1255.0) {
-					if (c.stairs.ticks == 0 && tick - c.lastStop < kRestartTicks)
+					if (f.state == state::CombatState::Stumble || tick - c.lastStumble < kRecoverTicks)
+					{
+						c.lastStumble = f.state == state::CombatState::Stumble ? tick : c.lastStumble;
+						continue; // a hit's stagger on the stairs holds the body still by design (and the second after it is the ramp out of it): the speed is read on the ticks it runs
+					}
+					if (c.stairs.ticks == 0 && tick - c.lastStart < kRestartTicks)
 						c.restarted = true;
 					++c.stairs.ticks;
 					c.stairs.sum += v;
@@ -193,7 +204,10 @@ int main(int argc, char** argv)
 		for (const auto& [id, c] : chasers)
 		{
 			if (c.stairs.ticks < 5 || c.restarted)
+			{
+				std::printf("raider %llu not measured: %d stair ticks, restarted %d\n", static_cast<unsigned long long>(id), c.stairs.ticks, c.restarted ? 1 : 0);
 				continue; // under a quarter second on the stairs: it fell (stumbled, was KO'd) as it came in, which no speed can be read from (k16.8.24: the chase arrives sooner)
+			}
 			++measured;
 			std::printf("raider %llu: flat plateau %.1f (%d ticks), stairs mean %.1f min %.1f (%d ticks), upper-floor approach mean %.1f (%d ticks); run speed %.1f\n",
 				static_cast<unsigned long long>(id), c.plateau, c.flat.ticks, c.stairs.mean(), c.stairMin, c.stairs.ticks, c.room.mean(), c.room.ticks, run);

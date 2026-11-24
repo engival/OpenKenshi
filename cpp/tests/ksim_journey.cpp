@@ -175,17 +175,22 @@ int main(int argc, char** argv)
 			test::require(near > 20.0 && near < 120.0, "journey_mine: the Wanderer starts by the deposit (" + std::to_string(near) + " u from its use spot)");
 			test::require(e.carried(hero, spots.ore) == 0, "journey_mine: no ore yet");
 			std::uint64_t ticks = 0;
+			const auto drawn = [&]() { return e.sim->combat()->find(hero)->weapon.weaponType != 5; }; // CHAR kFlagDrawn's source
+			const bool armed = drawn();
 			test::require(e.interact(hero, spots.site.id, 4).empty(), "journey_mine: the use order is accepted");
 			int guard = 0;
 			while (e.carried(hero, spots.ore) == 0 && e.entityWithId(spots.site.id).get<state::Inventory>()->carried(spots.ore) == 0 && guard++ < 6000)
 				advance(20, ticks);
 			test::require(guard < 6000, "journey_mine: one ore was made");
+			// rwh.272: Task_OperateMachine start sheathes the weapon (unconditional) and the stop never redraws it.
+			test::require(!drawn(), "journey_mine: kFlagDrawn is off while operating (armed at start: " + std::to_string(armed) + ")");
 			advance(5, ticks);
 			const Inv& deposit = e.inv.at(spots.site.id);
 			test::require(deposit.items.size() == 1 && std::get<1>(deposit.items[0]) >= 1, "journey_mine: the deposit's INVENTORY holds the ore");
 			test::require(e.transfer68(hero, spots.site.id, deposit.version, 0, 1, true).empty(), "journey_mine: take the ore with order 68");
 			advance(3, ticks);
 			test::require(e.carried(hero, spots.ore) == 1, "journey_mine: the Wanderer carries one Copper");
+			test::require(!drawn(), "journey_mine: kFlagDrawn stays off after the order (no redraw)");
 			std::cout << "journey_mine: one Copper after " << static_cast<double>(ticks) * kTickSeconds << " s of sim time\n";
 		}
 

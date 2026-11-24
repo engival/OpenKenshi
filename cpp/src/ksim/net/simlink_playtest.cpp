@@ -336,6 +336,7 @@ void Session::runScenarioLoad(std::uint32_t seq, const std::string& name, std::u
 		// The world has already been swapped (the scenario's, or the bare one if apply stopped halfway): tell the session what it
 		// has before the refusal, so a failed load never leaves a stale world on the client.
 		ctx_.looks.clear();
+		ctx_.cameraStart.reset(); // the world is no longer the import
 		resetKnown();
 		sendTick(out, true);
 		writeScenarioStarted(out, seq, 1, e.what(), name, info.fileHash, runSeed);
@@ -343,6 +344,7 @@ void Session::runScenarioLoad(std::uint32_t seq, const std::string& name, std::u
 	}
 	// The world is the scenario's now: nothing this session sent before is true.
 	ctx_.looks.clear();
+	ctx_.cameraStart.reset(); // the world is no longer the import: a later session gets no CAMERA_START
 	resetKnown();
 	progressLevel_ = 1; // the client sends order 98 again after SCENARIO_STARTED
 	ctx_.scenario.reset(name, info.fileHash, runSeed, sim_.clockTick(), info.metrics);

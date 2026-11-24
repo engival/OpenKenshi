@@ -483,7 +483,7 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 			c.stealth = ch.flag("stealth");
 			c.noncombat = ch.flag("non combat mode");
 			c.speed = static_cast<int>(ch.num("speed mode", 2.0));
-			c.age = ch.num("age", 1.0);
+			c.age = ch.num("age", -1.0);
 			c.blood = med.num("blood", -1.0);
 			c.hunger = med.num("hung", 3.0);
 			c.fed = med.num("fed");
@@ -703,6 +703,7 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 		std::set<std::string> have;
 		for (const kworld::PlacedInstance& placed : sim.world().placements())
 			have.insert(placed.instanceID);
+		std::vector<kworld::PlacedInstance> standing; // the save's own buildings (a player town): collision and nav, one path (kenshi-k16.7.125)
 		std::vector<fs::path> zoneFiles;
 		for (const fs::directory_entry& entry : fs::directory_iterator(root / "zone"))
 			zoneFiles.push_back(entry.path());
@@ -737,8 +738,14 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 				placed.townHand = instance.townHand;
 				if (sim.placeFurnitureCage(placed))
 					++report.furnitureCages;
+				else
+					standing.push_back(placed);
 			}
 		}
+		const Simulation::Stood stood = sim.standBuildings(std::move(standing));
+		report.savedBuildings = stood.placed;
+		report.savedBuildingsNav = stood.nav;
+		report.savedBuildingTiles = stood.navTiles;
 	}
 
 	if (std::any_of(platoons.begin(), platoons.end(), [](const Platoon& p) { return p.player; }))
@@ -802,25 +809,11 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 		result.members = p.members.size();
 		report.gaps["squad purse (money; PLATOON `money`)"] += p.money != 0 ? 1 : 0;
 	}
-	if (report.hasCamera)
-	{
-		const int radius = sim.regions().config().areaRadiusRegions;
-		const std::int32_t centre = sim.regions().regionOf(report.cameraPos[0], report.cameraPos[2]);
-		const std::int32_t axis = sim.regions().regionsPerAxis();
-		for (int dz = -radius; dz <= radius; ++dz)
-		{
-			for (int dx = -radius; dx <= radius; ++dx)
-			{
-				const int rx = centre % axis + dx;
-				const int rz = centre / axis + dz;
-				if (rx >= 0 && rz >= 0 && rx < axis && rz < axis)
-					loaded.insert(rx + axis * rz);
-			}
-		}
-	}
+	const state::ViewFocus focus{report.cameraPos[0], report.cameraPos[2]};
+	std::vector<state::GroundPoint> characters;
 	for (const auto& at : playerAt)
-		for (const std::int32_t zone : sim.regions().boxRegions(at[0], at[1], options.characterBox))
-			loaded.insert(zone);
+		characters.push_back({at[0], at[1]});
+	loaded = sim.regions().loadedZones(characters, report.hasCamera ? std::optional<state::ViewFocus>(focus) : std::nullopt, options.characterBox);
 
 	report.generatedRemoved = sim.importClearSquads();
 	for (Platoon& p : platoons)

@@ -30,6 +30,9 @@ inline constexpr double kDropRadius = 2400.0;
 inline constexpr std::uint64_t kIntervalTicks = 20;
 // The use point is the walkable point nearest the placement within this (3D).
 inline constexpr double kUseSnap = 60.0;
+// A zone placement has no collision bounds read (UNSURE): a quarry is a rock cluster cut out of the navmesh, its nearest walkable point
+// 60-80 u off its origin (South Stone Camp, kenshi-gzto), so it snaps this far (per axis) instead.
+inline constexpr double kPlacementSnap = 150.0;
 
 inline constexpr const char* kDefaultClip = "stonemine";
 
@@ -91,8 +94,8 @@ double statOf(const state::FighterSkills& skills, std::int32_t statUsed) noexcep
 double& statRef(state::FighterSkills& skills, std::int32_t statUsed) noexcept;
 // XP per sim-second per operator: 0.02 * 0.75 * 0.5 * raceMult (raceMult 1.2 / 0.8 unread: 1); Rules::addXp applies ((101 - L) / 101)^2.
 inline constexpr double kXpPerSecond = 0.02 * 0.75 * 0.5;
-// The power term. HOOK: no power model exists. An operated producer (maxOperators > 0) runs at 1.0; a fully automatic one
-// (maxOperators 0, a drill) makes no progress until a power model feeds this (powerHp = hpFrac * received / demand).
+// The power term. HOOK: no power model exists, so every producer counts as fully powered (1.0); a power model feeds this
+// (powerHp = hpFrac * received / demand).
 double powerFraction(const Spec& spec) noexcept;
 
 // Progress per tick one operator of this skill adds.

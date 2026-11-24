@@ -166,6 +166,8 @@
 #include "host/app.hpp"
 #include "host/pick.hpp"
 #include "host/script.hpp"	// hints_context
+#include "dev/framelog.hpp"
+static const bool kPickLog = framelog::on("pick");	// KCLIENT_FRAMELOG=pick: the pick cost lines (kenshi-jvhw)
 
 namespace host
 {
@@ -228,6 +230,19 @@ bool ray_shapes(const double origin[3], const double dir[3], double far, double 
 // of sim.peek+hover on a camera jump to a fresh zone cell, Hub 22k shapes ~170 ms).
 const cfg::Bool kPickWait{ cfg::Group{ "Scripted runs" }, "debug.pick_wait", true, "Scripted runs: wait for the collision gather before each pick (deterministic clicks). Off: pick with the shapes at hand, as the player does" };
 
+// A hover pick (the cursor and the placement bands, every frame) is never one of the script's clicks: it picks with the shapes at hand, as the player's does.
+static thread_local bool tHoverPick = false;
+
+// A scripted click, drag or click replay waits for the collision gather first (kenshi-1x99: the hover pick of an ask run waited 2.3 s after the load).
+// KCLIENT_FRAMELOG=pick prints the wait when it is over 5 ms.
+void pick_settle()
+{
+	if (!app.scripted() || tHoverPick || !kPickWait.get()) { return; }
+	const auto t0 = std::chrono::steady_clock::now();
+	app.collide.wait();
+	const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+	if (kPickLog && ms > 5) { fprintf(stderr, "pick wait: %.1f ms (click)\n", ms); }
+}
 
 // The floating camera's ground at (x, z): the highest surface drawn there, a building floor or roof (cut-away ones pass) or a rock, else the
 // terrain (kinspect camera_rts.md 3: a roof or floor under the pivot, ray from +3000, holds its y). on: "floor" or "terrain".
@@ -255,7 +270,7 @@ bool ray_hit(const double origin[3], const double dir[3], double hit[3], bool* b
 {
 	*building = false;
 	if (instance) { *instance = -1; }
-	if (app.scripted() && kPickWait.get()) { app.collide.wait(); }
+	pick_settle();
 #ifdef KCLIENT_DEV_TOOLS
 	if (pick_collision_on()) { return ray_hit_collision(origin, dir, hit, building, eye, skipped, hitBox); }
 #endif
@@ -283,7 +298,7 @@ bool ray_hit(const double origin[3], const double dir[3], double hit[3], bool* b
 #endif
 		const bool f = app.foliageOn && app.foliage.pickRay(origin, dir, from, b ? std::min(reach, t) : reach, tf, fbox);
 #ifdef KCLIENT_DEV_TOOLS
-		if (app.opt.debug)	// the foliage half's cost (kenshi-l5dx): median / p99 over 300 queries, one line each
+		if (app.opt.debug && kPickLog)	// the foliage half's cost (kenshi-l5dx): median / p99 over 300 queries, one line each
 		{
 			static std::vector<double> us;
 			us.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - fc0).count());
@@ -480,7 +495,7 @@ static void log_meshless_things()
 	lastCheck = app.frames;
 	for (const auto& [id, th] : app.sim.things())
 	{
-		const bool pickable = th.kind == simlink::Interactable::kItem || th.kind == simlink::Interactable::kContainer || th.kind == simlink::Interactable::kProducer;
+		const bool pickable = th.kind == simlink::Interactable::kItem || th.kind == simlink::Interactable::kContainer || th.machineLike();
 		// A foliage deposit (a copper / iron rock: its id is kIdBase + kFoliageIdBase + ..., cpp/include/ksim/economy/producers.hpp) is not a prop: the rock is a foliage
 		// instance the foliage layer draws, and the pick matches it to the producer through the rock's shell (ray_hit's foliage case). It never has a prop mesh (kenshi-sagp).
 		constexpr uint64_t kFoliageDepositBase = (1ull << 62) + (1ull << 40);
@@ -518,7 +533,7 @@ static void classify_drawn(Pick& p, uint32_t inst)
 		double c[3];
 		if (const simlink::Interactable* th = app.sim.thing(id))
 		{
-			kind = th->kind == simlink::Interactable::kContainer ? Pick::Container : th->kind == simlink::Interactable::kProducer ? Pick::Producer : th->kind == simlink::Interactable::kItem ? Pick::Item : Pick::Ground;
+			kind = th->kind == simlink::Interactable::kContainer ? Pick::Container : th->machineLike() ? Pick::Producer : th->kind == simlink::Interactable::kItem ? Pick::Item : Pick::Ground;
 			if (kind == Pick::Ground) { continue; }
 			for (int k = 0; k < 3; k++) { c[k] = th->pos[k]; }
 		}
@@ -617,7 +632,7 @@ Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped)
 #endif
 	const uint64_t bodyId = app.sim.pickBody(from, dir, &t, charHidden, capsules);
 #ifdef KCLIENT_DEV_TOOLS
-	if (app.opt.debug)	// the character half's cost (kenshi-1rnr): median / p99 over 300 picks, one line each
+	if (app.opt.debug && kPickLog)	// the character half's cost (kenshi-1rnr): median / p99 over 300 picks, one line each
 	{
 		static std::vector<double> us;
 		us.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - cost0).count());
@@ -639,7 +654,7 @@ Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped)
 	app.buildings.levelCuts = prevCuts;
 	if (p.kind == Pick::Ground && inst < 0 && worldBox[3] > worldBox[0]) { set_scenery(p, worldBox); }
 #ifdef KCLIENT_DEV_TOOLS
-	if (app.opt.debug)	// the whole pick's cost (kenshi-l5dx, the hover cost): median / p99 over 300 picks, one line each (pickmem is the evlog line at the BVH loads)
+	if (app.opt.debug && kPickLog)	// the whole pick's cost (kenshi-l5dx, the hover cost): median / p99 over 300 picks, one line each (pickmem is the evlog line at the BVH loads)
 	{
 		static std::vector<double> us;
 		us.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - whole0).count());
@@ -655,14 +670,15 @@ Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped)
 }
 
 // What is under the screen point: an item label (while shown), else the world pick along the ray. skipped (the F12 report): the shapes the ray passed.
-Pick pick_screen(double mx, double my, std::vector<PickSkip>* skipped)
+Pick pick_screen(double mx, double my, std::vector<PickSkip>* skipped, bool hover)
 {
+	struct HoverScope { bool prev = tHoverPick; explicit HoverScope(bool h) { tHoverPick = h; } ~HoverScope() { tHoverPick = prev; } } hoverScope(hover);
 	if (const int bar = Post::letterboxBar(view::width(), view::height()); my < bar || my >= view::height() - bar) { return {}; }	// the letterbox bars cover the world: nothing there to pick
 	if (const uint64_t id = label_at(mx, my))
 	{
 		Pick p;
 		const simlink::Interactable* th = app.sim.thing(id);
-		p.kind = !th ? Pick::Item : th->kind == simlink::Interactable::kContainer ? Pick::Container : th->kind == simlink::Interactable::kProducer ? Pick::Producer : Pick::Item;
+		p.kind = !th ? Pick::Item : th->kind == simlink::Interactable::kContainer ? Pick::Container : th->machineLike() ? Pick::Producer : Pick::Item;
 		p.id = id;
 		return p;
 	}

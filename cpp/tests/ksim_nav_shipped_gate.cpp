@@ -236,7 +236,15 @@ struct Spot
 	knav::Point at;
 };
 
-// Up to kPointsPerSet polygon centroids of `mesh` inside the zone, evenly strided.
+// Our sea floor under a Swim area stands for the original's water plane (k16.7.96; NAVMESH_CACHE "Water"): the plane is where the
+// original meshes deep water, the floor is where ours does on purpose. The plane height is the mesh's own (NavConfig::waterLevel,
+// the one the bake's depth classification uses).
+bool swimFloor(const knav::NavMesh& mesh, std::uint8_t area, double y)
+{
+	return area == static_cast<std::uint8_t>(knav::Area::Swim) && y < mesh.config().waterLevel;
+}
+
+// Up to kPointsPerSet polygon centroids of `mesh` inside the zone, evenly strided. A Swim floor centroid is lifted to the plane.
 std::vector<Spot> samplePolys(const knav::NavMesh& mesh, kworld::ZoneCell zone)
 {
 	std::vector<Spot> all;
@@ -262,6 +270,8 @@ std::vector<Spot> samplePolys(const knav::NavMesh& mesh, kworld::ZoneCell zone)
 			y /= poly.vertCount;
 			z /= poly.vertCount;
 			const kworld::ZoneCell at = kworld::zoneCellOf(x, z);
+			if (swimFloor(mesh, poly.getArea(), y))
+				y = mesh.config().waterLevel;
 			if (at.x == zone.x && at.z == zone.z)
 				all.push_back({ { static_cast<float>(x), static_cast<float>(y), static_cast<float>(z) } });
 		}
@@ -284,7 +294,18 @@ struct Reach
 	{
 		knav::PolyLoc loc;
 		if (!query.locate(p, { 2.0f, 6.0f, 2.0f }, loc))
-			return knav::PolyComponents::kNone;
+		{
+			// a point on the water plane: the Swim polygon below it (our floor) is the same surface
+			const float plane = mesh.config().waterLevel;
+			const dtNavMesh& nav = mesh.detour();
+			if (std::fabs(p[1] - plane) > 1.0f
+				|| !query.locateWhere(p, { 2.0f, 400.0f, 2.0f }, [&](const knav::PolyLoc& l)
+					{
+						const dtMeshTile* tile = nav.getTileAt(l.tileX, l.tileZ, 0);
+						return tile != nullptr && swimFloor(mesh, tile->polys[l.poly].getArea(), l.point[1]);
+					}, loc))
+				return knav::PolyComponents::kNone;
+		}
 		return components.at(loc.tileX, loc.tileZ, loc.poly);
 	}
 };
@@ -413,8 +434,11 @@ int main(int argc, char** argv)
 			knav::native::loadTile(navtiles, c.x, c.z, &stored);
 			const kworld::NavHashSource::ZoneHashes h = hashes.zone(c);
 			const kworld::StaleVerdict verdict = kworld::staleVerdict(stored.hasZone ? std::optional(stored.zone) : std::nullopt, h.hash);
-			rebaked[kworld::zoneIndexOf(c)] = verdict != kworld::StaleVerdict::Fresh;
-			if (verdict == kworld::StaleVerdict::Fresh)
+			// A forest-only difference keeps the shipped tile (the loader's rule, kenshi-k16.7.74): not rebaked, not gated.
+			const bool keep = verdict == kworld::StaleVerdict::Fresh
+				|| kworld::forestOnlyStale(stored.hasZone ? std::optional(stored.zone) : std::nullopt, h);
+			rebaked[kworld::zoneIndexOf(c)] = !keep;
+			if (keep)
 				continue;
 			++(verdict == kworld::StaleVerdict::Stale ? stale : unverifiable);
 			Zone zone;
@@ -488,8 +512,10 @@ int main(int argc, char** argv)
 			compare::nativeGeometry(meshes, job.nativeTris, job.walls);
 			for (const knav::native::Mesh& m : meshes)
 				job.interior.push_back(m.interior());
-			for (const compare::Tri& t : compare::ourTriangles(ours->mesh()))
+			for (compare::Tri t : compare::ourTriangles(ours->mesh()))
 			{
+				if (swimFloor(ours->mesh(), static_cast<std::uint8_t>(t.source), std::max({ t.a[1], t.b[1], t.c[1] })))
+					t.a[1] = t.b[1] = t.c[1] = ours->mesh().config().waterLevel;
 				const double lo = std::min({ t.a[0], t.b[0], t.c[0] }), hi = std::max({ t.a[0], t.b[0], t.c[0] });
 				const double lz = std::min({ t.a[2], t.b[2], t.c[2] }), hz = std::max({ t.a[2], t.b[2], t.c[2] });
 				if (hi >= x0 && lo <= x0 + kworld::kZoneSize && hz >= z0 && lz <= z0 + kworld::kZoneSize)

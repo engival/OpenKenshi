@@ -45,6 +45,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -196,9 +197,6 @@ struct GroupContext
 	// A delivering squad's slowest slave on foot (k16.6.22): how far the farthest owned slave that follows its captor stands from the leader.
 	// The delivery's carrot waits while it is beyond kSlaveLeash.
 	double slaveGap = 0.0;
-	// The squad owns a living player-controlled slave: the player is in it, the area follows (k16.6.468), so it never goes on as a token and walks an
-	// off-mesh goal one zone at a time (k16.6.482).
-	bool holdsPlayer = false;
 	// A wandering trader (Behaviour::TradeCircuit): its circuit state, and the world's towns as the pick sees them (what trader::eligibleTown
 	// reads), called only when a town is picked; `current` is the town the squad stands in, or null. Both null for any other squad.
 	state::TraderTrip* trip = nullptr;
@@ -313,6 +311,8 @@ private:
 	// A depot the route cannot reach (off the mesh): the walk to the mesh point nearest it along the line from the squad (k16.6.21 step 2).
 	// False when no such point is nearer the depot than the squad stands by kEdgeMinProgress.
 	bool deliveryEdge(GroupContext& context, const TownSite& site, GroupResult& result) const;
+	bool farLeg(GroupContext& context, const TownSite& site, GroupResult& result) const;
+	bool offMeshLeg(GroupContext& context, const TownSite& site, GroupResult& result) const;
 	// The off-mesh leg: start it toward `site` from where the squad stands, one straight step of it, and the wandering trader's token life (the
 	// leg, the stay in an off-mesh town, the next pick). tokenCircuit is true when the squad is in that life this step.
 	bool startTokenLeg(GroupContext& context, const TownSite& site, GroupResult& result) const;
@@ -401,6 +401,12 @@ public:
 	// The squad interval: group layer for every squad (and the unused
 	// individual hook for those at full detail). Between ticks of the engine.
 	void squadStep(flecs::world& ecs, RegionEngine& engine, std::uint64_t tick);
+	// Simulation::cadenceScale, set before each squadStep (k16.6.633): 1 = the second's cadence.
+	void setCadenceScale(std::uint32_t scale, std::set<std::uint64_t> fighting = {}) noexcept { cadenceScale_ = scale; fightingSquads_ = std::move(fighting); }
+	// The step period of a squad outside every Full region, in ticks (k16.6.640): 100 = 5 s; 20 = the second's (the 1 Hz baseline, for tests).
+	void setFarSquadPeriod(std::uint64_t ticks) noexcept { farSquadPeriod_ = ticks; }
+	// The NEW_GAME settle (Simulation::settleNewGame) steps every squad at 1 Hz: it stands for a world that has been running (k16.6.670).
+	void setSettling(bool on) noexcept { settling_ = on; }
 	// The strategic interval: the faction layer for every faction. Returns true
 	// when squads were added or removed (the caller rebuilds the region engine).
 	bool strategicStep(flecs::world& ecs, std::uint64_t tick);
@@ -438,7 +444,6 @@ public:
 		double z = 0.0;
 		bool holding = false;
 		double slaveGap = 0.0; // GroupContext::slaveGap
-		bool holdsPlayer = false; // GroupContext::holdsPlayer
 	};
 	std::map<std::uint64_t, Carry>& carried() noexcept { return carried_; }
 	const std::map<std::uint64_t, Carry>& carried() const noexcept { return carried_; }
@@ -473,6 +478,10 @@ public:
 	void invalidate() noexcept { knownSquads_ = static_cast<std::size_t>(-1); }
 
 private:
+	std::uint32_t cadenceScale_ = 1; // Simulation::cadenceScale (k16.6.633)
+	std::set<std::uint64_t> fightingSquads_; // squads with a member in a fight this tick: they keep the second at every speed
+	std::uint64_t farSquadPeriod_ = 100; // setFarSquadPeriod
+	bool settling_ = false; // setSettling
 	// The unloaded phase of a squad (TOWN_LIFE_SLICE 5.3 LOD, T3f): what its leader's package says it should be doing at this game
 	// hour (routines::TownPhase), with every finder assumed to succeed. Derived, never saved; `unmodelled` is the number of
 	// window-valid leader rows the scorer does not run (5.5), the coverage report's "unmodelled goal" counter.

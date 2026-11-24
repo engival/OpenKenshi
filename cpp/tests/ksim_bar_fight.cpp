@@ -898,7 +898,7 @@ void barFight(const std::string& bake, std::uint64_t banditSquad, bool engage)
 		bool armour = false;
 		for (const Gear& g : before[b])
 		{
-			weapon = weapon || g.slot == state::Inventory::kWeapon;
+			weapon = weapon || g.slot == state::Inventory::kWeapon || g.slot == state::Inventory::kSheathed; // a bandit that died out of combat has it sheathed, still equipped
 			armour = armour || g.slot >= state::Inventory::kArmourBase;
 		}
 		test::require(weapon && armour, "5: a built bandit carries its template's weapon and armour");
@@ -1024,36 +1024,43 @@ void barFight(const std::string& bake, std::uint64_t banditSquad, bool engage)
 	double farX = 0.0;
 	double farZ = 0.0;
 	{
-		double best = 1.0e18;
+		// Out of every squad's sight: a point 2500 u beside a far squad with no other squad within 2000 u (the player only leaves; a hostile mob there
+		// would be a second test, and since the join rules only the aggressive ones of it attack, but the one that does can keep a waking player down).
+		// The candidates are the squads 14000 u or more from the Bar, nearest first, until one has a clear ring point (the nearest may sit in a crowd).
+		std::vector<std::pair<double, double>> squads;
+		std::vector<std::pair<double, std::pair<double, double>>> candidates;
 		ecsOf(sim).each([&](const state::SquadInstance&, const state::Position& at)
 		{
+			squads.push_back({at.x, at.z});
 			const double d = std::hypot(at.x - kBarX, at.z - kBarZ);
-			if (d >= 14000.0 && d < best)
-			{
-				best = d;
-				farX = at.x;
-				farZ = at.z;
-			}
+			if (d >= 14000.0)
+				candidates.push_back({d, {at.x, at.z}});
 		});
-		test::require(best < 1.0e17, "a far point to leave to");
-		// Out of every squad's sight: a point 2500 u beside that squad with no other squad within 2000 u (the player only leaves; a hostile mob there
-		// would be a second test, and since the join rules only the aggressive ones of it attack, but the one that does can keep a waking player down).
-		std::vector<std::pair<double, double>> squads;
-		ecsOf(sim).each([&](const state::SquadInstance&, const state::Position& at) { squads.push_back({at.x, at.z}); });
+		test::require(!candidates.empty(), "a far point to leave to");
+		std::sort(candidates.begin(), candidates.end());
 		bool found = false;
-		const double baseX = farX;
-		const double baseZ = farZ;
-		for (int k = 0; k < 16 && !found; ++k)
+		std::size_t tried = 0;
+		for (const auto& candidate : candidates)
 		{
-			const double px = baseX + 2500.0 * std::cos(k * 0.3927);
-			const double pz = baseZ + 2500.0 * std::sin(k * 0.3927);
-			found = std::none_of(squads.begin(), squads.end(), [&](const auto& q) { return std::hypot(q.first - px, q.second - pz) < 2000.0; });
 			if (found)
-			{
-				farX = px;
-				farZ = pz;
-			}
+				break;
+			++tried;
+			for (const double ring : {2500.0, 4000.0, 6000.0}) // wandering squads end at a stride-dependent place: widen the ring until a point clears them all
+				for (int k = 0; k < 16 && !found; ++k)
+				{
+					const double px = candidate.second.first + ring * std::cos(k * 0.3927);
+					const double pz = candidate.second.second + ring * std::sin(k * 0.3927);
+					found = std::none_of(squads.begin(), squads.end(), [&](const auto& q) { return std::hypot(q.first - px, q.second - pz) < 2000.0; });
+					if (found)
+					{
+						farX = px;
+						farZ = pz;
+					}
+				}
 		}
+		if (!found)
+			std::cerr << "bar_fight: no clear far point after " << tried << " candidate squads (nearest " << candidates.front().first << " u, farthest tried "
+				<< candidates.back().first << " u from the Bar)\n";
 		test::require(found, "a far point with no squad within 2000 u");
 	}
 	const auto playerLine = [&](Simulation& s, const char* when, std::uint64_t who)

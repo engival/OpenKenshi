@@ -296,12 +296,19 @@ void autoArrest(Game& game)
 		me->z = lead->z;
 		me->clearRoute();
 	};
+	// Any law guard may spot the bounty and take the order (the EV_BOUNTY_SPOTTED pick is generic), not only this squad: which guard faces the player is
+	// a matter of idle yaws, and those depend on the arena strides.
+	const auto isLaw = [&](std::uint64_t id)
+	{
+		const state::Fighter* f = sim.combat()->find(id);
+		return f != nullptr && f->npcClass == crime::kClassLaw;
+	};
 	const auto spotted = [&](std::size_t from)
 	{
 		int picked = 0;
 		const auto& log = sim.dialogue()->log();
 		for (std::size_t i = from; i < log.size(); ++i)
-			if (mine.count(log[i].event.speaker) != 0 && log[i].event.event == 44 && log[i].result == DialoguePick::Result::Picked)
+			if (isLaw(log[i].event.speaker) && log[i].event.event == 44 && log[i].result == DialoguePick::Result::Picked)
 				++picked;
 		return picked;
 	};
@@ -332,10 +339,10 @@ void autoArrest(Game& game)
 		if (me->unconscious && !knockedOut)
 		{
 			me->koTimer = std::max(me->koTimer, 90.0);
-			for (const std::uint64_t g : mine)
-				if (sim.arrestOrdered(g))
+			for (const CombatArena::Member& m : sim.combat()->members())
+				if (sim.arrestOrdered(m.id))
 				{
-					const state::Fighter* holder = sim.combat()->find(g);
+					const state::Fighter* holder = sim.combat()->find(m.id);
 					me->x = holder->x + 2.0;
 					me->y = holder->y;
 					me->z = holder->z;

@@ -1,5 +1,6 @@
 // A STAY_IN_HOME (43) resident sits (kenshi-k16.6.30, TOWN_LIFE_SLICE 5.4 "Seat"): on the Hub's new game (needs the world bake, argv[1]; exit 77 without it)
-//   - every goal-43 resident of the Hub is seated, and a squatter in a ruin with no furniture sits on the floor: its own spot and yaw, ground height, "sitting idle";
+//   - 43's finder is the home building's Indoors slot (function mask 0x2049a, chairs among them; rwh.203): a resident resolves it only with a free chair,
+//     a home with none is the scorer's own fallback (OURS), which holds goal 43 at the home point and sits on the floor: its own spot and yaw, ground height, "sitting idle";
 //   - a resident whose home has a free chair (the Bar's) reserves it, walks to it and sits there on the chair's clip;
 //   - a fight (a target) stands it up, and it sits again when the fight is over.
 
@@ -24,6 +25,7 @@
 #include "sim_access.hpp"
 #include "ksim/dev/build_paths.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -117,8 +119,13 @@ int main(int argc, char** argv)
 			else if (goalOf(sim, m.id) == routines::task::Shopkeeper && m.fighter.building != 0)
 				barman = m.id;
 		}
-		require(squatters.size() >= 5, "the Hub has goal-43 residents (" + std::to_string(squatters.size()) + ")");
+		// The Hub has no building with a table-less chair (below), so 43's finder returns 0 for all of them (rwh.203: no Indoors slot, no goal): none
+		// of its residents may hold 43 by the finder. Whoever holds it is the scorer's fallback (nothing plannable), which has no target.
+		for (const std::uint64_t id : squatters)
+			test::require(entityOf(sim, id).get<state::Routine>()->target.kind == 0, "a Hub resident holds goal 43 with a target: the finder resolved a slot the Hub does not have");
+		require(true, "no Hub resident resolves goal 43 to a slot (" + std::to_string(squatters.size()) + " hold it as the fallback)");
 		std::size_t seated = 0;
+		std::size_t resolved = 0; // 43 resolved to a chair: the finder found the home's Indoors slot
 		for (const std::uint64_t id : squatters)
 		{
 			const state::Fighter& f = *sim.combat()->find(id);
@@ -127,32 +134,67 @@ int main(int argc, char** argv)
 			if (!sim.seated(id) || !pose)
 				continue;
 			++seated;
-			if (routine->target.kind == 0)
+			if (routine->target.kind == static_cast<std::uint8_t>(routines::SiteKind::Seat))
+				++resolved;
+			else if (routine->target.kind == 0)
 				test::require(pose->clip == routines::kClipSittingIdle && std::hypot(pose->x - f.x, pose->z - f.z) < 1e-9 && pose->y == f.y && pose->yaw == f.yaw,
-					"a floor-sit is the member's own spot, height and yaw on the sitting idle clip");
+					"a fallback floor-sit is the member's own spot, height and yaw on the sitting idle clip");
+			else
+				test::require(false, "a goal-43 resident holds a target that is neither the home's chair nor the fallback's none");
 		}
-		require(seated == squatters.size(), "every goal-43 resident is seated (" + std::to_string(seated) + " of " + std::to_string(squatters.size()) + ")");
+		// The finder never names the floor: every seated resident of the fallback holds no target, every resolved one a chair of its home.
+		require(seated == squatters.size(), "every goal-43 resident at its home is seated, on its chair or (fallback) the floor (" + std::to_string(seated) + " of " + std::to_string(squatters.size()) + ")");
+		std::printf("    resolved to an Indoors-slot chair: %zu, fallback floor-sits: %zu\n", resolved, seated - resolved);
+		const Simulation::TownScorerStats& stats = sim.townScorerStats();
+		require(resolved + stats.fallbacks > 0 || squatters.empty(), "the Hub's goal-43 residents are the finder's chairs or the scorer's fallback");
 		std::printf("    floor-sit clip: %s\n", std::string(routines::kClipSittingIdle).c_str());
 
 		// ---- (b) a home with a free chair: the Bar (a Hub squatter is given the Bar as its home) ----
 		test::require(barman != 0, "no Bar staff to name the Bar building");
 		const std::uint64_t bar = sim.combat()->find(barman)->building;
-		const std::uint64_t guest = squatters.front();
+		// The guest and the floor-sitter come from the Hub's members whatever the census holds: the cases below build their own home.
+		std::vector<std::uint64_t> others;
+		for (const CombatArena::Member& m : sim.combat()->members())
+			if (hub(m) && m.id != barman)
+				others.push_back(m.id);
+		const state::Fighter& host = fighterRef(sim, barman);
+		std::stable_sort(others.begin(), others.end(), [&](std::uint64_t a, std::uint64_t b) // nearest to the Bar first: a short walk to its chair
+		{
+			const state::Fighter& fa = fighterRef(sim, a);
+			const state::Fighter& fb = fighterRef(sim, b);
+			return std::hypot(fa.x - host.x, fa.z - host.z) < std::hypot(fb.x - host.x, fb.z - host.z);
+		});
+		test::require(others.size() >= 2, "the Hub has two members to stage cases (b)-(d) on");
+		// Stage the chair case: no Hub resident holds 43 (the Hub's packages list it for none now that 43 needs a chair), so put a member on the
+		// Bar's first table-less chair by hand - home, routine (goal 43, the chair as target, never rescored) and the spot - the state the finder's
+		// pick and the walk leave behind.
+		std::uint64_t guest = others[0];
+		const state::Routine* routine = nullptr;
+		const routines::SiteEntry* staged = nullptr;
+		for (std::uint16_t slot = 0; slot < 16 && staged == nullptr; ++slot)
+			staged = sim.routineSite({static_cast<std::uint8_t>(routines::SiteKind::Seat), bar, slot});
+		test::require(staged != nullptr, "the Bar has a table-less chair site");
 		fighterRef(sim, guest).homeBuilding = bar;
 		{
-			flecs::entity e = entityOf(sim, guest);
-			state::Routine* routine = e.get_mut<state::Routine>();
-			*routine = state::Routine{};
+			state::Routine* put = entityOf(sim, guest).get_mut<state::Routine>();
+			*put = state::Routine{};
+			put->goal = routines::task::StayInHome;
+			put->since = sim.clockTick();
+			put->nextScore = ~std::uint64_t{0};
+			put->target = {static_cast<std::uint8_t>(routines::SiteKind::Seat), staged->site.object, staged->site.slot};
 		}
-		sim.run(1200);
-		const state::Routine* routine = entityOf(sim, guest).get<state::Routine>();
-		test::require(routine != nullptr && routine->goal == routines::task::StayInHome, "the guest is no longer on STAY_IN_HOME");
+		fighterRef(sim, guest).x = staged->x;
+		fighterRef(sim, guest).z = staged->z;
+		sim.run(20);
+		routine = entityOf(sim, guest).get<state::Routine>();
 		// kenshi-k16.6.33: the Hub has one Bar blackmarket now (rwh.35) and a bar's chairs are its tables' BarSeats; a Seat is a chair that serves no
 		// table, and no intact Hub building has one (UNSURE, deferred: playtesting: the chair cases run on the first world that offers one).
-		const bool chairHome = routine->target.kind == static_cast<std::uint8_t>(routines::SiteKind::Seat);
-		std::printf("    a free table-less chair at the Bar's building: %s\n", chairHome ? "yes" : "none (cases b / c skipped)");
-		if (chairHome)
+		const bool chairHome = routine != nullptr && routine->target.kind == static_cast<std::uint8_t>(routines::SiteKind::Seat);
+		std::printf("    a free table-less chair at the Bar's building: %s\n", chairHome ? "yes" : "none");
+		test::require(chairHome, "no Hub member resolves goal 43 to a chair of the Bar: cases b / c have nothing to stage on");
 		{
+			for (int walk = 0; walk < 6 && !sim.seated(guest); ++walk)
+				sim.run(600); // an arbitrary Hub member walks to the Bar's chair from wherever it stands
 			const std::optional<Simulation::Pose> chair = sim.pose(guest);
 			test::require(sim.seated(guest) && chair.has_value(), "the guest never sat down at the chair");
 			require(!chair->clip.empty() && std::hypot(chair->x - fighterRef(sim, guest).x, chair->z - fighterRef(sim, guest).z) <= routines::kSeatTolerance,
@@ -164,11 +206,65 @@ int main(int argc, char** argv)
 			fighterRef(sim, guest).target = 0;
 			require(sim.seated(guest), "it sits again once the fight is over");
 		}
+		// ---- (b2) a home with a machine piece (function 1 / 3 / 4 / 7 / 10): the holder stands at its approach point and works (rwh.279) ----
+		{
+			const routines::SiteEntry* machine = nullptr;
+			std::uint64_t machineHome = 0;
+			for (const CombatArena::Member& m : sim.combat()->members())
+				for (std::uint16_t slot = 0; slot < 16 && machine == nullptr && m.fighter.homeBuilding != 0; ++slot)
+				{
+					machine = sim.routineSite({static_cast<std::uint8_t>(routines::SiteKind::Machine), m.fighter.homeBuilding, slot});
+					machineHome = machine != nullptr ? m.fighter.homeBuilding : machineHome;
+				}
+			std::printf("    a home with a machine piece: %s\n", machine != nullptr ? "yes" : "none");
+			if (machine != nullptr)
+			{
+				const std::uint64_t worker = others[1];
+				fighterRef(sim, worker).homeBuilding = machineHome;
+				state::Routine* put = entityOf(sim, worker).get_mut<state::Routine>();
+				*put = state::Routine{};
+				put->goal = routines::task::StayInHome;
+				put->since = sim.clockTick();
+				put->nextScore = ~std::uint64_t{0};
+				put->target = {static_cast<std::uint8_t>(routines::SiteKind::Machine), machine->site.object, machine->site.slot};
+				fighterRef(sim, worker).x = machine->x;
+				fighterRef(sim, worker).z = machine->z;
+				sim.run(20);
+				double yaw = 0.0;
+				const std::optional<Simulation::Pose> at = sim.pose(worker);
+				require(sim.seated(worker, &yaw) && at.has_value(), "a goal-43 holder at a machine piece is at its post");
+				require(at->clip == machine->clip && !at->clip.empty() && at->clip != routines::kClipSittingChair,
+					"it plays the part's clip (" + at->clip + "), not a chair's");
+				require(std::fabs(yaw - std::atan2(machine->inX - machine->x, machine->inZ - machine->z)) < 1e-9, "it faces the piece");
+				fighterRef(sim, worker).target = barman;
+				require(!sim.seated(worker), "a fight takes it off the machine");
+				fighterRef(sim, worker).target = 0;
+			}
+		}
+		// The scorer's fallback (nothing plannable) holds 43 at the home point with no target: stage one (a routine nobody rescores) on a fresh member.
 		std::uint64_t floorSitter = 0;
-		for (const std::uint64_t squatter : squatters)
-			if (squatter != guest && sim.seated(squatter))
-				floorSitter = squatter;
-		require(floorSitter != 0, "a squatter is seated on the floor");
+		for (std::size_t k = others.size(); k-- > 0 && floorSitter == 0;)
+		{
+			const state::Fighter& cand = fighterRef(sim, others[k]);
+			if (others[k] != guest && !cand.walking() && !cand.asleep && !cand.dead && !cand.unconscious && !cand.down && cand.target == 0)
+				floorSitter = others[k];
+		}
+		test::require(floorSitter != 0, "a standing Hub member to stage the floor-sit on");
+		{
+			state::Routine* staged = entityOf(sim, floorSitter).get_mut<state::Routine>();
+			test::require(staged != nullptr, "the staged floor-sitter has a routine");
+			*staged = state::Routine{};
+			staged->goal = routines::task::StayInHome;
+			staged->since = sim.clockTick();
+			staged->nextScore = ~std::uint64_t{0};
+		}
+		// With no home building it floor-sits at its squad's yard point (homeSitAt's fallback anchor): stand it there.
+		fighterRef(sim, floorSitter).homeBuilding = 0;
+		const state::Position* yard = entityOf(sim, floorSitter).target<state::MemberOf>().get<state::Position>();
+		test::require(yard != nullptr, "the staged floor-sitter's squad has a yard point");
+		fighterRef(sim, floorSitter).x = yard->x;
+		fighterRef(sim, floorSitter).z = yard->z;
+		require(sim.seated(floorSitter), "a goal-43 member with no target is seated on the floor");
 		fighterRef(sim, floorSitter).down = true;
 		require(!sim.seated(floorSitter), "a downed floor-sitter is not seated");
 		fighterRef(sim, floorSitter).down = false;

@@ -375,8 +375,11 @@ struct Rig
 				// A bed (kind 5) carries its own tail after the ownership tail: ksim_player_sleep's record, ignored here.
 				const bool bed = body[16] == ks::kInteractableBed;
 				const bool box = body[16] == ks::kInteractableContainer;
-				test::require(body.size() == (bed ? 94u : box ? 84u : 74u), "INTERACTABLE length " + std::to_string(body.size()));
-				if (bed)
+				// A machine (kind 12) carries machineKind, state, input, output (10 bytes) and a turret's (machineKind 3) u64 key; ignored here.
+				const bool machine = body[16] == ks::kInteractableMachine;
+				const std::size_t machineLen = body.size() > 74 && body[74] == 3 ? 92u : 84u;
+				test::require(body.size() == (bed ? 94u : box ? 84u : machine ? machineLen : 74u), "INTERACTABLE length " + std::to_string(body.size()));
+				if (bed || machine)
 					continue;
 				Inter r;
 				r.id = at<std::uint64_t>(body, 8);
@@ -2050,6 +2053,8 @@ int main(int argc, char** argv)
 		}
 
 		// ---- 290 / 226: the player's Smash order (interact action 12) on a locked foreign gate (dt40_tasks_289_290 section 4) ----
+		// k16.6.565 (rwh.235): the order is a direct task, so it runs bare-handed (FISTS) and with a katana alike: no equip step, no refusal.
+		for (int armed = 0; armed < 2; ++armed)
 		{
 			Rig d(gd, data, nav, order, true);
 			const std::uint64_t pid = d.duel.player;
@@ -2065,6 +2070,10 @@ int main(int argc, char** argv)
 			p.x = door->x + 3.0;
 			p.y = door->y;
 			p.z = door->z;
+			if (armed != 0)
+				p.weapon = data->buildWeapon(*gd, *gd->find(katanaRecord), katanaQuality);
+			else
+				test::require(p.weapon.weaponType == 5, "the Smash order's unarmed case did not start with fists");
 			d.run(2);
 			d.expectApplied(d.interact(pid, doorId, 12));
 			const std::size_t from = d.done.size();
@@ -2072,14 +2081,14 @@ int main(int argc, char** argv)
 			while (!d.doneFor(doorId, from) && ticks++ < 8000)
 				d.tick();
 			const auto result = d.doneFor(doorId, from);
-			test::require(result && result->action == 12 && result->result == 0 && door->state == 3, "the Smash order did not break the locked gate");
+			test::require(result && result->action == 12 && result->result == 0 && door->state == 3, (armed != 0 ? "the armed Smash order did not break the locked gate" : "the unarmed Smash order did not break the locked gate"));
 			// Task_BashDoor::vf2 (140348c10 L61): burglary against the door's faction (the record may have lapsed by the break; the bounty counts too).
 			{
 				const state::CrimeRecord* crimeRecord = nullptr;
 				d.sim->world().ecs().each([&](const state::Id& i, const state::CrimeRecord& held) { if (i.value == pid) crimeRecord = &held; });
 				test::require(crimeRecord != nullptr && (crimeRecord->crime == crime::kBurglary || !crimeRecord->bounties.empty()), "bashing a foreign gate recorded no burglary");
 			}
-			std::cout << "smash: the player's order broke a locked foreign gate in " << ticks * kTickSeconds << " s\n";
+			std::cout << "smash (" << (armed != 0 ? "katana" : "fists") << "): the player's order broke a locked foreign gate in " << ticks * kTickSeconds << " s\n";
 		}
 
 		// ---- save / load in the middle of a pick: the lock's timer is saved ----
@@ -2716,6 +2725,8 @@ int main(int argc, char** argv)
 			++foeStuff.version;
 			foeEntity.set<state::Inventory>(foeStuff);
 			foeEntity.set<state::Allegiance>(state::Allegiance{"bandit-test"});
+			// A malnourished squad template starts at hunger 1.7 (rwh.193, k16.17.13.13): the foe would eat one Bread at once. Fed, it keeps all four.
+			d.mutableFighter(foe).hunger = 3.0;
 			std::string mine;
 			d.sim->world().ecs().each([&](const state::Id& i, const state::Allegiance& al) { if (i.value == pid) mine = al.factionSid; });
 			test::require(mine != "bandit-test", "the test faction is the player's");

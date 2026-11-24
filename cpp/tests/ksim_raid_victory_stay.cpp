@@ -181,10 +181,19 @@ Outcome run(const std::string& bake, bool victoryAi)
 	{
 		sim.run(1);
 		occupied = board->current == occupySid;
+		// rwh.228 s2: the handover needs the player down, so he is held down while the assault runs (stand-in for the beating).
+		if (state::Fighter* f = fighterOf(sim, humanId); f != nullptr && !f->dead && board->current != occupySid && sim.clockTick() > 3)
+		{
+			f->koTimer = 1.0e9;
+			f->unconscious = true;
+		}
 	}
 	test::require(occupied, "the force never occupied the player's town");
 	if (state::Fighter* f = fighterOf(sim, humanId); f != nullptr && !f->dead)
+	{
+		f->koTimer = 1.0e9;
 		f->unconscious = true;
+	}
 	// The raid order: on site, the stay ends in a second, then 3 game hours of retreat; the way home starts 400 u outside the circle.
 	const std::uint64_t now = sim.clockTick();
 	state::GroupAI group = *squad.get<state::GroupAI>();

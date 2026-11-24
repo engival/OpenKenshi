@@ -18,6 +18,7 @@
 #include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
+#include "kworld/coords.hpp"
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
 
@@ -604,12 +605,26 @@ void workHandover(const kworld::LoadOrder& order, const std::shared_ptr<const Co
 		const BuildingSite* home = instance != nullptr && instance->homeBuilding != 0 ? probe.world().buildingSite(instance->homeBuilding) : nullptr;
 		const double hx = home != nullptr ? home->cx : p.resident.x;
 		const double hz = home != nullptr ? home->cz : p.resident.z;
+		// The finder (rwh.230, k16.6.687): a producer in the zone cells within 1 of the member, its function in 190's mask, and the squad's
+		// own faction its owner (the permission test; a factionless mine reads function 27, outside the mask).
+		const state::FactionState* faction = instance != nullptr && instance->faction.id != 0
+			? ecsOf(probe).entity(instance->faction.id).get<state::FactionState>() : nullptr;
+		const kworld::ZoneCell homeCell = kworld::zoneCellOf(hx, hz);
 		for (const ProducerSite& site : probe.world().producerSites())
-			if (std::hypot(site.x - hx, site.z - hz) <= 250.0)
+		{
+			const kworld::ZoneCell cell = kworld::zoneCellOf(site.x, site.z);
+			const kdata::Record* record = probe.gameData()->find(site.recordSid);
+			bool inMask = false;
+			if (record != nullptr)
+				for (const std::int32_t function : routines::buildingFunctions(*probe.gameData(), *record))
+					inMask = inMask || routines::functionInMask(routines::kMaskGoal190, function == routines::kFunctionMine && site.ownerFaction.empty() ? routines::kFunctionMineNatural : function);
+			if (goal == routines::task::RelaxInTownPackage ? std::hypot(site.x - hx, site.z - hz) <= 250.0
+				: inMask && std::abs(cell.x - homeCell.x) <= 1 && std::abs(cell.z - homeCell.z) <= 1 && (site.ownerFaction.empty() || (faction != nullptr && faction->templateSid == site.ownerFaction)))
 			{
 				candidates.push_back(&p);
 				break;
 			}
+		}
 	}
 	test::require(!candidates.empty(), std::string("a resident squad with the work goal ") + name + " and a producer site near its home");
 	// The first candidates are tried in their own fresh sims: a squad whose other goals keep winning never lands the goal.

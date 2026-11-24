@@ -218,12 +218,45 @@ double nativeReachable(const std::vector<knav::native::Mesh>& meshes, const Wind
 	return area;
 }
 
+// Two squares side by side in one tile, meeting on x = 16: partner edges counted for a shared edge (opposite faces) and for a
+// pair of wall edges on the same vertices (a sheet wall seen from both sides).
+std::size_t partnerEdges(bool wall)
+{
+	const double x0 = kworld::kWorldMin + 20 * kworld::kZoneSize + 64.0, z0 = kworld::kWorldMin + 32 * kworld::kZoneSize + 64.0;
+	knav::native::Mesh mesh;
+	mesh.vertices = { { x0, 100.0, z0 }, { x0 + 16, 100.0, z0 }, { x0 + 16, 100.0, z0 + 16 }, { x0, 100.0, z0 + 16 },
+		{ x0 + 32, 100.0, z0 }, { x0 + 32, 100.0, z0 + 16 } };
+	const auto edge = [&](std::uint32_t a, std::uint32_t b, int oppositeFace, int oppositeEdge)
+	{
+		knav::native::Edge e;
+		e.a = a;
+		e.b = b;
+		e.oppositeFace = oppositeFace;
+		e.oppositeEdge = oppositeEdge;
+		mesh.edges.push_back(e);
+	};
+	// Face 0 = vertices 0 1 2 3 (edge 1 is its x = 16 side), face 1 = vertices 1 4 5 2 (edge 7 is its x = 16 side).
+	edge(0, 1, -1, -1); edge(1, 2, wall ? -1 : 1, wall ? -1 : 7); edge(2, 3, -1, -1); edge(3, 0, -1, -1);
+	edge(1, 4, -1, -1); edge(4, 5, -1, -1); edge(5, 2, -1, -1); edge(2, 1, wall ? -1 : 0, wall ? -1 : 1);
+	mesh.faces = { { 0, 4, 0 }, { 4, 4, 0 } };
+	const knav::NavConfig config = knav::configForWorldZones({ 20, 32 }, { 20, 32 });
+	std::vector<knav::TileCoord> coords;
+	for (int z = config.window.z0; z <= config.window.z1; ++z)
+		for (int x = config.window.x0; x <= config.window.x1; ++x)
+			coords.push_back({ x, z });
+	knav::NativeTileStats stats;
+	knav::nativeTiles(config, { mesh }, coords, {}, &stats);
+	return stats.partnered;
+}
+
 } // namespace
 
 int main()
 {
 	try
 	{
+		test::require(partnerEdges(false) >= 2, "two faces sharing an edge are not linked");
+		test::require(partnerEdges(true) == 0, "a wall edge on shared vertices linked its two faces");
 		const std::string dir = knav::native::navtilesDir(KENSHI_DATA);
 		std::vector<knav::native::Mesh> meshes;
 		for (int j = kMin.z - 1; j <= kMax.z + 1; ++j)
@@ -244,7 +277,7 @@ int main()
 			knav::nativeTiles(config, meshes, coords, knav::nativeDoorKeys(area.buildings), &stats));
 		std::cout << mesh.tiles().size() << " tiles, " << stats.faces << " faces, " << stats.polys << " polys (fullest " << stats.maxPolys
 				  << "), slivers " << stats.slivers << ", fanned " << stats.fanned << ", open links " << stats.openLinks << ", open shared "
-				  << stats.openShared << ", door polys " << stats.doorPolys << " (" << stats.unkeyedDoors << " with no door), doors "
+				  << stats.openShared << ", partnered " << stats.partnered << ", door polys " << stats.doorPolys << " (" << stats.unkeyedDoors << " with no door), doors "
 				  << mesh.doorKeys().size() << "\n";
 		test::require(stats.overfull == 0, "a tile is past kMaxPolysPerTile");
 		test::require(stats.doorPolys > 0 && stats.unkeyedDoors == 0, "a door face found no door");

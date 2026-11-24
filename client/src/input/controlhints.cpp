@@ -428,6 +428,8 @@ HINT_KIND("put_in_bed_queue", "queues the rest");
 HINT_KIND("machine", "a production building's label opens its window");
 HINT_KIND("use_producer", "a mine or deposit sends the selection to mine it");
 HINT_KIND("open_automatic", "a machine that needs no operators");
+HINT_KIND("man_turret", "a placed turret: the original mans it");
+HINT_KIND("auto_machine", "an automatic converter or power building: gears, no order");
 HINT_KIND("producer_queue", "queues the rest");
 HINT_KIND("door_open", "a door opens or closes");
 HINT_KIND("door_close", "a door opens or closes");
@@ -521,7 +523,16 @@ void thing_hints(Hover& h, const Pick& p, const Context& ctx)
 		h.actions.push_back(ml);
 		const bool automatic = ctx.producerAutomatic && ctx.producerAutomatic(id);
 		const std::string cursor = ctx.producerCursor ? ctx.producerCursor(id) : "mine";
-		if (automatic)	// the original's furnace RMB is LOOT_TARGET: open it, never a use the sim refuses (no_slot)
+		const bool machine = t && t->kind == simlink::Interactable::kMachine;
+		if (machine && t->hasMachine && t->machineKind == 3)	// a turret: the original's RMB mans it (k16.6.19); the sim has no order for it (event 49 / the mounted tail are its only wire)
+		{
+			order_rows(h, "man_turret", "man_turret_queue", "Man " + name, cursor, "man turret " + ull(id), [](bool) { return false; }, false, "the sim has no order to man a placed turret (reported)");
+		}
+		else if (machine && automatic && !(t->hasMachine && t->machineKind == 4))	// an automatic converter / power building: the original's RMB is OPERATE_AUTOMATIC_MACHINERY (152), not in the sim
+		{
+			order_rows(h, "auto_machine", "auto_machine_queue", "Operate " + name, cursor, "automatic machine " + ull(id), [](bool) { return false; }, false, "an automatic machine takes no operate order (the original's 152 is not in the sim)");
+		}
+		else if (automatic)	// the original's furnace RMB is LOOT_TARGET: open it, never a use the sim refuses (no_slot)
 		{
 			order_rows(h, "open_automatic", "producer_queue", "Open " + name, cursor, "open automatic producer " + ull(id),
 				[po = ctx.producerOpen, id](bool q) { return po && po(id, q); });
@@ -741,15 +752,19 @@ void thing_menu(Hover& h, uint64_t id, const Context& ctx)
 	const auto order = [to = ctx.thingOrder, id](int action) { return [to, id, action] { return to && to(id, action, false); }; };
 	const auto open = [co = ctx.containerOpen, id] { return co && co(id, false); };
 	if (t->kind == simlink::Interactable::kItem) { menu_row(h, "menu_pick_up", "Pick up", "pick up", id, order(7)); }
-	else if (t->kind == simlink::Interactable::kProducer)
+	else if (t->machineLike())
 	{
-		// an automatic machine (max operators 0: the sim answers no_slot to a use) offers no operate row; its right click is the loot (Open)
-		if (!(ctx.producerAutomatic && ctx.producerAutomatic(id)))
+		// an automatic machine (max operators 0: the sim answers no_slot to a use) offers no operate row; its right click is the loot (Open).
+		// A kind 12 machine opens only when it holds contents (the furnace: machineKind 4); a turret's man row waits on a sim order.
+		const bool kind12 = t->kind == simlink::Interactable::kMachine;
+		const bool automatic = ctx.producerAutomatic && ctx.producerAutomatic(id);
+		const bool turret = kind12 && t->hasMachine && t->machineKind == 3, furnace = kind12 && t->hasMachine && t->machineKind == 4;
+		if (!automatic && !turret)
 		{
 			const bool mine = ctx.producerCursor && ctx.producerCursor(id) == "mine";
 			menu_row(h, "menu_operate", mine ? "Mine" : "Operate", "use", id, [pu = ctx.producerUse, id] { return pu && pu(id, false); });
 		}
-		menu_row(h, "menu_open", "Open", "open", id, open);
+		if (!kind12 || furnace) { menu_row(h, "menu_open", "Open", "open", id, open); }
 	}
 	else if (t->kind == simlink::Interactable::kContainer)
 	{

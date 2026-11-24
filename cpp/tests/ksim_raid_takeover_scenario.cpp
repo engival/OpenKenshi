@@ -34,16 +34,17 @@ constexpr const char* kOccupySid = "96451-rebirth.mod"; // hostile occupy town
 } // namespace
 
 // One run of the scenario in `townName` (the file already moved there); false when the bake lacks the town's region.
-static bool run(const scenario::File& file, const std::string& world, const char* townName)
+// `idle` extra ticks run before the scenario is placed: every later phase (walk, sense, 1 Hz pass) shifts, the outcome classes must not.
+static bool run(const scenario::File& file, const std::string& world, const char* townName, int idle)
 {
 	if (!scenario_rig::hasRegion(file, world))
 		return false;
-	std::cout << "-- " << townName << "\n";
+	std::cout << "-- " << townName << ", idle " << idle << "\n";
 	scenario_rig::Rig rig(file, world);
 	Simulation& sim = rig.sim;
 
 	sim.newWorld();
-	sim.run(1);
+	sim.run(1 + idle);
 
 	const scenario::Placed placed = scenario::apply(sim, *rig.gameData, *rig.combatData, rig.context, file, 3);
 	sim.run(2); // the squads' blackboards are made at fixed points of a tick
@@ -80,9 +81,25 @@ static bool run(const scenario::File& file, const std::string& world, const char
 		sim.run(1);
 		// Before the test's own hold below: only the crabs can have downed her here.
 		downed = downed || (fighter(human) != nullptr && (fighter(human)->unconscious || fighter(human)->dead));
-		if (state::Fighter* f = fighter(human); f != nullptr && !f->dead && occupied)
-			f->unconscious = true; // held down once the stay began: nothing in this test wakes her
 		assaulted = assaulted || applied() == kAssaultSid;
+		// rwh.228 s2: the assault ends only with no standing hostile in the town, so she is held down from the assault start (stand-in for the beating;
+		// the koTimer keeps her from waking): nothing in this test wakes her.
+		if (state::Fighter* f = fighter(human); f != nullptr && !f->dead && assaulted)
+		{
+			f->koTimer = 1.0e9;
+			f->unconscious = true;
+		}
+		// The assault runs until no hostile of the town stands (rwh.228 s2); whether the crabs beat the defenders is the fight's dice, which this test
+		// is not about, so everyone near the town is held down too while it runs (a force that won).
+		if (assaulted && !occupied && tick % 20 == 0)
+			for (const CombatArena::Member& member : sim.combat()->members())
+				if (member.id != human && std::find(placed.others.begin(), placed.others.end(), member.id) == placed.others.end()
+					&& !member.fighter.dead && std::hypot(member.fighter.x - fighter(human)->x, member.fighter.z - fighter(human)->z) < 3000.0)
+					if (state::Fighter* resident = fighter(member.id))
+					{
+						resident->koTimer = 1.0e9;
+						resident->unconscious = true;
+					}
 		if (applied() == kAssaultSid && !brought)
 		{
 			// Two raiders are put in reach of the Wanderer as the assault begins. The assault ends once two members are engaged at a 1 Hz sample, and
@@ -155,13 +172,16 @@ int main(int argc, char** argv)
 	try
 	{
 		const scenario::File file = scenario::parseFile(ksim::dev::srcPath("../scenarios/raid_takeover.kscen"));
-		if (argc < 2 || !run(file, argv[1], "Old Village"))
+		for (const int idle : {0, 3, 7})
 		{
-			std::cout << "ksim_raid_takeover_scenario: SKIPPED: needs the world navmesh bake with the Old Village region (pass its directory)\n";
-			return 77;
+			if (argc < 2 || !run(file, argv[1], "Old Village", idle))
+			{
+				std::cout << "ksim_raid_takeover_scenario: SKIPPED: needs the world navmesh bake with the Old Village region (pass its directory)\n";
+				return 77;
+			}
+			if (!run(scenario_rig::inHeft(file), argv[1], "Heft", idle))
+				std::cout << "ksim_raid_takeover_scenario: the Heft variant is skipped: no bake region\n";
 		}
-		if (!run(scenario_rig::inHeft(file), argv[1], "Heft"))
-			std::cout << "ksim_raid_takeover_scenario: the Heft variant is skipped: no bake region\n";
 		std::cout << "ksim_raid_takeover_scenario ok\n";
 		return 0;
 	} catch (const std::exception& e) {

@@ -1,0 +1,14 @@
+# gate_heft_occupant (kenshi-eolb): gate_heft plus a second player character, the Occupant, 3 u beside the Wanderer; tools/gate_close_check.sh orders the Occupant into the gateway and the Wanderer to Close the gate.
+# gate_heft (kenshi-k16.2.241.2): one player character 45 u outside Heft's Defensive Gate IV (placement 15-Newwworld-INGAME,
+# 67157.30,-72071.85, door "Defensive Gate level 4 Door" 2937-Walls2.mod, at 67122.9,-72113.6 = 45 u along the outside normal
+# + 30 u aside, so it does not stand in front of the leaves), so the gate's door interactable is in the session's detail bounds.
+# Nothing else placed: the world's own residents and gate crew are the default Heft ones. The player's squad is in the United Cities
+# faction (Heft's owner), so it may Unlock the gate after closing it (a locked gate reopens with Unlock, then Open). Quiet: no fight.
+# Verify ask for kenshi-k16.2.241 (gate leaves draw and move), from the worker's fixture in findings/kenshi-k16.2.241.2/.
+KSCEN 2
+scenario title=Heft%20gate%20leaves setup=The%20Wanderer%20stands%20outside%20Heft%27s%20big%20wall%20gate%20%28the%20Defensive%20Gate%20IV%29%2C%20which%20is%20OPEN.%20It%20has%20a%20closable%20door%3A%20the%20open%20leaf%20is%20the%20metal%20slab%20raised%20100%20u%20over%20the%20arch%2C%20not%20in%20the%20doorway. look_for=Camera%3A%20stand%20outside%20the%20gate%20facing%20it%20and%20tilt%20the%20camera%20up%20so%20the%20arch%20is%20on%20screen%20%28about%20150%20u%20from%20the%20gate%2C%20pitch%20%2B20%2C%20i.e.%20looking%20up%20at%20the%20arch%29.%20Hover%20the%20raised%20slab%20above%20the%20arch%2C%20not%20the%20open%20doorway%20%28the%20doorway%20is%20click-through%29%3A%20the%20door%20cursor%20shows.%20Right-click%20it%3A%20Close.%20The%20Wanderer%20walks%20over%2C%20then%20watch%20the%20slab%20come%20down%20across%20the%20opening.%20The%20gate%20crew%20should%20unlock%20and%20reopen%20it%20within%20about%203%20s. bead=kenshi-k16.2.241.5 metrics=player_downed_s
+source save=playtest game=1.0.68 radius=0 centre=67122.9,-72113.6 leader=Wanderer
+clock day=1 hour=11 minute=0
+squad id=1 name=Wanderer faction=defaultEmpireFactionSID player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=defaultEmpireFactionSID x=67122.9 y=1244.2 z=-72113.6 yaw=0.690 leader=1 player=1 chase=1 ranged=1
+char id=2 squad=1 name=Occupant template=1533662-rebirth.mod faction=defaultEmpireFactionSID x=67119.9 y=1244.2 z=-72113.6 yaw=0.690 player=1 chase=1 ranged=1

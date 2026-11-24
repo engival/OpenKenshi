@@ -1,7 +1,7 @@
 // kenshi-k16.6.36: a scenario character's `cage=` key puts it in a cage at load through Simulation::imprison (scenarios/cage_prisoner.kscen: a prisoner of
 // the player's squad in the Heft slave shop's cage, the Wanderer beside it, a Slaver boss and three crossbow guards 40 u away). Asserted: the prisoner is in
-// the cage (cageBuilding, at its slot, locked: CHAR_STATS state 5 with the cage's lock level, the value the wire sends); over 60 game seconds nothing
-// shoots, hits, knocks out or targets it, while the slavers do fight the free Wanderer; a `cage=` the world has no free cage for is refused at load.
+// the cage (cageBuilding, at its slot, locked: CHAR_STATS state 5 with the cage's lock level, the value the wire sends); over 60 game seconds no attack
+// is aimed at it (no pick, technique, shot or stealth KO; splash from a swing at someone else is allowed), while the slavers do fight the free Wanderer; a `cage=` the world has no free cage for is refused at load.
 // Needs the world navmesh bake (argv[1], exit 77 without the Heft region).
 #include "ksim/net/simlink.hpp"
 #include "ksim/core/simulation.hpp"
@@ -89,9 +89,9 @@ int main(int argc, char** argv)
 			std::size_t shotsAtWanderer = 0;
 			const_cast<CombatArena*>(sim.combat())->setObserver([&](const CombatEvent& e)
 			{
-				if (e.who == prisoner && (e.kind == CombatEvent::Kind::Hit || e.kind == CombatEvent::Kind::Shot || e.kind == CombatEvent::Kind::Knockout
-					|| e.kind == CombatEvent::Kind::Death || e.kind == CombatEvent::Kind::StealthKo))
-					hits.push_back("event kind " + std::to_string(static_cast<int>(e.kind)) + " by " + std::to_string(e.other));
+				// Targeted attacks only: a swing aimed at someone else may splash the caged prisoner (findings rwh176), so Hit events don't count.
+				if ((e.kind == CombatEvent::Kind::TechniqueStart && e.other == prisoner) || (e.who == prisoner && (e.kind == CombatEvent::Kind::Shot || e.kind == CombatEvent::Kind::StealthKo)))
+					hits.push_back("event kind " + std::to_string(static_cast<int>(e.kind)) + " by " + std::to_string(e.kind == CombatEvent::Kind::TechniqueStart ? e.who : e.other));
 				if (e.who == wanderer && e.kind == CombatEvent::Kind::Shot)
 					++shotsAtWanderer;
 			});
@@ -113,9 +113,9 @@ int main(int argc, char** argv)
 			test::require(after != nullptr && !after->dead && !after->unconscious && !after->down, "the prisoner is alive, up and conscious after 60 s");
 			test::require(after->cageBuilding == kHeftCage && std::hypot(after->x - cageX, after->z - cageZ) < 1.0, "the prisoner never left its cage");
 			test::require(pickedPrisoner == 0, "no slaver picked the prisoner as a target (" + std::to_string(pickedPrisoner) + " ticks)");
-			test::require(hits.empty(), "no hit, shot, KO or technique reached the prisoner: " + (hits.empty() ? std::string() : hits.front()));
+			test::require(hits.empty(), "no technique, shot or stealth KO was aimed at the prisoner: " + (hits.empty() ? std::string() : hits.front()));
 			test::require(pickedWanderer > 0, "the slavers fight the free Wanderer (target picks: " + std::to_string(pickedWanderer) + ", shots " + std::to_string(shotsAtWanderer) + ")");
-			std::cout << "cage=" << which << ": " << pickedWanderer << " target-ticks on the Wanderer, " << shotsAtWanderer << " shots at it, none on the prisoner\n";
+			std::cout << "cage=" << which << ": " << pickedWanderer << " target-ticks on the Wanderer, " << shotsAtWanderer << " shots at it, no attack aimed at the prisoner\n";
 		}
 		std::cout << "ksim_cage_scenario ok\n";
 		return 0;

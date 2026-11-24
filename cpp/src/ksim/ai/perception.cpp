@@ -207,7 +207,7 @@ bool knownNow(const Fighter& observer, std::uint64_t target) noexcept
 bool sensedNow(const Fighter& observer, std::uint64_t target) noexcept
 {
 	const SightRecord* r = find(observer, target);
-	return r != nullptr && r->seen && (r->knownNow || r->sinceSensed <= kScanMax);
+	return r != nullptr && r->seen && (r->knownNow || r->sinceSensed <= 0.0);
 }
 
 bool seenWithin(const Fighter& observer, std::uint64_t target, double maxAge) noexcept

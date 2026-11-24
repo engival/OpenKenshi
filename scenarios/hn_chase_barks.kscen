@@ -1,0 +1,16 @@
+# hn_chase_barks (kenshi-jtnm, ksim k16.9.25 / k16.9.26): a Holy Nation patrol (five Holy Paladins: squad template 1532649, the
+# "Holy Army Patrol" the 1js4 walk meets) hostile to the Wanderer and chasing him over open desert. The speech bubbles it prints are the check: one
+# conversation per speaker squad at a time, no line repeated inside its record's repeat delay (DIALOGUE_SELECTION_LIVE Q3 / Q4).
+# The player is only ever ordered by the script (SCENARIO_IMPORT.md "Rule"); the patrol aggros on sight (hostile=1 war=1).
+KSCEN 2
+scenario title=Holy%20Nation%20patrol%20chases%20you setup=The%20player%20on%20open%20desert%3B%20a%20Holy%20Army%20patrol%20a%20few%20dozen%20units%20behind%2C%20hostile. look_for=Run%20west.%20The%20patrol%20shouts%20as%20it%20chases%3A%20one%20bubble%20at%20a%20time%20over%20the%20squad%2C%20no%20line%20twice%20in%20a%20row. bead=kenshi-jtnm metrics=targeted_player
+source save=playtest game=1.0.68 radius=0 centre=-50750,-1000 leader=Wanderer
+clock day=1 hour=12 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-50730 y=1100 z=-1000 yaw=-1.5708 leader=1 player=1 chase=1 stats=athletics:25,attack:40,strength:40,dexterity:40,toughness:40
+squad id=2 name=Holy%20patrol faction=1083-gamedata.base template=1532649-__world%20reactions.mod package=2672-gamedata.base player=0
+char id=2 squad=2 name=Holy%20Paladin template=1411-gamedata.base faction=1083-gamedata.base x=-50710 y=1100 z=-1000 yaw=-1.5708 leader=1 chase=1
+char id=3 squad=2 name=Holy%20Paladin%201 template=1411-gamedata.base faction=1083-gamedata.base x=-50700 y=1100 z=-1015 yaw=-1.5708 chase=1
+char id=4 squad=2 name=Holy%20Paladin%202 template=1411-gamedata.base faction=1083-gamedata.base x=-50700 y=1100 z=-985 yaw=-1.5708 chase=1
+char id=5 squad=2 name=Holy%20Paladin%203 template=1411-gamedata.base faction=1083-gamedata.base x=-50690 y=1100 z=-1030 yaw=-1.5708 chase=1
+char id=6 squad=2 name=Holy%20Paladin%204 template=1411-gamedata.base faction=1083-gamedata.base x=-50690 y=1100 z=-970 yaw=-1.5708 chase=1

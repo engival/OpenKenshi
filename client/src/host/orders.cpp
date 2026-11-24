@@ -21,6 +21,7 @@
 #include "input/controlhints.hpp"
 #include "input/pick.hpp"
 #include "host/script.hpp"
+#include "dev/framelog.hpp"
 #include "ui/ui.hpp"
 
 namespace host
@@ -217,7 +218,7 @@ void sim_click(double mx, double my, bool right, bool shift)
 	Pick p = pick_screen(mx, my, &clickSkipped);
 	if (g_forcePickThing)
 	{
-		if (const simlink::Interactable* ft = app.sim.thing(g_forcePickThing)) { p = Pick{}; p.id = g_forcePickThing; p.kind = ft->kind == simlink::Interactable::kContainer ? Pick::Container : ft->kind == simlink::Interactable::kDoor ? Pick::Door : ft->kind == simlink::Interactable::kBed ? Pick::Bed : ft->kind == simlink::Interactable::kProducer ? Pick::Producer : Pick::Item; }
+		if (const simlink::Interactable* ft = app.sim.thing(g_forcePickThing)) { p = Pick{}; p.id = g_forcePickThing; p.kind = ft->kind == simlink::Interactable::kContainer ? Pick::Container : ft->kind == simlink::Interactable::kDoor ? Pick::Door : ft->kind == simlink::Interactable::kBed ? Pick::Bed : ft->machineLike() ? Pick::Producer : Pick::Item; }
 	}
 #ifdef KCLIENT_DEV_TOOLS
 	if (g_forcePickChar) { p = Pick{}; p.kind = Pick::Character; p.id = g_forcePickChar; }
@@ -657,7 +658,7 @@ void update_follow(double dt)
 		printf("dlook: %llu dx %.1f sent %.4f pred %.4f server %.4f serveryaw %.4f drawn %.4f cam %.4f pos %.2f %.2f eye %.2f %.2f %.2f\n", (unsigned long long)app.frames, app.lookDx, app.headingSent, app.sim.localHeading(), (double)d.heading, (double)d.yaw, yaw, heading_of(app.yaw), pos[0], pos[2], app.pos[0], app.pos[1], app.pos[2]);
 		app.lookDx = 0;
 	}
-	if (app.scripted() && app.frames % 10 == 0 && app.sim.predicting())
+	if (static const bool predictLog = framelog::on("predict"); predictLog && app.scripted() && app.frames % 10 == 0 && app.sim.predicting())
 	{
 		const simlink::Dynamic& d = app.sim.decoder().chars.at(app.followId).cur;
 		printf("predict: shown %.1f %.1f  server %.1f %.1f (tick %llu, drive %u) y shown %.2f server %.2f\n", pos[0], pos[2], d.pos[0], d.pos[2], (unsigned long long)d.tick, d.drive, pos[1], (double)d.pos[1]);
@@ -710,7 +711,7 @@ void update_follow(double dt)
 #ifdef KCLIENT_DEV_TOOLS
 	{ static const bool ylog = std::getenv("KFOLLOWYLOG") != nullptr; if (ylog && app.scripted()) { printf("followy: frame %llu id %llu drawn %.3f pivot %.3f eye %.3f\n", (unsigned long long)app.frames, (unsigned long long)app.followId, pos[1], pivot[1], app.pos[1]); } }	// kenshi-k16.2.395.1: the stairs diagnosis, per frame: the drawn body's y, the boom pivot's y and the eye's
 #endif
-	if (app.scripted()) { printf("boom: len %.2f wanted %.2f allowed %.2f hold %.2f cam %.1f %.1f %.1f rise %.2f pitch %.1f %s snap %d clamp %d\n", b.len, app.followDist, b.allowed, 0.0, app.pos[0], app.pos[1], app.pos[2], app.followRise, app.pitch * 180.0 / M_PI, b.blocker.c_str(), b.snapped ? 1 : 0, b.clamped ? 1 : 0); }
+	if (static const bool boomLog = framelog::on("boom"); boomLog && app.scripted()) { printf("boom: len %.2f wanted %.2f allowed %.2f hold %.2f cam %.1f %.1f %.1f rise %.2f pitch %.1f %s snap %d clamp %d\n", b.len, app.followDist, b.allowed, 0.0, app.pos[0], app.pos[1], app.pos[2], app.followRise, app.pitch * 180.0 / M_PI, b.blocker.c_str(), b.snapped ? 1 : 0, b.clamped ? 1 : 0); }
 }
 
 // Leaving direct drive (V, Esc, or a double right click on the driven character; k16.2.238.1): back to the floating camera, auto-centred on the

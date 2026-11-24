@@ -323,15 +323,17 @@ void Characters::locomote(Char& c, float dt, bool instant)
 					if (l.overlay || !l.info || l.info->code != 0 || l.info->idle || !l.synchs || l.target <= 0 || l.contacts.stride <= 0) { continue; }
 					if (!heaviest || l.target * l.contacts.stride > heaviest->target * heaviest->contacts.stride) { heaviest = &l; }
 				}
-				// The clips are the same for every character, so log once per clip, not once per character (13 characters x 2-3 clips was 34 lines).
-				static std::vector<std::string> warpLogged;
-				if (heaviest && std::find(warpLogged.begin(), warpLogged.end(), heaviest->info->name) == warpLogged.end())
+				// kenshi-e623: log once per clip and character (the line names who and the state bits that picked the clip set), not once per clip:
+				// the old per-clip dedupe left the next log unable to say which character played a combat set with the wire's Combat bit off.
+				static std::vector<std::pair<int, std::string>> warpLogged;
+				const std::pair<int, std::string> key{ c.spec.id, heaviest ? heaviest->info->name : std::string() };
+				if (heaviest && std::find(warpLogged.begin(), warpLogged.end(), key) == warpLogged.end())
 				{
-					warpLogged.push_back(heaviest->info->name);
-					fprintf(stderr, "kclient: stride warp: clip \"%s\" warped %.1fx%s (stride %.2f u/cycle, speed %.1f u/s)\n",
-						heaviest->info->name.c_str(), warp, std::fabs(advance) > std::fabs(hi) ? ", clamped to 2.5x" : "", heaviest->contacts.stride, x);
-					evlog::add("warp", -1, 0, "clip \"%s\" warped %.1fx%s (stride %.2f u/cycle, speed %.1f u/s)", heaviest->info->name.c_str(), warp,
-						std::fabs(advance) > std::fabs(hi) ? ", clamped to 2.5x" : "", heaviest->contacts.stride, x);
+					warpLogged.push_back(key);
+					fprintf(stderr, "kclient: stride warp: %s clip \"%s\" warped %.1fx%s (stride %.2f u/cycle, speed %.1f u/s) combat %d stealth %d\n", label(c.spec).c_str(),
+						heaviest->info->name.c_str(), warp, std::fabs(advance) > std::fabs(hi) ? ", clamped to 2.5x" : "", heaviest->contacts.stride, x, (int)s.combat, (int)s.stealth);
+					evlog::add("warp", -1, c.spec.id, "%s clip \"%s\" warped %.1fx%s (stride %.2f u/cycle, speed %.1f u/s) combat %d stealth %d", label(c.spec).c_str(),
+						heaviest->info->name.c_str(), warp, std::fabs(advance) > std::fabs(hi) ? ", clamped to 2.5x" : "", heaviest->contacts.stride, x, (int)s.combat, (int)s.stealth);
 				}
 			}
 			if (std::fabs(advance) > std::fabs(hi)) { advance = hi; }

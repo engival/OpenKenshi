@@ -314,6 +314,11 @@ StaleVerdict staleVerdict(std::optional<std::uint32_t> stored, std::optional<std
 	return basis == NavHashSource::Basis::Exact ? StaleVerdict::Stale : StaleVerdict::Unverifiable;
 }
 
+bool forestOnlyStale(std::optional<std::uint32_t> stored, const NavHashSource::ZoneHashes& ours)
+{
+	return stored && ours.hash && *stored != *ours.hash && ours.buildings == 0;
+}
+
 const char* staleReason(NavHashSource::Basis basis)
 {
 	switch (basis)

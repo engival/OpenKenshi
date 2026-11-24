@@ -683,11 +683,11 @@ int main(int argc, char** argv)
 			Simulation probe = Simulation::newGame(KENSHI_DATA, order, options, nullptr, RegionConfig{});
 			combat = CombatData::build(*probe.gameData(), KENSHI_DATA);
 		}
-		traceReadOnly(order, combat);
-		scenario(order, combat);
-		saveLoad(order, combat);
-		carrotRecovery(order, combat);
-		dayRegression(order, combat);
+		if (test::wantPart(argc, argv, 2, "traceReadOnly")) { traceReadOnly(order, combat); }
+		if (test::wantPart(argc, argv, 2, "scenario")) { scenario(order, combat); }
+		if (test::wantPart(argc, argv, 2, "saveLoad")) { saveLoad(order, combat); }
+		if (test::wantPart(argc, argv, 2, "carrotRecovery")) { carrotRecovery(order, combat); }
+		if (test::wantPart(argc, argv, 2, "dayRegression")) { dayRegression(order, combat); }
 		std::cout << "ksim_world_follow: ok\n";
 		return 0;
 	} catch (const std::exception& e) {

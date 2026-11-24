@@ -32,6 +32,11 @@ namespace knav {
 
 using Point = std::array<float, 3>;
 
+// Clearance component labels (NavQuery::refusedByComponents) are built whole on the first query by default, which is deterministic: the
+// world hash does not depend on when a build finished. A live server calls this to build them in slices instead (kenshi-k16.6.699): no tick
+// stalls 0.2-0.8 s per streamed region, but a query answers "no refusal" while a build is pending, so routes then depend on query history.
+void setSlicedComponents(bool sliced) noexcept;
+
 // Inclusive rectangle of tile coordinates.
 struct TileRect
 {
@@ -53,6 +58,11 @@ struct TileRect
 // along an unEroded mesh's boundary, and only `path mode` != 0 pieces are cut (rwh.183); live, bodies stand 0.3-2 u from the
 // pieces' boxes (rwh.184, Heft Noble House). Our eroded mesh plus this small ring reproduces that spacing without a body inside a barrel.
 constexpr float kFurnitureBodyClearance = 0.75f; // not a whole number of cells: at 1.0 the hull edge (1.0 + half a 2 u cell) fell on cell centres and marked a column more, which closed the Bar's corridor to the raiders (k16.7.95)
+// Dev side table (kenshi-k16.6.383): the spans the prop clearance ring hands back, as cell centres (kind 'g' gap lane, 's' stair, 'u' use-node spare), recorded by
+// the bake while recordExemptCells(true); takeExemptCells() returns and clears them.
+struct ExemptCell { float x, y, z; char kind; };
+void recordExemptCells(bool on);
+std::vector<ExemptCell> takeExemptCells();
 bool propClearanceShape(const kworld::WorldShape& shape);
 void propClearanceHull(const kworld::WorldShape& shape, float radius, std::vector<float>& out);
 
@@ -172,10 +182,6 @@ void setBakeTuning(const BakeTuning& tuning);
 BakeTuning bakeTuning();
 // Tiles emitted by the flat shortcut so far in this process.
 std::uint64_t flatTilesBaked();
-// Tiles baked without the wall band (Area::Edge) because it took them past kMaxPolysPerTile, so far in this process.
-std::uint64_t bandlessTiles();
-// Of those, the tiles still over it with no band, baked eroded (no surface within the agent radius of a wall).
-std::uint64_t erodedTiles();
 
 // Per-stage bake timing, summed over all threads: on when the environment variable KNAV_PROFILE is
 // set (read once) or after setBakeProfile(true). Costs nothing when off.
@@ -271,6 +277,8 @@ public:
 	// Changes whenever the tile set or any tile version does (replaceTiles, a door repaint that changed a tile), and is unique per
 	// mesh built in the process: a stream that saw this value need not look at the tiles again.
 	std::uint64_t revision() const noexcept { return revision_; }
+	// Steps only when tiles are added or removed (a door repaint changes flags, not shapes): what the clearance components are keyed on.
+	std::uint64_t geometryRevision() const noexcept { return geometryRevision_; }
 	// The patches that took the tile to its current version, oldest first (only the last kMaxTilePatches are kept; a tile
 	// whose chain from a given version is cut must be sent whole).
 	const std::vector<TilePatch>& tilePatches(int x, int z) const noexcept;
@@ -287,6 +295,12 @@ public:
 	std::vector<DoorKey> doorKeys() const;
 	// A door's polygons (tile and index; the point is unset), in (tile z, x, poly) order.
 	std::vector<PolyLoc> doorPolys(DoorKey door) const;
+	// The door a Detour polygon ref belongs to (0: none).
+	DoorKey doorOfRef(std::uint32_t ref) const
+	{
+		const auto found = doorOfRef_.find(ref);
+		return found == doorOfRef_.end() ? 0 : found->second;
+	}
 	// The mean of the vertices of a door's polygons (the doorway's centre, on its surface), or false if the door has none.
 	// `footprint`, when given, is the slab's xz extent about that centre (a gate is wide, and while it is shut its polygons are
 	// a wall, so a walker stops at their edge, not at the centre).
@@ -326,6 +340,7 @@ private:
 	std::map<std::pair<int, int>, TileLog> tileLogs_;
 	std::size_t polyCount_ = 0;
 	std::uint64_t revision_ = nextRevision();
+	std::uint64_t geometryRevision_ = nextRevision();
 	static std::uint64_t nextRevision() noexcept;
 	std::unique_ptr<dtNavMesh, void (*)(dtNavMesh*)> mesh_{ nullptr, nullptr };
 };
@@ -366,6 +381,20 @@ struct PolyLoc
 	int tileZ = 0;
 	int poly = 0;
 	Point point{};
+};
+
+// One portal of a walked corridor (kenshi-e9s9.4, PATH_WALK.md 3a): the stretch of the polygon edge a leg crosses, `left` / `right` as seen walking
+// the leg (x east, z north: walking +z, left is at smaller x), so (right - left) x (position - left) in xz is positive on the far side. A point
+// portal (left == right) is where a leg could not be walked by a ray or where a join leaves the polygon. `point` is the index into the point list
+// of the leg's end.
+struct CorridorPortal
+{
+	Point left{};
+	Point right{};
+	float clearLeft = 0.0f; // findDistanceToWall of each end, up to the limit given
+	float clearRight = 0.0f;
+	std::uint64_t ref = 0; // the polygon the walker is in before this portal (Detour ref; not stable across mesh changes)
+	int point = 0;
 };
 
 struct PathResult
@@ -426,8 +455,11 @@ public:
 	// moveAlongSurface slides along an edge it meets). `out` is on the surface, y included.
 	// `blocked` is set when `out` is more than a hair short of `to` in the xz plane. False when
 	// `from` is not within the half extents of the mesh.
+	// `crossing`: doors the walker's route was planned through while they were not locked. The lock refuses a PLAN, not a walk already
+	// under way (rwh.231 c3a, rwh.244: a walker planned at openness 0.72 crossed the 0.6 flip with no stop): the slide goes through
+	// these doors' polygons even when locked, and never through another locked door's.
 	bool slide(const Point& from, const Point& to, const Point& halfExtents, Point& out, bool& blocked,
-		const TravelFilter& travel = {}) const;
+		const TravelFilter& travel = {}, const std::vector<DoorKey>& crossing = {}) const;
 	// Path between the nearest walkable points to `from` and `to`, over the areas `travel` allows;
 	// the path is the cheapest by its area costs, `length` is its plain length.
 	// With `travel.radius` above 0 the search is ours, not Detour's: a portal is crossed only where the traveller
@@ -442,6 +474,14 @@ public:
 	// Distance from `point` (on polygon `loc`) to the nearest wall, up to `limit`; walls are mesh edges with no
 	// neighbour, whatever the areas.
 	float wallDistance(const PolyLoc& loc, float limit) const;
+	// wallDistance at a point: located within `halfExtents` first; -1 when the point is on no polygon.
+	float clearanceAt(const Point& point, const Point& halfExtents, float limit) const;
+
+	// The portal corridor of a point list: per leg, the polygons a Detour raycast along it crosses, chained from `startRef` (0 = locate the
+	// first point); a leg the ray cannot walk (or one over an off-mesh link) ends in a point portal at its end, as does a join that leaves the
+	// chained polygon. Every point after the first ends in a portal of its own or a crossing at it. `clearLimit` caps the wall-distance probes
+	// (radius + 5). Portals under 0.5 u wide are point portals.
+	std::vector<CorridorPortal> corridor(const std::vector<Point>& points, float clearLimit, const TravelFilter& travel) const;
 
 	// A door's middle (the mean of its polygons' vertices) and its axis through the wall, as a unit vector; false for an unknown door.
 	bool doorFrame(DoorKey door, Point& centre, double& axisX, double& axisZ) const;
@@ -449,12 +489,24 @@ public:
 private:
 	struct ClearanceCache; // what each portal is known to let through, filled lazily (navmesh.cpp)
 
+	// A door shut on a body (kenshi-k16.6.552): true, and the door, when `point` stands on a LOCKED door polygon (the leaf closed on it). The original's
+	// close never moves or refuses an occupant (rwh231 / rwh232), and the occupant keeps a route: a locked polygon refuses entry, not a body on it.
+	bool standsOnLocked(const Point& point, const Point& halfExtents, DoorKey& door) const;
+	// A route / slide from a locked door's leaf walks as if through locks, kept only when it passes no OTHER locked door.
+	bool passesOtherLocked(const std::vector<DoorKey>& doors, DoorKey held) const;
+	PathResult findPathFrom(const Point& from, const Point& to, const Point& halfExtents, const TravelFilter& travel) const;
+
 	// findPath without the door pass (a leg of a door route plans with this); `snappedStart` gets the start on the mesh before the clearance refit and push.
 	PathResult planPath(const Point& from, const Point& to, const Point& halfExtents, const TravelFilter& travel, Point* snappedStart) const;
 	PathResult planPathFrom(const Point& from, const Point& to, const Point& halfExtents, const TravelFilter& travel, Point* snappedStart,
 		bool ownStart, bool* exempted) const;
 	void throughDoorMiddle(PathResult& result, const Point& from, const Point& to, const Point& halfExtents, const TravelFilter& travel,
 		const Point& snappedStart) const;
+
+	// True when no clearance search from `start` to `end` at `radius` can arrive: the two lie in different clearance components (portals the
+	// body fits, the first hop out of the start when `exemptFirst` and the last into the goal exempt, as in the search). Labelled per radius
+	// over the whole mesh on first use, kept until tiles change. Doors and filters are ignored, so a refusal is never wrong.
+	bool refusedByComponents(std::uint32_t startRef, std::uint32_t endRef, const Point& end, float radius, bool exemptFirst) const;
 
 	ClearanceCache& clearanceFor() const; // the cache, emptied first if the mesh changed since it was filled
 

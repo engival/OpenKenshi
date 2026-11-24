@@ -1,0 +1,78 @@
+# bark_chase (kenshi-jtnm): the Wanderer flees west from a hostile Holy Nation patrol; shots every ~4 s of the chase, the client's `speech:` lines are the bubble log.
+# NOTE: the free-camera `set pos/yaw` lines do not move the follow camera in a simlink run, so the y*.png shots show the follow view, not the bubbles (open item).
+# @Wanderer@ is resolved by run.sh from a probe on a throwaway server. OUTDIR is the output directory.
+90 dump chars
+100 select id=@Wanderer@
+# the crime: the Wanderer walks up to a Holy servant and hits him in front of the patrol (assault witnessed), then runs west
+105 move -50705 -1015
+170 attack id=@Holy Paladin 1@
+200 attack id=@Holy Paladin 1@
+260 move -54000 -1000
+209 set pos -50660,-1020
+209 set alt 45
+209 set pitch -12
+210 set yaw -90
+212 screenshot OUTDIR/shots/y0210_-90.png
+239 set pos -50660,-1020
+239 set alt 45
+239 set pitch -12
+240 set yaw 90
+242 screenshot OUTDIR/shots/y0240_90.png
+269 set pos -50660,-1020
+269 set alt 45
+269 set pitch -12
+270 set yaw 0
+272 screenshot OUTDIR/shots/y0270_0.png
+299 set pos -50660,-1020
+299 set alt 45
+299 set pitch -12
+300 set yaw 180
+302 screenshot OUTDIR/shots/y0300_180.png
+329 set pos -50660,-1020
+329 set alt 45
+329 set pitch -12
+330 set yaw -90
+332 screenshot OUTDIR/shots/y0330_-90.png
+359 set pos -50660,-1020
+359 set alt 45
+359 set pitch -12
+360 set yaw 90
+362 screenshot OUTDIR/shots/y0360_90.png
+389 set pos -50660,-1020
+389 set alt 45
+389 set pitch -12
+390 set yaw 0
+392 screenshot OUTDIR/shots/y0390_0.png
+419 set pos -50660,-1020
+419 set alt 45
+419 set pitch -12
+420 set yaw 180
+422 screenshot OUTDIR/shots/y0420_180.png
+449 set pos -50660,-1020
+449 set alt 45
+449 set pitch -12
+450 set yaw -90
+452 screenshot OUTDIR/shots/y0450_-90.png
+479 set pos -50660,-1020
+479 set alt 45
+479 set pitch -12
+480 set yaw 90
+482 screenshot OUTDIR/shots/y0480_90.png
+509 set pos -50660,-1020
+509 set alt 45
+509 set pitch -12
+510 set yaw 0
+512 screenshot OUTDIR/shots/y0510_0.png
+539 set pos -50660,-1020
+539 set alt 45
+539 set pitch -12
+540 set yaw 180
+542 screenshot OUTDIR/shots/y0540_180.png
+569 set pos -50660,-1020
+569 set alt 45
+569 set pitch -12
+570 set yaw -90
+572 screenshot OUTDIR/shots/y0570_-90.png
+SHOTS
+3600 dump chars
+3650 quit

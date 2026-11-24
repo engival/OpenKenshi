@@ -24,6 +24,7 @@
 //       the Heft Longhouse on a build without k16.6.229's recipe 5);
 //       `--expect-absent X Z R A`: fail if a candidate of A u2 or more lies within R of (X, Z) (the self-check: Outpost s-IV's floor
 //       2, a 38,066 u2 island before k16.6.260's selectParts chance-0 rule and connected after it).
+// The walk runs in 4 threads (bands of block rows, one navigator each) and the graphs are merged (kenshi-k16.7.155: 324 s -> 121 s).
 // Cold (no nav cache) and cached wall times and the peak RSS are printed. Exit 77 without the navtiles.
 
 #include "ksim/nav/navigator.hpp"
@@ -55,6 +56,8 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <mutex>
+#include <thread>
 #include <numeric>
 #include <set>
 #include <sstream>
@@ -449,17 +452,13 @@ int main(int argc, char** argv)
 		ksim::NativeCacheOptions cache;
 		cache.dir = outDir + "/navcache";
 		cache.worldKey = kworld::dataHash(order);
-		std::vector<std::string> log;
-		const std::shared_ptr<ksim::MeshNavigator> nav = ksim::MeshNavigator::openNative(KENSHI_DATA, { { 20, 32 } },
-			[&log](const std::string& line) { log.push_back(line); }, gameData.get(), cache);
-
 		// ---- the walk graph over the whole world ----
-		World world;
-		std::size_t blocks = 0;
-		// The blocks of the window: `onBlock` runs with the zones resident (the mesh is the navigator's now).
-		const auto walkBlocks = [&](ksim::MeshNavigator& walker, World& graph, const auto& onBlock)
+		// The blocks of the window: `onBlock` runs with the zones resident (the mesh is the navigator's now). Block rows [row0, row1).
+		std::mutex outMutex;
+		const auto walkBlocks = [&](ksim::MeshNavigator& walker, World& graph, int row0, int row1, const auto& onBlock)
 		{
-			for (int bz = 0; bz * 4 < kworld::kZoneCellsPerAxis; ++bz)
+			std::size_t count = 0;
+			for (int bz = row0; bz < row1 && bz * 4 < kworld::kZoneCellsPerAxis; ++bz)
 			{
 				for (int bx = 0; bx * 4 < kworld::kZoneCellsPerAxis; ++bx)
 				{
@@ -477,23 +476,106 @@ int main(int argc, char** argv)
 					walker.setCoverage(zones);
 					absorb(graph, walker.mesh(), terrain);
 					onBlock(walker.mesh(), zones);
-					++blocks;
+					++count;
 				}
-				std::cout << "row " << bz << ": " << graph.parent.size() << " polygons, " << std::llround(msSince(start) / 1000.0) << " s, RSS "
+				const std::lock_guard<std::mutex> lock(outMutex);
+				std::cout << "row " << bz << ": " << graph.parent.size() << " polygons (its band), " << std::llround(msSince(start) / 1000.0) << " s, RSS "
 						  << statusKb("VmRSS") / 1024 << " MB" << std::endl;
 			}
+			return count;
 		};
-		walkBlocks(*nav, world, [](const knav::NavMesh&, const std::vector<kworld::ZoneCell>&) {});
-		for (const std::string& line : log)
-			std::cout << "loader: " << line << "\n";
-		if (const auto* report = nav->nativeReport({ 46, 16 }))
+		// The world is walked in kBands bands of block rows, one thread each with its own navigator and graph (the zone hash and the
+		// cache reads are most of the time, and a navigator is not thread safe); the graphs are merged below. Every pair of adjacent
+		// zones is in some block of one band: a block holds its own zones and one zone east and south.
+		struct Band
+		{
+			std::shared_ptr<ksim::MeshNavigator> nav;
+			std::vector<std::string> log;
+			World world;
+			std::size_t blocks = 0;
+		};
+		constexpr int kBands = 4;
+		constexpr int kRows = kworld::kZoneCellsPerAxis / 4;
+		std::vector<Band> bands(kBands);
+		std::vector<std::thread> threads;
+		std::vector<std::string> failures(kBands);
+		for (int t = 0; t < kBands; ++t)
+			threads.emplace_back([&, t]()
+			{
+				try
+				{
+					Band& band = bands[t];
+					band.nav = ksim::MeshNavigator::openNative(KENSHI_DATA, { { 20, 32 } },
+						[&band](const std::string& line) { band.log.push_back(line); }, gameData.get(), cache);
+					band.blocks = walkBlocks(*band.nav, band.world, t * kRows / kBands, (t + 1) * kRows / kBands,
+						[](const knav::NavMesh&, const std::vector<kworld::ZoneCell>&) {});
+				} catch (const std::exception& e) {
+					failures[t] = e.what();
+				}
+			});
+		for (std::thread& thread : threads)
+			thread.join();
+		for (int t = 0; t < kBands; ++t)
+			test::require(failures[t].empty(), "band " + std::to_string(t) + ": " + failures[t]);
+		// Merge: a tile in two bands (the seam rows) is one tile; a band's polygon sets join the world's.
+		World world;
+		std::size_t blocks = 0;
+		for (Band& band : bands)
+		{
+			blocks += band.blocks;
+			const World& local = band.world;
+			std::vector<std::uint32_t> globalOf(local.parent.size());
+			for (std::uint32_t id = 0; id < local.parent.size();)
+			{
+				const PolyInfo& first = local.info[id];
+				std::uint32_t end = id;
+				while (end < local.parent.size() && local.info[end].tx == first.tx && local.info[end].tz == first.tz)
+					++end;
+				const auto [at, fresh] = world.tileBase.try_emplace(tileKey(first.tx, first.tz), static_cast<std::uint32_t>(world.parent.size()));
+				if (fresh)
+				{
+					world.parent.resize(world.parent.size() + (end - id));
+					std::iota(world.parent.begin() + at->second, world.parent.end(), at->second);
+					world.info.insert(world.info.end(), local.info.begin() + id, local.info.begin() + end);
+				}
+				for (std::uint32_t k = id; k < end; ++k)
+					globalOf[k] = at->second + (k - id);
+				id = end;
+			}
+			World& mutableLocal = band.world;
+			for (std::uint32_t id = 0; id < local.parent.size(); ++id)
+			{
+				const std::uint32_t root = mutableLocal.find(id);
+				if (root != id)
+					world.join(globalOf[id], globalOf[root]);
+			}
+			band.world = World{}; // the merged graph is the one kept
+		}
+		// A zone's decision lives in the band that loaded it.
+		const auto nativeReportOf = [&](kworld::ZoneCell zone) -> const ksim::MeshNavigator::NativeTileReport*
+		{
+			for (const Band& band : bands)
+				if (const auto* report = band.nav->nativeReport(zone))
+					return report;
+			return nullptr;
+		};
+		std::size_t regionHits = 0, regionMisses = 0, zoneHits = 0, zoneMisses = 0;
+		for (const Band& band : bands)
+		{
+			for (const std::string& line : band.log)
+				std::cout << "loader: " << line << "\n";
+			regionHits += band.nav->nativeCacheStats().regionHits;
+			regionMisses += band.nav->nativeCacheStats().regionMisses;
+			zoneHits += band.nav->nativeCacheStats().zoneHits;
+			zoneMisses += band.nav->nativeCacheStats().zoneMisses;
+		}
+		if (const auto* report = nativeReportOf({ 46, 16 }))
 			std::cout << "zone 46,16 (the Heft Longhouse): " << (report->decision.choice == ksim::MeshNavigator::NativeChoice::Shipped ? "shipped tile" : "rebaked with our recipe")
 					  << (report->decision.reason.empty() ? "" : " (" + report->decision.reason + ")") << "\n";
 		const double walkMs = msSince(start);
 		std::cout << "graph: " << blocks << " blocks, " << world.tileBase.size() << " tiles, " << world.parent.size() << " polygons, "
 				  << std::llround(walkMs / 1000.0) << " s, peak RSS " << statusKb("VmHWM") / 1024 << " MB; nav cache: "
-				  << nav->nativeCacheStats().regionHits << " region hits / " << nav->nativeCacheStats().regionMisses << " misses, "
-				  << nav->nativeCacheStats().zoneHits << " zone hits / " << nav->nativeCacheStats().zoneMisses << " misses\n";
+				  << regionHits << " region hits / " << regionMisses << " misses, " << zoneHits << " zone hits / " << zoneMisses << " misses\n";
 
 		// ---- components ----
 		std::map<std::uint32_t, Island> byRoot;
@@ -735,7 +817,7 @@ int main(int argc, char** argv)
 			{
 				const PolyInfo& poly = world.info[id];
 				const kworld::ZoneCell zone = kworld::zoneCellOf(poly.x, poly.z);
-				const ksim::MeshNavigator::NativeTileReport* report = nav->nativeReport(zone);
+				const ksim::MeshNavigator::NativeTileReport* report = nativeReportOf(zone);
 				if (report == nullptr)
 				{
 					++source.unknown;
@@ -843,7 +925,7 @@ int main(int argc, char** argv)
 			const std::uint32_t kNoId = 0xffffffffu;
 			dtNavMeshQuery query;
 			const dtQueryFilter filter;
-			walkBlocks(*shipped, original, [&](const knav::NavMesh& mesh, const std::vector<kworld::ZoneCell>& zones)
+			walkBlocks(*shipped, original, 0, kRows, [&](const knav::NavMesh& mesh, const std::vector<kworld::ZoneCell>& zones)
 			{
 				const dtNavMesh& nav = mesh.detour();
 				test::require(dtStatusSucceed(query.init(&nav, 4096)), "dtNavMeshQuery init");

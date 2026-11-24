@@ -75,6 +75,9 @@ public:
 	// bakes the same as it would inside a bigger rectangle.
 	AreaGeometry gather(ZoneCell min, ZoneCell max);
 
+	// A placement the zone files do not carry (a save's own building, a player construction): later gathers of its zone see it.
+	void addPlacement(const PlacedInstance& placed);
+
 	// What the gatherer loaded; the references live as long as it does (terrain is the caller's).
 	AreaSources sources() const;
 

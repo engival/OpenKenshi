@@ -33,6 +33,8 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <set>
 #include <unordered_map>
 #include <vector>
 
@@ -60,8 +62,10 @@ struct RegionConfig
 	double keepRadius = 900.0;
 	double moveSpeed = 6.0;
 	double squadSpeed = 3.0;
-	// A player area is the square of regions within this Chebyshev radius.
+	// The camera focus's area is the square of regions within this Chebyshev radius.
 	int areaRadiusRegions = 1;
+	// A player character's area is the regions its +-characterBox box overlaps (the original's loaded-zone rule).
+	double characterBox = 340.0;
 	// Test/reference switch: every region is full detail and ticks every tick.
 	bool fullDetailAll = false;
 	// Test hook: every worker holds its first task of a pool run until all
@@ -76,6 +80,9 @@ struct Area
 {
 	std::vector<std::int32_t> regions;
 };
+
+// The camera focus that loads its 3x3 zones: the saved state::ViewFocus, else the first player character (no client camera).
+std::optional<state::ViewFocus> cameraFocus(flecs::world& ecs, const std::vector<state::GroundPoint>& centres);
 
 // One entity's current state; id and target are flecs ids (for callers that
 // hold flecs handles), stableId the state::Id.
@@ -157,7 +164,11 @@ public:
 
 	// Command targets, applied at the start of a tick (command.hpp).
 	// Player positions; areas whose region sets overlap merge into one.
+	// `centres` are the player characters; the camera focus joins them in a started game.
 	void setPlayerAreas(flecs::world& ecs, const std::vector<state::GroundPoint>& centres);
+	// The zones the player characters and the camera focus would load, and the zones the areas hold now.
+	std::set<std::int32_t> loadedZones(const std::vector<state::GroundPoint>& centres, const std::optional<state::ViewFocus>& view, double box = -1.0) const; // box < 0: config characterBox
+	std::set<std::int32_t> fullZones() const;
 	// False when the group does not exist.
 	bool setGroupCentre(std::int32_t group, double x, double z);
 
@@ -259,7 +270,6 @@ private:
 		std::int32_t group);
 	void writeMirror(flecs::world& ecs, const EntityState& state) const;
 	state::Mover moverOf(const EntityState& state) const;
-	void deriveAreas(const std::vector<state::GroundPoint>& centres);
 	void rendezvous(std::atomic<int>& arrived, std::size_t taskCount);
 	void noteActiveWorkers(const std::vector<std::uint64_t>& taskCounts);
 	void runRegionUnit(std::int32_t region);
@@ -269,6 +279,8 @@ private:
 	std::int32_t detailForRegion(std::int32_t region) const;
 	void applyRegionWrites(std::int32_t region, bool hasUpdates, std::uint64_t tick);
 	void rebuildMembership();
+	std::vector<std::vector<std::int32_t>> areaSets(const std::vector<state::GroundPoint>& centres, const std::optional<state::ViewFocus>& view, double box) const;
+	void deriveAreas(const std::vector<state::GroundPoint>& centres, const std::optional<state::ViewFocus>& view);
 	void syncEcsBoundary(flecs::world& ecs);
 	void ensureGroups(std::size_t count, double x, double z);
 

@@ -219,6 +219,8 @@ add_library(kworld
 	src/kworld/biomemap.cpp
 	src/kworld/roadoverlay.cpp
 	src/kworld/roads.cpp
+	src/kworld/roads_normalize.cpp
+	src/kworld/roadfixups.cpp
 	src/kworld/collision.cpp
 	src/kworld/collision_area.cpp
 	src/kworld/hull_tree.cpp
@@ -228,6 +230,8 @@ add_library(kworld
 	src/kworld/ogreskeleton.cpp
 )
 target_include_directories(kworld PUBLIC include)
+# The source tree's road fixup table (docs/formats/ROAD_FIXUPS.md), the default of kworld::defaultRoadFixupsPath.
+target_compile_definitions(kworld PRIVATE KSIM_ROAD_FIXUPS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../data/fixups/roads.tsv")
 # stb_image (PNG only) decodes biomemap.png; vendored, public domain / MIT.
 target_include_directories(kworld SYSTEM PRIVATE third_party/stb)
 target_link_libraries(kworld PUBLIC kdata kutil)
@@ -237,6 +241,12 @@ add_executable(kworld_survey tools/kworld_survey.cpp)
 target_link_libraries(kworld_survey PRIVATE kworld)
 target_compile_definitions(kworld_survey PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(kworld_survey)
+
+# kenshi-k16.6.716: offline road normalization analysis (a shipped maintainer tool: reads the data dir, writes a change list as TSV).
+add_executable(kroads_normalize tools/kroads_normalize.cpp)
+target_link_libraries(kroads_normalize PRIVATE kworld)
+target_compile_definitions(kroads_normalize PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(kroads_normalize)
 
 add_executable(kworld_features_dump tools/kworld_features.cpp)
 target_link_libraries(kworld_features_dump PRIVATE kworld)
@@ -526,6 +536,7 @@ add_library(ksim
 	src/ksim/economy/shopping_sim.cpp
 	src/ksim/nav/navcoverage.cpp
 	src/ksim/world/prospect.cpp
+	src/ksim/economy/machines.cpp
 	src/ksim/economy/producers.cpp
 	src/ksim/economy/trade.cpp
 	src/ksim/world/buildings.cpp
@@ -571,9 +582,10 @@ if(KSIM_DEBUG_VIEW)
 	target_sources(ksim PRIVATE src/ksim/debugview/view.cpp)
 endif()
 if(KSIM_DEV)
-	target_sources(ksim PRIVATE src/ksim/dev/checkpoint_log.cpp src/ksim/dev/walk_stats.cpp)
+	target_sources(ksim PRIVATE src/ksim/dev/checkpoint_log.cpp src/ksim/dev/walk_stats.cpp src/ksim/dev/arena_strides.cpp src/ksim/dev/test_phases.cpp)
 endif()
-target_include_directories(ksim PUBLIC include PRIVATE src/ksim)	# private headers beside their sources, as "<subsystem>/x.hpp" (kenshi-k16.6.387)
+target_sources(ksim PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/knav_bake_gen/knav_bake_srchash.h)	# the nav cache tree name folds the bake source hash (kenshi-k16.7.161); rule at knav_bake
+target_include_directories(ksim PUBLIC include PRIVATE src/ksim ${CMAKE_CURRENT_BINARY_DIR}/knav_bake_gen)	# private headers beside their sources, as "<subsystem>/x.hpp" (kenshi-k16.6.387)
 target_link_libraries(ksim PUBLIC kworld knav flecs ksim_paths PRIVATE lua55 kutil)
 # The shipped default behaviour scripts (data/behaviour/default).
 # The build's git hash (SIMLINK SCENARIO_STARTED simHash, server --version): written at build time into one generated file, so a new HEAD
@@ -614,6 +626,19 @@ target_compile_definitions(ksim_soak PRIVATE
 	KENSHI_DATA="${KENSHI_DATA}"
 )
 kdata_warnings(ksim_soak)
+
+if(KSIM_DEV)
+	# kenshi-k16.7.122: dev dump of our navmesh and collision round one building, in the common format of the original's export (k16.7.121).
+	add_executable(ksim_navcoll_export tools/ksim_navcoll_export.cpp)
+	target_link_libraries(ksim_navcoll_export PRIVATE ksim knav RecastNavigation::Detour)
+	target_compile_definitions(ksim_navcoll_export PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+	kdata_warnings(ksim_navcoll_export)
+	# kenshi-k16.7.131: grades the geometric navmesh generator (knav/surfgen.hpp) on a building against the original's live capture.
+	add_executable(ksim_surfgen_grade tools/ksim_surfgen_grade.cpp)
+	target_link_libraries(ksim_surfgen_grade PRIVATE knav)
+	target_compile_definitions(ksim_surfgen_grade PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+	kdata_warnings(ksim_surfgen_grade)
+endif()
 
 if(KSIM_DEV)
 	# kenshi-k16.6.109: our per-NPC checkpoint log of the spectate_fight squads, the shape of the original's rwh.91 log.
@@ -794,7 +819,10 @@ target_compile_definitions(ksim_town_beds PRIVATE
 	KENSHI_DATA="${KENSHI_DATA}"
 )
 kdata_warnings(ksim_town_beds)
-add_test(NAME ksim_town_beds COMMAND ksim_town_beds)
+# Split into parts for ctest to run in parallel (kenshi-k16.5.21): one test per case; the argument names the case.
+foreach(c sleepAndWake sharedYard shopNight staleDoors strangers shooEscalation determinism)
+	add_test(NAME ksim_town_beds_${c} COMMAND ksim_town_beds ${c})
+endforeach()
 
 # Guard shifts (routine_scorer.cpp + carry.cpp, TOWN_LIFE_SLICE.md 5.18, T3e1): the halves flip at the window hour, the beds fill
 # and no further, the night-shift addon's windows, and the intruder pickup (223 adopts stepIntruders) on the Hub mesh.
@@ -809,6 +837,12 @@ add_test(NAME ksim_town_guards COMMAND ksim_town_guards ${CMAKE_CURRENT_BINARY_D
 set_tests_properties(ksim_town_guards PROPERTIES FIXTURES_REQUIRED knav_cache)
 
 # Player sleep (task Y): the bed rates (FEATURES 160, `kBedRates`) and the wake on a replacing order.
+add_executable(ksim_bed_pose tests/ksim_bed_pose.cpp)
+target_link_libraries(ksim_bed_pose PRIVATE ksim)
+target_compile_definitions(ksim_bed_pose PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_bed_pose)
+add_test(NAME ksim_bed_pose COMMAND ksim_bed_pose)
+
 add_executable(ksim_player_sleep tests/ksim_player_sleep.cpp)
 target_link_libraries(ksim_player_sleep PRIVATE ksim)
 target_compile_definitions(ksim_player_sleep PRIVATE KENSHI_DATA="${KENSHI_DATA}"
@@ -824,7 +858,10 @@ target_compile_definitions(ksim_town_bar PRIVATE
 	KENSHI_DATA="${KENSHI_DATA}"
 )
 kdata_warnings(ksim_town_bar)
-add_test(NAME ksim_town_bar COMMAND ksim_town_bar ${KSIM_NAVWORLD})
+# Parts (kenshi-k16.5.21): argv[2..] name the cases.
+add_test(NAME ksim_town_bar_synthetic COMMAND ksim_town_bar ${KSIM_NAVWORLD} hubBar fallThrough shoppingAndSave traderStay)
+add_test(NAME ksim_town_bar_realHub COMMAND ksim_town_bar ${KSIM_NAVWORLD} realHub)
+add_test(NAME ksim_town_bar_realHeng COMMAND ksim_town_bar ${KSIM_NAVWORLD} realHeng)
 
 # The shopping trip (shopping.cpp / shopping_sim.cpp / routine_scorer.cpp, task CH group 3): the day's list from the CHARACTER refs,
 # the 118 resolver, 119's transaction, and the trip in the real tick across a save / load.
@@ -853,8 +890,11 @@ target_compile_definitions(ksim_world_follow PRIVATE
 	KENSHI_DATA="${KENSHI_DATA}"
 )
 kdata_warnings(ksim_world_follow)
-add_test(NAME ksim_world_follow COMMAND ksim_world_follow ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
-set_tests_properties(ksim_world_follow PROPERTIES FIXTURES_REQUIRED knav_cache)
+# Parts (kenshi-k16.5.21): argv[2..] name the cases.
+foreach(c traceReadOnly scenario saveLoad carrotRecovery dayRegression)
+	add_test(NAME ksim_world_follow_${c} COMMAND ksim_world_follow ${CMAKE_CURRENT_BINARY_DIR}/hub.knav ${c})
+	set_tests_properties(ksim_world_follow_${c} PROPERTIES FIXTURES_REQUIRED knav_cache)
+endforeach()
 
 # Streaming navmesh coverage (navcoverage.cpp, NAVMESH_CACHE.md "Streaming coverage"): needs the whole-world bake (knav_bake --world DIR, ~3 GB, 28 min);
 # skipped (exit 77) when KSIM_NAVWORLD has no region file for the Hub.
@@ -897,6 +937,14 @@ target_compile_definitions(ksim_route_corners PRIVATE KENSHI_DATA="${KENSHI_DATA
 kdata_warnings(ksim_route_corners)
 add_test(NAME ksim_route_corners COMMAND ksim_route_corners ${KSIM_NAVWORLD})
 set_tests_properties(ksim_route_corners PROPERTIES SKIP_RETURN_CODE 77)
+add_executable(ksim_zigzag_leg tests/ksim_zigzag_leg.cpp)
+target_link_libraries(ksim_zigzag_leg PRIVATE ksim)
+target_compile_definitions(ksim_zigzag_leg PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_zigzag_leg)
+# probes (kenshi-e9s9.15), not tests: ksim_zigzag_leg NAVWORLD [ring] prints the gate_heft leg's corners and a walkability map; ksim_zigzag_walk NAVWORLD OUT.tsv [s] logs every route install of the gate -> stone camp walk
+add_executable(ksim_zigzag_walk tests/ksim_zigzag_walk.cpp)
+target_link_libraries(ksim_zigzag_walk PRIVATE ksim)
+target_compile_definitions(ksim_zigzag_walk PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 add_executable(ksim_route_longhouse tests/ksim_route_longhouse.cpp)
 target_link_libraries(ksim_route_longhouse PRIVATE ksim)
 target_compile_definitions(ksim_route_longhouse PRIVATE KENSHI_DATA="${KENSHI_DATA}")
@@ -1178,6 +1226,16 @@ foreach(raid_test ksim_raid_goals ksim_raid_occupy ksim_raid_victory_stay ksim_r
 	set_tests_properties(${raid_test} PROPERTIES SKIP_RETURN_CODE 77)
 endforeach()
 
+# kenshi-k16.6.529: residents seated on an upper storey are placed at it (the bar next to Outpost s-IV), on the live world.
+add_executable(ksim_siv_residents tests/ksim_siv_residents.cpp)
+target_link_libraries(ksim_siv_residents PRIVATE ksim)
+target_compile_definitions(ksim_siv_residents PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+)
+kdata_warnings(ksim_siv_residents)
+add_test(NAME ksim_siv_residents COMMAND ksim_siv_residents ${KSIM_NAVWORLD})
+set_tests_properties(ksim_siv_residents PROPERTIES SKIP_RETURN_CODE 77)
+
 # The selector's live Situation feed (mission / assaultTown / atTown) and the loaded world's own selector re-stamping a patrol (task board-feed).
 add_executable(ksim_board_feed tests/ksim_board_feed.cpp)
 target_link_libraries(ksim_board_feed PRIVATE ksim)
@@ -1228,7 +1286,25 @@ kdata_warnings(ksim_walk_kinematics)
 add_test(NAME ksim_walk_kinematics COMMAND ksim_walk_kinematics ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
 set_tests_properties(ksim_walk_kinematics PROPERTIES FIXTURES_REQUIRED knav_cache)
 
+add_executable(ksim_medic_hold_order tests/ksim_medic_hold_order.cpp)
+target_link_libraries(ksim_medic_hold_order PRIVATE ksim)
+target_compile_definitions(ksim_medic_hold_order PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+)
+kdata_warnings(ksim_medic_hold_order)
+add_test(NAME ksim_medic_hold_order COMMAND ksim_medic_hold_order ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
+set_tests_properties(ksim_medic_hold_order PROPERTIES FIXTURES_REQUIRED knav_cache)
+
 # The follow task and the fight join (SQUAD_FOLLOW.md), on the same Hub cache.
+add_executable(ksim_medic_follower_patient tests/ksim_medic_follower_patient.cpp)
+target_link_libraries(ksim_medic_follower_patient PRIVATE ksim)
+target_compile_definitions(ksim_medic_follower_patient PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+)
+kdata_warnings(ksim_medic_follower_patient)
+add_test(NAME ksim_medic_follower_patient COMMAND ksim_medic_follower_patient ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
+set_tests_properties(ksim_medic_follower_patient PROPERTIES FIXTURES_REQUIRED knav_cache)
+
 add_executable(ksim_follow tests/ksim_follow.cpp)
 target_link_libraries(ksim_follow PRIVATE ksim)
 target_compile_definitions(ksim_follow PRIVATE
@@ -1249,6 +1325,15 @@ add_test(NAME ksim_group_settle COMMAND ksim_group_settle ${CMAKE_CURRENT_BINARY
 set_tests_properties(ksim_group_settle PROPERTIES FIXTURES_REQUIRED knav_cache)
 
 # A passing runner pushes the bodies it overlaps (kenshi-k16.6.425, oracle kenshi-rwh.188).
+add_executable(ksim_group_stop tests/ksim_group_stop.cpp)
+target_link_libraries(ksim_group_stop PRIVATE ksim)
+target_compile_definitions(ksim_group_stop PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+)
+kdata_warnings(ksim_group_stop)
+add_test(NAME ksim_group_stop COMMAND ksim_group_stop ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
+set_tests_properties(ksim_group_stop PROPERTIES FIXTURES_REQUIRED knav_cache)
+
 add_executable(ksim_overlap_push tests/ksim_overlap_push.cpp)
 target_link_libraries(ksim_overlap_push PRIVATE ksim)
 target_compile_definitions(ksim_overlap_push PRIVATE
@@ -1257,6 +1342,16 @@ target_compile_definitions(ksim_overlap_push PRIVATE
 kdata_warnings(ksim_overlap_push)
 add_test(NAME ksim_overlap_push COMMAND ksim_overlap_push ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
 set_tests_properties(ksim_overlap_push PROPERTIES FIXTURES_REQUIRED knav_cache)
+
+# Arena strides: the fight tier every step, the rest every second (kenshi-k16.6.636).
+add_executable(ksim_arena_strides tests/ksim_arena_strides.cpp)
+target_link_libraries(ksim_arena_strides PRIVATE ksim)
+target_compile_definitions(ksim_arena_strides PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+)
+kdata_warnings(ksim_arena_strides)
+add_test(NAME ksim_arena_strides COMMAND ksim_arena_strides ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
+set_tests_properties(ksim_arena_strides PROPERTIES FIXTURES_REQUIRED knav_cache)
 
 add_executable(ksim_speed_modes tests/ksim_speed_modes.cpp)
 target_link_libraries(ksim_speed_modes PRIVATE ksim)
@@ -1393,6 +1488,13 @@ foreach(dt27_test ksim_eat_kill ksim_hunting_smell ksim_travel_town ksim_army_tr
 endforeach()
 
 # Severed limbs as ground items (Simulation::onLimbSevered, CombatArena::torture / eat; rwh42): a hit, the peeler, Dismemberment 0, the eat path, the save.
+add_executable(ksim_char_names tests/ksim_char_names.cpp)
+target_link_libraries(ksim_char_names PRIVATE ksim RecastNavigation::Detour)
+target_compile_definitions(ksim_char_names PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_char_names)
+add_test(NAME ksim_char_names COMMAND ksim_char_names ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
+set_tests_properties(ksim_char_names PROPERTIES FIXTURES_REQUIRED knav_cache)
+
 add_executable(ksim_limb_tint tests/ksim_limb_tint.cpp)
 target_link_libraries(ksim_limb_tint PRIVATE ksim RecastNavigation::Detour)
 target_compile_definitions(ksim_limb_tint PRIVATE KENSHI_DATA="${KENSHI_DATA}")
@@ -1429,8 +1531,13 @@ add_executable(ksim_save_mid_order tests/ksim_save_mid_order.cpp)
 target_link_libraries(ksim_save_mid_order PRIVATE ksim)
 target_compile_definitions(ksim_save_mid_order PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(ksim_save_mid_order)
-add_test(NAME ksim_save_mid_order COMMAND ksim_save_mid_order)
-set_tests_properties(ksim_save_mid_order PROPERTIES SKIP_RETURN_CODE 77)
+# Parts (kenshi-k16.5.21): argv[1..] name the cases (each runs reloaded and fresh).
+add_test(NAME ksim_save_mid_order_a COMMAND ksim_save_mid_order arrest arrestWaits huntBounties smash)
+add_test(NAME ksim_save_mid_order_b COMMAND ksim_save_mid_order build lock crops)
+add_test(NAME ksim_save_mid_order_c COMMAND ksim_save_mid_order standing limbPlay alarmWait)
+foreach(c a b c)
+	set_tests_properties(ksim_save_mid_order_${c} PROPERTIES SKIP_RETURN_CODE 77)
+endforeach()
 # Assault -> Terrorism (task ds/terrorism, kinspect dt43): a diplomat in its faction's territory.
 add_executable(ksim_terrorism tests/ksim_terrorism.cpp)
 target_link_libraries(ksim_terrorism PRIVATE ksim)
@@ -1682,8 +1789,11 @@ add_library(knav
 	src/knav/coarse.cpp
 	src/knav/walk.cpp
 	src/knav/native.cpp
+	src/knav/navgeom.cpp
 	src/knav/compare.cpp
 	src/knav/native_tiles.cpp
+	src/knav/surfgen.cpp
+	src/knav/assemble.cpp
 	src/knav/seeds.cpp
 	src/knav/route.cpp
 )
@@ -1692,8 +1802,24 @@ target_link_libraries(knav PUBLIC kworld PRIVATE
 	RecastNavigation::Recast RecastNavigation::Detour Threads::Threads)
 kdata_warnings(knav)
 
-add_executable(knav_bake tools/knav_bake.cpp)
+# knav_bake caches its results by input (NAVMESH_CACHE.md "Bake cache"). KNAV_BAKE_CACHE: the cache root compiled in
+# (empty = off; the KNAV_BAKE_CACHE env var and --cache override it per run).
+set(KNAV_BAKE_CACHE "" CACHE PATH "knav_bake result cache directory (empty = off)")
+# The source hash is generated at build time (any generator), from the contents of the sources knav_bake is built from.
+file(GLOB_RECURSE KNAV_BAKE_SRCS CONFIGURE_DEPENDS src/knav/* include/knav/* src/kworld/* include/kworld/* src/kutil/* include/kutil/*
+	src/kdata/* include/kdata/*)
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/knav_bake_gen/knav_bake_srchash.h
+	COMMAND ${CMAKE_COMMAND} -DOUT=${CMAKE_CURRENT_BINARY_DIR}/knav_bake_gen/knav_bake_srchash.h -DROOT=${CMAKE_CURRENT_SOURCE_DIR}
+		-DBUILDID=${CMAKE_CURRENT_BINARY_DIR}/knav_bake_gen/buildid.txt
+		-P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/knav_srchash.cmake
+	DEPENDS ${KNAV_BAKE_SRCS} src/format.cpp src/gamedata.cpp tools/knav_bake.cpp tools/knav_bake_cache.hpp cmake/recast.cmake
+		cmake/knav_srchash.cmake cmake/knav_buildid.cmake ${CMAKE_CURRENT_BINARY_DIR}/knav_bake_gen/buildid.txt
+	COMMENT "knav_bake source hash")
+add_executable(knav_bake tools/knav_bake.cpp ${CMAKE_CURRENT_BINARY_DIR}/knav_bake_gen/knav_bake_srchash.h)
+target_include_directories(knav_bake PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/knav_bake_gen)
+target_compile_definitions(knav_bake PRIVATE KNAV_BAKE_CACHE_DEFAULT="${KNAV_BAKE_CACHE}")
 target_link_libraries(knav_bake PRIVATE knav RecastNavigation::Detour)
+include(cmake/knav_buildid.cmake)	# compiler / flags / Recast identity -> buildid.txt, hashed into the key (kenshi-k16.15.45)
 # A top-down picture of a world bake over a box (areas, pruned polygons, routes).
 add_executable(knav_draw tools/knav_draw.cpp)
 target_link_libraries(knav_draw PRIVATE knav RecastNavigation::Detour)
@@ -1712,11 +1838,23 @@ add_executable(knav_native tools/knav_native.cpp)
 target_link_libraries(knav_native PRIVATE knav RecastNavigation::Detour)
 target_compile_definitions(knav_native PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(knav_native)
+add_executable(knav_hkt_dump tools/knav_hkt_dump.cpp)
+target_link_libraries(knav_hkt_dump PRIVATE knav)
+target_compile_definitions(knav_hkt_dump PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(knav_hkt_dump)
 
 add_executable(knav_navhash tools/knav_navhash.cpp)
 target_link_libraries(knav_navhash PRIVATE kworld knav)
 target_compile_definitions(knav_navhash PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(knav_navhash)
+
+if(KSIM_DEV)
+# kenshi-k16.7.128: the geometric stale test over the shipped tiles with a stale hash.
+	add_executable(knav_stalegeom tools/knav_stalegeom.cpp)
+	target_link_libraries(knav_stalegeom PRIVATE ksim knav RecastNavigation::Detour)
+	target_compile_definitions(knav_stalegeom PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+	kdata_warnings(knav_stalegeom)
+endif()
 add_test(NAME knav_navhash COMMAND knav_navhash --check)
 set_tests_properties(knav_navhash PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -1780,6 +1918,17 @@ target_link_libraries(knav_door PRIVATE knav RecastNavigation::Detour)
 target_compile_definitions(knav_door PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(knav_door)
 
+add_executable(knav_door_occupied tests/knav_door_occupied.cpp)
+target_link_libraries(knav_door_occupied PRIVATE knav RecastNavigation::Detour)
+target_compile_definitions(knav_door_occupied PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(knav_door_occupied)
+
+add_executable(knav_gate_leaf tests/knav_gate_leaf.cpp)
+target_link_libraries(knav_gate_leaf PRIVATE knav RecastNavigation::Detour)
+kdata_warnings(knav_gate_leaf)
+add_test(NAME knav_gate_leaf COMMAND knav_gate_leaf ${KSIM_NAVWORLD})
+set_tests_properties(knav_gate_leaf PROPERTIES SKIP_RETURN_CODE 77)
+
 # The bake runs twice (4 threads, 1 thread); the files must be identical.
 add_test(NAME knav_bake_hub
 	COMMAND knav_bake --out ${CMAKE_CURRENT_BINARY_DIR}/hub.knav --threads 4)
@@ -1788,11 +1937,16 @@ add_test(NAME knav_bake_stack
 	COMMAND knav_bake --out ${CMAKE_CURRENT_BINARY_DIR}/stack.knav --zones 18 28 20 30 --threads 4)
 add_test(NAME knav_bake_hub_single
 	COMMAND knav_bake --out ${CMAKE_CURRENT_BINARY_DIR}/hub_single.knav --threads 1)
+# Cached and uncached bakes into one output dir (k16.15.47): both succeed, the cache entry is untouched.
+add_test(NAME knav_bake_cache_reuse
+	COMMAND ${CMAKE_COMMAND} -DBAKE=$<TARGET_FILE:knav_bake> -DWORK=${CMAKE_CURRENT_BINARY_DIR}/bake_cache_reuse
+		-P ${CMAKE_CURRENT_SOURCE_DIR}/tests/knav_bake_cache_reuse.cmake)
 add_test(NAME knav_deterministic
 	COMMAND ${CMAKE_COMMAND} -E compare_files
 		${CMAKE_CURRENT_BINARY_DIR}/hub.knav ${CMAKE_CURRENT_BINARY_DIR}/hub_single.knav)
 add_test(NAME knav_hub COMMAND knav_hub ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
 add_test(NAME knav_door COMMAND knav_door ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
+add_test(NAME knav_door_occupied COMMAND knav_door_occupied ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
 add_executable(knav_storm_house tests/knav_storm_house.cpp)
 target_link_libraries(knav_storm_house PRIVATE knav)
 target_compile_definitions(knav_storm_house PRIVATE KENSHI_DATA="${KENSHI_DATA}")
@@ -1809,6 +1963,13 @@ target_link_libraries(knav_interior_walk PRIVATE ksim)
 target_compile_definitions(knav_interior_walk PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(knav_interior_walk)
 add_test(NAME knav_interior_walk COMMAND knav_interior_walk ${KSIM_NAVWORLD})
+# Geometric navmesh generator (knav/surfgen.hpp) on the Hub bar and the Longhouse (kenshi-k16.7.131).
+add_executable(knav_surfgen tests/knav_surfgen.cpp)
+target_link_libraries(knav_surfgen PRIVATE knav)
+target_compile_definitions(knav_surfgen PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(knav_surfgen)
+add_test(NAME knav_surfgen COMMAND knav_surfgen)
+
 add_executable(knav_longhouse_door tests/knav_longhouse_door.cpp)
 target_link_libraries(knav_longhouse_door PRIVATE knav)
 target_compile_definitions(knav_longhouse_door PRIVATE KENSHI_DATA="${KENSHI_DATA}")
@@ -1835,6 +1996,7 @@ add_test(NAME knav_furniture COMMAND knav_furniture ${CMAKE_CURRENT_BINARY_DIR}/
 set_tests_properties(knav_furniture PROPERTIES FIXTURES_REQUIRED knav_cache)
 set_tests_properties(knav_snap PROPERTIES FIXTURES_REQUIRED knav_cache)
 set_tests_properties(knav_door PROPERTIES FIXTURES_REQUIRED knav_cache)
+set_tests_properties(knav_door_occupied PROPERTIES FIXTURES_REQUIRED knav_cache)
 set_tests_properties(knav_bake_hub PROPERTIES FIXTURES_SETUP knav_cache)
 set_tests_properties(knav_bake_hub_single PROPERTIES FIXTURES_SETUP knav_cache_single)
 set_tests_properties(knav_bake_stack PROPERTIES FIXTURES_SETUP knav_cache_stack)
@@ -1844,12 +2006,31 @@ set_tests_properties(knav_deterministic PROPERTIES FIXTURES_REQUIRED "knav_cache
 # The runtime native loader (MeshNavigator::openNative): the Hub streamed from the shipped navtiles, the bar route at radius 4,
 # a walked route (docs/formats/NAVMESH_CACHE.md "Runtime mesh"). Reads the install at run time; - as argv[1] = an optional
 # world bake to compare load time and RSS with.
+add_executable(ksim_path_walk tests/ksim_path_walk.cpp)
+target_link_libraries(ksim_path_walk PRIVATE ksim)
+target_compile_definitions(ksim_path_walk PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_path_walk)
+add_test(NAME ksim_path_walk COMMAND ksim_path_walk)
+set_tests_properties(ksim_path_walk PROPERTIES SKIP_RETURN_CODE 77)
+add_executable(ksim_hub_west_corridor tests/ksim_hub_west_corridor.cpp)
+target_link_libraries(ksim_hub_west_corridor PRIVATE ksim)
+target_compile_definitions(ksim_hub_west_corridor PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_hub_west_corridor)
+add_test(NAME ksim_hub_west_corridor COMMAND ksim_hub_west_corridor)
+set_tests_properties(ksim_hub_west_corridor PROPERTIES SKIP_RETURN_CODE 77)
 add_executable(ksim_move_detour tests/ksim_move_detour.cpp)
 target_link_libraries(ksim_move_detour PRIVATE ksim)
 target_compile_definitions(ksim_move_detour PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(ksim_move_detour)
 add_test(NAME ksim_move_detour COMMAND ksim_move_detour)
 set_tests_properties(ksim_move_detour PROPERTIES SKIP_RETURN_CODE 77)
+
+add_executable(ksim_stand_building tests/ksim_stand_building.cpp)
+target_link_libraries(ksim_stand_building PRIVATE ksim)
+target_compile_definitions(ksim_stand_building PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_stand_building)
+add_test(NAME ksim_stand_building COMMAND ksim_stand_building)
+set_tests_properties(ksim_stand_building PROPERTIES SKIP_RETURN_CODE 77)
 
 add_executable(ksim_native_nav tests/ksim_native_nav.cpp)
 target_link_libraries(ksim_native_nav PRIVATE ksim)
@@ -1875,6 +2056,23 @@ add_test(NAME ksim_snap_component COMMAND ksim_snap_component)
 
 # The query-time clearance (NAVMESH_CACHE.md "Clearance"): the mesh is built in the test (no bake, no game data), two
 # walls across a floor. Radius 0 walks a 7 u gap, a radius 4 body refuses it (under the original's 9 u) and takes 12 u.
+add_executable(ksim_path_corridor tests/ksim_path_corridor.cpp)
+target_link_libraries(ksim_path_corridor PRIVATE ksim knav RecastNavigation::Recast RecastNavigation::Detour)
+kdata_warnings(ksim_path_corridor)
+add_test(NAME ksim_path_corridor COMMAND ksim_path_corridor)
+
+add_executable(knav_first_corner tests/knav_first_corner.cpp)
+target_link_libraries(knav_first_corner PRIVATE knav)
+kdata_warnings(knav_first_corner)
+add_test(NAME knav_first_corner COMMAND knav_first_corner)
+
+add_executable(ksim_path_corridor_save tests/ksim_path_corridor_save.cpp)
+target_link_libraries(ksim_path_corridor_save PRIVATE ksim)
+target_compile_definitions(ksim_path_corridor_save PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_path_corridor_save)
+add_test(NAME ksim_path_corridor_save COMMAND ksim_path_corridor_save)
+set_tests_properties(ksim_path_corridor_save PROPERTIES SKIP_RETURN_CODE 77)
+
 add_executable(knav_clearance tests/knav_clearance.cpp)
 target_link_libraries(knav_clearance PRIVATE ksim knav RecastNavigation::Recast RecastNavigation::Detour)
 kdata_warnings(knav_clearance)
@@ -1891,13 +2089,34 @@ kdata_warnings(ksim_native_cache)
 add_test(NAME ksim_native_cache COMMAND ksim_native_cache)
 set_tests_properties(ksim_native_cache PROPERTIES SKIP_RETURN_CODE 77)
 
+# The cache root keeps the newest 3 recipe trees (NAVMESH_CACHE.md "Prune"; kenshi-k16.7.101).
+add_executable(ksim_nav_cache_prune tests/ksim_nav_cache_prune.cpp)
+target_link_libraries(ksim_nav_cache_prune PRIVATE ksim)
+kdata_warnings(ksim_nav_cache_prune)
+add_test(NAME ksim_nav_cache_prune COMMAND ksim_nav_cache_prune)
+
 # The nav cache's canary: a fresh bake of one zone, its digest pinned beside kNativeCacheRecipe (kenshi-k16.7.67).
 add_executable(ksim_nav_cache_canary tests/ksim_nav_cache_canary.cpp)
 target_link_libraries(ksim_nav_cache_canary PRIVATE ksim)
 target_compile_definitions(ksim_nav_cache_canary PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(ksim_nav_cache_canary)
+# The cache tree key folds the bake source hash (injected here, kenshi-k16.7.161).
+add_executable(ksim_nav_cache_key tests/ksim_nav_cache_key.cpp)
+target_link_libraries(ksim_nav_cache_key PRIVATE ksim)
+target_compile_definitions(ksim_nav_cache_key PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_nav_cache_key)
+add_test(NAME ksim_nav_cache_key COMMAND ksim_nav_cache_key)
+set_tests_properties(ksim_nav_cache_key PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME ksim_nav_cache_canary COMMAND ksim_nav_cache_canary)
 set_tests_properties(ksim_nav_cache_canary PROPERTIES SKIP_RETURN_CODE 77)
+
+# gate_heft open-sand hole (kenshi-k16.7.154): the hole is in the shipped tile and the bake alike; pins it and a near-straight leg beside it
+add_executable(ksim_gate_heft_hole tests/ksim_gate_heft_hole.cpp)
+target_link_libraries(ksim_gate_heft_hole PRIVATE ksim)
+target_compile_definitions(ksim_gate_heft_hole PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_gate_heft_hole)
+add_test(NAME ksim_gate_heft_hole COMMAND ksim_gate_heft_hole ${KSIM_NAVWORLD})
+set_tests_properties(ksim_gate_heft_hole PROPERTIES SKIP_RETURN_CODE 77)
 
 add_executable(ksim_nav_islands tests/ksim_nav_islands.cpp)
 target_link_libraries(ksim_nav_islands PRIVATE ksim RecastNavigation::Detour)
@@ -1914,6 +2133,8 @@ endif()
 # RUN_SERIAL: the world graph peaks at 7.6 GB RSS (k16.7.43), which beside a -j12 suite's other tests on the 31 GB dev box can
 # exhaust memory; alone it costs the suite about its own wall time (4 min cached).
 set_tests_properties(ksim_nav_islands PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 3600 RUN_SERIAL TRUE)
+# kenshi-k16.5.21: a whole-world union-find (not splittable): 350 s alone on a warm cache, 873 s in the queue on a cold one. Label `soak`: out of the test queue.
+set_property(TEST ksim_nav_islands APPEND PROPERTY LABELS soak)
 
 add_executable(ksim_nav_shipped_gate tests/ksim_nav_shipped_gate.cpp)
 target_link_libraries(ksim_nav_shipped_gate PRIVATE ksim RecastNavigation::Detour)
@@ -2034,6 +2255,12 @@ target_compile_definitions(ksim_economy_prod PRIVATE
 )
 kdata_warnings(ksim_economy_prod)
 add_test(NAME ksim_economy_prod COMMAND ksim_economy_prod)
+
+add_executable(ksim_auto_producer tests/ksim_auto_producer.cpp)
+target_link_libraries(ksim_auto_producer PRIVATE ksim)
+target_compile_definitions(ksim_auto_producer PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_auto_producer)
+add_test(NAME ksim_auto_producer COMMAND ksim_auto_producer)
 
 # The supply board and its delivery caravans (TOWN_LIFE_SLICE 7.4, T4c): offers and needs from the town stock, expiring claims,
 # both ends reserved, a trade-circuit squad carrying a delivery, and the loss on death. The v69 board/caravan kinds carry the state.
@@ -2279,6 +2506,28 @@ kdata_warnings(ksim_gates)
 add_test(NAME ksim_gates COMMAND ksim_gates)
 
 # Perception: the measured sensor (perception.hpp), pure rules, scans and the arena with a save mid-meter.
+# Decision cadences scaled by min(game speed, 3) (k16.6.633).
+add_executable(ksim_far_squad_step tests/ksim_far_squad_step.cpp)
+target_link_libraries(ksim_far_squad_step PRIVATE ksim)
+target_compile_definitions(ksim_far_squad_step PRIVATE KENSHI_DATA="${KENSHI_DATA}" KSIM_AI_TABLE="${KSIM_AI_TABLE}")
+kdata_warnings(ksim_far_squad_step)
+add_test(NAME ksim_far_squad_step COMMAND ksim_far_squad_step)
+add_executable(ksim_hunger_stride tests/ksim_hunger_stride.cpp)
+target_link_libraries(ksim_hunger_stride PRIVATE ksim)
+target_compile_definitions(ksim_hunger_stride PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_hunger_stride)
+add_test(NAME ksim_hunger_stride COMMAND ksim_hunger_stride)
+add_executable(ksim_save_stamps tests/ksim_save_stamps.cpp)
+target_link_libraries(ksim_save_stamps PRIVATE ksim)
+target_compile_definitions(ksim_save_stamps PRIVATE KENSHI_DATA="${KENSHI_DATA}" KSIM_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+kdata_warnings(ksim_save_stamps)
+add_test(NAME ksim_save_stamps COMMAND ksim_save_stamps)
+add_executable(ksim_cadence_scale tests/ksim_cadence_scale.cpp)
+target_link_libraries(ksim_cadence_scale PRIVATE ksim)
+target_compile_definitions(ksim_cadence_scale PRIVATE KENSHI_DATA="${KENSHI_DATA}" KSIM_AI_TABLE="${KSIM_AI_TABLE}")
+kdata_warnings(ksim_cadence_scale)
+add_test(NAME ksim_cadence_scale COMMAND ksim_cadence_scale)
+
 add_executable(ksim_perception tests/ksim_perception.cpp)
 target_link_libraries(ksim_perception PRIVATE ksim)
 target_compile_definitions(ksim_perception PRIVATE KENSHI_DATA="${KENSHI_DATA}")
@@ -2348,6 +2597,20 @@ target_compile_definitions(ksim_producers PRIVATE
 kdata_warnings(ksim_producers)
 add_test(NAME ksim_producers COMMAND ksim_producers ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
 set_tests_properties(ksim_producers PROPERTIES FIXTURES_REQUIRED knav_cache)
+
+# kenshi-k16.5.22: a machine record for every functional building at the South Stone Camp (producer, converter, power, turret, furnace).
+add_executable(ksim_machine_records tests/ksim_machine_records.cpp)
+target_link_libraries(ksim_machine_records PRIVATE ksim)
+target_compile_definitions(ksim_machine_records PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+)
+kdata_warnings(ksim_machine_records)
+add_test(NAME ksim_machine_records COMMAND ksim_machine_records)
+add_executable(ksim_machine_wire tests/ksim_machine_wire.cpp)
+target_link_libraries(ksim_machine_wire PRIVATE ksim)
+target_compile_definitions(ksim_machine_wire PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_machine_wire)
+add_test(NAME ksim_machine_wire COMMAND ksim_machine_wire)
 
 # kenshi-k16.19.4 / .19.5: the Hub copper node's navmesh cut follows its collision (a rock shell cuts per triangle, not its hull); the miner's stand point.
 add_executable(ksim_mine_node_cut tests/ksim_mine_node_cut.cpp)
@@ -2627,8 +2890,11 @@ target_compile_definitions(ksim_newgame_starts PRIVATE
 	KSIM_AI_TABLE="${KSIM_AI_TABLE}"
 )
 kdata_warnings(ksim_newgame_starts)
-add_test(NAME ksim_newgame_starts COMMAND ksim_newgame_starts ${KSIM_NAVWORLD})
-set_tests_properties(ksim_newgame_starts PROPERTIES SKIP_RETURN_CODE 77)
+# Twelve shards of the start-offs (kenshi-k16.5.21, k16.15.49): argv[2] = "k/n".
+foreach(k 0 1 2 3 4 5 6 7 8 9 10 11)
+	add_test(NAME ksim_newgame_starts_${k} COMMAND ksim_newgame_starts ${KSIM_NAVWORLD} ${k}/12)
+	set_tests_properties(ksim_newgame_starts_${k} PROPERTIES SKIP_RETURN_CODE 77)
+endforeach()
 
 # A patrol squad's members carry the attack join goals: a hostile in sight gets an attack candidate (kenshi-k16.6.543).
 add_executable(ksim_patrol_threat tests/ksim_patrol_threat.cpp)
@@ -2722,8 +2988,13 @@ target_compile_definitions(ksim_slaver_route PRIVATE
 	KENSHI_DATA="${KENSHI_DATA}"
 )
 kdata_warnings(ksim_slaver_route)
-add_test(NAME ksim_slaver_route COMMAND ksim_slaver_route)
-set_tests_properties(ksim_slaver_route PROPERTIES SKIP_RETURN_CODE 77)
+# One test per idle phase shift (kenshi-k16.5.21).
+foreach(idle 0 5)
+	add_test(NAME ksim_slaver_route_${idle} COMMAND ksim_slaver_route ${idle})
+	set_tests_properties(ksim_slaver_route_${idle} PROPERTIES SKIP_RETURN_CODE 77)
+endforeach()
+add_test(NAME ksim_slaver_route_npc COMMAND ksim_slaver_route 0 npc)
+set_tests_properties(ksim_slaver_route_npc PROPERTIES SKIP_RETURN_CODE 77)
 # kenshi-k16.6.96: the slavers_downed caravan leaves Trading when the player attacks its Boss.
 add_executable(ksim_slavers_trading tests/ksim_slavers_trading.cpp)
 target_link_libraries(ksim_slavers_trading PRIVATE ksim)
@@ -2758,6 +3029,15 @@ target_compile_definitions(ksim_slavers_capture PRIVATE
 kdata_warnings(ksim_slavers_capture)
 add_test(NAME ksim_slavers_capture COMMAND ksim_slavers_capture)
 set_tests_properties(ksim_slavers_capture PROPERTIES SKIP_RETURN_CODE 77)
+# kenshi-k16.6.702: a world squad's capture of an unreachable body stays blocked (addBlockedTarget re-arm).
+add_executable(ksim_capture_unreachable tests/ksim_capture_unreachable.cpp)
+target_link_libraries(ksim_capture_unreachable PRIVATE ksim)
+target_compile_definitions(ksim_capture_unreachable PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+)
+kdata_warnings(ksim_capture_unreachable)
+add_test(NAME ksim_capture_unreachable COMMAND ksim_capture_unreachable)
+set_tests_properties(ksim_capture_unreachable PROPERTIES SKIP_RETURN_CODE 77)
 # kenshi-k16.6.288: after the slavers_downed capture no member keeps a fight goal or a weapon in hand.
 add_executable(ksim_slavers_sheathe tests/ksim_slavers_sheathe.cpp)
 target_link_libraries(ksim_slavers_sheathe PRIVATE ksim)
@@ -2840,6 +3120,16 @@ kdata_warnings(ksim_animal_feed)
 add_test(NAME ksim_animal_feed COMMAND ksim_animal_feed)
 set_tests_properties(ksim_animal_feed PROPERTIES SKIP_RETURN_CODE 77)
 
+# A squad animal rolls its age at spawn (rwh.193 section 5; kenshi-k16.17.13.14), and the save keeps it (v119).
+add_executable(ksim_animal_age tests/ksim_animal_age.cpp)
+target_link_libraries(ksim_animal_age PRIVATE ksim)
+target_compile_definitions(ksim_animal_age PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+)
+kdata_warnings(ksim_animal_age)
+add_test(NAME ksim_animal_age COMMAND ksim_animal_age)
+set_tests_properties(ksim_animal_age PROPERTIES SKIP_RETURN_CODE 77)
+
 add_executable(ksim_capture_live tests/ksim_capture_live.cpp)
 target_link_libraries(ksim_capture_live PRIVATE ksim)
 target_compile_definitions(ksim_capture_live PRIVATE
@@ -2894,6 +3184,15 @@ target_compile_definitions(ksim_dead_guy PRIVATE
 kdata_warnings(ksim_dead_guy)
 add_test(NAME ksim_dead_guy COMMAND ksim_dead_guy ${KSIM_NAVWORLD})
 set_tests_properties(ksim_dead_guy PROPERTIES SKIP_RETURN_CODE 77)
+add_executable(ksim_quarry_camp tests/ksim_quarry_camp.cpp)
+target_link_libraries(ksim_quarry_camp PRIVATE ksim)
+target_compile_definitions(ksim_quarry_camp PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+)
+kdata_warnings(ksim_quarry_camp)
+add_test(NAME ksim_quarry_camp COMMAND ksim_quarry_camp ${KSIM_NAVWORLD})
+set_tests_properties(ksim_quarry_camp PROPERTIES SKIP_RETURN_CODE 77)
+
 add_executable(ksim_bed_choice tests/ksim_bed_choice.cpp)
 target_link_libraries(ksim_bed_choice PRIVATE ksim)
 target_compile_definitions(ksim_bed_choice PRIVATE
@@ -2968,6 +3267,11 @@ add_test(NAME ksim_chase_stuck COMMAND ksim_chase_stuck)
 # Task BN: an unreachable melee target is never a terminal state. A bake pinch narrower than the body is walked through
 # by the clearance-free route; a target no walk reaches is given up, retried after the block, then left for the goal.
 # A hand-built mesh (a wall with a 4 u gap, then with none), like ksim_chase_stuck's.
+add_executable(ksim_route_negative_cache tests/ksim_route_negative_cache.cpp)
+target_link_libraries(ksim_route_negative_cache PRIVATE ksim RecastNavigation::Detour)
+kdata_warnings(ksim_route_negative_cache)
+add_test(NAME ksim_route_negative_cache COMMAND ksim_route_negative_cache)
+
 add_executable(ksim_unreachable_recovery tests/ksim_unreachable_recovery.cpp)
 target_link_libraries(ksim_unreachable_recovery PRIVATE ksim RecastNavigation::Detour)
 target_compile_definitions(ksim_unreachable_recovery PRIVATE KENSHI_DATA="${KENSHI_DATA}")
@@ -3044,6 +3348,13 @@ target_link_libraries(ksim_spawn_biome PRIVATE ksim)
 target_compile_definitions(ksim_spawn_biome PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(ksim_spawn_biome)
 add_test(NAME ksim_spawn_biome COMMAND ksim_spawn_biome)
+
+# One nest-source rule for placement / spawn / wilderness, judged on the game's facts (kenshi-k16.6.563).
+add_executable(ksim_nest_sources tests/ksim_nest_sources.cpp)
+target_link_libraries(ksim_nest_sources PRIVATE ksim)
+target_compile_definitions(ksim_nest_sources PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_nest_sources)
+add_test(NAME ksim_nest_sources COMMAND ksim_nest_sources)
 
 # Crowd spacing (BAR_FIGHT_LOOP.md Finding 0e): avoidance comfort radii, KO'd bodies, depenetration floor, hit-list threats, waiting attackers.
 add_executable(ksim_crowd_spacing tests/ksim_crowd_spacing.cpp)
@@ -3207,8 +3518,11 @@ target_compile_definitions(ksim_arrest_vs_capture PRIVATE
 	KENSHI_DATA="${KENSHI_DATA}"
 )
 kdata_warnings(ksim_arrest_vs_capture)
-add_test(NAME ksim_arrest_vs_capture COMMAND ksim_arrest_vs_capture ${KSIM_NAVWORLD})
-set_tests_properties(ksim_arrest_vs_capture PROPERTIES SKIP_RETURN_CODE 77)
+# One test per case (kenshi-k16.5.21: one run was 1682 s in the queue; each case builds a fresh world per Ids bump, 6 worlds), so ctest runs them in parallel.
+foreach(c a b c d e f g)
+	add_test(NAME ksim_arrest_vs_capture_${c} COMMAND ksim_arrest_vs_capture ${KSIM_NAVWORLD} ${c})
+	set_tests_properties(ksim_arrest_vs_capture_${c} PROPERTIES SKIP_RETURN_CODE 77)
+endforeach()
 
 # Task ds/arrest-2: a law guard sees a player with a bounty and arrests them through the dialogue (Heft).
 add_executable(ksim_arrest_auto tests/ksim_arrest_auto.cpp)
@@ -3240,17 +3554,36 @@ target_compile_definitions(ksim_path_retry PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(ksim_path_retry)
 add_test(NAME ksim_path_retry COMMAND ksim_path_retry)
 
+add_executable(kworld_roads_normalize tests/kworld_roads_normalize.cpp)
+target_link_libraries(kworld_roads_normalize PRIVATE ksim)
+target_compile_definitions(kworld_roads_normalize PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(kworld_roads_normalize)
+add_test(NAME kworld_roads_normalize COMMAND kworld_roads_normalize)
+
 add_executable(ksim_road_route tests/ksim_road_route.cpp)
 target_link_libraries(ksim_road_route PRIVATE ksim)
 target_compile_definitions(ksim_road_route PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(ksim_road_route)
 add_test(NAME ksim_road_route COMMAND ksim_road_route)
+# kenshi-k16.6.712: the road fixup table (kworld/roadfixups.hpp): parse / apply / write, guard and version refusals, the Hub spike moved off the far route.
+add_executable(ksim_road_fixups tests/ksim_road_fixups.cpp)
+target_link_libraries(ksim_road_fixups PRIVATE ksim)
+target_compile_definitions(ksim_road_fixups PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_road_fixups)
+add_test(NAME ksim_road_fixups COMMAND ksim_road_fixups)
 
 add_executable(ksim_retarget_hold tests/ksim_retarget_hold.cpp)
 target_link_libraries(ksim_retarget_hold PRIVATE ksim)
 target_compile_definitions(ksim_retarget_hold PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(ksim_retarget_hold)
 add_test(NAME ksim_retarget_hold COMMAND ksim_retarget_hold)
+
+# h2v.2.7: a waiter on a crowded target defends a free enemy's blows and re-picks per pickTarget (kenshi-k16.6.526).
+add_executable(ksim_wait_slot_aggro tests/ksim_wait_slot_aggro.cpp)
+target_link_libraries(ksim_wait_slot_aggro PRIVATE ksim)
+target_compile_definitions(ksim_wait_slot_aggro PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_wait_slot_aggro)
+add_test(NAME ksim_wait_slot_aggro COMMAND ksim_wait_slot_aggro)
 add_executable(ksim_target_lock tests/ksim_target_lock.cpp)
 target_link_libraries(ksim_target_lock PRIVATE ksim)
 target_compile_definitions(ksim_target_lock PRIVATE KENSHI_DATA="${KENSHI_DATA}")
@@ -3284,6 +3617,20 @@ target_compile_definitions(ksim_far_move PRIVATE
 kdata_warnings(ksim_far_move)
 add_test(NAME ksim_far_move COMMAND ksim_far_move ${KSIM_NAVWORLD})
 set_tests_properties(ksim_far_move PROPERTIES SKIP_RETURN_CODE 77)
+# kenshi-k16.6.720: road look-ahead following vs the exe's marker rule (925 zig-zag, 152 switchback, Heft walk). argv[2]: the rwh295 frames tsv (optional).
+add_executable(ksim_road_lookahead tests/ksim_road_lookahead.cpp)
+target_link_libraries(ksim_road_lookahead PRIVATE ksim)
+target_compile_definitions(ksim_road_lookahead PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_road_lookahead)
+add_test(NAME ksim_road_lookahead COMMAND ksim_road_lookahead ${KSIM_NAVWORLD})
+set_tests_properties(ksim_road_lookahead PROPERTIES SKIP_RETURN_CODE 77)
+
+add_executable(ksim_road_exe_rule tests/ksim_road_exe_rule.cpp)
+target_link_libraries(ksim_road_exe_rule PRIVATE ksim)
+target_compile_definitions(ksim_road_exe_rule PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_road_exe_rule)
+add_test(NAME ksim_road_exe_rule COMMAND ksim_road_exe_rule ${KSIM_NAVWORLD})
+set_tests_properties(ksim_road_exe_rule PROPERTIES SKIP_RETURN_CODE 77)
 # kenshi-k16.6.36: a scenario character's `cage=` key puts it in a cage through Simulation::imprison (state 5 / 6 on the wire is ksim_char_stats'); nothing
 # shoots, hits or targets the prisoner while the slavers fight the free Wanderer beside it.
 add_executable(ksim_cage_scenario tests/ksim_cage_scenario.cpp)
@@ -3336,6 +3683,15 @@ target_compile_definitions(ksim_cage_wire PRIVATE
 kdata_warnings(ksim_cage_wire)
 add_test(NAME ksim_cage_wire COMMAND ksim_cage_wire ${KSIM_NAVWORLD})
 set_tests_properties(ksim_cage_wire PROPERTIES SKIP_RETURN_CODE 77)
+# kenshi-k16.6.739: a carrier's order 60 on a free cage key puts the carried body in (exe PUT_IN_CAGE 0x6c carry swap).
+add_executable(ksim_carry_cage tests/ksim_carry_cage.cpp)
+target_link_libraries(ksim_carry_cage PRIVATE ksim)
+target_compile_definitions(ksim_carry_cage PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+)
+kdata_warnings(ksim_carry_cage)
+add_test(NAME ksim_carry_cage COMMAND ksim_carry_cage ${KSIM_NAVWORLD})
+set_tests_properties(ksim_carry_cage PROPERTIES SKIP_RETURN_CODE 77)
 add_executable(ksim_cage_capture tests/ksim_cage_capture.cpp)
 target_link_libraries(ksim_cage_capture PRIVATE ksim)
 target_compile_definitions(ksim_cage_capture PRIVATE
@@ -3604,6 +3960,13 @@ kdata_warnings(knav_route_shared)
 add_test(NAME knav_route_shared COMMAND knav_route_shared ${KSIM_NAVWORLD})
 set_tests_properties(knav_route_shared PROPERTIES SKIP_RETURN_CODE 77)
 
+add_executable(ksim_stair_click tests/ksim_stair_click.cpp)
+target_link_libraries(ksim_stair_click PRIVATE ksim)
+target_compile_definitions(ksim_stair_click PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_stair_click)
+add_test(NAME ksim_stair_click COMMAND ksim_stair_click ${KSIM_NAVWORLD})
+set_tests_properties(ksim_stair_click PROPERTIES SKIP_RETURN_CODE 77)
+
 add_executable(knav_counter_arm tests/knav_counter_arm.cpp)
 target_link_libraries(knav_counter_arm PRIVATE knav)
 target_compile_definitions(knav_counter_arm PRIVATE KENSHI_DATA="${KENSHI_DATA}")
@@ -3620,16 +3983,41 @@ kdata_warnings(ksim_counter_path)
 add_test(NAME ksim_counter_path COMMAND ksim_counter_path ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
 set_tests_properties(ksim_counter_path PROPERTIES FIXTURES_REQUIRED knav_cache)
 
+add_executable(ksim_stand_at_node tests/ksim_stand_at_node.cpp)
+target_link_libraries(ksim_stand_at_node PRIVATE ksim)
+target_compile_definitions(ksim_stand_at_node PRIVATE
+	KENSHI_DATA="${KENSHI_DATA}"
+	KSIM_AI_TABLE="${KSIM_AI_TABLE}"
+	KSIM_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+)
+kdata_warnings(ksim_stand_at_node)
+add_test(NAME ksim_stand_at_node COMMAND ksim_stand_at_node)
+
 # Tests of 20 s or more: label `slow` (ctest cost data on dev, 2026-11-13; user 2026-11-13: "automate the test like you said to skip the
 # long tests"). Workers run `ctest -LE slow` plus the slow tests their change touches; the sim lead runs the full suite on each ksim head
 # (docs/RUNBOOK.md "Dev box"). A new test that runs 20 s or more is added here. if(TEST): a name missing from this tree is skipped.
 set(KSIM_SLOW_TESTS
+	ksim_road_lookahead
+	ksim_road_exe_rule
+	ksim_quarry_camp
 	ksim_gate_crew
+	ksim_siv_residents
 	ksim_far_move
 	ksim_server_import
 	ksim_venge_population
 	knav_bake_threads
-	ksim_newgame_starts
+	ksim_newgame_starts_0
+	ksim_newgame_starts_1
+	ksim_newgame_starts_2
+	ksim_newgame_starts_3
+	ksim_newgame_starts_4
+	ksim_newgame_starts_5
+	ksim_newgame_starts_6
+	ksim_newgame_starts_7
+	ksim_newgame_starts_8
+	ksim_newgame_starts_9
+	ksim_newgame_starts_10
+	ksim_newgame_starts_11
 	ksim_prop_clip
 	ksim_prop_clip_native
 	ksim_nav_islands
@@ -3638,6 +4026,7 @@ set(KSIM_SLOW_TESTS
 	ksim_combat_join
 	knav_interior_walk
 	knav_bake_world_sample
+	knav_bake_cache_reuse
 	knav_navhash
 	ksim_after_fight
 	ksim_aggressive
@@ -3647,7 +4036,13 @@ set(KSIM_SLOW_TESTS
 	ksim_army_travel
 	ksim_arrest
 	ksim_arrest_auto
-	ksim_arrest_vs_capture
+	ksim_arrest_vs_capture_a
+	ksim_arrest_vs_capture_b
+	ksim_arrest_vs_capture_c
+	ksim_arrest_vs_capture_d
+	ksim_arrest_vs_capture_e
+	ksim_arrest_vs_capture_f
+	ksim_arrest_vs_capture_g
 	ksim_bar_brawl
 	ksim_bar_brawl_thug
 	ksim_bar_fight
@@ -3724,6 +4119,8 @@ set(KSIM_SLOW_TESTS
 	ksim_machines2
 	ksim_manhunter_hunt
 	ksim_medic
+	ksim_medic_follower_patient
+	ksim_medic_hold_order
 	ksim_move
 	ksim_move_detour
 	ksim_native_cache
@@ -3754,7 +4151,9 @@ set(KSIM_SLOW_TESTS
 	ksim_rescue_leader
 	ksim_run_away
 	ksim_save_import
-	ksim_save_mid_order
+	ksim_save_mid_order_a
+	ksim_save_mid_order_b
+	ksim_save_mid_order_c
 	ksim_scenario_load
 	ksim_self_aid
 	ksim_severed_limbs
@@ -3768,7 +4167,9 @@ set(KSIM_SLOW_TESTS
 	ksim_slave_trade
 	ksim_slaver_caravan
 	ksim_slaver_deliver
-	ksim_slaver_route
+	ksim_slaver_route_0
+	ksim_slaver_route_5
+	ksim_slaver_route_npc
 	ksim_slavers_capture
 	ksim_slavers_trading
 	ksim_small_exec
@@ -3784,11 +4185,21 @@ set(KSIM_SLOW_TESTS
 	ksim_thug_walk
 	ksim_token_fights
 	ksim_town_aggro
-	ksim_town_bar
-	ksim_town_beds
+	ksim_town_bar_synthetic
+	ksim_town_bar_realHub
+	ksim_town_bar_realHeng
+	ksim_town_beds_sleepAndWake
+	ksim_town_beds_sharedYard
+	ksim_town_beds_shopNight
+	ksim_town_beds_staleDoors
+	ksim_town_beds_strangers
+	ksim_town_beds_shooEscalation
+	ksim_town_beds_determinism
 	ksim_town_guards
 	ksim_town_patrol
 	ksim_town_scorer
+	ksim_cadence_scale
+	ksim_far_squad_step
 	ksim_trade
 	ksim_trader_circuit
 	ksim_travel_town
@@ -3797,10 +4208,16 @@ set(KSIM_SLOW_TESTS
 	ksim_venge_scen
 	ksim_weather
 	ksim_world_fighters
-	ksim_world_follow
+	ksim_world_follow_traceReadOnly
+	ksim_world_follow_scenario
+	ksim_world_follow_saveLoad
+	ksim_world_follow_carrotRecovery
+	ksim_world_follow_dayRegression
 	ksim_world_hub
 	ksim_world_offmesh
 	ksim_patrol_threat
+	ksim_path_walk
+	ksim_hub_west_corridor
 )
 # The world tests run on the runtime mesh and need only KENSHI_DATA; only the bake-kept ones (KSIM_BAKE_TESTS below) take the navmesh bake
 # (KSIM_NAVWORLD) and they skip (77) on their own when it holds no region files.
@@ -3896,6 +4313,13 @@ kdata_warnings(ksim_order_attack_far)
 add_test(NAME ksim_order_attack_far COMMAND ksim_order_attack_far ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
 set_tests_properties(ksim_order_attack_far PROPERTIES FIXTURES_REQUIRED knav_cache)
 
+# Tile assembly: Recast polygons as native faces, cut by the generator's surfaces, one nativeTiles call (knav/assemble.hpp, kenshi-k16.7.144).
+add_executable(knav_assemble tests/knav_assemble.cpp)
+target_link_libraries(knav_assemble PRIVATE knav)
+target_compile_definitions(knav_assemble PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(knav_assemble)
+add_test(NAME knav_assemble COMMAND knav_assemble)
+
 # After every test that reads the install (kenshi-379.14.8: tests declared below this block got no data guard, no skip code and no disable).
 # Without the Kenshi install the tests that read it skip (exit 77) instead of failing (kenshi-379.15): every test binary compiled with
 # KENSHI_DATA takes tests/test_needs_data.cpp, and every test treats 77 as a skip. Tests that need the navmesh bake (KSIM_NAVWORLD) skip on their own.
@@ -3926,6 +4350,18 @@ if(NOT EXISTS "${KENSHI_DATA}/gamedata.base")
 		endif()
 	endforeach()
 endif()
+# Navmesh tests off while the navmesh rework lands (user 2026-11-23, docs/INTENT.md): the tests of the mesh itself and of walking it are disabled
+# ("Not Run (Disabled)", not a failure) until the new system works and the user has judged it live against the collision overlay. The four fixture
+# bakes stay on (other tests read their files). -DKSIM_NAV_TESTS=ON runs them for diagnosis.
+option(KSIM_NAV_TESTS "run the navmesh tests (off while the navmesh rework lands, user 2026-11-23)" OFF)
+if(NOT KSIM_NAV_TESTS)
+	foreach(test IN LISTS allTests)
+		if(test MATCHES "^(knav_|ksim_nav_|ksim_native_|ksim_prop_clip|ksim_door_(sweep|plan)$|ksim_foyer_route$|ksim_storm_door$|ksim_route_|ksim_path_walk$|ksim_walk_kinematics$|ksim_stair_|ksim_move_(detour|no_route)$|ksim_offmesh_travel$|ksim_siv_|ksim_stand_building$)"
+			AND NOT test MATCHES "^knav_bake_(hub|hub_single|stack|world_sample)$")
+			set_tests_properties(${test} PROPERTIES DISABLED TRUE)
+		endif()
+	endforeach()
+endif()
 
 
 # World tests run on the runtime mesh (the shipped navtiles converted at load, the mesh the server and the game use; tests/nav_source.hpp),
@@ -3942,6 +4378,25 @@ foreach(bake_test IN LISTS KSIM_BAKE_TESTS)
 		set_property(TEST ${bake_test} APPEND PROPERTY ENVIRONMENT KSIM_NAVWORLD_BAKE=1)
 	endif()
 endforeach()
+# The scenario goldens again at the production arena strides (fight 1 / idle 2; kenshi-k16.6.658): the same executables with KSIM_ARENA_STRIDES=1/2,
+# which the dev-only CombatRules hook reads (src/ksim/dev/arena_strides.cpp). Defaults stay 1/1 everywhere else. The long scenarios (town beds / bar /
+# scorer, slaver route, ksim_fight_1v1) pass at 1/2 too but stay out of this set for time.
+if(KSIM_DEV)
+	function(ksim_stride_test name)
+		add_test(NAME ${name}_s12 COMMAND ${name} ${ARGN})
+		set_tests_properties(${name}_s12 PROPERTIES ENVIRONMENT KSIM_ARENA_STRIDES=1/2 SKIP_RETURN_CODE 77)
+	endfunction()
+	foreach(stride_base ksim_raid_phases ksim_raid_occupy ksim_bar_brawl ksim_bar_thugs ksim_fight_trace)
+		ksim_stride_test(${stride_base} ${KSIM_NAVWORLD})
+	endforeach()
+	add_test(NAME ksim_bar_brawl_thug_s12 COMMAND ksim_bar_brawl ${KSIM_NAVWORLD} Vagrants)
+	set_tests_properties(ksim_bar_brawl_thug_s12 PROPERTIES ENVIRONMENT KSIM_ARENA_STRIDES=1/2 SKIP_RETURN_CODE 77)
+	ksim_stride_test(ksim_town_guards ${CMAKE_CURRENT_BINARY_DIR}/hub.knav)
+	set_tests_properties(ksim_town_guards_s12 PROPERTIES FIXTURES_REQUIRED knav_cache)
+	foreach(stride_base ksim_town_fighters ksim_slavers_trading ksim_crowd_penalty)
+		ksim_stride_test(${stride_base})
+	endforeach()
+endif()
 get_property(all_tests DIRECTORY PROPERTY TESTS)
 foreach(any_test IN LISTS all_tests)
 	set_property(TEST ${any_test} APPEND PROPERTY ENVIRONMENT KENSHI_NAV_CACHE=${CMAKE_BINARY_DIR}/navcache)
@@ -3964,6 +4419,7 @@ endif()
 
 # Validity labels (kenshi-k16.15.26): golden / pin / infra (+ unverified, wrong) per test, generated from cpp/tests/validity/*.tsv, the one home
 # of the classification; a test with no rows is 'unclassified'. Appended, so `slow` below and any other label stay. docs/RUNBOOK.md "Test labels".
+
 find_package(Python3 COMPONENTS Interpreter)
 if(NOT Python3_Interpreter_FOUND)
 	message(WARNING "validity labels skipped: no Python3")
@@ -3991,6 +4447,45 @@ else()
 endif()
 
 # Last in the file: a test defined after this loop never got its slow label (kenshi-cotr, ksim_prop_clip and the k16.6.253 tests).
+# The smoke set (kenshi-k16.15.51, user 2026-11-22: "258?! Oh yeah, REAL QUICK. :p no wonder the test queue is collapsing under its
+# own weight."): what every test-queue job runs before its named tests, about 300 s of test time. Every test under 1 s, then one or
+# two per system: startup and wire, save / load, determinism, nav, combat, AI goals, town, world, economy, dialogue, medical, items,
+# ranged, spawn. The whole suite stays with CI on every ksim and master push. Choosing a test here is a cost call, not a coverage one:
+# what CI catches that this set misses gets an item.
+set(KSIM_SMOKE_TESTS
+	# under 1 s each
+	fields kdatadir knav_clearance ksim_blackboard ksim_blood ksim_brawl_freeze ksim_clock ksim_door_plan ksim_goal_select
+	ksim_goap_plan ksim_locks2 ksim_path_corridor ksim_profile ksim_ranged_plan ksim_script ksim_sensor_bits
+	ksim_server_import_fixture ksim_server_wire_version ksim_skin_harvest ksim_small_tasks ksim_snap_component
+	ksim_talk_approach ksim_worker_guard kutil_crashlog kworld_height_live kworld_loadorder kworld_terrain overlay versions
+	knav_deterministic knav_walk ksim_hub_stair_seam ksim_regions_areas ksim_validity_check kworld_features_malformed
+	kworld_malformed malformed ksim_regions_perception ksim_regions_squads ksim_regions_target kworld_malformed_asan
+	kworld_skeleton kworld_pathing ksim_regions_ownership ksim_regions_perf roundtrip ksim_regions_migration malformed_asan
+	kworld_features_malformed_asan
+	# one or two per system
+	ksim_server_lib ksim_server_scenario_file ksim_simlink_sample
+	ksim_save ksim_path_corridor_save
+	ksim_determinism ksim_regions_determinism
+	knav_route_shared ksim_route_walk knav_door ksim_nav_cache_canary
+	ksim_melee_table ksim_combat_armed ksim_ko_fate
+	ksim_town_goals ksim_package_leads ksim_schedule
+	ksim_hub_residents
+	kworld_zones kworld_towns ksim_world
+	ksim_economy_price
+	ksim_dialogue_book
+	ksim_medical
+	ksim_item_stats
+	ksim_ranged_fire
+	ksim_spawn
+)
+foreach(smoke_test IN LISTS KSIM_SMOKE_TESTS)
+	if(TEST ${smoke_test})
+		set_property(TEST ${smoke_test} APPEND PROPERTY LABELS smoke)
+	else()
+		message(WARNING "KSIM_SMOKE_TESTS names ${smoke_test}, which is not a test")
+	endif()
+endforeach()
+
 foreach(slow_test IN LISTS KSIM_SLOW_TESTS)
 	if(TEST ${slow_test})
 		set_property(TEST ${slow_test} APPEND PROPERTY LABELS slow)
@@ -4006,3 +4501,12 @@ foreach(t kdata_parity kworld_terrain kworld_zones kworld_skeleton kworld_foliag
 		target_link_libraries(${t} PRIVATE ksim_paths)
 	endif()
 endforeach()
+
+# Startup benchmark (kenshi-k16.15.44): per-phase wall time to the first tick. Dev-only, off by default; not a ctest.
+option(KSIM_STARTUP_BENCH "Build ksim_startup_bench (dev-only startup timing)" OFF)
+if(KSIM_STARTUP_BENCH AND KSIM_DEV)
+	add_executable(ksim_startup_bench tests/ksim_startup_bench.cpp)
+	target_link_libraries(ksim_startup_bench PRIVATE ksim)
+	target_compile_definitions(ksim_startup_bench PRIVATE KENSHI_DATA="${KENSHI_DATA}" KSIM_AI_TABLE="${KSIM_AI_TABLE}")
+	kdata_warnings(ksim_startup_bench)
+endif()

@@ -733,6 +733,13 @@ void Simulation::recordCaughtStealing(std::uint64_t thief, std::uint64_t victim,
 	noteCaughtAct(thief, 1, container); // a caught take is a theft act as much as a landed one (EVENT 51 names the container, as reportTheft does)
 	if (victim != 0 && combat_ != nullptr)
 		combat_->markHostile(victim, thief);
+	if (crimeObserver_) // the failed roll is its own sighting: EVENT 51 cause 0 at once, no witness named
+	{
+		CrimeEvent caught;
+		caught.kind = CrimeEvent::Kind::CaughtStealing;
+		caught.who = thief;
+		crimeObserver_(caught);
+	}
 }
 
 void Simulation::stealXp(std::uint64_t thief, double chance, bool caught)

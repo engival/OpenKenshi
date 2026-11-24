@@ -1,4 +1,5 @@
 #include "ksim/world/spawn.hpp"
+#include "ksim/world/nest_sources.hpp"
 
 #include "ksim/world/buildings.hpp"
 #include "ksim/ai/gatebind.hpp"
@@ -33,10 +34,6 @@ constexpr std::array<std::pair<std::string_view, SpawnSource>, 4> kTownLists = {
 	{"default resident", SpawnSource::TownDefaultResident},
 	{"roaming squads", SpawnSource::TownRoaming},
 }};
-
-// A nest town's lists, in world_model.py's build_spawn_sources order.
-constexpr std::array<std::string_view, 4> kNestLists = {
-	"residents", "default resident", "bar squads", "roaming squads"};
 
 std::int32_t typeId(std::string_view name)
 {
@@ -87,12 +84,17 @@ std::optional<bool> SquadBuilder::evalState(std::string_view sid) const
 	const kdata::Record* record = data_.find(sid);
 	if (record == nullptr || record->type != stateType_)
 		return std::nullopt;
+	return worldstate::stateHolds(data_, facts(), *record);
+}
+
+const worldstate::Facts& SquadBuilder::facts() const
+{
 	if (!facts_)
 	{
 		facts_.emplace();
 		worldstate::collectStatuses(ecs_, *facts_);
 	}
-	return worldstate::stateHolds(data_, *facts_, *record);
+	return *facts_;
 }
 
 // A record's own `world state` list: every entry's state must evaluate to
@@ -814,14 +816,11 @@ private:
 		{
 			for (const kdata::Record* biome : data_.byType(type))
 			{
-				forEachRef(*biome, "nests", [&](const kdata::RefEntry& nestEntry)
+				forEachLiveNest(data_, builder_.facts(), townType_, *biome, [&](const kdata::Record& nest, const kdata::RefEntry&)
 				{
-					const kdata::Record* nest = recordOf(nestEntry.targetID, townType_);
-					if (nest == nullptr || !builder_.worldStateHolds(*nest))
-						return;
-					for (const std::string_view list : kNestLists)
+					for (const std::string_view list : kNestSquadLists)
 					{
-						forEachRef(*nest, list, [&](const kdata::RefEntry& entry)
+						forEachRef(nest, list, [&](const kdata::RefEntry& entry)
 						{
 							sources.emplace_back(entry.targetID, SpawnSource::BiomeNest);
 						});

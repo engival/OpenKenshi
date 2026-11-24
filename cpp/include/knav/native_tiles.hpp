@@ -34,6 +34,7 @@ struct NativeTileStats
 	std::size_t overfull = 0; // tiles past kMaxPolysPerTile, left out
 	std::size_t openLinks = 0; // streaming-link edges with no partner in their tile and not on its border
 	std::size_t openShared = 0; // edges with an opposite face that found no partner (welding or clipping lost it)
+	std::size_t partnered = 0; // polygon edges joined to a neighbour polygon in their tile
 	std::size_t doorPolys = 0; // polygons of door faces (faceData 4 / 5)
 	std::size_t unkeyedDoors = 0; // ... that no door claimed
 	int maxPolys = 0; // most polygons in one tile

@@ -180,6 +180,7 @@
 #include "host/logicframe.hpp"
 #include "host/uihost.hpp"
 #include "host/panels.hpp"
+#include "dev/framelog.hpp"
 
 // Control hints, the key rows (kenshi-eq2z): each HUD widget lists the keys that do its thing, named from the bindings as they are now (an unbound
 // action has no row). The kinds are the guide-coverage keys: each phrase must appear in docs/PLAYER_GUIDE.md section 5.
@@ -383,7 +384,7 @@ static void init_menus()
 		rpa.select = [](int i) { roads_select_suspect(i); };
 		rpa.mark = [](int m) { dev::roadedit::mark(m); };
 		rpa.copy = [] { const std::string c = dev::roadedit::coords(); if (!c.empty()) { sappcmd::setClipboard(c); } };
-		rpa.close = [] { cfg::set("debug.roads=off"); };
+		rpa.close = [] { dev::roadedit::setOn(false); };	// a user choice: saved, so it stays closed (kenshi-gopl)
 		app.roadsPanel = std::make_unique<ui::RoadsPanel>(std::move(rpa));
 	}
 	// The animation lab's window (ui/dev/animbrowser.hpp): it shows the host's state and reports its clicks; dev/debughost.cpp renders, plays
@@ -1101,7 +1102,8 @@ void update_ui(double dt)
 			printf("\n");
 		}
 		static int hudFrames = 0;
-		if (app.scripted() && ++hudFrames % 300 == 0)
+		static const bool hudLog = framelog::on("hud");
+		if (hudLog && app.scripted() && ++hudFrames % 300 == 0)
 		{
 			for (const ui::HudMember& m : st.squad)
 			{

@@ -20,6 +20,7 @@
 #include "ksim/combat/combat_data.hpp"
 #if KSIM_DEV
 #include "ksim/dev/walk_stats.hpp"
+#include "ksim/dev/arena_strides.hpp"
 #endif
 #include "ksim/combat/fighter_state.hpp"
 #include "ksim/ai/perception.hpp"
@@ -146,6 +147,9 @@ public:
 		: data_(std::move(data))
 		, settings_(settings)
 	{
+#if KSIM_DEV
+		dev::applyArenaStrides(settings_); // KSIM_ARENA_STRIDES=1/2 (kenshi-k16.6.658)
+#endif
 	}
 
 	const CombatData& data() const noexcept { return *data_; }
@@ -263,7 +267,12 @@ public:
 	}
 	// Per-second update: bleeding, clotting, stun decay, heat decay, KO timer, collapse flags, death.
 	// Returns true when the fighter just died.
-	bool updateMedical(state::Fighter& f, double dt) const;
+	// `hungerDt` < 0: the hunger clock runs the same time as the medical one (a stored member, a test); the arena passes the elapsed time of
+	// its once-a-second hunger slice, or 0 on a step the hunger is not due.
+	bool updateMedical(state::Fighter& f, double dt, double hungerDt = -1.0) const;
+	// A member whose medical update changes nothing a step at a time: conscious, not bleeding (no wound, no leak), no stun, no bandage pool
+	// and no part over 20 % damaged, so the update is linear in dt and the arena runs it once a second (k16.6.607 item 6).
+	bool medicallyQuiet(const state::Fighter& f) const noexcept;
 	void checkCollapse(state::Fighter& f) const;
 	// severPart (`14064edc0`, BQ11): for a humanoid's intact non-vital limb whose H - bonus is below -(max - wear), when the
 	// Dismemberment setting allows `viaHit` (>= 1) or the passive path (>= 2). Forces the limb's max to 5, costs U[5, 30] blood
@@ -329,6 +338,22 @@ public:
 		double preZ = 0.0;
 		double stepFwd = 0.0;
 		double stepLat = 0.0;
+		// Arena strides (CombatSettings::fightStride / idleStride). Transient: tier is rebuilt from fighter state at add(), lastStep from the
+		// phase clock, so a load resumes the straight run's schedule.
+		bool fightTier = false;
+		std::uint64_t lastStep = 0; // phaseStep_ after this member's last update
+		double stepDt = 0.0; // the dt of its last update (the velocity and the wire's fwd/lat divide by it)
+		bool stepped = false; // updated in the current step
+		// The due list for the loops outside the arena (kenshi-k16.6.639), published once a tick (publishDue): whether it was updated this tick and
+		// the ticks since the last pass of those loops (they integrate with it). A member added after the publish is due for one tick.
+		bool due = true;
+		std::uint32_t dueTicks = 1;
+		std::uint32_t dueRouteVersion = 0; // the fighter's routeVersion at its last due pass
+		bool tickStepped = false; // stepped in any arena step of this tick (settleDue)
+		std::uint64_t dueLastTick = 0; // the tick of its last due pass, 0 = none yet
+		// The Fighter differs from the ECS copy (Simulation::stepCombat mirrors only these): set by a step of the member, by every mutable
+		// access from outside (find, touch, membersMutable) and by the arena's cross-member writes; cleared by the mirror. Transient.
+		bool dirty = true;
 		// BQ13 / BQ14 join rules (join_rules.hpp): `joinDriven` = the character has an AI package, so it picks fights only through the attack
 		// goals of its role list (`joinGoals`, joins::k* bits) and not on sight. Derived from the squad's package by the Simulation
 		// (setJoinGoals); never saved. A plain fighter (a duel, a test) keeps the sight rule.
@@ -455,7 +480,12 @@ public:
 	state::Fighter* find(std::uint64_t id) noexcept;
 	const state::Fighter* find(std::uint64_t id) const noexcept;
 	const std::vector<Member>& members() const noexcept { return members_; }
-	std::vector<Member>& membersMutable() noexcept { return members_; }
+	// Every member may be written through the list: all of them are marked for the mirror.
+	std::vector<Member>& membersMutable() noexcept { for (Member& m : members_) m.dirty = true; return members_; }
+	// An outside writer that holds a Fighter pointer from before (or writes a member another way) says so: the next mirror copies it.
+	void touch(std::uint64_t id) noexcept;
+	// The members the mirror must copy (dirty); clears each flag as it is read. `skipped` counts the clean ones (the KSIM_PROFILE mirror counter).
+	bool takeDirty(std::size_t index) noexcept { const bool was = members_[index].dirty; members_[index].dirty = false; return was; }
 	bool empty() const noexcept { return members_.empty(); }
 	// The previous step's refused-attacker count of `id` (the crowd penalty's n, crowd_melee.md §10); 0 for an unknown id.
 	std::uint32_t lastRefusals(std::uint64_t id) const noexcept;
@@ -514,9 +544,22 @@ public:
 #if KSIM_PROFILE
 	// The tick's profiler, for the sub marks inside step (docs/PROFILING.md); null = none.
 	void setProfiler(profile::Profiler* profiler) noexcept { profiler_ = profiler; }
+	void profileIslands(const std::vector<std::uint64_t>& updateNs, std::uint64_t updateTotalNs, std::uint64_t routeNs, std::uint64_t thinkNs,
+		std::uint64_t thinkRouteNs, std::uint64_t thinkCalls, std::uint64_t scanNs, std::uint64_t scanCalls); // k16.6.305 probes, in step()
 #endif
 	double time() const noexcept { return time_; }
 	void setTime(double time) noexcept { time_ = time; }
+	// The stride phase clock, in arena steps: the Simulation sets tick x substeps before a tick's steps, so a loaded arena (stepCount_ restarts) keeps the straight run's phases.
+	void setPhaseStep(std::uint64_t steps) noexcept;
+	std::uint64_t phaseStep() const noexcept { return phaseStep_; }
+	// Marks the members the coming `steps` arena steps update (Member::due) and their elapsed ticks. Called before the steps with the phase
+	// clock already set: a pure function of ids, tiers and the clock. 1 / 1 strides: every member, one tick.
+	void publishDue(std::uint64_t tick, int steps);
+	// After the tick's steps: a member stepped that the prediction missed joins the list (the loops after the arena run on it).
+	void settleDue(std::uint64_t tick);
+	static void markDue(Member& m, std::uint64_t tick, bool all);
+	// Event promotion into the fight tier (a target, an engaged entry, a hit, an order, a carry): the member steps every step from now on.
+	void promote(std::uint64_t id) noexcept;
 
 	void setObserver(std::function<void(const CombatEvent&)> observer) { observer_ = std::move(observer); }
 	// The decision trace's fight hook (kenshi-k16.6.59, decision_trace.hpp Source::Combat): `wants` (null = every member) is asked before any
@@ -604,6 +647,10 @@ public:
 	// The characters the depenetration leaves alone, as pusher and as neighbour (BQ16: in a bed or cage = the exe's char+0x2f8, operating a machine = +0xb8;
 	// our stand-ins are a seated patron and an operator). Rebuilt by the Simulation before every step; never saved.
 	void setPushExempt(std::unordered_set<std::uint64_t> ids) { pushExempt_ = std::move(ids); }
+	// The set kept between ticks: the pre-pass edits it for the due members only (kenshi-k16.6.639).
+	std::unordered_set<std::uint64_t>& pushExemptMutable() { return pushExempt_; }
+	// The character the player's camera follows (client state, kenshi-k16.6.597): no overlap push or settle ever moves it, the others yield. 0 = none.
+	void setCameraFollow(std::uint64_t id) { cameraFollow_ = id; }
 	// Faction pairs hostile by relation (at or below -30 in either view): the BQ14 goal 16 takes them on sight. Same refresh as the bond set.
 	bool hostileFactions(std::uint64_t a, std::uint64_t b) const { return a != 0 && b != 0 && a != b && hostile_.count(bondKey(a, b)) != 0; }
 	// The FACTION `coexistence` relation flag (kinspect bq10_goal21.md K2, RelationData byte 3): goal 21 skips such a target faction.
@@ -700,10 +747,19 @@ private:
 		std::uint64_t tick = 0; // stepCount_ when sampled
 	};
 
+	bool inFightTier(const Member& m) const;
+	bool stepsNow(Member& m);
+	void initSchedule(Member& m);
 	CombatRules rules_;
 	std::uint64_t seed_;
 	std::vector<Member> members_;
 	double time_ = 0.0;
+	std::uint64_t phaseStep_ = 0; // the stride phase clock (setPhaseStep), +1 per step
+	std::uint64_t sliceSteps_ = 40; // arena steps in one second (the hunger / quiet-medical slice)
+	double stepSeconds_ = 0.0; // the seconds one arena step is (the dt of the running step): the stamps' steps count in them
+	// Members whose Fighter still holds an older save's counted clock, or no medical / hunger step: the first step converts them.
+	bool stampsPending_ = false;
+	void placeStamps(Member& m);
 	std::uint64_t stepCount_ = 0; // steps taken; the path cache's age counts in them (an exact count survives a save, a seconds sum does not)
 	// The crowd penalty's double buffer (Member::refused): the phase this step's refusals go to; readers use the other.
 	std::uint8_t refusePhase_ = 0;
@@ -730,6 +786,7 @@ private:
 	mutable std::map<std::array<std::uint64_t, 3>, std::vector<std::pair<double, double>>> formationCache_; // formationOffset's random layouts
 	std::shared_ptr<RelationMemo> relationMemo_ = std::make_shared<RelationMemo>();
 	std::unordered_set<std::uint64_t> pushExempt_;
+	std::uint64_t cameraFollow_ = 0;
 	std::shared_ptr<const MeshNavigator> navigation_;
 	std::map<std::pair<std::uint64_t, std::uint64_t>, PathSample> pathCache_;
 	// A walk's failed re-request (member -> the goal asked and when it may be asked again): the original blocks a goal its path request

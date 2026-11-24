@@ -143,8 +143,9 @@ int main()
 		{
 			// Two idle humans 1 u apart: the first pushes itself 0.5 x 7, the second 0.5 of what is left, so 0.75 of the overlap goes in one step.
 			Rig idle(gd, data, 5);
-			const std::uint64_t p = idle.spawn(0.0, 0.0, 0, false);
-			const std::uint64_t q = idle.spawn(1.0, 0.0, 0, false);
+			// Two NPCs: the exe's rule; a player character's push is held to a walk step (below).
+			const std::uint64_t p = idle.spawn(0.0, 0.0, 0, true);
+			const std::uint64_t q = idle.spawn(1.0, 0.0, 0, true);
 			const double radius = 2.0 * idle.data->race(idle.me(p).raceSid)->footprintRadius; // R = r_s + r_n, 4 + 4 for humans (rebirth.mod), unscaled
 			idle.run(1);
 			const double first = idle.distance(p, q);
@@ -152,10 +153,25 @@ int main()
 			idle.run(10);
 			test::require(idle.distance(p, q) >= radius - 0.04 - 1.0e-9, "idle bystanders are pushed apart to R (less the overlap whose half-push, under 0.02, is dropped), got " + std::to_string(idle.distance(p, q)));
 
+			// Two player characters 2 u apart (6 u overlap): each tick moves either at most a walk step (k16.6.597, ksim decision 2026-11-21).
+			Rig players(gd, data, 5);
+			const std::uint64_t u = players.spawn(0.0, 0.0, 0, false);
+			const std::uint64_t v = players.spawn(2.0, 0.0, 0, false);
+			double stepMax = 0.0;
+			for (int i = 0; i < 20; ++i)
+			{
+				const double ux = players.me(u).x;
+				const double vx = players.me(v).x;
+				players.run(1);
+				stepMax = std::max({stepMax, std::fabs(players.me(u).x - ux), std::fabs(players.me(v).x - vx)});
+			}
+			test::require(stepMax > 0.5 && stepMax <= 3.6, "overlapping player characters separate at no more than a walk step per tick, got " + std::to_string(stepMax));
+			test::require(players.distance(u, v) > radius - 0.5, "the two player characters end apart, got " + std::to_string(players.distance(u, v)));
+
 			// Sneaking: the pusher's own push is x0.02 (posture != 0); the other one pushes in full.
 			Rig sneak(gd, data, 5);
-			const std::uint64_t s0 = sneak.spawn(0.0, 0.0, 0, false);
-			const std::uint64_t s1 = sneak.spawn(1.0, 0.0, 0, false);
+			const std::uint64_t s0 = sneak.spawn(0.0, 0.0, 0, true);
+			const std::uint64_t s1 = sneak.spawn(1.0, 0.0, 0, true);
 			sneak.me(s0).sneak = true;
 			const double s0x = sneak.me(s0).x;
 			sneak.run(1);
@@ -164,8 +180,8 @@ int main()
 
 			// Exempt (seated, operating): neither pushes nor is pushed.
 			Rig seated(gd, data, 5);
-			const std::uint64_t e0 = seated.spawn(0.0, 0.0, 0, false);
-			const std::uint64_t e1 = seated.spawn(1.0, 0.0, 0, false);
+			const std::uint64_t e0 = seated.spawn(0.0, 0.0, 0, true);
+			const std::uint64_t e1 = seated.spawn(1.0, 0.0, 0, true);
 			seated.arena.setPushExempt({e0});
 			seated.run(5);
 			test::require(seated.me(e0).x == 0.0 && seated.me(e0).z == 0.0 && seated.me(e1).x == 1.0, "an exempt character is out of the push, both ways");

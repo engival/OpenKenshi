@@ -50,6 +50,7 @@ int main(int argc, char** argv)
 		const kworld::LoadOrder order = kworld::resolveLoadOrder(KENSHI_DATA, "");
 		SpawnOptions options;
 		options.seed = 1;
+		options.settleSeconds = 30.0; // the Holy Army patrol's place at the player's teleport was pinned on the 30 s new-game settle (kenshi-rmw6 made the default 45)
 		Simulation sim = Simulation::newGame(KENSHI_DATA, order, options, nullptr, RegionConfig{});
 		const auto combat = CombatData::build(*sim.gameData(), KENSHI_DATA);
 		CombatSettings settings;
@@ -120,9 +121,13 @@ int main(int argc, char** argv)
 		{
 			const std::uint64_t id = member.get<state::Id>()->value;
 			const state::Fighter* fogman = fighterOf(sim, id);
+			// The patrol now kills a Fogman inside the window (k16.9.24 / k16.6.495 combat): a dead one is no longer sighted, so only
+			// the sighted ones are tested for the relation.
 			if (const state::SightRecord* record = perception::find(*paladin, id); record != nullptr && record->seen)
+			{
 				++sighted;
-			hostile += sensor::enemy(ctx, *paladin, *fogman) ? 1 : 0;
+				hostile += sensor::enemy(ctx, *paladin, *fogman) ? 1 : 0;
+			}
 		}
 		test::require(sighted > 0, "the patrol sights the Fogmen beside it");
 		// rwh.227: the relation map is min-seeded per pair, so the Holy Nation (default 0) reads the Fogmen (default -100) at -100.

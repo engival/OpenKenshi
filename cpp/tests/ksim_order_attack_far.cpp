@@ -47,10 +47,16 @@ struct Result
 	int hits = 0;
 	std::uint64_t lastTarget = 0;
 	std::string end; // the player's state when the run ends (diagnostic)
+	bool pickedSelfPreservation = false; // combatGoal was 32 at any step
+	double minPart = 1.0; // the lowest part health fraction seen (wounded runs)
+	double maxBleed = 0.0;
+	bool tookOrder = false; // the combat target has been the ordered enemy at some step
+	int goal32Steps = 0; // steps spent on a goal 32 pick before the order's pick took over (the fight the order interrupted)
+	std::string trace; // wounded runs: one line per second
 };
 
 Result run(const kdata::GameData& gd, const std::shared_ptr<const CombatData>& data, const std::shared_ptr<MeshNavigator>& nav,
-	const kdata::Record* servant, int attackers, std::uint64_t seed)
+	const kdata::Record* servant, int attackers, std::uint64_t seed, bool wounded = false)
 {
 	CombatArena arena(data, CombatSettings{}, seed);
 	arena.setNavigation(nav);
@@ -96,12 +102,30 @@ Result run(const kdata::GameData& gd, const std::shared_ptr<const CombatData>& d
 		me = arena.find(1);
 		out.seconds = (step + 1) * kDt;
 		// The crowd must not put the runner down (a vital part under the KO point): the test judges the order, not the fight's price.
+		// Wounded runs keep the damage (limbs worn down, bleeding) and only floor it above the KO point.
 		for (state::FighterPart& part : arena.find(1)->parts)
 		{
-			part.health = part.maxHealth;
+			if (wounded)
+				out.minPart = std::min(out.minPart, part.health / std::max(part.maxHealth, 1.0));
+			part.health = wounded ? std::max(part.health, 0.35 * part.maxHealth) : part.maxHealth;
 			part.stun = 0.0;
 		}
-		arena.find(1)->blood = 150.0;
+		arena.find(1)->blood = wounded ? std::max(arena.find(1)->blood, 60.0) : 150.0;
+		if (wounded)
+		{
+			out.maxBleed = std::max(out.maxBleed, static_cast<double>(me->wounds.size()));
+			out.tookOrder = out.tookOrder || me->target == kTarget;
+			out.pickedSelfPreservation = out.pickedSelfPreservation || (out.tookOrder && me->combatGoal == 32);
+			out.goal32Steps += me->combatGoal == 32 ? 1 : 0;
+			if (step % 20 == 19)
+			{
+				char line[200];
+				std::snprintf(line, sizeof line, "  t %.0f goal %u state %d order %llu target %llu wounds %.0f blood %.0f hits %d d %.1f\n", out.seconds,
+					static_cast<unsigned>(me->combatGoal), static_cast<int>(me->state), static_cast<unsigned long long>(me->orderTarget),
+					static_cast<unsigned long long>(me->target), static_cast<double>(me->wounds.size()), me->blood, out.hits, std::hypot(target->x - me->x, target->z - me->z));
+				out.trace += line;
+			}
+		}
 		out.lastTarget = me->target;
 		if (std::getenv("OAF_TRACE") != nullptr)
 			std::printf("t %.2f pos (%.1f, %.1f) d %.1f state %d goal %u order %llu target %llu fwd %.1f hp-hits %d\n", out.seconds, me->x, me->z,
@@ -154,6 +178,17 @@ int main(int argc, char** argv)
 				test::require(!r.dropped, "the attack order is never dropped by the attackers engaging");
 				test::require(r.reached, "the ordered character reaches the far target and fights it");
 			}
+		}
+		// The pack hits the runner on the way (limbs worn, bleeding) and the order still holds: no drop, no goal 32 pick (kenshi-k16.6.578; UNSURE pending rwh.243).
+		for (std::uint64_t seed = 5; seed < 9; ++seed)
+		{
+			const Result r = run(gd, data, nav, servant, 3, seed, true);
+			std::printf("wounded seed %llu: reached %d in %.2f s, hits %d, dropped %d, goal32 after the order pick %d (%.1f s before it), min part %.2f, max wounds %.0f\n%s", static_cast<unsigned long long>(seed),
+				r.reached, r.seconds, r.hits, r.dropped, r.pickedSelfPreservation, r.goal32Steps * kDt, r.minPart, r.maxBleed, r.trace.c_str());
+			test::require(r.hits > 0 && r.maxBleed > 0.0, "the pack hits the ordered character and it bleeds");
+			test::require(!r.dropped, "the attack order holds while the ordered character is hit and bleeding");
+			test::require(!r.pickedSelfPreservation, "once the order's pick holds the target, no SELF_PRESERVATION pick replaces it");
+			test::require(r.reached, "the wounded ordered character reaches the far target");
 		}
 		std::printf("ksim_order_attack_far: ok\n");
 		return 0;

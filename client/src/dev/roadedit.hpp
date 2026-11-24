@@ -24,6 +24,7 @@ struct Pose
 
 bool on();	// the settings key debug.roads
 void toggle();
+void setOn(bool v);	// the user setter (saved), for the panel's close
 // Moves the selection to the next (dir > 0) or previous suspect and gives the camera pose that frames it from above at an angle, both neighbours in view.
 // false: the network did not load or has no suspects (the debug line says which). The first call selects suspect 1 (next) or the last (prev).
 bool step(int dir, const std::string& dataDir, const kworld::Heightmap& hm, Pose& out);

@@ -786,8 +786,24 @@ bool CombatRules::severNow(state::Fighter& f, state::FighterPart& p) const
 	return true;
 }
 
-bool CombatRules::updateMedical(state::Fighter& f, double gameDt) const
+bool CombatRules::medicallyQuiet(const state::Fighter& f) const noexcept
 {
+	if (f.dead || f.unconscious || f.down || f.hungerKo || f.hunger < 0.1 || f.bleeding > 0.0 || f.blood < 0.0 || !f.wounds.empty() || f.koTimer > 0.0 || f.koLatch)
+		return false;
+	for (const state::FighterPart& p : f.parts)
+	{
+		const double maxP = p.maxHealth - p.wear;
+		// A severed limb leaks and sinks; a part the update would degenerate (over 20 % damaged, the pool counted) is not quiet either.
+		if (p.stun > 0.0 || p.pool > 0.0 || p.severed() || maxP <= 0.0 || p.health < 0.0 || (maxP - p.health) * 100.0 / maxP > 20.0)
+			return false;
+	}
+	return true;
+}
+
+bool CombatRules::updateMedical(state::Fighter& f, double gameDt, double hungerDt) const
+{
+	if (hungerDt < 0.0)
+		hungerDt = gameDt;
 	if (f.dead)
 		return false;
 	const CombatConstants& k = data_->k;
@@ -840,8 +856,8 @@ bool CombatRules::updateMedical(state::Fighter& f, double gameDt) const
 	}
 	// Hunger (a): hunger -= game hours / T x M. Below 0.1 a forced KO starts once (timer lerp(toughness, 60, 10) x a
 	// random factor, UNSURE: 28.4 and 54.7 on one character, taken as 0.75..1.75); it holds until fed. Below 0: death.
-	if (gameDt > 0.0)
-		f.hunger -= gameDt / kGameHourSeconds / (k.starvationHours * settings_.hungerTime) * hungerUse(f);
+	if (hungerDt > 0.0)
+		f.hunger -= hungerDt / kGameHourSeconds / (k.starvationHours * settings_.hungerTime) * hungerUse(f);
 	if (f.hunger < 0.1 && !f.hungerKo)
 	{
 		f.hungerKo = true;

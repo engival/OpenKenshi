@@ -151,9 +151,9 @@ int main()
 			const std::vector<Row> loaded = play(seed, kSettle, true);
 			test::require(loaded.size() == rows.size(), "the loaded run has the same members");
 			for (std::size_t i = 0; i < rows.size(); ++i)
-				test::require(loaded[i].weapon == rows[i].weapon && loaded[i].fight == rows[i].fight, // the goal is not compared: a reload does not keep the selector's pick (goal 53 / 43 at the capture)
+				test::require(loaded[i].weapon == rows[i].weapon && loaded[i].fight == rows[i].fight && loaded[i].goal == rows[i].goal && loaded[i].routine == rows[i].routine,
 					"seed " + std::to_string(seed) + " member " + std::to_string(rows[i].id) + ": a run saved and loaded at the capture stands down as the straight run (weapon "
-					+ std::to_string(loaded[i].weapon) + " / " + std::to_string(rows[i].weapon) + ", fight " + std::to_string(loaded[i].fight) + " / " + std::to_string(rows[i].fight) + ")");
+					+ std::to_string(loaded[i].weapon) + " / " + std::to_string(rows[i].weapon) + ", fight " + std::to_string(loaded[i].fight) + " / " + std::to_string(rows[i].fight) + ", goal " + std::to_string(loaded[i].goal) + " / " + std::to_string(rows[i].goal) + ", routine " + std::to_string(loaded[i].routine) + " / " + std::to_string(rows[i].routine) + ")");
 			if (std::getenv("KSIM_DUMP") != nullptr)
 				for (const Row& r : rows)
 					std::cout << "seed " << seed << " m" << r.id << " weapon " << r.weapon << " fight " << r.fight << " goal " << r.goal << " routine " << r.routine << " tech " << r.technique << "\n";

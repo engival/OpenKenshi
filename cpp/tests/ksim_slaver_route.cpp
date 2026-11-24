@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -35,7 +36,9 @@
 
 using namespace ksim;
 
-int main()
+// One run with `idle` extra ticks before the scenario is placed (a phase shift of every walk and fight after it).
+// npc: no player captive; the caravan cuffs a downed bandit placed beside it (the player stands by, uncaptured, so the area is loaded the same).
+static int run(int idle, bool npc)
 {
 	try
 	{
@@ -62,23 +65,56 @@ int main()
 				hub.push_back({ simlink::kHubZoneX + dx, simlink::kHubZoneZ + dz });
 		// The server's default: the runtime mesh over the shipped navtiles (ksim_server without a nav argument).
 		sim.enableNavigation(MeshNavigator::openNative(KENSHI_DATA, hub, {}, context.gameData.get(), NativeCacheOptions{}));
-		const scenario::File file = scenario::parseFile(std::string(KSIM_SCENARIOS_DIR) + "/slavers_downed.kscen");
+		scenario::File file = scenario::parseFile(std::string(KSIM_SCENARIOS_DIR) + "/slavers_downed.kscen");
+		if (npc)
+		{
+			scenario::Squad squad;
+			squad.id = 3;
+			squad.name = "Bandits";
+			squad.faction = "200-gamedata.base";
+			squad.templateSid = "1302-gamedata.base";
+			file.squads.push_back(squad);
+			scenario::Char victim;
+			victim.id = 10;
+			victim.squad = 3;
+			victim.name = "Starving bandit";
+			victim.templateSid = "1301-gamedata.base";
+			victim.faction = "200-gamedata.base";
+			victim.x = -50960.0;
+			victim.y = 1533.0;
+			victim.z = 2940.0;
+			victim.leader = true;
+			victim.unconscious = true;
+			victim.incapacitated = true;
+			file.chars.push_back(victim);
+		}
 		// The scenario's ids follow the world's (the client's script named 41968 / 41969 / 41970): the squad, the player, the boss.
 		const std::uint64_t firstId = sim.world().ecs().get<state::Ids>()->next;
 		const std::uint64_t kSquad = firstId + 1;
-		const std::uint64_t kPlayer = firstId + 2;
-		const std::uint64_t kBoss = firstId + 3;
+		std::uint64_t kPlayer = firstId + 2;
+		std::uint64_t kBoss = firstId + 3; // the scenario's char 2 (looked up below: the NPC case's extra squad shifts the ids)
 		const std::uint64_t kDepot = 4459; // the nearest camp's town id (4772 before kenshi-k16.6.33 changed the Hub's residents)
-		scenario::apply(sim, *context.gameData, *data, context, file, 1);
+		sim.run(idle);
+		const scenario::Placed placed = scenario::apply(sim, *context.gameData, *data, context, file, 1);
+		kBoss = placed.idOf.at(2);
+		const std::uint64_t kHuman = placed.idOf.at(1); // the player's id (the attacker, and the one the area follows)
+		if (npc)
+		{
+			test::require(placed.idOf.count(10) != 0, "the bandit was placed");
+			kPlayer = placed.idOf.at(10);
+		}
 		ServerAiOptions ai;
 		ai.registryPath = KSIM_AI_TABLE;
 		enableServerAi(sim, ai);
 		std::vector<std::string> lines;
 		sim.setTaskLog([&](const std::string& line) { lines.push_back(line); });
 		// The client's script: the player attacks the boss; the caravan downs and cuffs the player.
-		Command attack = Command::fighterAttack(state::Id{kPlayer}, state::Id{kBoss});
-		attack.tick = sim.clockTick() + 100;
-		sim.enqueue(attack);
+		if (!npc)
+		{
+			Command attack = Command::fighterAttack(state::Id{kHuman}, state::Id{kBoss});
+			attack.tick = sim.clockTick() + 100;
+			sim.enqueue(attack);
+		}
 		const double bossX0 = sim.combat()->find(kBoss)->x;
 		const double bossZ0 = sim.combat()->find(kBoss)->z;
 		// 30000 ticks = 13.8 game hours: the capture is done by tick ~1000, the walk to the edge (~7.5 km) by tick ~10000 at the caravan's 15 u/s, ~15000
@@ -86,7 +122,7 @@ int main()
 		// kTicks only bounds the loop (it stops at the hold line). The arrival tick is not fixed: the caravan's escorts break off to chase a wanderer within
 		// 900 u (the squad holds while they are away, squadFighting), and where the wanderers are shifts with any change to the other squads' walks
 		// (k16.8.54 moved it ~115 ticks past 18000: kenshi-k16.6.453).
-		constexpr int kTicks = 40000;
+		constexpr int kTicks = 26000; // was 40000: the boss gains 10500 u by tick ~22000 (13200 u at 26000, measured 2026-11-22); the later ticks only repeated the no-hold / far-gap checks (kenshi-k16.5.21)
 		constexpr double kFarGap = 250.0; // the gap the old check allowed at any tick
 		constexpr double kEdgeGain = 7500.0; // where the squad used to hold at the mesh edge (from the start)
 		constexpr int kFarTicks = 600; // 30 s: a detour past an obstacle, not a captive left behind (k16.6.22 fell 2.3 km and stayed)
@@ -125,9 +161,31 @@ int main()
 			sim.tick();
 			const state::Fighter* c = sim.combat()->find(kPlayer);
 			const state::Fighter* b = sim.combat()->find(kBoss);
-			test::require(c != nullptr && b != nullptr, std::string(c == nullptr ? "player " : "") + (b == nullptr ? "boss " : "") + "gone: the squad with the player captive stays detailed on the walk (tick " + std::to_string(i) + ")");
+			test::require(c != nullptr && b != nullptr, std::string(c == nullptr ? "player " : "") + (b == nullptr ? "boss " : "") + "gone: the squad with the captive stays detailed on the walk (tick " + std::to_string(i) + ")");
 			boss = Seen{b->x, b->z, b->dead};
 			captive = Seen{c->x, c->z, c->dead};
+			if (npc && i >= 700 && i % 100 == 0)
+			{
+				// The player tails the caravan (set down at the boss every 5 s), so the loaded area, which follows the player (k16.6.468), goes with
+				// it: the squad stays in detail, as it does with the player a captive.
+				state::Fighter* tail = const_cast<state::Fighter*>(sim.combat()->find(kHuman));
+				if (tail != nullptr && !tail->dead)
+				{
+					tail->x = b->x + 15.0;
+					tail->z = b->z;
+					tail->y = b->y;
+					tail->clearRoute();
+				}
+			}
+			if (npc && i >= 20 && i < 600 && c->slaveState == 0)
+			{
+				// The bandit starved down: held unconscious until the caravan has cuffed it.
+				state::Fighter* bandit = const_cast<state::Fighter*>(c);
+				bandit->unconscious = true;
+				bandit->down = true;
+				bandit->koLatch = true;
+				bandit->koTimer = 60.0;
+			}
 			if (i % 4000 == 0)
 				std::cerr << "ksim_slaver_route: tick " << i << " boss gain " << toDepot(bossX0, bossZ0) - toDepot(b->x, b->z) << " captive gap " << std::hypot(c->x - b->x, c->z - b->z) << "\n";
 			if (i >= 1500)
@@ -163,10 +221,31 @@ int main()
 		test::require(longestFar <= kFarTicks, "the captive stayed more than " + std::to_string(kFarGap) + " u behind the boss for " + std::to_string(longestFar) + " ticks on the walk (worst "
 			+ std::to_string(worstGap) + " u; the delivery waits for a slave on foot)");
 		test::require(std::hypot(captive.x - boss.x, captive.z - boss.z) < 250.0, "the captive is with the squad at the end");
-		std::cerr << "ksim_slaver_route: ok\n";
+		std::cerr << "ksim_slaver_route: idle " << idle << " ok\n";
 		return 0;
 	} catch (const std::exception& e) {
 		std::cerr << "FAIL: " << e.what() << "\n";
 		return 1;
 	}
+}
+
+int main(int argc, char** argv)
+{
+	// Parts for ctest to run in parallel (kenshi-k16.5.21): argv[1] = the one idle value, argv[2] = "npc": the NPC-captive case (idle 0) instead.
+	// No arguments: all three runs.
+	const bool npcOnly = argc > 2 && std::string(argv[2]) == "npc";
+	if (!npcOnly)
+	{
+		for (const int idle : std::vector<int>{0, 5})
+		{
+			if (argc > 1 && std::atoi(argv[1]) != idle)
+				continue;
+			if (const int status = run(idle, false); status != 0)
+				return status;
+		}
+	}
+	if (argc > 1 && !npcOnly)
+		return 0;
+	// A squad that cuffs an NPC walks the same leg in detail (k16.6.672): the far walk is the squad's detail state, not the captive's identity.
+	return run(0, true);
 }

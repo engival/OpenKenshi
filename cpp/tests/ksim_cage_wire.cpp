@@ -420,6 +420,17 @@ int main(int argc, char** argv)
 			test::require(wire.interact(cast.wanderer, kHeftCage, kPickCageAction, 1) == "bad_value", "action 18 queued is bad_value");
 			test::require(wire.interact(cast.wanderer, kHeftCage, 21) == "bad_value", "action 21 is bad_value");
 
+			// Below the chance floor the pick is unplannable (rwh.178): accepted, then nothing: no walk, so no event 13 ends it in 600 ticks.
+			fighter(cast.wanderer).skills.lockpicking = 0.0; // a fresh lookup: `me` may point at a moved arena slot
+			{
+				const std::size_t ends0 = wire.ends.size();
+				test::require(wire.interact(cast.wanderer, kHeftCage, kPickCageAction).empty(), "action 18 below the floor is accepted");
+				wire.run(600);
+				test::require(wire.ends.size() == ends0, "action 18 below the floor sends no event 13");
+				test::require(sim.cageDoorLocked(kHeftCage), "action 18 below the floor leaves the cage locked");
+			}
+			fighter(cast.wanderer).skills.lockpicking = 40.0;
+
 			// 19 without a tool, 20 with too little strength: the Wanderer walks over and the run-time end is result 1 on the cage key.
 			me.skills.strength = 10.0;
 			fighter(cast.wanderer).skills.strength = 10.0;

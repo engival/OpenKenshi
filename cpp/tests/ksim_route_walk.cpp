@@ -39,7 +39,7 @@ constexpr double kArrive = 1.0; // the sim's own reach of a route point (combat.
 constexpr double kFloorTol = 12.0;
 constexpr double kDoorNear = 14.0;
 constexpr double kHeightCause = 2.0;
-constexpr int kPinnedStalls = 0; // 3 before k16.8.37 (2 stalls + 1 off-floor leg of 6,885): a portal corner on a T-junction edge was 16 u off the floor; the test's own reach was looser than the sim's
+constexpr int kPinnedStalls = 1; // 1 known: route 185 leg 33 (x -50432, z -1106 -> -1280): a shipped tile floats 17-30 u over the heightmap beside our ground-true rebake; kenshi-k16.7.169 (seam rebake) takes it back to 0 and removes this entry. 3 before k16.8.37 (2 stalls + 1 off-floor leg of 6,885): a portal corner on a T-junction edge was 16 u off the floor; the test's own reach was looser than the sim's
 
 struct Spot
 {

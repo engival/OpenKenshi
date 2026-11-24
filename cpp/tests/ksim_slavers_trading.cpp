@@ -21,6 +21,7 @@
 #include "test_util.hpp"
 #include "ksim/dev/build_paths.hpp"
 
+#include <cstdlib>
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -81,7 +82,14 @@ void play(const std::uint64_t seed)
 	std::uint64_t downTick = 0; // the tick the player first went down: the goals after it are the squad's answer to the down
 	bool woke = false; // the aid woke the downed player before the capture (package order: Medic 58 at 100 over CAPTURE_NEW_SLAVES 167 at 24, k16.6.287)
 	// The guards carry their kits, so they first-aid the downed player before the capture: the run goes on past 1500 ticks until the cuff (or a wake).
-	for (int i = 0; i < 1500 || (i < 6000 && !woke && sim.combat()->find(kPlayer)->slaveState == 0); ++i)
+	// A cuffed player that took a deep KO (seed 706960716: a KO timer of ~315 s) is treated where it lies and neither carried nor following until it wakes;
+	// the run goes on to the slave's hand-over, not to a fixed tick.
+	const auto handedOver = [&]
+	{
+		const state::Fighter& body = *sim.combat()->find(kPlayer);
+		return body.slaveState != 1 || body.carriedBy != 0 || body.followTarget != 0;
+	};
+	for (int i = 0; i < 1500 || (i < 6000 && !woke && sim.combat()->find(kPlayer)->slaveState == 0) || (i < 12000 && !handedOver()); ++i)
 	{
 		sim.tick();
 		woke = woke || (down && !sim.combat()->find(kPlayer)->unconscious && sim.combat()->find(kPlayer)->slaveState == 0);
@@ -131,6 +139,9 @@ void play(const std::uint64_t seed)
 	test::require(count("goal CAPTURE_NEW_SLAVES member") >= 1, "the capture goal on the downed player" + tag);
 	test::require(count("168 cuff + lift") == 1, "the capture chain runs to the cuff once (seed " + std::to_string(seed) + ")");
 	// kenshi-k16.6.111: the cuff wipes the player's jobs and adds the one row 187 Obedient Slave (a player cannot add it); its goal is the slave task it runs.
+	// The lift waits for the aid (k16.6.287) and the aid lasts as long as the fight left the captive hurt, so the run goes on, bounded, until the slave is carried or follows.
+	for (int i = 0; i < 3000 && sim.combat()->find(kPlayer)->carriedBy == 0 && sim.combat()->find(kPlayer)->followTarget == 0; ++i)
+		sim.tick();
 	const state::Fighter& slave = *sim.combat()->find(kPlayer);
 	test::require(slave.slaveState == 1, "the cuffed player is a slave" + tag);
 	const JobsView view = sim.jobsOf(kPlayer);
@@ -167,6 +178,23 @@ int main()
 		{
 			std::cerr << "ksim_slavers_trading: SKIPPED: no shipped navtiles in " << KENSHI_DATA << "\n";
 			return 77;
+		}
+		if (const char* sweep = std::getenv("KSIM_SEEDS")) // KSIM_SEEDS=1,2,3: each seed played, pass / fail reported, nothing asserted (a seed survey)
+		{
+			for (const char* at = sweep; *at != '\0';)
+			{
+				char* end = nullptr;
+				const std::uint64_t seed = std::strtoull(at, &end, 10);
+				try
+				{
+					play(seed);
+					std::cout << "SWEEP seed " << seed << ": ok\n";
+				} catch (const std::exception& e) {
+					std::cout << "SWEEP seed " << seed << ": " << e.what() << "\n";
+				}
+				at = *end == ',' ? end + 1 : end;
+			}
+			return 0;
 		}
 		for (const std::uint64_t seed : {std::uint64_t{1}, std::uint64_t{706960716}, std::uint64_t{1151889715}})
 			play(seed);

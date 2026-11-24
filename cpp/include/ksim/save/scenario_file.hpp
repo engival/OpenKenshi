@@ -68,7 +68,7 @@ struct Char
 	bool stealth = false;
 	bool noncombat = false;
 	int speed = 2;
-	double age = 1.0;
+	double age = -1.0; // `age=`: the character's own age; absent (< 0) keeps makeFighter's roll (an animal's squad roll, 1 otherwise)
 	double blood = -1.0; // absent: the race's maximum for its strength (scenario_file.cpp apply)
 	double hunger = 3.0; // 3.0 full (UI x 100)
 	double fed = 0.0;

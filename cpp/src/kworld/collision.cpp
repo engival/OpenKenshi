@@ -537,47 +537,75 @@ namespace {
 // column instead and keeps the terrain where it is higher (WorldShape::solid).
 constexpr double kWalkSlopeDegrees = 40.0;
 constexpr double kStairSlopeDegrees = 55.0;
+constexpr std::size_t kHullMinBoxes = 3; // addBuilding: masks with this many boxes clip upper floors to their convex hull
 
-// The planes of the intersection of a mask's boxes: one per triangle, facing away from its box's centre. Only boxes count:
-// the original's carver takes each mask shape's 6 OBB planes (kinspect navinterior_cut.md); a mask with no box (the
-// Watchtower's: a convex hull and a capsule on its roof) gives no planes and is not carved (UNSURE: the finding is static,
-// "zero shapes, probably no carving"; the tower's floors are climbable in the game).
+// The planes of the ONE convex hull of every point of a building's interior mask: every group-13 box corner plus every
+// convex-mesh mask vertex (exe 1403c0510 / 140fb5260; kinspect rwh282_*.md, rwh292_*.md). Neither the boxes' intersection nor
+// their union. Brute force over point triples (a mask has tens of points): a plane is kept when every point lies on one side,
+// coplanar duplicates collapse. Planes face outward: inside is n . p <= d.
 std::vector<std::array<float, 4>> hullPlanes(const std::vector<WorldShape>& shapes)
 {
-	std::vector<std::array<float, 4>> planes;
+	constexpr double kPlaneEps = 1e-4;
+	std::vector<std::array<double, 3>> points;
 	for (const WorldShape& shape : shapes)
 	{
-		if (shape.half == std::array<float, 3>{})
-			continue;
-		std::array<double, 3> centre{};
-		const std::size_t count = shape.vertices.size() / 3;
-		for (std::size_t i = 0; i < count; ++i)
-			for (int k = 0; k < 3; ++k)
-				centre[static_cast<std::size_t>(k)] += shape.vertices[i * 3 + static_cast<std::size_t>(k)] / static_cast<double>(count);
-		for (std::size_t t = 0; t + 2 < shape.indices.size(); t += 3)
+		for (std::size_t i = 0; i + 2 < shape.vertices.size(); i += 3)
 		{
-			const float* a = &shape.vertices[shape.indices[t] * 3];
-			const float* b = &shape.vertices[shape.indices[t + 1] * 3];
-			const float* c = &shape.vertices[shape.indices[t + 2] * 3];
-			const double ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
-			const double vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
-			double nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-			const double length = std::sqrt(nx * nx + ny * ny + nz * nz);
-			if (length < 1e-9)
-				continue;
-			nx /= length;
-			ny /= length;
-			nz /= length;
-			if (nx * (centre[0] - a[0]) + ny * (centre[1] - a[1]) + nz * (centre[2] - a[2]) > 0.0)
-			{
-				nx = -nx;
-				ny = -ny;
-				nz = -nz;
-			}
-			planes.push_back({ static_cast<float>(nx), static_cast<float>(ny), static_cast<float>(nz),
-				static_cast<float>(nx * a[0] + ny * a[1] + nz * a[2]) });
+			const std::array<double, 3> p = { shape.vertices[i], shape.vertices[i + 1], shape.vertices[i + 2] };
+			if (std::none_of(points.begin(), points.end(), [&](const auto& q)
+				{ return std::fabs(q[0] - p[0]) + std::fabs(q[1] - p[1]) + std::fabs(q[2] - p[2]) < 1e-6; }))
+				points.push_back(p);
 		}
 	}
+	std::vector<std::array<float, 4>> planes;
+	const std::size_t n = points.size();
+	if (n < 4)
+		return planes;
+	std::array<double, 3> centre{};
+	for (const auto& p : points)
+		for (std::size_t k = 0; k < 3; ++k)
+			centre[k] += p[k] / static_cast<double>(n);
+	std::vector<std::array<double, 4>> found;
+	for (std::size_t i = 0; i < n; ++i)
+	{
+		for (std::size_t j = i + 1; j < n; ++j)
+		{
+			for (std::size_t k = j + 1; k < n; ++k)
+			{
+				const auto& a = points[i];
+				const double ux = points[j][0] - a[0], uy = points[j][1] - a[1], uz = points[j][2] - a[2];
+				const double vx = points[k][0] - a[0], vy = points[k][1] - a[1], vz = points[k][2] - a[2];
+				double nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+				const double length = std::sqrt(nx * nx + ny * ny + nz * nz);
+				if (length < 1e-9)
+					continue;
+				nx /= length;
+				ny /= length;
+				nz /= length;
+				double d = nx * a[0] + ny * a[1] + nz * a[2];
+				if (nx * centre[0] + ny * centre[1] + nz * centre[2] > d)
+				{
+					nx = -nx;
+					ny = -ny;
+					nz = -nz;
+					d = -d;
+				}
+				bool supporting = nx * centre[0] + ny * centre[1] + nz * centre[2] < d - 1e-9; // else all points coplanar
+				for (std::size_t m = 0; m < n && supporting; ++m)
+					supporting = nx * points[m][0] + ny * points[m][1] + nz * points[m][2] <= d + kPlaneEps;
+				if (!supporting)
+					continue;
+				const bool duplicate = std::any_of(found.begin(), found.end(), [&](const auto& f)
+				{
+					return std::fabs(f[0] - nx) + std::fabs(f[1] - ny) + std::fabs(f[2] - nz) < 1e-5 && std::fabs(f[3] - d) < 1e-3;
+				});
+				if (!duplicate)
+					found.push_back({ nx, ny, nz, d });
+			}
+		}
+	}
+	for (const auto& f : found)
+		planes.push_back({ static_cast<float>(f[0]), static_cast<float>(f[1]), static_cast<float>(f[2]), static_cast<float>(f[3]) });
 	return planes;
 }
 
@@ -783,7 +811,7 @@ CollisionLibrary::CollisionLibrary(std::string_view dataDir, const kdata::GameDa
 	std::error_code ec;
 	for (fs::recursive_directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec))
 		if (it->is_regular_file(ec))
-			files_.emplace(normalisePath(fs::relative(it->path(), root, ec).generic_string()),
+			files_.emplace(normalisePath(it->path().lexically_relative(root).generic_string()), // not fs::relative: it canonicalises (a stat per path component per file)
 				it->path().string());
 }
 
@@ -972,11 +1000,12 @@ std::optional<BuildingNav> CollisionLibrary::addBuilding(const PlacedInstance& p
 			++coverage.partsNoGeometry;
 		}
 	}
-	// A walkable building with an interior mask: its upper floors and stairs count only inside the mask hull (the intersection
-	// of its boxes). The original cuts them from the zone mesh (groups 10-12, 15-18) and bakes them in the building's own
-	// interior mesh carved to that hull; its ground-floor parts (group 9) stay walkable outdoors. UNSURE: a destroyed building
-	// (Hub ruins) gathers fewer groups there; we read its parts' destroyed state only (the part loop above).
-	// Terrain inside that hull is left out of the mesh unless the BUILDING says `interior terrain` (rwh.90), so every shape carries it.
+	// A walkable building with an interior mask: the mask volume is ONE convex hull of all its points (hullPlanes), not the boxes'
+	// intersection. UPPER shapes only (`building floor` >= 1 and stairs, `upper`) keep inside it: on this Recast path the zone side and the
+	// interior bake from the same shapes, and in the original the hull bounds the interior mesh only, while the zone mesh is cut by the
+	// boxes. Keeping every shape inside the hull cut the ground outside it (14 tests). A mask with no box (Outpost s-IV's) has hull
+	// planes too, but BuildingSite floors (world.cpp) keep the height-by-slab rule for it.
+	// Terrain inside the mask is left out of the mesh unless the BUILDING says `interior terrain` (rwh.90), so every shape carries that.
 	for (const std::size_t i : upper)
 		placedShapes[i].upperPart = true;
 	if (nav.pathMode == PathMode::Walkable && (!upper.empty() || !nav.interiorTerrain))
@@ -984,18 +1013,32 @@ std::optional<BuildingNav> CollisionLibrary::addBuilding(const PlacedInstance& p
 		std::vector<WorldShape> mask;
 		if (addInteriorMask(placed, mask))
 		{
-			if (auto planes = hullPlanes(mask); !planes.empty())
+			// Boxes only: the planes of each box, one volume per box (the carve below) or all together (their intersection).
+			std::vector<std::vector<std::array<float, 4>>> boxVolumes;
+			for (const WorldShape& box : mask)
+				if (box.half != std::array<float, 3>{})
+					if (auto own = hullPlanes({ box }); !own.empty())
+						boxVolumes.push_back(std::move(own));
+			// The hull replaces the boxes' intersection only where rwh.282 / rwh.292 measured it: a mask of kHullMinBoxes boxes or more (the
+			// Longhouse's 3: the intersection cuts every upper floor) or one with a convex-mesh shape (the Hub's interiors, unclipped before).
+			// Two overlapping boxes keep the intersection: the hull keeps upper floors there that the Recast bake then leaves as islands
+			// (4014-TwoStorey: 33 new island regions, kenshi-k16.7.142); the generator (NAVMESH_GENERATOR s0) applies the hull to all.
+			const bool hullShape = std::any_of(mask.begin(), mask.end(), [](const WorldShape& shape) { return shape.half == std::array<float, 3>{}; });
+			std::vector<std::array<float, 4>> planes;
+			if (boxVolumes.size() >= kHullMinBoxes || hullShape)
+				planes = hullPlanes(mask);
+			else
+				for (const auto& volume : boxVolumes)
+					planes.insert(planes.end(), volume.begin(), volume.end());
+			if (!planes.empty())
 			{
 				const auto shared = std::make_shared<const std::vector<std::array<float, 4>>>(std::move(planes));
 				for (const std::size_t i : upper)
 					placedShapes[i].keepInside = shared;
-				if (!nav.interiorTerrain)
+				// The terrain carve stays the union of the mask's boxes (rwh.90, knav_interior_terrain); only the floor clip is the hull.
+				if (!nav.interiorTerrain && !boxVolumes.empty())
 				{
-					std::vector<std::vector<std::array<float, 4>>> volumes;
-					for (const WorldShape& box : mask)
-						if (auto own = hullPlanes({ box }); !own.empty())
-							volumes.push_back(std::move(own));
-					const auto carve = std::make_shared<const std::vector<std::vector<std::array<float, 4>>>>(std::move(volumes));
+					const auto carve = std::make_shared<const std::vector<std::vector<std::array<float, 4>>>>(std::move(boxVolumes));
 					for (WorldShape& shape : placedShapes)
 						shape.carveTerrain = carve;
 				}
@@ -1135,6 +1178,11 @@ bool CollisionLibrary::addFoliage(const FoliageInstance& instance, std::vector<W
 	++coverage.foliageCutters;
 	placeModel(cutter, pos, { 1.0, 0.0, 0.0, 0.0 }, 1.0, NavUse::Projected, true, out);
 	return true;
+}
+
+std::vector<std::array<float, 4>> interiorMaskHull(const std::vector<WorldShape>& mask)
+{
+	return hullPlanes(mask);
 }
 
 } // namespace kworld

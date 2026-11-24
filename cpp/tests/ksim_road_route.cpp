@@ -16,11 +16,13 @@
 
 #include "knav/native.hpp"
 
+#include "sim_access.hpp"
 #include "test_util.hpp"
 
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -103,6 +105,27 @@ void install()
 			if (!net.route(-50979.0, 2932.0, -50979.0 + dx, 2932.0 + dz).empty())
 				++taken;
 	test::require(taken > 0, "no long move from the Hub takes any road");
+	// Heft gate -> stone camp (e9s9.28): the chain holds every marker of the original's walk, in particular the seven (roads 1250 #4,
+	// 1248 #1 #0, 383808953 #9..#5) that the walked trail was seen to miss: they are lost after the router, in the follower.
+	const auto chain = net.route(67046.8, -72096.9, 65406.1, -50248.6);
+	test::require(!chain.empty(), "the Heft walk takes the roads");
+	const double want[][2] = {
+		{ 68456.1, -71304.4 }, // road 1250 marker 4
+		{ 70460.3, -70940.2 }, // road 1248 marker 1
+		{ 70585.9, -70841.1 }, // road 1248 marker 0
+		{ 70603.4, -69608.4 }, // road 383808953 marker 9
+		{ 70579.7, -69576.1 }, // road 383808953 marker 8
+		{ 70399.8, -69477.7 }, // road 383808953 marker 7
+		{ 70150.7, -69610.9 }, // road 383808953 marker 6
+		{ 69883.1, -69457.0 }, // road 383808953 marker 5
+	};
+	for (const auto& w : want)
+	{
+		bool found = false;
+		for (const auto& m : chain)
+			found = found || std::hypot(m.x - w[0], m.z - w[1]) < 2.0;
+		test::require(found, "the Heft chain lacks the original's marker at " + std::to_string(w[0]) + "," + std::to_string(w[1]));
+	}
 }
 
 void simulation()
@@ -120,7 +143,9 @@ void simulation()
 	const kdata::GameData gd = kworld::loadMergedGameData(KENSHI_DATA);
 	const std::shared_ptr<const CombatData> data = CombatData::build(gd, KENSHI_DATA);
 	Simulation sim = Simulation::load(KENSHI_DATA, 77);
+	sim.setRoadLookahead(0.0); // this test measures the exe's marker handover (rwh.268); the look-ahead is ksim_road_lookahead's
 	sim.setClockTick(tickAt(kNewGameDay, kNewGameHour, kNewGameMinute));
+	sim.setGameData(std::make_shared<const kdata::GameData>(gd));
 	sim.enableCombat(data, CombatSettings{});
 	sim.enableNavigation(nav);
 	std::string sid;
@@ -134,7 +159,27 @@ void simulation()
 	f.x = spot->x;
 	f.y = spot->y;
 	f.z = spot->z;
-	const std::uint64_t id = sim.spawnFighter(std::move(f)).get<state::Id>()->value;
+	const flecs::entity entity = sim.spawnFighter(std::move(f));
+	const std::uint64_t id = entity.get<state::Id>()->value;
+
+	// The factor is the walker's faction's: two factions with different road preferences give different factors.
+	{
+		const kdata::Record* other = nullptr;
+		for (const kdata::Record* r : gd.byType(kworld::itemTypeByName("FACTION")))
+			if (r->floatOr("road preference", 0.4f) != 0.4f && !other)
+				other = r;
+		const double own = sim.roadFactor(id);
+		test::require(std::fabs(own - 0.0) < 1e-9 || own >= 0.0, "roadFactor is non-negative");
+		if (other != nullptr)
+		{
+			const std::string was = entity.get<state::Allegiance>() != nullptr ? entity.get<state::Allegiance>()->factionSid : std::string();
+			entity.set<state::Allegiance>({ other->stringID });
+			const double got = sim.roadFactor(id);
+			test::require(std::fabs(got - RoadNetwork::factorFor(other->floatOr("road preference", 0.4f))) < 1e-6, "roadFactor follows the faction's road preference");
+			test::require(std::fabs(got - own) > 1e-6 || was == other->stringID, "two factions with different preferences give different factors");
+			entity.set<state::Allegiance>({ was });
+		}
+	}
 
 	// A goal 1.2-2 km away on walkable ground with a plain route no longer than 1.3x the straight line, and a detour point M beside the
 	// middle that the plain route does not pass (so a route through M can only come from a road).
@@ -209,6 +254,96 @@ void simulation()
 	// The ladder's road rung: the call itself, at the stuck fallback's factor, walks the markers; with no roads it is not found.
 	const Route rung = sim.roadNetworkRoute(me, gx, gz);
 	test::require(rung.found && passes(rung), "the road-network rung walks the road's markers");
+	// The road follower (kenshi-e9s9.10, rwh.268): a hand-made road S - M - G with a 60 degree turn at M and width 100. The walker hands M over
+	// within the width and plans on from where it is: it cuts the corner by about the width, keeps its speed, and never stops before the goal.
+	{
+		const double ux = (gx - spot->x) / straight, uz = (gz - spot->z) / straight;
+		double turnX = 0.0, turnZ = 0.0;
+		bool found60 = false;
+		for (const double side : { 1.0, -1.0 })
+		{
+			const double off = side * std::tan(30.0 * 3.14159265358979 / 180.0) * straight / 2.0;
+			const auto m = nav->walker().snap({ (spot->x + gx) / 2.0 - uz * off, spot->y, (spot->z + gz) / 2.0 + ux * off }, 15.0);
+			if (!m || !nav->routeFrom(from, m->x, m->z, std::nullopt, true, 4.0).found || !nav->routeFrom({ m->x, m->y, m->z }, gx, gz, std::nullopt, true, 4.0).found)
+				continue;
+			turnX = m->x;
+			turnZ = m->z;
+			found60 = true;
+			break;
+		}
+		if (found60)
+		{
+			RoadNetwork::Road r = road(1, 2, { { spot->x + 5.0, 0, spot->z + 5.0 }, { turnX, 0, turnZ }, { gx - 5.0, 0, gz - 5.0 } });
+			r.width = 100.0;
+			sim.setRoadNetwork(std::make_shared<const RoadNetwork>(RoadNetwork::fromRoads({ r })));
+			sim.forgetPathRetries();
+			sim.enqueue(Command::fighterMoveTo(state::Id{ id }, { { gx, gz } }, { 0.0 }, 9));
+			double closest = 1e9, peak = 0.0, speedNear = -1.0;
+			std::size_t stops = 0, near540 = 0;
+			for (int t = 0; t < 20 * 400; ++t)
+			{
+				sim.run(1);
+				const state::Fighter& w = *sim.combat()->find(id);
+				const double toGoal = std::hypot(gx - w.x, gz - w.z);
+				const double toTurn = std::hypot(turnX - w.x, turnZ - w.z);
+				peak = std::max(peak, w.forwardSpeed);
+				closest = std::min(closest, toTurn);
+				if (toTurn < 100.0 && speedNear < 0.0)
+					speedNear = w.forwardSpeed;
+				if (t > 100 && toGoal > 30.0 && w.forwardSpeed < 0.1 * peak)
+					++stops;
+				if (const auto* held = sim.farOrder(id); held != nullptr && toGoal < 540.0)
+				{
+					++near540;
+					test::require(held->next >= held->markers.size(), "within 547.7 u of the goal a road marker is still being walked");
+				}
+				if (toGoal < 30.0)
+					break;
+			}
+			std::cout << "ksim_road_route: road follower: closest approach to the 60 degree marker " << closest << " u (width 100), speed at the handover "
+				<< speedNear << " of peak " << peak << ", stops " << stops << ", ticks inside 547.7 u with the order held " << near540 << "\n";
+			test::require(closest > 20.0 && closest < 130.0, "the walker did not cut the corner by about the width: closest " + std::to_string(closest));
+			test::require(speedNear >= 0.7 * peak, "the walker slowed at the handover: " + std::to_string(speedNear) + " of " + std::to_string(peak));
+			test::require(stops == 0, std::to_string(stops) + " ticks stopped away from the goal");
+			test::require(std::hypot(gx - sim.combat()->find(id)->x, gz - sim.combat()->find(id)->z) < 30.0, "the walker did not reach the goal");
+			// A save taken while the walker is on a marker leg (before the handover) and reloaded walks on as the straight run: the same place 400 ticks in.
+			const auto leg = [&](bool reload) -> std::pair<double, double>
+			{
+				state::Fighter* w = fighterOf(sim, id);
+				w->x = spot->x;
+				w->y = spot->y;
+				w->z = spot->z;
+				w->forwardSpeed = 0.0;
+				w->vx = w->vz = 0.0;
+				sim.enqueue(Command::fighterStop(state::Id{ id }, false)); // the walker the last leg left mid-route would carry its heading and route into this one
+				sim.run(40);
+				sim.enqueue(Command::fighterMoveTo(state::Id{ id }, { { gx, gz } }, { 0.0 }, reload ? 12 : 11));
+				sim.run(60);
+				if (reload)
+				{
+					const auto* held = sim.farOrder(id);
+					test::require(held != nullptr && held->onMarker, "the walker is not on a marker leg 3 s in");
+					std::ostringstream out;
+					sim.save(out);
+					std::istringstream in(out.str());
+					sim.reload(in);
+					held = sim.farOrder(id);
+					test::require(held != nullptr && held->onMarker && held->markers[held->cur].width == 100.0, "the marker leg state was not restored by the load");
+				}
+				sim.run(340);
+				const state::Fighter* e = sim.combat()->find(id);
+				return { e->x, e->z };
+			};
+			leg(false); // the first run after the walk above starts from a different state: a warm-up, two straight runs from here are alike
+			const auto straightEnd = leg(false);
+			const auto loadedEnd = leg(true);
+			const double apart = std::hypot(straightEnd.first - loadedEnd.first, straightEnd.second - loadedEnd.second);
+			std::cout << "ksim_road_route: road follower save: " << apart << " u between the straight run and the reloaded one after 400 ticks\n";
+			test::require(apart < 0.01, "a save on a marker leg reloads to a different walk: " + std::to_string(apart) + " u apart");
+		} else {
+			std::cerr << "ksim_road_route: road follower case skipped: no walkable 60 degree marker\n";
+		}
+	}
 	sim.setRoadNetwork(std::make_shared<const RoadNetwork>());
 	test::require(!sim.roadNetworkRoute(me, gx, gz).found, "with no roads the rung finds nothing");
 }

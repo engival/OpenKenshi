@@ -4,10 +4,12 @@
 
 #include "ksim/core/simulation.hpp"
 
+#include "ksim/dev/island_probe.hpp"
 #include "kworld/loadorder.hpp"
 #include "test_util.hpp"
 
 #include <iostream>
+#include <vector>
 #include <sstream>
 #include <string>
 
@@ -19,6 +21,21 @@ int main()
 {
 	try
 	{
+		// The island probe (kenshi-k16.6.305): three clusters 1500 u apart in a chain of cells, one lone point, one inactive point.
+		{
+			ksim::dev::IslandProbe uf;
+			const std::vector<double> x = {0, 100, 200, 5000, 5100, 9000, 0};
+			const std::vector<double> z = {0, 0, 0, 0, 0, 9000, 100};
+			std::vector<char> active(7, 1);
+			active[6] = 0;
+			uf.reset(7);
+			uf.joinByRange(x, z, active, 1500.0);
+			const ksim::dev::IslandStats st = uf.stats(active);
+			test::require(st.components == 3 && st.largest == 3 && st.second == 2 && st.singletons == 1 && st.nonSingleton == 2, "island probe: 3 + 2 + 1");
+			uf.reset(7);
+			uf.joinByRange(x, z, active, 6000.0);
+			test::require(uf.stats(active).components == 2, "island probe: a larger range joins the two clusters, the far point stays");
+		}
 #if KSIM_PROFILE
 		using namespace ksim;
 		const kworld::LoadOrder order = kworld::resolveLoadOrder(KENSHI_DATA, "");

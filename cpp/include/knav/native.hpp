@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace knav::native {
@@ -20,6 +21,7 @@ struct Face
 	std::uint32_t startEdge = 0;
 	std::uint16_t numEdges = 0;
 	std::int32_t data = 0; // faceData: 4 = an open door, 5 = closed, others material ids (UNSURE)
+	std::uint64_t door = 0; // a door face (data 4 / 5) painted by the generator: the door's kworld::DoorKey; 0 = none (shipped faces carry no id)
 };
 
 struct Edge
@@ -41,6 +43,7 @@ struct Mesh
 	std::vector<std::array<double, 3>> vertices; // world coordinates
 	std::vector<Face> faces;
 	std::vector<Edge> edges;
+	std::vector<std::pair<std::string, double>> scalars; // the hkaiNavMesh's own int / real members (erosionRadius, ...), for dev tools
 
 	bool interior() const noexcept { return !info.empty(); }
 	// A wall: an edge with no opposite face and no streaming link.

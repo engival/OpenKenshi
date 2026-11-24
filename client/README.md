@@ -370,6 +370,12 @@ Set `render.thread=overlap` in the config for the overlap case; read the startup
 exponential average (0.95 / 0.05), so it hides spikes: judge by p50 / p99 / max and the `0:` count. `HEADLESS_REFRESH=N` (tools/headless.sh) pins
 the nested gamescope's refresh for a headless run.
 
+`KCLIENT_FRAMELOG=boom,predict,drive,cursor,hud,pick` (dev builds; `all` = every family; kenshi-jvhw, k16.2.522) turns on the per-frame / per-step
+diagnostics a scripted run once printed into every log: `boom:` (the follow camera each frame), `predict: shown` (every 10th frame), `drive N strafe M`
+(each order sent), `cursor:` (each cursor change), `hud:` (every 300th frame), and `pickat / pickbody / pickfoliage cost` (also needs `--debug`).
+Unset, none prints. The tests that parse a family set it themselves (drivecam: boom; sellburst, combatsound: hud; boxselect: cursor). The older
+single-purpose opt-ins stay: `KFOLLOWYLOG`, `KCLIENT_FOLLOWCAM_LOG`, `KDLOOK`, `KCLIENT_CAMTRACE`, the script op `rtsboom log`.
+
 While `render.thread` runs a logic thread (lockstep or overlap) the line ends with two more sections (kenshi-k16.2.437.1):
 `lockstep repeats N (runs N, longest L frames / M ms, P over 50 ms printed)` and `logic ms L vs bound B`. `repeats` = callbacks that found no packet
 in 100 ms and blitted the kept frame back (`cb/s` minus `drew/s` is the same count), `runs` = runs of them, `longest` = the longest run and its wall

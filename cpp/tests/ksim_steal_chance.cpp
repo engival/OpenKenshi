@@ -197,6 +197,8 @@ struct Take
 	bool theft;
 	std::uint64_t event8;
 	std::uint8_t percent; // Simulation::stealPercent before the take (SIMLINK ITEM_GRID's steal tail)
+	std::uint64_t thief;
+	std::vector<Simulation::CrimeEvent> sent; // the EVENT 51 / 52 the observer saw
 };
 
 // The thief (player, `thievery`) takes the one item from a Holy Nation box with its guard standing at it.
@@ -210,14 +212,16 @@ Take take(const Rig& shared, std::uint64_t seed, double thievery, double* chance
 	if (chance != nullptr)
 		*chance = rig.sim->stealChance(thief, id, rig.item);
 	const std::uint8_t percent = rig.sim->stealPercent(thief, id, rig.item);
+	Take t;
+	rig.sim->setCrimeObserver([&t](const Simulation::CrimeEvent& e) { t.sent.push_back(e); });
 	rig.sim->enqueue(Command::containerTransfer(state::Id{thief}, id, rig.item, 1, true, 1));
 	rig.tick(1);
 	const state::CrimeRecord* r = rig.sim->crimeRecord(thief);
 	(void)guard;
-	Take t;
 	t.percent = percent;
 	t.taken = rig.carried(thief) == 1;
 	t.theft = r != nullptr && r->crime == cr::kTheft;
+	t.thief = thief;
 	t.event8 = rig.sim->dialogueEventCount(cr::kEvThiefCaughtStealingFromMe);
 	t.caught = !t.taken;
 	return t;
@@ -243,10 +247,12 @@ void roll(const Rig& shared)
 		if (t.taken)
 		{
 			++passes;
-			test::require(t.theft && t.event8 == 0, "a passed roll must record theft and fire no event 8");
+			test::require(t.theft && t.event8 == 0 && t.sent.empty(), "a passed roll must record theft, fire no event 8 and send no EVENT 51");
 		} else {
 			++fails;
 			test::require(t.theft && t.event8 >= 1, "a failed roll did not record theft 3 and fire event 8");
+			test::require(t.sent.size() == 1 && t.sent[0].kind == Simulation::CrimeEvent::Kind::CaughtStealing && t.sent[0].who == t.thief
+				&& t.sent[0].other == 0 && t.sent[0].cause == 0 && t.sent[0].container == 0, "a failed roll sends EVENT 51 cause 0 for the thief, witness 0, once");
 		}
 	}
 	{

@@ -2160,10 +2160,10 @@ void wounds(const Data& w)
 }
 
 // DC_NUM_BACKPACKS (37) and the `target has item type` list (1.3 step 8) on the inventories: the Dust King's "Looting" (7151) under
-// EV_LOOTING_EVERYTHING, whose line 7154 wants two squad backpacks and 7158 an item type (Hashish, by item function).
+// EV_LOOTING_EVERYTHING, whose line 7154 wants two squad backpacks and 7156-7159 an item type (by the first list entry's item function, rwh.213).
 void looting(const Data& w)
 {
-	const auto line = [&](int members, bool hashish)
+	const auto line = [&](int members, const char* carried)
 	{
 		Rig rig(w, 7);
 		rig.sim->dialogue()->force(w.dustKing, w.book->dialogueIndex("7151-Dialogue.mod"));
@@ -2181,23 +2181,29 @@ void looting(const Data& w)
 		}
 		for (const std::uint64_t member : squad)
 			rig.giveItem(member, "576-gamedata.base", 1, state::Inventory::kBackpackSlot); // Small Backpack (CONTAINER, slot 12)
-		if (hashish)
-			rig.giveItem(player, "1230-gamedata.base", 1); // Hashish (ITEM)
+		if (carried != nullptr)
+			rig.giveItem(player, carried, 1);
 		rig.settle();
 		rig.push(33, king, player); // EV_LOOTING_EVERYTHING
 		rig.tick();
 		const state::Conversation* said = rig.sim->conversation(king);
 		return said != nullptr ? said->line : std::string();
 	};
-	const std::string twoBags = line(2, false);
-	check(twoBags == "7154-Dialogue.mod", "two squad backpacks draw NUM_BACKPACKS' line 7154 (got \"" + twoBags + "\")");
-	const std::string oneBag = line(1, false);
-	check(oneBag.empty(), "one does not (the item-type lines fail, the money line is gated out; got \"" + oneBag + "\")");
-	// The exe reads only the first list entry, by its item function (item+0x124), in the flat main inventory (findings/bread.md): Hashish
-	// (function 8) passes 7156 (Cactus Rum 8) and 7158 (Hashish 8), never 7157 (function 3) or 7159 (function 0); the lines tie, the hash picks.
-	const std::string hashish = line(1, true);
-	check(hashish == "7156-Dialogue.mod" || hashish == "7158-Dialogue.mod",
-		"carrying Hashish passes the function-8 lists only (7156 / 7158, got \"" + hashish + "\")");
+	const std::string twoBags = line(2, nullptr);
+	check(twoBags == "7154-Dialogue.mod" || twoBags == "7159-Dialogue.mod", // 7159 (function 0, unconstrained) ties with it
+		"two squad backpacks pass NUM_BACKPACKS' line 7154 (and 7159; got \"" + twoBags + "\")");
+	// rwh.213 (findings/rwh213_loot_itemtype_function0_static.md): the exe reads only the first list entry's item function; function 0
+	// (Luxury Goods) is no constraint, so 7159 passes for any target, empty hands included. Otherwise the carried item's function
+	// (main inventory) must match: Rice Bowl is function 3 (7157 + 7159), Hashish function 8 (7156 + 7158 + 7159).
+	const std::string empty = line(1, nullptr);
+	check(empty == "7159-Dialogue.mod", "empty hands still draw the unconstrained line 7159 (got \"" + empty + "\")");
+	const std::string luxury = line(1, "585-gamedata.base"); // Luxury Goods (function 0)
+	check(luxury == "7159-Dialogue.mod", "carrying Luxury Goods draws 7159 only (got \"" + luxury + "\")");
+	const std::string rice = line(1, "1016-gamedata.base"); // Rice Bowl (function 3)
+	check(rice == "7157-Dialogue.mod" || rice == "7159-Dialogue.mod", "carrying a Rice Bowl passes 7157 + 7159 (got \"" + rice + "\")");
+	const std::string hashish = line(1, "1230-gamedata.base"); // Hashish (function 8)
+	check((hashish == "7156-Dialogue.mod" || hashish == "7158-Dialogue.mod" || hashish == "7159-Dialogue.mod"),
+		"carrying Hashish passes 7156 + 7158 + 7159 (got \"" + hashish + "\")");
 }
 
 // The `target carrying character` list (1.3 step 7) and `target has item` (step 8): the Samurai Gate Guard's "Guard sees fish head"
@@ -2406,18 +2412,18 @@ void individualGoals(const Data& w, const std::shared_ptr<MeshNavigator>& nav)
 		const std::uint64_t player = rig.add("", w.nameless, 9, 0.0, 0.0, 0.0, true, 1);
 		place(rig, player, kHubX, kHubZ);
 		place(rig, runner, kHubX + 60.0, kHubZ);
-		check(!rig.sim->giveIndividualGoal(player, IndividualKind::Flee, runner), "a player character is given no individual goal");
-		check(rig.sim->giveIndividualGoal(runner, IndividualKind::Flee, player), "flee: given");
+		check(!rig.sim->orderRunAwayGoal(player, runner), "a player character is given no run-away order");
+		check(rig.sim->orderRunAwayGoal(runner, player), "flee: given");
 		bool fought = false;
 		double furthest = 0.0;
 		int ticks = 0;
-		while (rig.f(runner).goal.kind == IndividualKind::Flee && ticks++ < 20 * 130)
+		while (rig.f(runner).fleeing && ticks++ < 20 * 130)
 		{
 			rig.tick();
 			fought = fought || rig.f(runner).target != 0;
 			furthest = std::max(furthest, std::hypot(rig.f(runner).x - kHubX, rig.f(runner).z - kHubZ));
 		}
-		check(!fought && furthest > 1000.0 && rig.f(runner).goal.kind == IndividualKind::None,
+		check(!fought && furthest > 1000.0 && !rig.f(runner).fleeing,
 			"flee: the runner takes no target, gets " + str(static_cast<std::size_t>(furthest)) + " away and the goal ends (" + str(static_cast<std::size_t>(ticks / 20)) + " s)");
 	}
 	// Summon and go home: a squad of three whose home is a town (no home building).
@@ -2466,6 +2472,87 @@ void individualGoals(const Data& w, const std::shared_ptr<MeshNavigator>& nav)
 		const auto near = [&](std::uint64_t id, double reach) { return std::hypot(rig.f(id).x - rig.f(boss).x, rig.f(id).z - rig.f(boss).z) <= reach; };
 		check(ticks < 20 * 120 && near(a, 200.0) && near(b, 200.0) && std::hypot(rig.f(boss).x - homeSpot->x, rig.f(boss).z - homeSpot->z) <= 100.0,
 			"summon and go home: the mates reach the summoner, it reaches home, and every goal ends (" + str(static_cast<std::size_t>(ticks / 20)) + " s)");
+	}
+}
+
+
+// A squad of five gets the same event in one tick (kenshi-k16.9.26): DIALOGUE_SELECTION_LIVE Q3 (one conversation per speaker squad) and Q4
+// (a record shown inside its repetition limit is not shown again) hold in member order, because each pick is committed before the next event.
+class ChorusWorld : public FakeWorld
+{
+public:
+	bool squads = true;
+	std::set<std::uint64_t> talking;
+	std::map<std::uint32_t, std::uint64_t> shown;
+	bool busy(std::uint64_t id) const override { return talking.count(id) != 0; }
+	bool squadBusy(std::uint64_t) const override { return squads && !talking.empty(); }
+	bool lastShown(std::uint32_t record, std::uint64_t& tick) const override
+	{
+		const auto found = shown.find(record);
+		if (found == shown.end())
+			return false;
+		tick = found->second;
+		return true;
+	}
+};
+
+void chorus(const Data& w)
+{
+	const DialogueBook& book = *w.book;
+	for (const bool oneSquad : { true, false })
+	{
+		ChorusWorld world;
+		world.squads = oneSquad;
+		DialogueActor target;
+		target.exists = true;
+		target.id = 20;
+		target.playerFaction = true;
+		target.faction = w.nameless;
+		target.building = 9;
+		target.z = 50.0;
+		world.actors[20] = target;
+		DialogueSystem system(w.book, 3);
+		for (std::uint64_t id = 5; id < 10; ++id)
+		{
+			DialogueActor speaker;
+			speaker.exists = true;
+			speaker.id = id;
+			speaker.character = w.citizen;
+			speaker.faction = w.holy;
+			speaker.leader = true;
+			speaker.building = speaker.homeBuilding = 9;
+			world.actors[id] = speaker;
+			DialogueEvent e;
+			e.event = ev::ShooFromMyBuilding;
+			e.speaker = id;
+			e.target = 20;
+			e.tick = 100;
+			system.push(e);
+		}
+		std::vector<std::uint32_t> lines;
+		const std::vector<DialoguePick> picks = system.step(world, 100, [&](DialoguePick& pick)
+		{
+			if (pick.result != DialoguePick::Result::Picked)
+				return;
+			world.talking.insert(pick.event.speaker);
+			world.shown[book.line(pick.line).sid] = 100;
+			world.shown[book.dialogue(pick.dialogue).sid] = 100;
+			lines.push_back(pick.line);
+		});
+		std::size_t busy = 0;
+		for (const DialoguePick& p : picks)
+			busy += p.result == DialoguePick::Result::Busy ? 1 : 0;
+		if (oneSquad)
+			check(picks.size() == 5 && lines.size() == 1 && busy == 4, "a squad of 5, one tick: one conversation, the other four events are dropped as busy (Q3)");
+		else
+		{
+			std::set<std::uint32_t> distinct(lines.begin(), lines.end());
+			bool limited = true;
+			for (const std::uint32_t line : distinct)
+				limited = limited && book.line(line).gate.repetition != 0;
+			check(distinct.size() == lines.size() || !limited, "five squads, one tick: no record with a repetition limit is shown twice (Q4)");
+			check(!lines.empty(), "five squads, one tick: the first speaker is picked");
+		}
 	}
 }
 
@@ -2581,6 +2668,7 @@ int main(int argc, char** argv)
 	townsAndWalls(w);
 	sliceConditions(w);
 	individualGoals(w, MeshNavigator::load(argv[1]));
+	chorus(w);
 	determinism(w);
 	std::printf("ksim_dialogue_events: ok\n");
 	return 0;

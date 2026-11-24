@@ -42,19 +42,19 @@ int main()
 		const flecs::entity inside = sim.spawnMover(-100000.0, -80000.0);
 		const flecs::entity outside = sim.spawnMover(0.0, 60000.0);
 
-		// Players in adjacent regions: the two 3x3 sets overlap and merge.
-		// The command applies at the start of tick 1.
-		sim.enqueue(ksim::Command::setPlayerAreas({{-100000.0, -80000.0},
-			{-96000.0, -80000.0}, {0.0, 0.0}}));
+		// Two players stand 232 u and 268 u from the edge between zones (10, 14) and (11, 14): each +-340 u box overlaps both zones
+		// (the original's loaded-zone rule, rwh.202), so the two sets share them and merge. The command applies at the start of tick 1.
+		sim.enqueue(ksim::Command::setPlayerAreas({{-97000.0, -80000.0},
+			{-96500.0, -80000.0}, {2304.0, 2304.0}}));
 		test::require(engine.areas().empty(), "areas changed before the command tick");
 		sim.tick();
 		const std::vector<ksim::Area>& areas = engine.areas();
 		test::require(areas.size() == 2,
 			"overlapping areas did not merge to one");
-		test::require(areas[0].regions.size() == 12,
-			"merged area is not the union of the two 3x3 sets");
-		test::require(contains(areas[0], 9 + 64 * 13)
-			&& contains(areas[0], 12 + 64 * 15),
+		test::require(areas[0].regions.size() == 2,
+			"merged area is not the union of the two boxes' zones");
+		test::require(contains(areas[0], 10 + 64 * 14)
+			&& contains(areas[0], 11 + 64 * 14),
 			"merged area does not span both player sets");
 		test::require(!contains(areas[0], 32 + 64 * 32),
 			"far player area was merged by mistake");

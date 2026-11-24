@@ -568,7 +568,7 @@ public:
 	const void* groundDrawnGen() const;	// changes with the instance set and the Ready meshes (what groundDrawn reads): the per-character ray cache's key
 	// The world box of everything a prop draws (its parts' mesh boxes, this frame), grown by `grow`; false: no such prop or nothing drawn yet.
 	// pick_at: a click whose world hit point is on the prop's own drawn box is that prop (its collision proxy may sit just outside it)
-	bool propBox(uint64_t id, double lo[3], double hi[3], double grow = 0) const;
+	bool propBox(uint64_t id, double lo[3], double hi[3], double grow = 0, bool pickableOnly = false) const;	// pickableOnly: only the parts the pick sees (partPickable), not a marker volume (kenshi-wsbz)
 	bool bedBox(const double spot[3], double lo[3], double hi[3]) const;	// the world box of the layout piece holding a bed's sleeping spot (bedPiece): debug.pick_mask's bed box (kenshi-89l0)
 	// kenshi-k16.2.396.5: the click / hover pick's one world query. The nearest DRAWN triangle along the ray with t in [tMin, tMax] over every instance
 	// (building shells, layout furniture, props, doors at their drawn pose, player buildings): a per-instance box is only the broad phase. A part of the
@@ -921,7 +921,7 @@ private:
 		float colour[3];	// the record's colour, unscaled
 		float base = 0;		// brightness + the instance's roll, pre-phase
 		float spot = 0;
-		float dir[4];
+		float dir[4];		// the spot axis; w = the beam drop (kenshi-ac8f): world units from the light's position to the bulb end of the fixture along the axis (0: none)
 		float cone[4];
 		float near = 0;
 		int effect = 0;
@@ -975,7 +975,7 @@ private:
 	size_t heldReady_ = 0;	// created background meshes and textures waiting in uploading_ for their batch frame (promote)
 	uint64_t holdFlushFrame_ = 0;
 	uint64_t holdGen_ = 0;		// a mesh's state moved or a part found its mesh: what instanceHolds sees changed (bedRay's memo, kenshi-k16.2.205.12.111). Logic thread
-	void addLight(const BuildingInstance& b, uint32_t ii, const BuildingPartDef& def, uint32_t li, const double cam[3], const float planes[4][4], double maxDist);
+	void addLight(const BuildingInstance& b, uint32_t ii, const BuildingPartDef& def, uint32_t li, const double cam[3], const float planes[4][4], double maxDist, const MeshEntry* mesh = nullptr);	// mesh: the part's loaded mesh, for the beam drop (LightCand::dir[3])
 	void addOwnLight(const BuildingInstance& b, uint32_t ii, uint32_t li, const double cam[3], const float planes[4][4], double maxDist);
 	void addEffect(const BuildingInstance& b, uint32_t ii, int32_t part, const BuildingPartDef* def, uint32_t ei, const double cam[3], const float planes[4][4]);
 

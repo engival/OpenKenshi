@@ -8,6 +8,7 @@
 #include "kdata/format.hpp"
 
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -20,6 +21,8 @@ class GameData
 public:
 	// Apply one file over the records loaded so far, in file order.
 	void apply(const File& file);
+	// Same result; takes the records instead of copying them.
+	void apply(File&& file);
 
 	// nullptr when absent (including when a later overlay removed it).
 	const Record* find(std::string_view stringID) const;
@@ -34,9 +37,17 @@ public:
 
 private:
 	std::vector<Record> records_;
-	std::unordered_map<std::string, std::size_t> index_;
+	struct StringHash
+	{
+		using is_transparent = void;
+		std::size_t operator()(std::string_view text) const noexcept { return std::hash<std::string_view>()(text); }
+	};
+	std::unordered_map<std::string, std::size_t, StringHash, std::equal_to<>> index_;
 
-	void removeAt(std::size_t position);
+	template <typename F>
+	void applyImpl(F& file);
+
+	void compact(const std::vector<char>& dead);
 };
 
 } // namespace kdata

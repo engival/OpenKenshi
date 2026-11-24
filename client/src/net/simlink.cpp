@@ -902,6 +902,12 @@ bool SimLinkDecoder::frame(uint16_t type, const uint8_t* p, size_t n)
 		if (r.at < r.n) { t.owner = r.u32(); t.lockLevel = r.u16(); t.model = r.u32(); t.yaw = r.f32(); t.hasOwner = true; }	// an older server: no tail
 		if (t.kind == Interactable::kBed) { t.building = r.u64(); t.furniture = r.u32(); t.occupant = r.u64(); }
 		else if (t.kind == Interactable::kContainer && r.n - r.at >= 10) { t.building = r.u64(); t.piece = r.u16(); t.hasPiece = true; }	// an older server: no tail, the client matches a piece by position
+		if (t.kind == Interactable::kMachine && r.n - r.at >= 10)
+		{
+			t.machineKind = r.u8(); t.mstate = r.u8(); t.input = r.u32(); t.machineOutput = r.u32();
+			if (t.machineKind == 3 && r.n - r.at >= 8) { t.turret = r.u64(); }
+			t.hasMachine = true;
+		}
 		// limb tail (kind 2 only, an ITEM with `item function` 0x11): 9 f32, skin rgb, blood rgb, scale xyz (SIMLINK "Tail, kind 2 severed limb only").
 		// The record's item function is not known here, so the tail is read when the bytes are there, as the doc says; a server without it sends
 		// nothing after the ownership tail and the item draws as before.

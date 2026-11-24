@@ -16,6 +16,13 @@ std::uint64_t nsBetween(Profiler::Clock::time_point from, Profiler::Clock::time_
 	return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(to - from).count());
 }
 
+std::string fmtMs(std::uint64_t ns)
+{
+	char text[32];
+	std::snprintf(text, sizeof text, "%.1f", static_cast<double>(ns) / 1.0e6);
+	return text;
+}
+
 double percentile(std::vector<std::uint64_t>& sorted, double fraction)
 {
 	return static_cast<double>(sorted[static_cast<std::size_t>(fraction * static_cast<double>(sorted.size() - 1))]) / 1000.0;
@@ -27,6 +34,8 @@ Profiler::Profiler() : ring_(kWindow)
 {
 	if (const char* seconds = std::getenv("KSIM_PROFILE_JSON"); seconds != nullptr)
 		jsonSeconds_ = std::max(0.0, std::atof(seconds));
+	if (const char* ms = std::getenv("KSIM_PROFILE_SLOW_MS"); ms != nullptr)
+		slowMs_ = std::max(0.0, std::atof(ms));
 	if (const char* path = std::getenv("KSIM_PROFILE_TICKS"); path != nullptr && *path != 0 && (ticksFile_.reset(std::fopen(path, "w"), [](std::FILE* file) { if (file != nullptr) std::fclose(file); }), ticksFile_ != nullptr))
 	{
 		std::fprintf(ticksFile_.get(), "tick,tick_us");
@@ -34,7 +43,10 @@ Profiler::Profiler() : ring_(kWindow)
 			std::fprintf(ticksFile_.get(), ",%s", name);
 		for (const char* name : kSubNames)
 			std::fprintf(ticksFile_.get(), ",sub_%s", name);
-		std::fprintf(ticksFile_.get(), ",characters,squads,path_queries,path_us\n");
+		std::fprintf(ticksFile_.get(), ",characters,squads,path_queries,path_us");
+		for (const char* name : kProbeNames)
+			std::fprintf(ticksFile_.get(), ",%s", name);
+		std::fprintf(ticksFile_.get(), "\n");
 	}
 }
 
@@ -71,10 +83,37 @@ void Profiler::end(std::uint64_t tick, std::uint32_t characters, std::uint32_t s
 			std::fprintf(ticksFile_.get(), ",%.1f", static_cast<double>(ns) / 1000.0);
 		for (const std::uint64_t ns : subPending_)
 			std::fprintf(ticksFile_.get(), ",%.1f", static_cast<double>(ns) / 1000.0);
-		std::fprintf(ticksFile_.get(), ",%u,%u,%u,%.1f\n", characters, squads, sample.pathQueries, static_cast<double>(sample.pathNs) / 1000.0);
+		std::fprintf(ticksFile_.get(), ",%u,%u,%u,%.1f", characters, squads, sample.pathQueries, static_cast<double>(sample.pathNs) / 1000.0);
+		for (const double v : probePending_)
+			std::fprintf(ticksFile_.get(), ",%.2f", v);
+		std::fprintf(ticksFile_.get(), "\n");
+		probePending_.fill(0.0);
+		knav::measure::tick.store(tick + 1, std::memory_order_relaxed);
 		if (tick % 200 == 0)
 			std::fflush(ticksFile_.get());
 		subPending_.fill(0);
+	}
+	// Slow-tick line (KSIM_PROFILE_SLOW_MS, default 50; 0 = off): the tick's own sections, then the nav work that ran inside it
+	// (region conversion, stale check / rebake, component label build: nested, so they overlap the sections that called them).
+	if (slowMs_ > 0.0 && static_cast<double>(sample.tickNs) / 1.0e6 >= slowMs_)
+	{
+		std::string line = "SLOWTICK tick=" + std::to_string(tick) + " total_ms=" + fmtMs(sample.tickNs);
+		for (std::size_t i = 0; i < kSections; ++i)
+			if (sample.ns[i] >= 1000000)
+				line += std::string(" ") + kSectionNames[i] + "=" + fmtMs(sample.ns[i]);
+		for (int i = 0; i < knav::measure::kLoads; ++i)
+		{
+			const std::uint64_t ns = knav::measure::loadNs[i].load(std::memory_order_relaxed);
+			if (ns >= 1000000)
+				line += std::string(" ") + knav::measure::kLoadNames[i] + "=" + fmtMs(ns) + "x" + std::to_string(knav::measure::loadCount[i].load(std::memory_order_relaxed));
+		}
+		line += " path_q=" + std::to_string(sample.pathQueries) + " path_ms=" + fmtMs(sample.pathNs) + " chars=" + std::to_string(characters);
+		std::fprintf(stderr, "%s\n", line.c_str());
+	}
+	for (int i = 0; i < knav::measure::kLoads; ++i)
+	{
+		knav::measure::loadNs[i].store(0, std::memory_order_relaxed);
+		knav::measure::loadCount[i].store(0, std::memory_order_relaxed);
 	}
 	pending_.fill(0);
 	next_ = (next_ + 1) % kWindow;

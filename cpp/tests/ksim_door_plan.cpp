@@ -199,6 +199,23 @@ int main()
 					has[k] = has[k] || row.task == (k == 0 ? goap::kLockDoor : k == 1 ? goap::kLockDoorHere : k == 2 ? goap::kLockDoorFromInside : goap::kLockDoorFromOutside);
 			check(has[0] && has[1] && has[2] && has[3], "rows 77 / 79 / 162 / 198 exist");
 		}
+		// Row 226 is the player's order, not a planner row: no hasWeaponEquipped precondition (rwh.235); the planner's bash rows keep it (rwh.199).
+		{
+			bool orderFree = false;
+			bool plannerNeeds = true;
+			for (const goap::TaskRow& row : goap::rows())
+			{
+				if (row.task != goap::kBashDoorOrder && row.task != goap::kBashDoor && row.task != goap::kBashDoorHere && row.task != goap::kBashGate)
+					continue;
+				bool needs = false;
+				for (std::uint8_t k = 0; k < row.preCount; ++k)
+					needs = needs || row.pre[k].sym == goap::Sym::HasWeaponEquipped;
+				if (row.task == goap::kBashDoorOrder) orderFree = !needs && row.orderOnly;
+				else plannerNeeds = plannerNeeds && needs;
+			}
+			check(orderFree, "BASH_DOOR_PLAYER_ORDER 226 is orderOnly with no weapon precondition");
+			check(plannerNeeds, "rows 81 / 123 / 287 still need hasWeaponEquipped");
+		}
 		// The stand points: inside and outside are the two faces of the slab, the near one is the walker's.
 		{
 			DoorSlab slab;

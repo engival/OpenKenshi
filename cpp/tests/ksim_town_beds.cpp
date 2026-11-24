@@ -20,6 +20,7 @@
 #include "ksim/dialogue/dialogue_events.hpp"
 #include "ksim/dialogue/dialogue_book.hpp"
 
+#include "../src/ksim/world/world_resolvers.hpp"
 #include "kdata/gamedata.hpp"
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
@@ -540,7 +541,10 @@ void sharedYard(const kworld::LoadOrder& order, const std::shared_ptr<const Comb
 		squad.get_mut<state::Position>()->x = chosen.front()->x;
 		squad.get_mut<state::Position>()->z = chosen.front()->z;
 	}
-	centreOn(sim, { { chosen.front()->x, chosen.front()->z } });
+	std::vector<std::array<double, 2>> yards; // each squad's own +-340 u box is loaded (the original's rule), not the 3x3 round the first
+	for (const Pick* pick : chosen)
+		yards.push_back({pick->x, pick->z});
+	centreOn(sim, yards);
 	runUntil(sim, [&] { return std::all_of(chosen.begin(), chosen.end(), [&](const Pick* p) { return squadIn(sim, p->id).has<state::SquadRoutine>(); }); },
 		4000, "the squads were never promoted");
 	std::size_t most = 0;
@@ -626,13 +630,11 @@ void strangers(const kworld::LoadOrder& order, const std::shared_ptr<const Comba
 		for (const flecs::entity m : rig.members)
 			sim.dialogue()->setInputs(idOf(m), DialogueInputs{ 13, false, false });
 		// The staff close up at 24:00 with the stranger still inside: goals 155 / 239 stay candidates and their plan's working step is the
-		// shoo (the dialogue's EV 9 chain, on its own timers), for the hour and a half the stranger stays (the test's perception does not
-		// scan a stranger two units away, so the keepers are told of them).
+		// shoo (the dialogue's EV 9 chain, on its own timers), for the hour and a half the stranger stays (the finder is
+		// an occupancy scan of the player's characters, rwh.221: no sighting, so nothing tells the keepers of them).
 		bool closing = false;
 		for (int i = 0; i < 144; ++i)
 		{
-			for (const flecs::entity m : rig.members)
-				perception::notice(fighterOf(sim, idOf(m)), visitorId);
 			sim.run(kTicksPerGameHour / 96);
 			for (const flecs::entity m : rig.members)
 			{
@@ -702,7 +704,122 @@ void strangers(const kworld::LoadOrder& order, const std::shared_ptr<const Comba
 		test::require(doorState(rig) == 2 && lockedFlag(sim, rig) == 1 && anyAsleep(sim, rig), "the stranger gone: the home locks up and sleeps");
 		test::require(sim.townScorerStats().shoos == shoosBefore, "and nobody shoos any more");
 	}
+	{
+		// A SNEAKING stranger is the finder's only perception gate (rwh.221 section 1): with no record of it the keepers do not shoo.
+		Simulation sim = newGame(order);
+		enable(sim, combat);
+		sim.setClockTick(tickAt(1, 19, 0));
+		const routines::PackageTable packages(*sim.gameData());
+		const std::vector<Pick> picks = residentSquads(sim, packages, *combat);
+		const Pick* pick = nullptr;
+		for (const Pick& p : picks)
+			if (p.behaviour == "resident_life" && (p.tasks.count(283) != 0 || p.tasks.count(158) != 0) && p.tasks.count(239) != 0 && p.tasks.count(155) != 0)
+			{
+				pick = &p;
+				break;
+			}
+		test::require(pick != nullptr, "a private resident squad that shoos, locks and sleeps");
+		const HomeRig rig = setupHome(sim, *pick, 0);
+		std::uint64_t dice = 11;
+		state::Fighter visitor = combat->makeFighter(*sim.gameData(), rig.members.front().get<state::CharacterInstance>()->templateSid, "", dice,
+			squadIn(sim, pick->id).get<state::SquadInstance>()->templateSid);
+		visitor.team = 0;
+		visitor.playerControlled = true;
+		visitor.sneak = true;
+		visitor.x = rig.cx + 2.0;
+		visitor.z = rig.cz;
+		visitor.building = rig.building;
+		const std::uint64_t sneakerId = idOf(sim.spawnFighter(std::move(visitor)));
+		// The finder on its own (the keeper's own sensor may well have a record of a sneaker two units away): no record, no shoo; with
+		// a record the same sneaker is a target, and a plain stranger needs none.
+		state::Fighter keeper = fighterOf(sim, idOf(rig.members.front()));
+		keeper.sight.clear();
+		keeper.target = 0;
+		keeper.playerControlled = false;
+		const state::Fighter* sneaker = &fighterOf(sim, sneakerId);
+		const auto lookup = [&](std::uint64_t id) { return id == sneakerId ? sneaker : nullptr; };
+		const auto roster = [&](const auto& visit) { visit(sneakerId, *sneaker); };
+		const sensor::Context ctx{};
+		test::require(worldres::shooStrangers283(keeper, ctx, lookup, roster, 0) == 0, "a sneaking stranger the keeper has no record of is not shooed");
+		state::SightRecord record;
+		record.target = sneakerId;
+		keeper.sight.push_back(record);
+		test::require(worldres::shooStrangers283(keeper, ctx, lookup, roster, 0) == sneakerId, "once the keeper has a record of it, it is");
+		keeper.sight.clear();
+		fighterOf(sim, sneakerId).sneak = false;
+		test::require(worldres::shooStrangers283(keeper, ctx, lookup, roster, 0) == sneakerId, "a plain stranger needs no record: an occupancy scan");
+	}
 	std::cout << "strangers ok\n";
+}
+
+// The shoo chain's end is the dialogue root's data: a keeper whose package roots "shopkeep holy shoo" (43003) ends the EV 9 chain in
+// DA_CRIME_ALARM, and the alarm makes the keeper attack the stranger who stays (goal 143, rwh201 section 19: 9 shoo lines in 0.54 h, then the
+// keeper attacks and goes to bed). The squad is picked by its data: the first shop squad with the secure bed whose EV 9 pick is that root.
+void shooEscalation(const kworld::LoadOrder& order, const std::shared_ptr<const CombatData>& combat)
+{
+	std::size_t tried = 0;
+	for (std::size_t index = 0; index < 64; ++index)
+	{
+		Simulation sim = newGame(order);
+		enable(sim, combat);
+		sim.enableDialogue(DialogueBook::build(sim.gameData()));
+		sim.setClockTick(tickAt(1, 23, 50));
+		const routines::PackageTable packages(*sim.gameData());
+		const std::vector<Pick> picks = residentSquads(sim, packages, *combat);
+		std::size_t seen = 0;
+		const Pick* pick = nullptr;
+		for (const Pick& p : picks)
+			if (p.behaviour == "shop_keeper" && p.leader && p.tasks.count(20) != 0 && p.tasks.count(86) != 0 && p.tasks.count(239) != 0 && seen++ == index)
+				pick = &p;
+		if (pick == nullptr)
+			break;
+		++tried;
+		const HomeRig rig = setupHome(sim, *pick, 0);
+		std::uint64_t dice = 7;
+		state::Fighter visitor = combat->makeFighter(*sim.gameData(), rig.members.front().get<state::CharacterInstance>()->templateSid, "", dice,
+			squadIn(sim, pick->id).get<state::SquadInstance>()->templateSid);
+		visitor.team = 0;
+		visitor.playerControlled = true;
+		visitor.x = rig.cx + 2.0;
+		visitor.z = rig.cz;
+		visitor.building = rig.building;
+		const std::uint64_t visitorId = idOf(sim.spawnFighter(std::move(visitor)));
+		// A female stranger: the root's 43015 branch ('troublesome women') ends in DA_CRIME_ALARM and the interjector's attack; a male same-race stranger takes 43004's
+		// branch, which only nags and holds no alarm (the live chain of rwh201 19 was a woman).
+		sim.dialogue()->setInputs(visitorId, DialogueInputs{ 0, true, false });
+		for (const flecs::entity m : rig.members)
+			sim.dialogue()->setInputs(idOf(m), DialogueInputs{ 13, false, false });
+		const auto rooted = [&]
+		{
+			for (const DialoguePick& logged : sim.dialogue()->log())
+				if (logged.event.event == ev::ShooFromMyBuilding && logged.result == DialoguePick::Result::Picked
+					&& sim.dialogue()->book().dialogue(logged.dialogue).name == "shopkeep holy shoo")
+					return true;
+			return false;
+		};
+		bool attacked = false;
+		for (int i = 0; i < 144; ++i) // 23:50 - 01:20 game time; the stranger stays through 00:40 and past
+		{
+			for (const flecs::entity m : rig.members)
+				perception::notice(fighterOf(sim, idOf(m)), visitorId);
+			sim.run(kTicksPerGameHour / 96);
+			const state::Fighter& keeper = fighterOf(sim, idOf(rig.members.front()));
+			attacked = attacked || (keeper.combatGoal == routines::task::ProtectOwnSquad && keeper.target == visitorId);
+			if (i == 24 && !rooted()) // the first shoo line comes at 24:00 (step 16): another root, another squad
+				break;
+		}
+		if (!rooted())
+			continue;
+		std::cout << "shoo escalation: squad " << index << " roots 'shopkeep holy shoo', attacked=" << attacked << "\n";
+		test::require(attacked, "the keeper rooted on 'shopkeep holy shoo' ends the shoo chain on goal 143 with the stranger as its target (rwh201 19)");
+		// The fight ends with the stranger down (the test world has no navmesh for it to run on, and the mates' chase has no end while it lives).
+		fighterOf(sim, visitorId).building = 0;
+		fighterOf(sim, visitorId).unconscious = true;
+		sim.run(kTicksPerGameHour * 2);
+		test::require(anyAsleep(sim, rig), "and the keeper goes to bed after the stranger is gone");
+		return;
+	}
+	test::require(false, "no shop squad of the data roots 'shopkeep holy shoo' under the shoo event (" + std::to_string(tried) + " tried)");
 }
 
 // Determinism and save / load mid-night.
@@ -736,19 +853,20 @@ void determinism(const kworld::LoadOrder& order, const std::shared_ptr<const Com
 
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
 	try
 	{
 		const kworld::LoadOrder order = kworld::vanillaLoadOrder(KENSHI_DATA);
 		Simulation sim = newGame(order);
 		const std::shared_ptr<const CombatData> combat = CombatData::build(*sim.gameData(), KENSHI_DATA);
-		sleepAndWake(order, combat);
-		sharedYard(order, combat);
-		shopNight(order, combat, true, "", nullptr);
-		staleDoors(order, combat);
-		strangers(order, combat);
-		determinism(order, combat);
+		if (test::wantPart(argc, argv, 1, "sleepAndWake")) { sleepAndWake(order, combat); }
+		if (test::wantPart(argc, argv, 1, "sharedYard")) { sharedYard(order, combat); }
+		if (test::wantPart(argc, argv, 1, "shopNight")) { shopNight(order, combat, true, "", nullptr); }
+		if (test::wantPart(argc, argv, 1, "staleDoors")) { staleDoors(order, combat); }
+		if (test::wantPart(argc, argv, 1, "strangers")) { strangers(order, combat); }
+		if (test::wantPart(argc, argv, 1, "shooEscalation")) { shooEscalation(order, combat); }
+		if (test::wantPart(argc, argv, 1, "determinism")) { determinism(order, combat); }
 		std::cout << "ksim_town_beds: ok\n";
 		return 0;
 	} catch (const std::exception& e) {

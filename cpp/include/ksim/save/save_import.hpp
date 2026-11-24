@@ -101,6 +101,9 @@ struct Report
 	std::vector<PlatoonResult> platoons; // one per PLATOON record
 	std::map<std::string, std::size_t> byOutcome;
 	std::vector<std::string> staleFiles; // platoon files no record names
+	std::size_t savedBuildings = 0; // the save's own buildings (a player town) the loaded zones lack, stood in the world (World::addPlacedBuilding)
+	std::size_t savedBuildingsNav = 0; // ... of them with collision and a patch bake (needs a native mesh)
+	std::size_t savedBuildingTiles = 0; // ... the nav tiles the patch replaced
 	std::size_t furnitureCages = 0; // the save's zone placements of a cage building (a Peeler Machine) the loaded zones lack, added as cage sites
 	std::size_t generatedRemoved = 0; // the world's own squads removed before the import (Simulation::importClearSquads)
 	std::size_t members = 0; // characters imported

@@ -41,6 +41,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <unordered_map>
 #include <string>
@@ -82,7 +83,10 @@ struct SpawnOptions
 	// Simulation::newGame only: seconds of sim time the world runs headless after a NEW_GAME command, before the first frame the player sees, so
 	// the residents are at their sites and busy (TOWN_LIFE_SLICE 5.40); newGame builds the world that much before `startTick`, so a NEW_GAME applied on its first tick shows the start time at the first frame (the clock never goes back).
 	// 0 = off (the tests that pin the t0 state).
-	double settleSeconds = 30.0;
+	double settleSeconds = 45.0;
+	// Simulation::newGame only: called after each startup stage with a short description ("game data parsed: 12 files, 1234 B");
+	// the server prints it with the elapsed time. Null = silent.
+	std::function<void(const std::string&)> stageHook;
 };
 
 struct SpawnReport
@@ -113,6 +117,9 @@ class SquadBuilder
 {
 public:
 	SquadBuilder(flecs::world& ecs, const kdata::GameData& gameData, RngStream& rng);
+
+	// The world's facts, read from the world on first use.
+	const worldstate::Facts& facts() const;
 
 	// A record's own `world state` list at the initial snapshot (see above).
 	bool worldStateHolds(const kdata::Record& record) const;

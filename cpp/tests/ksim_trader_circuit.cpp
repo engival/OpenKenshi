@@ -38,6 +38,11 @@
 
 namespace {
 
+// A trader far from the player steps every far period (100 ticks, k16.6.640), so its leave lands on the first step after the stay's end:
+// up to one period late, in game hours. UNSURE: the exe's far-squad cadence is not measured (validity row); near the player the leave is on time.
+constexpr double kFarStepHours = (100 + 20) * ksim::kTickSeconds / ksim::kGameDaySeconds * 24.0; // a far period plus the 1 s slice the step is read on (measured late: 0.036 and 0.0525 h)
+
+
 using namespace ksim;
 
 class StraightNavigator final : public Navigator
@@ -436,7 +441,9 @@ void circuit(const kworld::LoadOrder& order)
 				const Visit& previous = visits.back();
 				const double distance = std::hypot(town.x - previous.fromX, town.z - previous.fromZ);
 				const double seconds = static_cast<double>(tick - previous.leaveTick) * kTickSeconds;
-				test::require(std::fabs(seconds - distance / trader::kWanderSpeed) <= 2.5,
+				// The arrival is read on the far trader's next step: up to one far period (5 s) and its 1 s slice late (k16.6.670; measured 3.8 s late).
+				const double late = seconds - distance / trader::kWanderSpeed;
+				test::require(late >= -2.5 && late <= 2.5 + 6.0,
 					"the trip took " + std::to_string(seconds) + " s for " + std::to_string(distance) + " u (expected " + std::to_string(distance / trader::kWanderSpeed) + ")");
 			}
 			visits.push_back(visit);
@@ -465,9 +472,9 @@ void circuit(const kworld::LoadOrder& order)
 			lastTown = visit.town;
 			test::require(trader::inLeaveWindow(hours), "it leaves only between 06:00 and 21:00 (left at hour " + std::to_string(hours) + ")");
 			const double expected = trader::departureTime(visit.arrivedAt, visit.stay);
-			test::require(hours >= expected - 1e-9 && hours - expected < 0.02, "it leaves at the end of the stay or the next 06:00 (left " + std::to_string(hours) + ", expected " + std::to_string(expected) + ")");
+			test::require(hours >= expected - 1e-9 && hours - expected < kFarStepHours, "it leaves at the end of the stay or the next 06:00 (left " + std::to_string(hours) + ", expected " + std::to_string(expected) + ")");
 			if (visits.size() == 2)
-				test::require(std::fabs(hours - forcedLeave) < 0.02, "a stay that ends at night waits for 06:00");
+				test::require(std::fabs(hours - forcedLeave) < kFarStepHours, "a stay that ends at night waits for 06:00");
 			test::require(trip.town.id != visit.town, "the next town is not the one it leaves");
 		}
 	}

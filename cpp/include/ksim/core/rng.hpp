@@ -117,6 +117,10 @@ inline constexpr std::size_t kTokenFightStream = 28;
 // start already saves.
 inline constexpr std::size_t kDropStream = 29;
 
+// A gate crew's post hand-over (gatecrew.cpp postSlots): per guard and rotation epoch one draw, streamSeed(streamSeed(streamSeed(seed, kGateRotationStream),
+// guard Id), epoch). A pure function; nothing is saved.
+inline constexpr std::size_t kGateRotationStream = 30;
+
 // xorshift64*; deterministic across platforms.
 class RngStream
 {

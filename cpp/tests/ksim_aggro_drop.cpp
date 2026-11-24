@@ -255,6 +255,12 @@ struct Outcome
 	std::size_t targeted = 0; // bandits a crew member targeted
 	std::size_t switchedInTime = 0; // ... and that were on the crew within 10 s of it
 	std::uint64_t slowestSwitch = 0;
+	// rwh302 (the exe's counter poll): a bandit D that a crew member A swings at while D waits in Defend with no clip running re-targets A
+	// within 1 s (the poll is 0.1 s, median 0.14 s after the swing starts). Only those cases count, not every bandit A targets.
+	std::size_t counterCases = 0;
+	std::size_t counterAnswered = 0;
+	std::size_t maxEngaged = 0; // the most engaged attackers any crew member held
+	std::size_t unlistedSwings = 0; // a bandit mid-swing at a crew member whose engaged list does not hold it, once that list is full
 };
 
 // The player's run: provoke outside, walk in, then `cycle` (in and out again) or else keep moving inside until the crew has fought
@@ -362,6 +368,8 @@ Outcome kite(Game& game, const std::vector<Person>& bandits, const std::vector<s
 	std::map<std::uint64_t, std::uint64_t> lastTarget;
 	std::map<std::uint64_t, std::uint64_t> targetedAt; // the tick a crew member first targeted the bandit
 	std::map<std::uint64_t, std::uint64_t> switched; // its first tick targeting a crew member, as a delay from targetedAt
+	std::map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>> counter; // bandit -> (swinging crew member, tick of the swing's first sight)
+	std::set<std::uint64_t> counterDone;
 		const double run = sim.combat()->runSpeed(game.me());
 	std::cout << "player run speed " << run << " u/s\n";
 	for (std::uint64_t tick = 0; tick < 20 * 150; ++tick)
@@ -445,6 +453,23 @@ Outcome kite(Game& game, const std::vector<Person>& bandits, const std::vector<s
 			out.bestStubbornSeen = s.stubbornSeen;
 			out.bestStubbornBlind = s.stubbornBlind;
 		}
+		// rwh302 (b): no crew member holds more than 5 engaged attackers, and a bandit outside a full list does not swing at it.
+		for (const std::uint64_t cid : crew)
+		{
+			const state::Fighter* c = sim.combat()->find(cid);
+			if (c == nullptr)
+				continue;
+			out.maxEngaged = std::max(out.maxEngaged, c->engaged.size());
+			if (c->engaged.size() <= 4)
+				continue;
+			for (const Person& p : bandits)
+			{
+				const state::Fighter* f = sim.combat()->find(p.id);
+				if (f != nullptr && !f->dead && f->target == cid && f->state == state::CombatState::Attack && f->swingProgress > 0.0
+					&& std::find(c->engaged.begin(), c->engaged.end(), p.id) == c->engaged.end())
+					++out.unlistedSwings;
+			}
+		}
 		// Target changes, with why: awareness of the player, the distance to it and to the new target.
 		for (const Person& p : bandits)
 		{
@@ -468,6 +493,37 @@ Outcome kite(Game& game, const std::vector<Person>& bandits, const std::vector<s
 			else if (!switched.count(p.id) && std::find(crew.begin(), crew.end(), f->target) != crew.end())
 			{
 				switched[p.id] = sim.clockTick() - targetedAt[p.id];
+			}
+			// rwh302 (a): the counter poll. A crew member mid-swing at a bandit that waits in Defend with no clip running, the bandit in the crew member's engaged list
+			// (outside a full list it waits or defends: (b)).
+			if (counterDone.count(p.id) == 0)
+			{
+				const auto open = counter.find(p.id);
+				if (open == counter.end())
+				{
+					for (const std::uint64_t cid : crew)
+					{
+						const state::Fighter* c = sim.combat()->find(cid);
+						if (c != nullptr && !c->dead && c->state == state::CombatState::Attack && c->swingProgress > 0.0 && c->target == p.id
+							&& f->state == state::CombatState::Defend && f->clipTime == 0.0 && !f->down
+							&& std::find(c->engaged.begin(), c->engaged.end(), p.id) != c->engaged.end())
+						{
+							counter[p.id] = { cid, sim.clockTick() };
+							break;
+						}
+					}
+				}
+				else if (f->target == open->second.first)
+				{
+					++out.counterAnswered;
+					++out.counterCases;
+					counterDone.insert(p.id);
+				}
+				else if (sim.clockTick() > open->second.second + 20)
+				{
+					++out.counterCases;
+					counterDone.insert(p.id);
+				}
 			}
 			const auto it = lastTarget.find(p.id);
 			const bool changed = it == lastTarget.end() || it->second != f->target;
@@ -886,8 +942,13 @@ int main(int argc, char** argv)
 				check(out.crewEver >= 3 && out.crewEver <= 4, std::string(name) + ": the Hub Bar's Trade Ninjas target a bandit, 3 or 4 of the 4 (" + std::to_string(out.crewEver) + ")");
 			check(out.end.crewTargeting > 0, std::string(name) + ": the Bar's crew holds a target on the bandits (the join rules work)");
 			check(out.end.onCrew > 0, std::string(name) + ": the bandits turn on the crew that fights them (aggro drops)");
-			check(out.targeted >= 5 && out.switchedInTime * 5 >= out.targeted * 4, std::string(name) + ": at least 80% of the bandits "
-				"a crew member targets turn on the crew within 10 s (" + std::to_string(out.switchedInTime) + "/" + std::to_string(out.targeted) + ")");
+			// The exe's two rules (findings/rwh302_counter_flip_outside_list.md; the earlier "80 % of every bandit a crew member targets" had no
+			// source: a defender outside a full engaged list does not turn on its attacker). 1 s is the counter poll's 0.1 s plus its measured
+			// median of 0.14 s after the swing starts, with room for the swing's own start.
+			check(out.counterCases == 0 || out.counterAnswered == out.counterCases, std::string(name) + ": a bandit a crew member swings at while it waits in Defend re-targets it within 1 s ("
+				+ std::to_string(out.counterAnswered) + "/" + std::to_string(out.counterCases) + ")");
+			check(out.maxEngaged <= 5 && out.unlistedSwings == 0, std::string(name) + ": no crew member holds more than 5 engaged attackers (" + std::to_string(out.maxEngaged)
+				+ ") and no bandit outside a full list swings at it (" + std::to_string(out.unlistedSwings) + ")");
 		}
 		// The client's BE lure (its run-3 input exactly), several seeds: the squad must notice the player, and by the end of the
 		// watch somebody must be down (the client saw 8 in combat and 0 KOs, task BR2).

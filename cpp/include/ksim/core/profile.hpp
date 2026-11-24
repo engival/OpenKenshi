@@ -12,6 +12,8 @@
 
 #if KSIM_PROFILE
 
+#include "knav/route_measure.hpp"
+
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -64,6 +66,23 @@ enum class Sub : std::size_t
 };
 
 inline constexpr std::size_t kSubs = kSubNames.size();
+
+// Per-tick probe columns of the same CSV (kenshi-k16.6.305, docs/PROFILING.md "Scheduling measurements"): think vs act inside cs_update and the
+// interaction islands (isl_* / tgt_* / upd_members are summed over the tick's combat steps: divide by `steps`). Summed into the tick by probe(); written (and cleared) only when KSIM_PROFILE_TICKS is set.
+inline constexpr std::array<const char*, 54> kProbeNames = {"think_us", "think_route_us", "think_calls", "scan_us", "scan_calls", "upd_us",
+	"upd_route_us", "upd_members", "isl_n", "isl_max", "isl_2nd", "isl_single", "isl_top_share", "isl_uf_us", "tgt_n", "tgt_max", "tgt_nonsingle", "isl_active", "steps",
+	// kenshi-k16.6.637: the arena -> ECS mirror: members copied and members skipped (clean) this tick.
+	"mirror_copied", "mirror_skipped",
+	// kenshi-k16.6.631: arena member updates by Ctx::update branch (dead, down, walk, follow, drive, idle = Hub/Done at entry, fight = the other
+	// state-machine states, other) x distance band from the nearest player character (n 0-2000 u, m 2000-3250 u, f beyond); pickTarget calls by state.
+	"b_dead_n", "b_dead_m", "b_dead_f", "b_down_n", "b_down_m", "b_down_f", "b_walk_n", "b_walk_m", "b_walk_f", "b_follow_n", "b_follow_m", "b_follow_f",
+	"b_drive_n", "b_drive_m", "b_drive_f", "b_idle_n", "b_idle_m", "b_idle_f", "b_fight_n", "b_fight_m", "b_fight_f", "b_other_n", "b_other_m", "b_other_f",
+	"pick_attack", "pick_defend", "pick_between", "pick_hub", "pick_circle", "pick_wait", "pick_stumble", "pick_done", "pick_approach"};
+enum class Probe : std::size_t
+{
+	ThinkUs, ThinkRouteUs, ThinkCalls, ScanUs, ScanCalls, UpdUs, UpdRouteUs, UpdMembers, IslN, IslMax, Isl2nd, IslSingle, IslTopShare, IslUfUs, TgtN, TgtMax, TgtNonsingle, IslActive, Steps, MirrorCopied, MirrorSkipped, BranchBase, PickBase = BranchBase + 24
+};
+inline constexpr std::size_t kProbes = kProbeNames.size();
 
 struct TickSample
 {
@@ -123,8 +142,11 @@ public:
 			return;
 		const Clock::time_point now = Clock::now();
 		subPending_[static_cast<std::size_t>(which)] += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - subLast_).count());
+		knav::measure::lastSub.store(static_cast<std::uint32_t>(which), std::memory_order_relaxed);
 		subLast_ = now;
 	}
+	void probe(Probe which, double value) noexcept { probePending_[static_cast<std::size_t>(which)] += value; }
+	bool probing() const noexcept { return ticksFile_ != nullptr; }
 	void end(std::uint64_t tick, std::uint32_t characters, std::uint32_t squads, std::uint64_t navQueries, std::uint64_t navNs);
 
 	const Totals& totals() const noexcept { return totals_; }
@@ -144,9 +166,11 @@ private:
 	std::uint64_t navQueries_ = 0;
 	std::uint64_t navNs_ = 0;
 	double jsonSeconds_ = 0.0;
+	double slowMs_ = 50.0; // KSIM_PROFILE_SLOW_MS: a tick over this prints one SLOWTICK line on stderr (0 = off)
 	Clock::time_point jsonLast_;
 	std::shared_ptr<std::FILE> ticksFile_; // KSIM_PROFILE_TICKS: one CSV row per tick (shared: a moved Simulation keeps it)
 	std::array<std::uint64_t, kSubs> subPending_{};
+	std::array<double, kProbes> probePending_{};
 	Clock::time_point subLast_;
 };
 

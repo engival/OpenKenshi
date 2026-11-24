@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <iostream>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -195,12 +196,15 @@ int main(int argc, char** argv)
 				rig.follow(members.back(), leader);
 			}
 			rig.drive(leader, heading);
-			std::vector<double> px, pz, last;
+			// facingMoving: the yaw at the last tick it moved. A step the wall room slides along a wall (k16.7.129) leaves the
+			// displacement off the facing, so the stopped member is held to its facing, not to its last displacement.
+			std::vector<double> px, pz, last, facingMoving;
 			for (const std::uint64_t id : members)
 			{
 				px.push_back(rig.at(id).x);
 				pz.push_back(rig.at(id).z);
 				last.push_back(rig.at(id).yaw);
+				facingMoving.push_back(rig.at(id).yaw);
 			}
 			double worst = 0.0;
 			int fast = 0;
@@ -222,7 +226,10 @@ int main(int argc, char** argv)
 						worst = std::max(worst, std::fabs(std::remainder(f.yaw - std::atan2(vx, vz), 2.0 * kPi)));
 					}
 					if (speed > 0.1)
+					{
 						last[i] = std::atan2(vx, vz);
+						facingMoving[i] = f.yaw;
+					}
 				}
 			}
 			std::cout << "steer: " << fast << " fast direct samples, worst |yaw - velocity| " << worst << " rad\n";
@@ -240,11 +247,14 @@ int main(int argc, char** argv)
 					px[i] = f.x;
 					pz[i] = f.z;
 					if (std::hypot(vx, vz) * 20.0 > 0.1)
+					{
 						last[i] = std::atan2(vx, vz);
+						facingMoving[i] = f.yaw;
+					}
 				}
 			}
 			for (std::size_t i = 0; i < members.size(); ++i)
-				test::require(std::fabs(std::remainder(rig.at(members[i]).yaw - last[i], 2.0 * kPi)) < 0.05,
+				test::require(std::fabs(std::remainder(rig.at(members[i]).yaw - facingMoving[i], 2.0 * kPi)) < 0.05,
 					"a member at its slot does not keep its last approach heading");
 		}
 
@@ -494,8 +504,8 @@ int main(int argc, char** argv)
 			test::require(rig.at(follower).followTarget == victim && rig.at(sneaker).sneak, "orders lost");
 		}
 		// The join range is the sight geometry, not a distance (PERCEPTION_LIVE.md; the retired proxy cut it at 880). 1000 units
-		// away on a clear day: a member facing the fight sees the attacker (R 1500, c near 1) and joins; one facing away does not
-		// (behind the cone), and one whose view is turned 70 degrees off needs c >= 0.67 (dot >= 0.74) so does not either.
+		// away on a clear day: a member facing the fight senses the victim (R 1500, c near 1) and joins; a member joins only while it
+		// senses the victim (below), so the geometry gates the ally, not the attacker (k16.6.495).
 		{
 			Rig rig(data, gd, nav);
 			const std::uint64_t victim = rig.spawn(kHubX, kHubZ);
@@ -508,11 +518,23 @@ int main(int argc, char** argv)
 			const std::uint64_t facing = rig.spawn(x, z, 0, true, toFight);
 			const std::uint64_t away = rig.spawn(x, z, 0, true, toFight + 3.14159265358979);
 			const std::uint64_t off = rig.spawn(x, z, 0, true, toFight + 1.22);
-			rig.run(100);
+			// A member joins an ally's fight when ITS OWN sensor holds the ally fresh (+0x38 / +0x39) and the attacker stands within 150 u of the
+			// ally (plan 13, rwh.228 s4; the attacker itself need not be in the member's records: the ally senses it fresh or I hold any record).
+			// So the sight geometry decides on the ALLY: a member that never senses the victim must not join, whatever way it faces
+			// (k16.6.783: this block required the member to be aware of the attacker, the gate k16.6.495 replaced).
+			std::map<std::uint64_t, bool> sensedVictim;
+			for (int t = 0; t < 100; ++t)
+			{
+				rig.run(1);
+				for (const std::uint64_t who : {facing, away, off})
+					for (const state::SightRecord& r : rig.at(who).sight)
+						if (r.target == victim && r.seen && (r.knownNow || r.sinceSensed <= 0.0))
+							sensedVictim[who] = true;
+			}
 			test::require(rig.at(enemy).target == victim, "the hostile did not pick the victim");
-			test::require(rig.at(facing).target == enemy, "a member facing the fight 1000 away did not join");
-			test::require(rig.at(away).target == 0, "a member facing away from the fight joined");
-			test::require(rig.at(off).target == 0, "a member 70 degrees off the fight (outside the reach there) joined");
+			test::require(sensedVictim[facing] && rig.at(facing).target == enemy, "a member facing the fight 1000 away did not join");
+			test::require(sensedVictim[away] || rig.at(away).target == 0, "a member that never sensed the victim joined (facing away)");
+			test::require(sensedVictim[off] || rig.at(off).target == 0, "a member that never sensed the victim joined (70 degrees off)");
 		}
 
 		// ---- SELF_PRESERVATION (goal 32; kinspect f5784bb + c1a305f): a player answers an attacker on ITSELF only

@@ -175,8 +175,13 @@ std::uint64_t pickupIntrudersTown273(const state::Fighter& self, int myTown, con
 // building" test. A stranger is a NEUTRAL bit record (include 2: hostiles are other goals' business), conscious, inside MY HOME
 // building and not of my faction (the neutral bit already excludes an ally; a same-faction body is skipped too). The goal keeps its
 // current hand (`current`) while that character is still inside my building; else the scan takes the first hit in list order.
-template <typename Lookup>
-std::uint64_t shooStrangers283(const state::Fighter& self, const sensor::Context& ctx, Lookup&& lookup, std::uint64_t current)
+// rwh.221 section 1: the finder is a building OCCUPANCY scan, not a sighting. After the keeper's sensor records, an NPC keeper (not
+// player-controlled) scans every character of the player faction (`eachPlayer(visit(id, body))`): interior == my home, conscious, not my
+// faction, not in an object; no range, movement or line-of-sight test. The only perception gate is a sneaking body (sneak flag, not in
+// combat), which needs a record of it (or to be my dialogue target) - `1405c9750` / `140855960`.
+template <typename Lookup, typename Roster>
+std::uint64_t shooStrangers283(const state::Fighter& self, const sensor::Context& ctx, Lookup&& lookup, Roster&& eachPlayer,
+	std::uint64_t current)
 {
 	if (self.homeBuilding == 0)
 		return 0; // I own no building: nothing to shoo from
@@ -200,6 +205,26 @@ std::uint64_t shooStrangers283(const state::Fighter& self, const sensor::Context
 				return; // 14032e2a0: never my own faction's
 			found = id;
 		});
+	if (found != 0 || self.playerControlled)
+		return found;
+	eachPlayer([&](std::uint64_t id, const state::Fighter& body)
+	{
+		if (found != 0 || body.dead || body.building != self.homeBuilding)
+			return;
+		if (body.unconscious || body.down || body.asleep || body.cageBuilding != 0 || body.carriedBy != 0)
+			return;
+		if (body.faction == self.faction)
+			return;
+		if (body.sneak && !perception::inCombat(body))
+		{
+			bool known = self.target == id;
+			for (const state::SightRecord& record : self.sight)
+				known = known || record.target == id;
+			if (!known)
+				return;
+		}
+		found = id;
+	});
 	return found;
 }
 
@@ -698,6 +723,21 @@ std::uint64_t protectAllies15(const state::Fighter& self, const sensor::Context&
 	return best;
 }
 
+// AI+0xbc (14059f3a0's precondition, rwh.228 s1.4): the observer has a record of a hostile, capable character, seen or only remembered. The scan
+// rebuilds the count; ours reads the records now.
+template <typename Lookup>
+bool hostileCapable(const state::Fighter& self, const sensor::Context& ctx, Lookup&& lookup)
+{
+	for (const state::SightRecord& record : self.sight)
+	{
+		const state::Fighter* other = lookup(record.target);
+		if (other != nullptr && !other->dead
+			&& sensor::matches(sensor::flags(ctx, self, *other, record), sensor::kHostile, sensor::kDead | sensor::kIncapacitated))
+			return true;
+	}
+	return false;
+}
+
 // 14059f3a0 ATTACK_ENEMIES 16: every hostile record seen or heard is a CANDIDATE; the shared picker 14059e300 scores the candidates and
 // chooses the one (dt24_16; ai_target_hand.md Q3: the resolver copies no hand - it buffers, and the picker picks). So this is the
 // resolver's admission of one candidate `id`, not a pick: the score and the one-per-tick choice stay in our picker stand-in
@@ -707,7 +747,7 @@ bool attackEnemies16(const state::Fighter& self, const sensor::Context& ctx, std
 {
 	const state::SightRecord* record = perception::find(self, id);
 	const state::Fighter* other = lookup(id);
-	if (record == nullptr || other == nullptr || other->dead || !perception::aware(self, id))
+	if (record == nullptr || other == nullptr || other->dead || !perception::sensedNow(self, id))
 		return false; // FRESH (rwh.212, 14059f3a0): +0x38 || +0x39
 	return sensor::matches(sensor::flags(ctx, self, *other, *record), sensor::kHostile,
 		sensor::kIncapacitated | sensor::kInObject);
@@ -734,13 +774,32 @@ bool attackEnemiesAndNeutrals21(const state::Fighter& self, const sensor::Contex
 // 140599f30's range (dt24_34): |me - t|^2 below 42467328 (6517 u).
 inline constexpr double kTroubleRelevanceD2 = 42467328.0;
 
-// 14099baa0 ATTACK_TROUBLE_MAKERS 34 (dt24_34; batch 2): a troublemaker in MY town. No candidate when I stand in no town - the exe
-// returns 0 when its town is 0 (the town test replaces 16's AI+0xbc gate). Two sensor lists (4 hostiles, 2 neutrals with the class
-// rules), then the accept path's town test, the criminal test (its goal aggression: we read it running an attack task, or my squad's
-// short-term AGGRESSOR tag on its squad) and the admittance rules of 14099b820 (never a slaver; the place branches are not modelled,
-// UNSURE). A remembered record counts: this resolver has no seen/heard test (s81). The exe's Town object is not modelled: the caller
-// supplies `hasTown` and `sameTown(other)` (the town circle / walled region / building equality, and the live-observed join area -
-// OURS, BAR_FIGHT_LOOP.md BQ14; task BZ's terms). `tagged` is my squad's AGGRESSOR test against a squad key.
+// `status+0xac` > 0 (rwh313 / s81 s3): the aggression weight of the character's CURRENT GOAL, rewritten every light tick. +1.0 for the
+// ordered / unprovoked attack goals (4, 61, 227, 228, 235, 146, 131, 244, 262, 263, 266), +0.5 for 13; 0 for 16, 21, 34, 143, 15.
+// Our stand-in: one of those goals. UNSURE: the weight of task 5 (the player's focus-attack order) is not read (kenshi-rwh.314, live). It
+// is taken as 0: rwh82 / rwh83 live show 34 never firing on a player who hits a patron, which only G2 can explain (rwh313 s3 B).
+inline bool goalAggression(const state::Fighter& f) noexcept
+{
+	switch (f.combatGoal)
+	{
+		case 4: case 13: case 61: case 131: case 146: case 227: case 228: case 235: case 244: case 262: case 263: case 266:
+			return true;
+		default:
+			return false;
+	}
+}
+
+// 14099baa0 ATTACK_TROUBLE_MAKERS 34 (dt24_34 corrected by rwh313; batch 2): a troublemaker in MY town. No candidate when I stand in no
+// town (the exe returns 0 when its town is 0). Two sensor lists. List A (hostile records): accepted on the goal aggression `ac > 0` or my
+// squad's AGGRESSOR tag, plus relevance (140599f30) and the same Town - the admission is NOT run. List B (neutral records, with the class
+// rules): the same Town, then the admission 14099b820 (rwh313 s1, G1-G8): G1 not a slaver; G2 `ac > 0` or tag 2, or (the running task's
+// weight a0 > 0 and the class is BANDIT); G3 relevance; G4-G5 `t` has a victim V it is actively on; G6 V is my ally -> accept; G7 V is no
+// slaver / bandit, has no bounty from my faction and no pending crime: accept when `t`'s faction is flagged (G7a / G7b) or V is not my
+// enemy and V is not class 8 / 6. The "place" is the candidate's VICTIM, never a building or a town (rwh313 s0).
+// UNSURE: a0 = "it holds a target" (our attack task stand-in); V's bounty by my faction and its pending crime are not in the combat
+// state (read as none, so V counts as innocent); G7a / G7b (the attacker faction's flags) are not modelled; class 6 is unnamed in the exe;
+// `t vf+0x248` (animal) is not modelled. The caller supplies `hasTown` and `sameTown(other)` (the Town object is not modelled) and
+// `tagged` = my squad's AGGRESSOR test against a squad key.
 template <typename Lookup, typename SameTown, typename Tagged>
 bool troubleMaker34(const state::Fighter& self, const sensor::Context& ctx, std::uint64_t id, Lookup&& lookup, std::uint64_t myId,
 	bool hasTown, SameTown&& sameTown, Tagged&& tagged)
@@ -754,9 +813,10 @@ bool troubleMaker34(const state::Fighter& self, const sensor::Context& ctx, std:
 	const std::uint32_t bits = sensor::flags(ctx, self, *other, *record);
 	if ((bits & (sensor::kHostile | sensor::kNeutral)) == 0 || (bits & sensor::kIncapacitated) != 0)
 		return false;
+	const bool listB = (bits & sensor::kHostile) == 0;
 	// List B's class rules: a diplomat, a trader or a law enforcer is never a troublemaker; a military one only when it is neither mine
 	// nor an ally's (the exe's myFaction+0xf0 faction set is not modelled: `sensor::ally` stands in, OURS).
-	if ((bits & sensor::kNeutral) != 0)
+	if (listB)
 	{
 		if (other->npcClass == crime::kClassDiplomat || other->npcClass == crime::kClassTrader || other->npcClass == crime::kClassLaw)
 			return false;
@@ -766,20 +826,29 @@ bool troubleMaker34(const state::Fighter& self, const sensor::Context& ctx, std:
 	// The accept path: its town is mine (the exe re-checks getTown(t) == myTown after the lists).
 	if (!sameTown(*other))
 		return false;
-	// Criminal (the goal aggression > 0, our stand-in = it runs an attack task, or the squad tag 2) and relevant (140599f30: its town
-	// is my home place, it is within 6517 u, or it is already fighting me).
-	// A defender (32 SELF_PRESERVATION, 143 PROTECT_OWN_SQUAD, 15 PROTECT_ALLIES) standing inside MY home building is no troublemaker (k16.6.85):
-	// a bar patron answering the player's attack in the bar draws no 34 from the crew (rwh.82), while a defender elsewhere (the Dust Bandits
-	// on the street) and an attacker that came in (Starving Bandits on 16 / 21) are picked as before (bar_fight_loop step 2, bq14). OURS / UNSURE: this
-	// stands in for the exe's place branch of 14099b820 (the place the target stands in, dt24_34.md), not decoded: kenshi-k16.6.94.
-	const bool defending = self.homeBuilding != 0 && other->building == self.homeBuilding
-		&& (other->combatGoal == routines::task::SelfPreservation || other->combatGoal == routines::task::ProtectOwnSquad
-			|| other->combatGoal == routines::task::ProtectAllies || other->combatGoal == routines::task::ProtectAlliesStayInTown);
-	const bool criminal = (other->target != 0 && !defending) || tagged(other->squad);
+	// G3 relevance (140599f30): its town is my home place, it is within 6517 u, or it is already fighting me.
 	const double dx = other->x - self.x;
 	const double dz = other->z - self.z;
-	const bool relevant = dx * dx + dz * dz < kTroubleRelevanceD2 || other->target == myId;
-	return criminal && relevant;
+	if (dx * dx + dz * dz >= kTroubleRelevanceD2 && other->target != myId)
+		return false;
+	const bool marked = goalAggression(*other) || tagged(other->squad);
+	if (!listB)
+		return marked;
+	// G2
+	if (!marked && !(other->target != 0 && other->npcClass == crime::kClassBandit))
+		return false;
+	// G4 / G5: the victim, and that the candidate is on it now (a living target it holds).
+	const state::Fighter* victim = other->target != 0 ? lookup(other->target) : nullptr;
+	if (victim == nullptr || victim->dead)
+		return false;
+	// G6: I defend my ally's attacker-victim.
+	if (sensor::ally(ctx, self, *victim))
+		return true;
+	// G7: a victim that is a slaver / bandit is no one to defend. (bounty of V for my faction, V's pending crime: not modelled.)
+	if (victim->npcClass == crime::kClassSlaver || victim->npcClass == crime::kClassBandit)
+		return false;
+	// G7c: V does not count me as an enemy, and V is not class 6 (unnamed).
+	return !sensor::enemy(ctx, *victim, self) && victim->npcClass != crime::kClassSlave;
 }
 
 // 14059fd70 TERRITORIAL_AGGRESSION_BUT_DONT_LEAVE_HOME 144 (dt24_144; batch 2): hostiles only, a remembered record counts (no
@@ -1821,16 +1890,16 @@ std::uint64_t foodOnGround259(const state::Fighter& self, std::span<const Ground
 }
 
 // 277 ANIMAL_FETCH_A_LIMB (1409993a0): the nearest loose limb (`item function` 0x11) within the 100-unit query, the 200-unit (40000.0
-// squared) cap on top. The hunger gate (vf+0x398 against 0.9) and the cooldown (AI+0x318) are the caller's `allowed`: this runs only
-// when the animal is not full. 0 = none.
-inline std::uint64_t limb277(const state::Fighter& self, std::span<const GroundThing> grounds, bool allowed)
+// squared) cap on top. No cooldown and no hunger gate (rwh.203: the 0.9 is the animal's age fraction, AI+0x318 the generic per-AI
+// throttle). 0 = none.
+inline std::uint64_t limb277(const state::Fighter& self, std::span<const GroundThing> grounds)
 {
 	std::uint64_t found = 0;
 	double best = kGroundFoodReach * kGroundFoodReach;
 	for (const GroundThing& thing : grounds)
 	{
 		const double d = (thing.x - self.x) * (thing.x - self.x) + (thing.z - self.z) * (thing.z - self.z);
-		if (allowed && thing.function == kItemFunctionLimb && d <= best && d <= 40000.0)
+		if (thing.function == kItemFunctionLimb && d <= best && d <= 40000.0)
 		{
 			best = d;
 			found = thing.id;

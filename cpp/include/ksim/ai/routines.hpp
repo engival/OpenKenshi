@@ -38,6 +38,10 @@ inline constexpr std::uint64_t kResidentIntervalTicks = 20;
 // so that a save taken later loads to the straight run (the Hub's squads promote within ~40 ticks of NEW_GAME).
 inline constexpr std::uint64_t kArriveTicks = 100;
 inline constexpr int kResidentSquadsPerPass = 32;
+// Promotions built per tick (k16.6.614): a region crossing is not one 100 ms tick. At most this many squads, and no more once this many members are built
+// (a squad is always finished: at least one a tick). A pass's queue is chosen afresh at the next pass.
+inline constexpr std::size_t kPromotesPerTick = 4;
+inline constexpr std::uint64_t kPromoteMembersPerTick = 8;
 inline constexpr double kResidentRing = 6.0;
 // Stragglers (demoteWorldSquad, k16.6.53): a living member farther than kStragglerRadius (ten rings, the follow leash of 60 u) from its squad's leader at demotion becomes a token
 // of its own; its token walks back to the parent and merges within kStragglerMerge (half the radius, so a merged member is not a straggler again).
@@ -151,7 +155,7 @@ inline constexpr std::uint16_t AttackSlavemasterEnemies = 41; // ATTACK_ENEMIES_
 inline constexpr std::uint16_t FirstAid = 58; // JOB_MEDIC (task CG): the goal; its plan is 25 FIRST_AID_ORDER -> Task_FirstAid
 inline constexpr std::uint16_t PatrolTown = 36;
 inline constexpr std::uint16_t RunAroundTown = 216; // RUN_AROUND_TOWN_LOOKING_FOR_PEOPLE (task patrol, dt24_36 section 3)
-inline constexpr std::uint16_t ProtectAlliesStayInTown = 288; // PROTECT_ALLIES_STAY_IN_TOWN: 15 inside the home ring (the leash of 144)
+inline constexpr std::uint16_t ProtectAlliesStayInTown = 288; // PROTECT_ALLIES_STAY_IN_TOWN: goal 15's resolver, no town leash (rwh.215); the attacker within 150 u of the ally
 inline constexpr std::uint16_t ProtectAllies = 15; // PROTECT_ALLIES (task CF: the package's join goal)
 inline constexpr std::uint16_t AttackEnemies = 16; // ATTACK_ENEMIES (task CF)
 inline constexpr std::uint16_t AttackEnemiesAndNeutrals = 21; // MQ14 path 2: a squad that attacks the neutral squads it sees
@@ -161,6 +165,11 @@ inline constexpr std::uint16_t StaticGuardBuilding = 38; // STAND_AT_GUARD_NODE_
 inline constexpr std::uint16_t StaticGuardBuildingIndoors = 268; // ..._INDOORS_ONLY: 38's resolver, the node query's indoors flag (dt24_38 section 4)
 inline constexpr std::uint16_t NotBeUnarmed = 42; // DON'T BE UNARMED (dt25 section 2): the rearm loop 8 FIND_WEAPON -> 6 EQUIP
 inline constexpr std::uint16_t StayInHome = 43;
+inline constexpr std::uint16_t WanderTown = 37; // WANDER_TOWN: goal atNode (a general node of the town)
+inline constexpr std::uint16_t StandAtGeneralNode = 47; // STAND_AT_GENERAL_NODE: finder 14099f280, mode 1 on the home building
+inline constexpr std::uint16_t StandAtNode = 51; // STAND_AT_NODE (Task_StandAtNode): consumes the atNode resolver's node
+// The goals that stand on a general node of the town node DB (Task_StandAtNode, rwh.55 section 5).
+inline constexpr bool standsAtNode(std::uint16_t goal) noexcept { return goal == WanderTown || goal == StandAtGeneralNode || goal == StandAtNode; }
 inline constexpr std::uint16_t SitOnThrone = 255; // SIT_ON_THRONE (dt24_43 section 2c): 43's resolver on the throne slot of my home building
 inline constexpr std::uint16_t RunAwayHometown = 127; // RUN_AWAY_HOMETOWN (dt24_128): Task_GoHomeTownFast, effect isAtHomeTown
 inline constexpr std::uint16_t RetreatHometown = 128; // RETREAT_HOMETOWN (dt24_128): Task_GoHomeTown, a walk to the home town
@@ -177,6 +186,7 @@ inline constexpr std::uint16_t StandUp = 28; // STAND_UP (Task_UnCrouch): goal i
 inline constexpr std::uint16_t GoHomeBuilding = 19; // GO_HOMEBUILDING: finder 14099f370, goal isAtLocation, effect isAtHome
 inline constexpr std::uint16_t Wanderer = 24; // WANDERER: finder 140998040, goal isAtLocation, effect atATown
 inline constexpr std::uint16_t HoldPosition = 30; // HOLD_POSITION (Task_Blank): the plan's hand is the place, goal isAtLocation
+inline constexpr std::uint16_t RunAwayForced = 280; // RUN_AWAY_FORCED (Task_Runaway, DA_RUN_AWAY): an order-named Routine (individual_goals.cpp)
 inline constexpr std::uint16_t StandStill = 62; // STAND_STILL (Task_StandStill 140336ba0): the tick only stops the movement host, no finish flag
 inline constexpr std::uint16_t SeekAndTalk = 102; // SEEK_AND_TALK_AND_SEND_SIGNAL (Task_TalktoPlayer): walk to the target, then the dialogue event
 inline constexpr std::uint16_t SendDialogue = 159; // SEND_DIALOGUE_SIGNAL (Task_TalktoPlayer): the same class as 102 and 161
@@ -538,8 +548,21 @@ inline constexpr std::int32_t kFunctionBed = 6;
 inline constexpr std::int32_t kFunctionCage = 8; // a cage piece of a Slave Shop, Police Station, Prison or Faction HQ layout (T3e2)
 inline constexpr std::int32_t kFunctionCounter = 9;
 inline constexpr std::int32_t kFunctionTable = 16;
+inline constexpr std::int32_t kFunctionMine = 1;
+inline constexpr std::int32_t kFunctionMineNatural = 27; // getFunctionId reads a factionless mine as 27 (rwh.230 section 1)
 inline constexpr std::int32_t kFunctionChair = 17;
 inline constexpr std::int32_t kFunctionThrone = 24; // "throne chair": 1 << 24 is 255's finder mask 0x1000000 (dt24_43 section 2c)
+// The exe's BuildingFinder_SpecialFunction accept tests `(1 << function(part)) & mask` (rwh.230: the goal rows' 0x2049a / 0x41a / 0x1000000 are
+// bitmasks over the BuildingFunction enum, not ids). The goal rows' masks:
+inline constexpr std::uint32_t kMaskGoal43 = 0x2049a; // {1 mine, 3 research, 4 refinery, 7 training, 10 crafting, 17 chair}: the home interior's Indoors slot
+inline constexpr std::uint32_t kMaskGoal190 = 0x41a; // 189 / 190 {1, 3, 4, 10}
+inline constexpr std::uint32_t kMaskGoal255 = 0x1000000; // {24 throne}
+inline constexpr std::uint32_t kMaskGoal275 = 0x1020080; // {7, 17, 24}
+constexpr bool functionInMask(std::uint32_t mask, std::int32_t function) noexcept
+{
+	return function >= 0 && function < 32 && ((mask >> function) & 1u) != 0;
+}
+inline constexpr std::uint32_t kMaskMachine = kMaskGoal43 & ~(std::uint32_t{1} << kFunctionChair); // the non-chair bits of 43's mask
 inline constexpr std::int32_t kFunctionTraining = 7; // a Training Dummy's functionality (build21_static section 5: "function 7")
 inline constexpr std::int32_t kFunctionGunTurret = 12; // "Gun turret": the building factory's TurretBuilding case (dt24_turret_finder section 2)
 // The disposal machine (dt24_patrol_town_pot section 3): 137's pot finder (`building vf+0x2f0` 0xb). "Cooking pot" 2678 and "Corpse
@@ -570,8 +593,13 @@ enum class SiteKind : std::uint8_t
 	BarSeat = 14, // a chair or stool of a table of a bar (a ResidentData::seatsOfTable entry: object = the table's key, slot = the seat's index); a RELAX 214 member's own claim, one holder per seat; never in the SiteIndex
 	Seat = 13, // a chair or stool of a layout that serves no table (kenshi-k16.6.30): where a STAY_IN_HOME 43 resident of the building sits; real pieces only
 	ShopkeeperNode = 15, // a `Node Shopkeeper` marker (node type 0) of a layout: where the shopkeeper stands, behind the counter (kenshi-k16.6.106); real pieces only
+	Machine = 17, // a non-chair piece of function 1 / 3 / 4 / 7 / 10 (owned mine, research, refinery, training, crafting): where a 43 holder operates it (rwh.279); real pieces only
+	GeneralNode = 16, // an `is node` marker of node type 1 (the town node DB's general / wander node, rwh.55 section 2): 37 / 47 / 51 stand on it, facing its direction; real pieces only
 };
-inline constexpr int kSiteKindCount = 16;
+inline constexpr int kSiteKindCount = 18;
+
+// A site a STAY_IN_HOME (43) holder takes at its home: a chair (sits) or a machine piece (stands at its approach point and operates).
+inline constexpr bool isHomeSlot(SiteKind kind) noexcept { return kind == SiteKind::Seat || kind == SiteKind::Machine; }
 
 // One usable thing. `object` is the owning building's key; `slot` the ordinal within (building, kind), real and synthetic alike.
 struct Site
@@ -599,6 +627,10 @@ bool isShopkeeperNode(const kdata::Record& building);
 // (dt24_38 section 3; task CH group 3); the data names 1 the production function (mines, farms) and 3 research, so the set is
 // taken as decoded (UNSURE names). Empty: the building has no functionality (an ordinary house).
 std::vector<std::int32_t> buildingFunctions(const kdata::GameData& data, const kdata::Record& building);
+
+// The function (1 mine, 3 research, 4 refinery, 7 training, 10 crafting) of a BUILDING record's functionality ref that goal 43's mask accepts
+// and that is no chair: what the finder offers as a SiteKind::Machine (rwh.230 / rwh.279). 0: the piece is none.
+std::int32_t machineFunction(const kdata::GameData& data, const kdata::Record& building);
 
 // A turret BUILDING: its `functionality` ref resolves to a BUILDING_FUNCTIONALITY row with int `function` == 12 ("Gun turret"; 13
 // BUILDING rows in the merged data). The exe's TurretBuilding class is chosen by that same function id at load (dt24_turret_finder
@@ -646,10 +678,22 @@ public:
 	// The layouts of one building, sid order.
 	std::vector<const Layout*> forBuilding(std::string_view buildingSid) const;
 	std::size_t size() const noexcept { return layouts_.size(); }
+	const std::vector<Layout>& all() const noexcept { return layouts_; }
 
 private:
 	std::vector<Layout> layouts_;
 	std::unordered_map<std::string, std::size_t> index_;
+};
+
+// One use node of a bed, with the pose a sleeper on it takes (kinspect bed_seat_pose.md 2: the nearest unoccupied node, facing
+// node -X). Piece: layout frame, `y` the node's own height; SiteEntry: world, `y` its world height.
+struct BedNode
+{
+	double x = 0.0;
+	double z = 0.0;
+	double y = 0.0;
+	double faceX = 0.0;
+	double faceZ = 1.0;
 };
 
 // A piece already classified, building-local.
@@ -668,6 +712,7 @@ struct Piece
 	// A bed's use node height over `y` (layout frame, rotated by the piece): the original lays the body on the node itself, a few
 	// units above the floor (kinspect bed_seat_pose.md); the walk still aims at the floor point.
 	double nodeY = 0.0;
+	std::vector<BedNode> nodes{}; // a bed's every use node (a sleeper takes the one nearest it); `x`, `z` are the default one
 	// A cage's occupant position: the cage's own centre (the layout piece origin). `x`, `z` are the use node beside it, the walkers' spot
 	// (k16.6.370: the prisoner was put at the node and stood outside the bars).
 	bool hasIn = false;
@@ -695,6 +740,7 @@ std::string functionClip(const kdata::GameData& data, const kdata::Record& build
 inline constexpr std::string_view kClipSleepInBed = "sleepinbed"; // a bed without its own clip (Bed, Old Bed: rebirth.mod adds it)
 inline constexpr std::string_view kClipSleepOnFloor = "sleeponfloor"; // a synthetic bed: no furniture, the original's floor sleeping
 inline constexpr std::string_view kClipSittingChair = "sitting chair";
+inline constexpr std::string_view kClipOperateMachine = "stonemine"; // Task_OperateMachine's default animation when the part names none (rwh.279)
 inline constexpr std::string_view kClipSittingIdle = "sitting idle"; // the floor-sit of a STAY_IN_HOME resident with no chair (ANIMATION 2623-gamedata.base; male and female skeletons)
 
 // A point of a layout piece's own frame in the layout's frame (building-local), xz: the piece position plus its rotation of `local`.
@@ -742,6 +788,7 @@ struct SiteEntry
 	double nodeY = 0.0;
 	double faceX = 0.0; // a real bed's pose facing, world (Piece::faceX)
 	double faceZ = 1.0;
+	std::vector<BedNode> nodes{}; // a real bed's use nodes, world (Piece::nodes)
 	std::string clip{}; // a real bed's clip ("" otherwise)
 	std::string record{}; // a real bed's furniture BUILDING record ("" for synthetic sites)
 	bool hasIn = false; // a cage: the occupant stands at (inX, inZ), the cage's centre, not at the walk spot (x, z)
@@ -750,6 +797,10 @@ struct SiteEntry
 	double occupantX() const noexcept { return hasIn ? inX : x; }
 	double occupantZ() const noexcept { return hasIn ? inZ : z; }
 };
+
+// The use node of a real bed a sleeper at (x, z) takes: the nearest of its nodes (bed_seat_pose.md 2); the bed's own point and facing
+// when it lists none.
+BedNode bedNodeNear(const SiteEntry& bed, double x, double z) noexcept;
 
 struct BuildingSites
 {

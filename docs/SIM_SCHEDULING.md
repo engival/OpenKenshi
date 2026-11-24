@@ -228,7 +228,8 @@ none of the clearance search. So, in order:
 2. O: one snapshot per catch-up batch at speed > 1 (wire proposal to the client lead first).
 3. Measure, on a quiet box: tick mean and p99 at 1x and 5x after 1-2; think vs act share inside `cs_update`; the route
    node counts and found / not found (5E.1); the one-off islands count (section 6). **Gate:** if the think share is
-   under about 0.5 ms, A is not worth its refactor of `combat.cpp`; then E and C are the work.
+   under about 0.5 ms, A is not worth its refactor of `combat.cpp`; then E and C are the work. Measured (k16.6.305, loaded box,
+   PROFILING.md "Scheduling measurements"): think 1.0-1.35 ms at Heft (above the gate), 0.12 ms on the long x5 walk (below).
 4. E.1-E.2 (route pre-check / negative cache, no per-tick re-queries); E.3 only if the spikes remain.
 5. A and B (one think slot, the scorer's minimum period, wakes), after the oracle's answer on where the exe's combat
    class AI runs.

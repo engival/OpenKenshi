@@ -324,8 +324,8 @@ int main(int argc, char** argv)
 			const double attachSeconds = (attachTick + 1) * kTickSeconds;
 			const double doneSeconds = (doneTick + 1) * kTickSeconds;
 			test::require(attachTick >= 0 && doneTick >= 0, "the lift did not attach and finish");
-			test::require(std::fabs(attachSeconds - kLiftAttachSeconds) <= kTickSeconds + 1e-9, "the body attached at " + std::to_string(attachSeconds) + " s, not 0.49");
-			test::require(std::fabs(doneSeconds - kLiftSeconds) <= kTickSeconds + 1e-9, "the lift took " + std::to_string(doneSeconds) + " s, not 1.17");
+			test::require(std::fabs(attachSeconds - kLiftAttachSeconds) <= kTickSeconds + 1e-9, "the body attached at " + std::to_string(attachSeconds) + " s, not " + std::to_string(kLiftAttachSeconds));
+			test::require(std::fabs(doneSeconds - kLiftSeconds) <= kTickSeconds + 1e-9, "the lift took " + std::to_string(doneSeconds) + " s, not " + std::to_string(kLiftSeconds));
 			test::require(rig.doneEvent(player, kCarry)->result == InteractEvent::kDone && rig.doneEvent(player, kCarry)->target == servant, "event 13 for the lift");
 			test::require(rig.carryOf(player)->phase == 1 && rig.f(player).carrying == servant && rig.f(servant).carriedBy == player, "not carrying after the lift");
 			std::cout << "lift: attached at " << attachSeconds << " s, done at " << doneSeconds << " s\n";
@@ -381,7 +381,7 @@ int main(int argc, char** argv)
 			test::require(std::fabs(slow - expectedSlow) < 1e-6 && slow < topSpeed, "encumbered run speed " + std::to_string(slow) + " vs " + std::to_string(expectedSlow));
 			std::cout << "encumbrance: strength 10 ratio " << expectedRatio << ", run speed " << slow << " (unladen " << topSpeed << ")\n";
 
-			// Put down: 1.00 s, then it lies where the carrier stands, KO'd for at least 3 s (a non-ally).
+			// Put down: 1.973 s, then it lies where the carrier stands, KO'd for at least 3 s (a non-ally).
 			rig.f(servant).koTimer = 1.0; // shorter than the forced timer: only the put-down can keep it down
 			rig.f(player).clearRoute();
 			rig.tick(2);
@@ -396,7 +396,7 @@ int main(int argc, char** argv)
 				++putTicks;
 			}
 			const double putSeconds = (putTicks + 1) * kTickSeconds;
-			test::require(std::fabs(putSeconds - kPutDownSeconds) <= kTickSeconds + 1e-9, "the put-down took " + std::to_string(putSeconds) + " s, not 1.00");
+			test::require(std::fabs(putSeconds - kPutDownSeconds) <= kTickSeconds + 1e-9, "the put-down took " + std::to_string(putSeconds) + " s, not " + std::to_string(kPutDownSeconds));
 			test::require(rig.f(player).carrying == 0 && rig.carryOf(player) == nullptr && rig.f(player).encumbrance == 1.0, "the carrier is still marked as carrying");
 			test::require(dist(rig.f(player), rig.f(servant)) <= CombatArena::kSlideCap + 1e-9, "the put-down body is not at the carrier: " + std::to_string(dist(rig.f(player), rig.f(servant))));
 			test::require(rig.f(servant).unconscious && rig.f(servant).koTimer >= kForcedKoMinSeconds, "no forced KO timer of 3 s for a non-ally: " + std::to_string(rig.f(servant).koTimer));
@@ -1127,14 +1127,15 @@ int main(int argc, char** argv)
 			std::cout << "lift out of a cage: slave freeing on the lifter, no escape record on the carried\n";
 		}
 
-		// ---- ds/kidnap: a lift of a non-slave sets the captive flag; setting it down writes crime 15 (1405ce1e0); a slave is not captive ----
+		// ---- ds/kidnap: a plain lift sets no captive flag (the exe: only Task_Kidnapping, k16.6.669); a captive set down writes crime 15 (1405ce1e0) ----
 		{
 			Rig rig(gd, data, nav, order);
 			rig.knockOut(rig.duel.enemy);
 			rig.entityOf(rig.duel.enemy).set<state::Allegiance>(state::Allegiance{"kidnap-victim-test"});
 			rig.interact(rig.duel.player, rig.duel.enemy, kCarry);
 			rig.until([&] { return rig.carryOf(rig.duel.player) != nullptr && rig.carryOf(rig.duel.player)->phase == 1; }, 400);
-			test::require(rig.f(rig.duel.enemy).carriedBy == rig.duel.player && rig.f(rig.duel.enemy).captive, "the lift of a non-slave did not set the captive flag");
+			test::require(rig.f(rig.duel.enemy).carriedBy == rig.duel.player && !rig.f(rig.duel.enemy).captive, "a plain lift of a non-slave set the captive flag");
+			rig.f(rig.duel.enemy).captive = true; // as order 246 would have: the put-down below is the captive's
 			test::require(rig.entityOf(rig.duel.player).get<state::CrimeRecord>() == nullptr, "carrying alone wrote a crime (no witness here)");
 			rig.interact(rig.duel.player, rig.duel.enemy, kPutDown);
 			rig.until([&] { return rig.f(rig.duel.enemy).carriedBy == 0; }, 100);
@@ -1150,7 +1151,7 @@ int main(int argc, char** argv)
 			slave.interact(slave.duel.player, slave.duel.enemy, kCarry);
 			slave.until([&] { return slave.carryOf(slave.duel.player) != nullptr && slave.carryOf(slave.duel.player)->phase == 1; }, 400);
 			test::require(slave.f(slave.duel.enemy).carriedBy == slave.duel.player && !slave.f(slave.duel.enemy).captive, "a carried slave got the captive flag");
-			std::cout << "captive flag: set on a non-slave lift, kidnapping on the put-down, not set for a slave\n";
+			std::cout << "captive flag: not set on a plain lift, kidnapping on the put-down of a captive, not set for a slave\n";
 		}
 
 		// ---- k16.6.162: the lift gate (Task_LiftSomething::vf1 14034f990): a RACE with carriable false is refused silently ----
@@ -1188,7 +1189,8 @@ int main(int argc, char** argv)
 				rig.entityOf(rig.duel.player).set<state::Allegiance>(state::Allegiance{carrierSide});
 				rig.interact(rig.duel.player, rig.duel.enemy, kCarry);
 				rig.until([&] { return rig.carryOf(rig.duel.player) != nullptr && rig.carryOf(rig.duel.player)->phase == 1; }, 400);
-				test::require(rig.f(rig.duel.enemy).carriedBy == rig.duel.player && rig.f(rig.duel.enemy).captive, "the captive was not lifted");
+				test::require(rig.f(rig.duel.enemy).carriedBy == rig.duel.player, "the captive was not lifted");
+				rig.f(rig.duel.enemy).captive = true; // as order 246 would have set it
 				test::require(perception::find(rig.f(rig.duel.enemy), rig.duel.player) == nullptr, "a record existed before the put-down");
 			};
 			{

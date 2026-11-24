@@ -43,6 +43,9 @@ constexpr double kAreaZ = 2639.0;
 constexpr double kAreaRadius = 70.0;
 constexpr double kUpperY = 1646.0;
 constexpr double kMaxStep = 4.0;
+// The step a fighter turns unconscious or dead is a placement, not movement (user 2026-11-22, kenshi-9zwr: "a knockout ground position is NOT movement"): the
+// body is put at its rest point, kMaxStep + the knockback + the downhill slide cap (CombatArena::rollRagdoll).
+constexpr double kKoPlaceStep = 4.0 + 3.0 + 8.0;
 constexpr double kMaxRise = 1.5;
 // The upper floor's own slope; the lower floor is 60 u or more under it.
 constexpr double kLevelSlack = 8.0;
@@ -126,6 +129,11 @@ struct Rig
 		return 0.0;
 	}
 
+	static bool koStep(const state::Fighter& from, const state::Fighter& to)
+	{
+		return (to.unconscious && !from.unconscious) || (to.dead && !from.dead);
+	}
+
 	// A step along one continuous mesh surface is not a jump however steep it is: the mesh height at the step's midpoint lies within 0.5 u of the
 	// midpoint of the two heights (the walker is on a stair or ramp polygon). Seen: Hub bar upper floor, the stair at about (-51140, 2620) (seed 6, step 831)
 	// climbs 1.4 u per u (a 55 degree ramp: y 1644.2 -> 1642.6 over 1.3 u), which the furniture clearance of k16.7.89 now puts a fighter on.
@@ -170,7 +178,7 @@ struct Rig
 				what = "off the mesh";
 			else if (std::fabs(f.y - wall.y) > slack && !stairFromUpper(i, was, f))
 				what = "on another level (y " + std::to_string(f.y) + ", the upper floor is " + std::to_string(wall.y) + ")";
-			else if (moved > kMaxStep + pushed(ids[i]))
+			else if (moved > (koStep(was, f) ? kKoPlaceStep : kMaxStep + pushed(ids[i])))
 				what = "teleported " + std::to_string(moved) + " u in one step";
 			else if (std::fabs(f.y - was.y) > maxRise && !continuousSurface(was, f))
 				what = "jumped " + std::to_string(f.y - was.y) + " in height in one step";

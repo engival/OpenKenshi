@@ -119,6 +119,7 @@
 
 #include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
+#include "kworld/roadfixups.hpp"
 #include "ksim/dev/build_paths.hpp"
 
 #include <atomic>
@@ -382,6 +383,8 @@ int parseServerArgs(int argc, char** argv, ServerConfig& options)
 				options.scenarioFile = argv[++i];
 			else if (arg == "--scenarios" && hasValue)
 				options.scenarios = argv[++i];
+			else if (arg == "--idle-stride" && hasValue)
+				options.idleStride = std::max(1, std::stoi(argv[++i]));
 			else if (arg == "--combat-retarget-hold" && hasValue)
 			{
 				options.retargetHold = std::stod(argv[++i]);
@@ -554,6 +557,8 @@ int runServer(const ServerConfig& options, std::atomic<bool>& stop)
 		using Wall = std::chrono::steady_clock;
 		const auto start = Wall::now();
 		const auto seconds = [&]() { return std::chrono::duration<double>(Wall::now() - start).count(); };
+		double lastMark = 0; // the startup stage lines print the time since the previous one as well as the total
+		const auto lap = [&]() { const double now = seconds(); const double delta = now - lastMark; lastMark = now; return delta; };
 		// --data as given; else $KENSHI_DATA, the build's baked KENSHI_DATA (dev and test builds) and the game's default installs
 		// (kdata/datadir.hpp, kenshi-k16.6.421); no hit prints every place tried.
 		std::string dataDir = options.data;
@@ -593,15 +598,19 @@ int runServer(const ServerConfig& options, std::atomic<bool>& stop)
 		context.scenariosDir = options.scenarios; // task CE: SCENARIO_LIST and SCENARIO_LOAD read it
 		if (!options.scenarios.empty())
 			err << "ksim_server: scenarios " << options.scenarios << "\n";
-		context.dataHash = simlink::dataHash(order);
+		context.dataHash = kworld::foldRoadFixups(simlink::dataHash(order), kworld::defaultRoadFixupsPath()); // the road fixup table is world data too
 		context.squadLimit = options.squadLimit;
 		context.dialogueFreeze = options.dialogueFreeze;
 		err << "ksim_server: dialogue pause " << (options.dialogueFreeze ? "freeze (--dialogue-pause freeze: the tick stops while a menu is open)" : "hold (default: real time, the two parties held)") << "\n";
 		err << "ksim_server: data hash " << std::hex << context.dataHash << std::dec << " ("
-			<< order.files.size() << " files, " << seconds() << " s)\n";
+			<< order.files.size() << " files, " << seconds() << " s; stage " << lap() << " s)\n";
 
 		ksim::SpawnOptions spawnOptions;
 		spawnOptions.seed = options.seed;
+		spawnOptions.stageHook = [&](const std::string& stage)
+		{
+			err << "ksim_server: " << stage << " (stage " << lap() << " s, " << seconds() << " s since start)\n";
+		};
 		Simulation sim = options.noWorld ? Simulation::load(dataDir, options.seed)
 			: Simulation::newGame(dataDir, order, spawnOptions);
 		if (options.noWorld)
@@ -657,11 +666,13 @@ int runServer(const ServerConfig& options, std::atomic<bool>& stop)
 		if (options.dumpSnapshot.empty())
 			sim.markPristine(); // order 84 new_world returns to this world: the data's instances, no player faction, no scenario
 		// Task CE: the pristine world is the bare one even for --scenario-file, so SCENARIO_LOAD (103) can place another file on it.
-		err << "ksim_server: world ready (" << seconds() << " s)\n";
+		err << "ksim_server: world ready (" << seconds() << " s; stage " << lap() << " s: snapshot and containers)\n";
 
 		const std::shared_ptr<const CombatData> data = CombatData::build(*context.gameData, dataDir);
+		err << "ksim_server: combat data built (stage " << lap() << " s, " << seconds() << " s since start)\n";
 		CombatSettings settings;
 		settings.substeps = 2;
+		settings.idleStride = options.idleStride; // the fight tier steps every arena step, everyone else every second (kenshi-k16.6.636)
 		settings.squadFollowHeadingFix = options.followHeadingFix;
 		settings.fixExtraAttackSlots = options.fixExtraAttackSlots;
 		settings.noRunawaySkills = options.noRunawaySkills;
@@ -707,7 +718,7 @@ int runServer(const ServerConfig& options, std::atomic<bool>& stop)
 					throw std::runtime_error("--force-dialogue: no DIALOGUE record " + options.forceDialogue);
 				sim.dialogue()->force(options.forceCharacter, forced, [&err](const std::string& line) { err << "ksim_server: " << line << '\n'; });
 			}
-			err << "ksim_server: dialogue book ready (" << seconds() << " s)\n";
+			err << "ksim_server: dialogue book ready (stage " << lap() << " s, " << seconds() << " s)\n";
 		}
 		// The duel takes orders, so it needs a navmesh: no navmesh, no nav (SIMLINK.md section 12).
 		// The default is the runtime mesh over the shipped navtiles; --navmesh reads a knav_bake cache, --navworld a world bake.
@@ -730,7 +741,7 @@ int runServer(const ServerConfig& options, std::atomic<bool>& stop)
 		err << "ksim_server: navmesh " << (native ? "streaming the shipped navtiles"
 			: !options.navworld.empty() ? "streaming from " + options.navworld : "loaded") << " ("
 			<< sim.navigation()->mesh().tiles().size() << " tiles, " << sim.navigation()->mesh().polyCount()
-			<< " polys, " << seconds() << " s since start)\n";
+			<< " polys, stage " << lap() << " s, " << seconds() << " s since start)\n";
 		if (native)
 		{
 			// The original's stale-tile check: what shipped as is, what our bake replaced, and what could not be verified

@@ -41,6 +41,7 @@ Counts per tick: characters (`Fighter` entities), squads (`SquadInstance`), path
 The sim never prints or writes them on its own.
 1. **Soak report** (`ksim_soak`, a KSIM_PROFILE build): a "profile" block, per section total seconds, share of the tick, mean us per tick and the max us of the window, then the window's tick mean / p50 / p99 / max and the per-tick counts.
 2. **JSON line on stderr**, off by default: `KSIM_PROFILE_JSON=<seconds>` in the environment, `ksim_soak --profile-json SECONDS`, or `Profiler::setJsonSeconds`. One line, at most once per interval, from the tick: `{"profile":1,"tick":N,"window":W,"tick_us":{mean,p50,p99,max},"section_mean_us":{<section>:us,...},"counts":{characters,squads,path_queries,path_us}}`.
+2b. **Slow-tick log** (kenshi-k16.6.699), on in a KSIM_PROFILE build: a tick over `KSIM_PROFILE_SLOW_MS` (default 50; 0 = off) prints one stderr line `SLOWTICK tick=N total_ms=T <section>=ms ... nav_convert=msxN nav_stale=msxN nav_bake=msxN nav_components=msxN path_q=Q path_ms=M chars=C` (sections under 1 ms are left out; the `nav_*` stretches ran inside the sections that called them, so they overlap: `nav_stale` includes `nav_bake`; N is the number of calls in that tick). `KSIM_SLOWQ=1` adds the `COMPONENTS` and `SLOWQ` lines. Run: `KSIM_PROFILE_SLOW_MS=50 KSIM_SLOWQ=1 cpp/build-prof/OpenKenshi-server ... 2> server.log` (the client's `KSIM_SERVER=` takes it); `tools/walk_probe.py` walks the gate_heft Wanderer headless over SIMLINK and writes the wire arrival times.
 3. **SIMLINK, admin only**: order 120 `profile_query` and frame 70 `PROFILE` (the window summary and the per-section rows), kenshi-k16.6.90; the wire is SIMLINK.md PROFILE.
 4. **Per-tick CSV, dev probe** (kenshi-k16.6.230): `KSIM_PROFILE_TICKS=<path>` writes one row per tick: the tick and every section in us, 31 finer stages inside `ai_squad`, `tokens`, `combat`, `tasks` and `residents` (`sub_*`, `kSubNames` in profile.hpp, marked with `KSIM_PROFILE_SUB`; each charges the time since the previous sub mark, and nothing is timed without the variable), and the counts. Summarise with `tools/heft_ticks.py FILE BUDGET_US`; `tools/heft_run.sh` + `tools/heft_probe.py` drive a server at Heft like the client. Compiled out with the rest.
 
@@ -362,6 +363,18 @@ walkOrder costs 76% more per call but is 3.1% of the tick (1.2 points more); the
 
 `KSIM_SLOWQ=1` (a KSIM_PROFILE build) makes `MeshNavigator::routeFrom` print one `SLOWQ` line per query over 5 ms (from, to, radius, planned, failure index, clearance nodes). Heft 5x, 600 s wall (`tools/heft_run.sh`, box load ~30): 57,236 ticks, mean 7.1 ms, p99 22.9 ms; 1,114 ticks over 20 ms, of which combat section 38, residents 110, tasks 6 (k16.6.262 left 30 combat ticks). 691 slow queries, 15.8 s in all: **Closed** (search ran out of reachable polygons, 29,135-29,213 nodes, plain search would succeed) 132 queries, 11.7 s, up to 281 ms; **OutOfNodes** at radius 22 (~2,400-4,400 nodes) 324, 2.4 s, 5-35 ms each; found routes 235, 1.6 s, max 17 ms. Closed planned=0 (combat): 24 queries, 4.9 s, the cage goals (67370,-70706 x14), 9 start spots. Closed planned=1 (residents, up to 281 ms): 108 queries, 6.8 s, 104 distinct goals: a poly-pair memo would not hit them; a clearance component id per radius class answers all 132 in O(1).
 
+**Clearance components (kenshi-k16.6.382; branch ds/clearance-components).** `NavQuery::refusedByComponents`: per radius, every polygon of the mesh is labelled with a union-find over the portals the body fits (`fits`, the clearance search's own rule and cache; labels built whole-mesh on the first query at a radius, kept per geometry revision, so door repaints keep them and `replaceTiles` drops them; at most 32 radius classes; none on a mesh with off-mesh links). `planPathFrom` asks it where the clearance search would start (probe found a path that does not fit, no closed probe): when the start's and goal's components differ it answers `Closed` at once (found=false, 0 nodes). The search's exempt hops are modelled (the start's neighbours when `exemptFirst`, the goal's neighbours), doors and filters are ignored, so a refusal is only ever for goals the search could not reach either; found routes are untouched. A search that would have hit its node budget (OutOfNodes) now answers Closed for such goals. Test `knav_clearance`: the 7 u gap's far-side goals now cost 0 nodes (was 20-200), a same-side goal and radius 0 still route. A KSIM_PROFILE build with `KSIM_SLOWQ=1` prints `COMPONENTS r= polys= ms= bytes=` per label build (memory = 8 bytes per polygon: the parent array while building, 4 kept). The label build is sliced since k16.6.699 (see "Far walk stalls"); Heft far-walk numbers there.
+
+## Far walk stalls, gate_heft at 1x (kenshi-k16.6.699, 2026-11-22)
+
+Wanderer from Heft's gate to 66588,-50636, KSIM_PROFILE server (default native navtiles, warm disk cache), `tools/walk_probe.py` over SIMLINK (interest 2000 around the walker), 450 s, box load 2-7. Tick wall time over the last 4096 ticks (JSON line): p50 3.3 ms, p99 21.6 ms, max 172 ms (after the fix; mean 4.5 ms). Sim time per wall second stays at 20 ticks except where a stall hits; no catch-up burst (max 24 ticks in a wall second).
+
+- **Cause 1, fixed here: the clearance component labels (k16.6.382).** Every region streamed in changes the mesh geometry, which dropped the labels, and the next refused-eligible query rebuilt them for the whole mesh on the tick thread: 155 ms mean at r 4 (40-65k polys), 283 ms at r 7, 461 ms at r 22 (max 603 ms), 90 builds in the 450 s walk, up to 3 in one tick (a 0.8 s tick). Now in `ksim_server` (`knav::setSlicedComponents(true)`; tests, ksim_run and replays keep the whole build, which is deterministic: with slices a query answers "no refusal" while pending, so routes depend on query history and ksim_world_follow traceReadOnly, which shares one navigator across two runs, diverged) the build runs in slices of 1024 polygons (~3 ms; a count, not wall time, so the sim stays deterministic) (`ClearanceCache::Build`), one slice per `refusedByComponents` call; until it is done the query answers "no refusal" and the search runs as before k16.6.382. Before / after (same walk, `KSIM_COMPONENTS_SLICE_POLYS=0` is the old whole build): slow ticks over 100 ms 104 -> 19, over 200 ms 34 -> 1, max tick 611 -> 285 ms; wire gaps of CHAR_DYNAMIC (20 Hz, 50 ms): p99 153 -> 84 ms, max 1160 -> 331 ms, gaps over 250 ms 35 -> 1, over 500 ms 9 -> 0. A wall second with fewer than 80 % of the ticks: 3 -> 0 (the one left is the run's end). Label memory is 4 bytes per polygon kept (8 while building): 0.2 MB per radius.
+- **Cause 2, not fixed (k16.24): the stale-zone check on region entry.** `nav_stale` (hash recomputation of a zone against the shipped tile, bake 0 ms: patch cache hits) ran 40 times in the walk, 30-160 ms each (sum 3.7 s), always in the `residents` section, in bursts of 2-3 ticks (one zone per tick) at every region crossing; `nav_convert` (shipped tiles to the runtime mesh, 8-77 ms) 10 times. 18 stale checks at start (792 ms, tick 1). No `nav_bake`: the zone rebakes came from the cache. This is the client's 0.3-0.8 s zone-load stall less the client's own load; it moves to the k16.24 bake thread (the navigator is serial-step only, so a prefetch thread needs the stale check split from the tile swap).
+- **Not ours at 1x:** the 0.37 s ticks the client saw at 71 s and 110 s are resident / task path searches (`residents` / `tasks` 100-280 ms with `path_q` 5-28, mostly Closed searches in Heft's 280-320 characters) and, before the fix, the label builds above (every one of them printed `nav_components=200x1`).
+- Per-tick means, 450 s (JSON `section_mean_us`, first window): combat 7-8 ms and tasks 3-5 ms near Heft (300 characters), residents 3-4 ms, simlink (frame encode) 1.9 ms, ai_squad 1.7-2.3 ms; the window mean falls to 4.5 ms once the walker leaves Heft. The 5x split (item (3) of the bead) was not run.
+- Run it: `KSIM_PROFILE_SLOW_MS=50 KSIM_SLOWQ=1 cpp/build-prof/OpenKenshi-server --listen 127.0.0.1:PORT --scenario-file scenarios/gate_heft.kscen 2> server.log`, then `python3 -I tools/walk_probe.py PORT 450 1 66588 -50636 wire.csv`.
+
 ## walkOrder re-plans by reason (kenshi-k16.8.39; branch ds/replan-measure2)
 
 Dev counters (`dev::WalkStats`, `KSIM_DEV`): with `KSIM_WALK_STATS=1` a `WALKSTATS` line goes to stderr at the arena's end and every 600 sim s. A window re-plan (off the route window for 5 s) is split: **lost** = the walker was within `kOffPathReach` footprints of the WHOLE route (the window lost its place: routeNext ahead of or behind the walker), **real** = beyond that reach. Measured on ksim c42c91ec, Release, no behaviour change.
@@ -399,3 +412,126 @@ From the user's report (kenshi-k16.2.477): x5 is unplayable on a long map move. 
 - **Far-route stalls (Hub run):** single ticks of 320 ms (4 queries) and 739 ms (30 queries) in the goals section. ROUTEMEASURE: the clearance fit inside routeFrom is almost all of the router's 2.4 s over 16k routes. This matches the client's 250 ms stall plus catch-up (kenshi-k16.2.477.1).
 - **Against Heft:** the same family (combat step, cs_update, the 1 Hz pass), but travel adds streaming-style spikes (areas / nav / residents) and far-route stalls. No zone bake ran in the tick (the navworld is prebaked).
 - Fixes dispatched from this: the region promotion spread (kenshi-k16.6.614), the far-route budget and re-ask cap (kenshi-k16.6.307, once kenshi-k16.6.305's routeFrom node counts are in). The per-system rates for the arena cost go through the Fable review kenshi-k16.6.607 and design kenshi-k16.6.606. The Wanderer stopped after ~16 ku with 30 blocked routes: kenshi-k16.6.615.
+
+### Region promotion spread (kenshi-k16.6.614, 2026-11-21)
+
+Same recipe (Guy with a Dog, 26 ku east, x5, 300 s, KSIM_PROFILE build). The areas column is `stepPlayerAreas` + `syncNavCoverage` (stepPlayerAreas itself is ~0: the cost is the zone load); the nav column is `syncLineOfSight` (hull trees of a newly Full region), not the navmesh.
+- **Before** (box load 13): areas max 123 ms (11 ticks over 10 ms), LOS 78 (9), residents 28 (15). **After** (load 17-21, so everything about 1.5x slower than the baseline box): areas max 22.5 ms (a zone load is spread to one a tick; 61 ticks over 10 ms, none over 23), LOS 37.5 (7 ticks over 10 ms), residents 19 (7).
+- What changed: `syncNavCoverage(spread)` loads one zone per tick, nearest to the player first, drops first and alone, furnishes the doors and containers on the tick after the load, and prefetches the zones ahead from the heading; `syncLineOfSight(spread)` builds one region's hull trees a tick; `stepResidents` builds at most `kPromotesPerTick` squads / `kPromoteMembersPerTick` members a tick from a queue the 1 Hz pass fills, and a squad whose ground is not on the mesh yet waits (a member with no ground is skipped for good).
+- **Left:** one zone load is ~10 ms (read 8, apply 2) and its furnish ~15 ms; one region's hull trees 15-45 ms; a promoted squad up to ~12 ms. The mean tick with an arena of 300+ characters is still 14-23 ms on this box, so the whole tick stays over 20 ms: that is the combat cost (k16.6.607), not the crossings. Next: build hull trees and read zones on a worker thread and hand the finished result to the tick (not built here).
+
+## Scheduling measurements (kenshi-k16.6.305; SIM_SCHEDULING section 8 step 3)
+
+Measurement only. Gate for SIM_SCHEDULING A: is the **think** share of `cs_update` above ~0.5 ms; are the long routes failed or exhaustive; is Heft one interaction component; how many components on the long travel, at what union-find cost.
+
+**Tooling** (KSIM_PROFILE build only; nothing in a normal build):
+- The `KSIM_PROFILE_TICKS` CSV gained probe columns (`kProbeNames` in `core/profile.hpp`): `think_us` (every `pickTarget` call the update loop makes; `scan_us` is its `scanCandidates` part; `*_calls`), `upd_us` (the whole update loop), `upd_route_us` (`routeFrom` time inside it) and the island columns. The combat arena steps **twice per tick** (0.025 s substeps): `isl_*`, `tgt_*`, `upd_members`, `isl_active` are summed over the tick's steps (column `steps`; divide by it); the `*_us` times are per tick. **Think** = `pickTarget`; **act** = the rest of the update loop minus all route time (state transitions, incoming check, steering, swings); routes are reported apart. The fight-goal pick runs outside the loop: it is the existing `sub_wt_fight_goals` column.
+- `KSIM_ROUTELOG=<path>`: one CSV row per `routeFrom` call (`knav/route_measure.hpp`): tick, the profiler stretch it ran in, a caller tag (1 combat `pathLength`, 2 combat `replan`, 3 blocked-target test, 0 any other) with a member key (combat callers only), wall us, found, planned, radius, from, to, and the nodes of each stage: the plain probe `findPath` (`probe_nodes`; at radius 0 the whole search), the clearance A* first pass (`clear_nodes`), the goal-exempt second clearance pass (`again_nodes`), `searches` (refit and own-polygon plans), `find_paths`.
+- Islands (`ksim/dev/island_probe.hpp`, header only): union-find on a 1500 u cell grid over the usable characters of the arena (range = the base sight, race mult 1, daylight 1; the indoor 500 and race multipliers are ignored), run after the update loop; a second union-find joins each member with its `target` ("fight" islands). An island's share of the loop = the sum of its members' own update times. The probe's own cost is `isl_uf_us`. Test: `ksim_profile` (the union-find cases).
+- Summary: `[TICK_MIN= TICK_MAX=] tools/probe_summary.py NAME.ticks.csv [NAME.routes.csv]`. Recipes, each under the worker lock with `nice -n 10` and `KSIM_ROUTELOG` exported: `tools/travel_run.sh travel5 47321 300 5 26000` (kenshi-k16.6.604's recipe, reused as is: new game "Guy with a Dog", one move 26,000 u east, view and interest following the leader), `tools/heft_run.sh heft5 47322 300 5`, `tools/heft_run.sh heft1 47323 300 1`. 300 s wall each (not 10 min); the first 100 ticks are dropped.
+- Raw files: `{travel5,heft5,heft1}.{ticks.csv,routes.csv,meta,probe.txt}` in the dev worker's scratch dir for k16.6.305.
+- **Load**: the box was busy throughout (load average 16-19 on 16 cores at every start and end, see `.meta`): the times are inflated by an unknown 10-30%. The probe adds timers (about 40 ns per `pickTarget`, member update and route) and the union-find (0.05-0.2 ms a tick); Heft 1x read 12.3 ms mean against 10.0 ms in the k16.6.230 runs, part probe and part load.
+- **The travel run has two phases**: the leader reaches the goal at 118 s wall (tick 82,381; 8,718 ticks, 436 sim s), then idles 180 s. The travel column below is the **walking phase** (`TICK_MAX=82400`); the idle phase (18,975 ticks) reads tick mean 3.3 ms, think 26 us, act 1.2 ms, and is not a travel number.
+
+### (1) Tick
+
+| | travel x5 (walking) | Heft x5 | Heft x1 |
+|---|---|---|---|
+| ticks delivered (target) | 8,718 in ~110 s = **80 /s of 100** | 28,515 in 300 s = 95 /s of 100 | 5,901 = 19.7 /s of 20 |
+| tick mean / p50 / p99 / max (ms) | 10.5 / 9.2 / 42.3 / 134 | 8.6 / 7.8 / 23.1 / 274 | 12.3 / 10.6 / 38.2 / 221 |
+| encode (`simlink`) mean / p99 (ms) | 0.69 / 10.3 | 0.96 / 13.8 | 2.67 / 14.6 |
+| combat section mean (ms) | 8.2 | 5.5 | 7.8 |
+| server CPU of the run's wall | whole run 170 s of 300 | 271 s of 300 | 85 s of 300 |
+
+The x5 walk is the slower of the two x5 runs: 80 ticks/s against 95, tick mean 10.5 ms (the 10 ms budget), because zones stream in as the leader moves (the arena holds 250 characters on average, up to 450) and the crowd differs from Heft's steady 280-320.
+
+### (2) `cs_update`: think vs act (per tick, us; two combat steps per tick)
+
+| | travel x5 (walking) | Heft x5 | Heft x1 |
+|---|---|---|---|
+| `cs_update` loop mean / p99 | 6,222 / 33,835 | 3,022 / 7,420 | 4,651 / 10,482 |
+| **think** (`pickTarget`) mean / p99 | **123 / 334** | **1,039 / 2,451** | **1,354 / 4,004** |
+| of it `scanCandidates` | 89 / 256 | 834 / 2,121 | 1,061 / 3,674 |
+| **act** (route time removed) mean / p99 | 5,264 / 32,291 | 1,872 / 5,357 | 3,085 / 7,701 |
+| routes inside the loop mean / p99 | 835 / 6,237 | 111 / 1,169 | 213 / 2,318 |
+| `pickTarget` calls per tick (scans) | 44 (23) | 234 (220) | 242 (219) |
+| think share of the loop | 2.0% | 34% | 29% |
+
+**Reading:** at Heft the think part is 1.0-1.35 ms per tick (p99 2.5-4.0 ms), **above the 0.5 ms gate** by 2-2.7x, and 80% of it is `scanCandidates` (about 4 us a scan, 220 scans per tick). On the travel it is 0.12 ms (p99 0.33), **under the gate** by 4x: the cost there is act (85% of the loop, p99 32 ms in the zone-stream ticks) and routes (13%). So A pays at Heft (a crowd scene) and does nothing for the x5 walk. `think_route_us` is 0: `pickTarget` only reads the path cache.
+
+### (3) Routes
+
+| | travel x5 (walking) | Heft x5 | Heft x1 |
+|---|---|---|---|
+| `routeFrom` calls / per sim second | 41,039 / 94 | 214,880 / 151 | 19,024 / 64 |
+| wall ms mean / p99 / max; total | 0.20 / 1.5 / 27; 8.1 s of ~110 s | 0.09 / 0.6 / 257; 18.9 s of 300 s | 0.41 / 5.4 / 203; 7.7 s of 300 s |
+| not found (n; wall) | 1,049 (1.1 s) | 74,173 (2.6 s) | 15 (0.7 s) |
+| over 5 ms: n (share of route time) | 52 (5.9%) | 203 (18.6%) | 225 (30.7%) |
+| the slow ones: found / not found | 17 / 35 | 143 / 60 | 211 / 14 |
+| slow: probe nodes mean; clearance nodes mean | 1,646; 1,674 | 8,722; 7,564 | 4,959; 3,243 |
+| radius-0 retries (calls at radius 0 after a miss; wall) | 946 (0.2 s) | 444 (0.1 s) | 40 |
+| routes per tick (ticks with any) mean / p99 / max | 6.8 / 24 / 44 | 7.8 / 56 / 66 | 3.9 / 15 / 39 |
+
+Nodes per call (all calls, mean): probe 33 / 22 / 152, first clearance pass 35 / 10 / 51, second (goal-exempt) pass 12 / 0.6 / 0.7; the largest probe closes the 32,768-node pool (65,772 over two searches at Heft). Calls by the stage they ran in (calls, wall): travel: `cs_update` 36,799 (7.3 s), `world_squads` 1,302 (0.5 s); Heft x5: `routines` 20,627 (8.3 s), `wt_in_hand` 161,412 (7.0 s), `cs_update` 27,483 (3.2 s); Heft x1: `wt_in_hand` 5,079 (4.0 s), `routines` 4,255 (2.3 s), `cs_update` 8,216 (1.3 s).
+
+**Reading:**
+- **On the travel the routes are combat re-plans**: 90% of the calls and 7.3 of 8.1 s are inside `cs_update`; 25,257 are `replan` (tag 2) from 433 members, one member 1,064 times, up to 2.4 per sim second per member, runs of 158 consecutive-tick queries; `pathLength` (tag 1, the cached pair length) is mild (175 members, 0.44 per member-second at most). The slow ones (52, 6% of route time) are **not found**: 34 of 52 are failed clearance A* runs (probe under the pool, `plainFailed` 0: the plain search found a way and the clearance search refused its portals), 8 ms each, 0.27 s together. About 3% of the calls miss (1,049).
+- **At Heft the 30-40 ms routes are found, not failed**: 211 of 225 (1x), 143 of 203 (5x) slow routes are found, after a probe that closed 5-9 k nodes and a clearance A* of 3-8 k (up to 58 k). The failed slow ones are exhaustive: 37 of 60 at Heft x5 (2.1 s, 57 ms each) hit the 32,768-node pool in the probe then ran a clearance search, all from `routines` (the scorer's retry).
+- **Re-queries, Heft**: combat `replan` at Heft x5 has one member re-planning 5,829 times in 1,426 sim s (4.1 per sim second at the worst; a run of 2,647 consecutive ticks). The volume is not combat: **161,412 of the 214,880 calls at Heft x5 come from `wt_in_hand`** (the tasks-in-hand member loop; `planned` routes, clearance 22), **73,877 of them not found**, on 3,826 ticks with up to 40 each, the same goals again (one goal cell asked 1,429 times). Each is cheap (0.035 ms; 2.6 s of 300 s) but it is 34% of the calls and all of the 74 k failures; at Heft x1 the same loop has 15 failures. So at 5x a task in hand re-asks an unreachable goal every tick: the "negative cache / no per-tick re-query" case of 5E.
+
+### (4) Interaction islands (per combat step; sight range 1500 u over usable characters)
+
+| | travel x5 (walking) | Heft x5 | Heft x1 |
+|---|---|---|---|
+| usable characters in the arena, mean / p99 | 255 / 452 | 276 / 320 | 292 / 324 |
+| **components** mean / p99 / max | 14.9 / 20 / 20 | 7.7 / 9 / 9 | 7.8 / 9 / 9 |
+| largest component mean / p99 / max | 52 / 72 / 81 | 231 / 242 / 244 | 234 / 244 / 244 |
+| second largest mean | 43 | 15 | 21 |
+| singletons mean | 2.2 | 0.2 | 0 |
+| largest component's share of the update loop (own member times) mean / p99 | 0.28 / 0.86 | 0.65 / 0.81 | 0.61 / 0.84 |
+| union-find cost per tick (both steps) mean / p99 / max (us) | 76 / 153 / 2,927 | 157 / 251 / 3,046 | 215 / 775 / 4,705 |
+| fight islands (target links): non-singleton components mean; largest mean / p99 | 5.9; 6.0 / 26 | 1.8; 5.6 / 21 | 3.3; 8.8 / 23 |
+
+**Reading:**
+- **Heft is not one component, but one giant one**: 8 islands, the largest holding about 80% of the usable characters (231-234 of 276-292), the next 15-21. The sight graph at 1500 u is too connected to cut Heft's think into independent islands; the largest holds 61-65% of the loop's time.
+- **The travel is about 15 islands**, the largest 52 (p99 72, max 81) of 255, 28% of the loop on average, up to 86-92% in the worst ticks.
+- **The fights are small islands** (target links): 2-6 non-singleton groups of 6-9 members on average, at most 27. A "fighting members only" think (members in a fight or with an enemy in sight) is the one with room; the sight islands are not.
+- **The union-find is cheap**: 76-215 us a tick (both steps), 0.7% of the travel tick and 1.8% of the Heft tick; the occasional ms-scale max is a cold grid. Cheap enough to run every tick if a design wants it.
+
+### What this says about the design (for SIM_SCHEDULING 8, k16.6.607, k16.6.606)
+- Gate (think > 0.5 ms): **yes at Heft (1.0-1.35 ms), no on the travel (0.12 ms)**. A is a crowd-scene optimisation and does not touch the x5 walk.
+- The x5 walk (80 ticks/s of 100, tick mean 10.5 ms) is **act (5.3 ms) and combat re-plans (0.84 ms, p99 6.2 ms) inside `cs_update`**, with zones streaming in; the failed searches are 34 clearance floods of 8 ms.
+- At Heft x5 the biggest single waste is `wt_in_hand`'s 74 k failed `planned` re-queries (E.1/E.2 target) and the 37 exhaustive `routines` retries (57 ms each).
+- Not measured: no quiet box (load 16-19 throughout); the walkers, goal runner and scorer outside `cs_update` have no island timing; the fight-goal pick is the existing `sub_wt_fight_goals`.
+
+## Arena member steps by update branch and distance band (kenshi-k16.6.631, k16.6.607 item 0)
+
+KSIM_PROFILE-only probe columns in the `KSIM_PROFILE_TICKS` CSV (`b_<branch>_<band>`, `pick_<state>` in `kProbeNames`; a normal build has none of the code). Per combat step each member's `Ctx::update` is counted by the branch it took: `dead` (also the tick it dies), `down` (KO / crawler), `walk` (move order), `follow`, `drive` (direct drive and drive turn), `idle` (state Hub or Done on entry to the state machine), `fight` (Attack, Defend, Between, Circle, Wait, Approach on entry, and a ranged shot is not counted separately), `other` (stumble, recovery hold, stealth KO, mounted gunner, ranged task). Band = distance from the nearest living player-controlled character (the view focus is not used): `n` 0-2,000 u, `m` 2,000-3,250 u, `f` beyond. `pick_*` counts the outer `pickTarget` calls by the caller's state. All are summed over the tick's two combat steps (so ~2x the arena size); `tools/probe_summary.py` prints them.
+
+Runs: `tools/travel_run.sh travel P 300 5 26000` (Guy with a Dog, 26 ku east, x5, 300 s) and `tools/heft_run.sh heft P 200 5`, one at a time under the worker lock, nice 10, at box load ~18-25 (counts do not depend on load; wall times do). Output kept in the dev worker's scratch dir for kenshi-k16.6.631. The travel summary covers the whole run (ticks 100+ after the first 100 are skipped), not only the walk.
+
+| | travel (26,165 ticks) | Heft x5 (17,014 ticks) |
+|---|---|---|
+| member updates per tick (2 steps) | 296.8 (~148 arena members) | 619.4 (~310) |
+| **near share (0-2,000 u)** | **16.9 %** | **75.5 %** |
+| mid 2,000-3,250 u / far | 11.3 % / 71.8 % | 3.0 % / 21.5 % |
+| follow | 216.1 (72.8 %; near 28.8, mid 26.0, far 161.3) | 74.2 (12.0 %) |
+| idle Hub/Done | 21.2 (7.1 %) | 433.3 (69.9 %; near 408.7) |
+| down | 22.7 | 51.4 |
+| walk | 12.8 | 31.4 (near 22.5) |
+| fight | 15.2 (near 7.8) | 17.2 (far 15.8) |
+| dead / other / drive | 3.8 / 5.2 / 0 | 8.8 / 3.2 / 0 |
+
+`pickTarget` calls per tick by state (mean; p99; max):
+
+| state | travel | Heft |
+|---|---|---|
+| Hub | 11.4 (35; 166) | **218.8 (225; 234)** |
+| Approach | 5.3 | 8.4 |
+| Circle / Wait / Between | 1.9 / 1.5 / 1.2 | 2.7 / 1.6 / 2.4 |
+| Attack, Defend, Stumble, Done | 0 | 0 |
+
+Findings:
+- **The walk is mostly far followers**: 72 % of the arena's updates are `follow` and 72 % are beyond 3,250 u of any player character; only 17 % are near. Heft is the opposite: 70 % of updates are idle Hub/Done members and 75 % are near (the whole bar crowd).
+- **Heft's ~234 picks a tick are the idle Hub -> Done flip.** Idle updates are 433 per tick (two steps) and Hub picks are 219: one pick per idle member per two steps. `pick_done` is 0 and the Done entry runs `setState(Hub)` with no pick, so an idle member alternates Hub (pick, nothing found, Done) and Done (-> Hub) every other step. The p99 of 225 and max of 234 match the idle population, so it is a steady per-member cost, not a burst.
+- The pick is not the Heft cost on the walk: Hub picks there are 11 a tick.

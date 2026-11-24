@@ -44,6 +44,8 @@ int main(int argc, char** argv)
 			});
 		});
 		test::require(barman != 0, "the Hub's Bar blackmarket squad has a barman");
+		// The camera looks at the bar: the barman's zone is loaded (rwh.202 section 3: +-340 u round the player only, the Nobodies start is further off).
+		r.sim->enqueue(Command::setView(-50560.0, -1190.0));
 		r.tick(1200); // the barman walks to his post (ksim_barman_node)
 
 		const auto onMesh = [&](std::uint64_t who)

@@ -636,6 +636,16 @@ int main(int argc, char** argv)
 		snapAfterImport(order, argc > 1 ? argv[1] : nullptr);
 		test::require(sim.combat()->find(heroId) != nullptr, "the imported world runs");
 
+		// kenshi-k16.6.679: an order naming a token squad's member (an imported hostile) builds its squad, so the attack reaches a Fighter.
+		{
+			const std::uint64_t farId = report.memberOfHandle.at({kPoolFar, 1});
+			test::require(entityOf(sim, farId).get<state::Fighter>() == nullptr && sim.combat()->find(farId) == nullptr, "an order target in a far token squad has no Fighter yet");
+			test::require(sim.promoteForOrder(farId), "promoteForOrder builds the token member's squad");
+			const state::Fighter* built = sim.combat()->find(farId);
+			test::require(built != nullptr && !built->dead && !built->playerControlled, "the ordered target is a living non-player Fighter");
+			test::require(sim.promoteForOrder(farId) && !sim.promoteForOrder(heroId + 999999), "a built target stays true, an unknown id is refused");
+		}
+
 		// Stage 3a: each group where our save keeps it.
 		const saveimport::WorldReport& world = report.world;
 		test::require(world.day == 140 && world.hour == 17 && world.minute == 32, "the clock is read");

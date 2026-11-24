@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -52,9 +53,9 @@ struct Rig
 	std::shared_ptr<const ksim::CombatData> combatData;
 	ksim::simlink::ServerContext context;
 
-	// `window` empty: the 3 x 3 regions around the file's centre (the default 4 7 6 9 window is the Hub's).
-	Rig(const ksim::scenario::File& file, const std::string& world, std::optional<Window> window = std::nullopt)
-		: sim(ksim::Simulation::newGame(KENSHI_DATA, kworld::resolveLoadOrder(KENSHI_DATA, ""), spawnOptions()))
+	// `seed`: the world seed. `window` empty: the 3 x 3 regions around the file's centre (the default 4 7 6 9 window is the Hub's).
+	Rig(const ksim::scenario::File& file, const std::string& world, std::optional<Window> window = std::nullopt, std::uint64_t seed = 7)
+		: sim(ksim::Simulation::newGame(KENSHI_DATA, kworld::resolveLoadOrder(KENSHI_DATA, ""), spawnOptions(seed)))
 	{
 		const kworld::ZoneCell zone = kworld::zoneCellOf(file.centreX, file.centreZ);
 		std::vector<kworld::ZoneCell> zones;
@@ -69,13 +70,22 @@ struct Rig
 		ksim::CombatSettings settings;
 		settings.substeps = 2;
 		sim.enableCombat(combatData, settings);
-		sim.enableNavigation(test::openWorldNav(world, zones));
+		const std::shared_ptr<ksim::MeshNavigator> mesh = test::openWorldNav(world, zones);
+		sim.enableNavigation(mesh);
 		ksim::AiSystem::Config ai;
 		ai.registry = std::make_shared<ksim::BehaviourRegistry>(sim.world(), ksim::BehaviourRegistry::readRules(KSIM_AI_TABLE));
 		const int rx = zone.x / knav::kRegionZones;
 		const int rz = zone.z / knav::kRegionZones;
 		const Window at = window.value_or(Window{std::max(0, rx - 1), std::max(0, rz - 1), rx + 1, rz + 1});
-		ai.navigator = ksim::KnavNavigator::open(KENSHI_DATA, world, at.rx0, at.rz0, at.rx1, at.rz1, at.last);
+		// The AI plans on the mesh the fighters walk (k16.7.119): the static world bake is older than the recipe, so squad routes
+		// never saw a bake change and a passage only one mesh has gave the leader a route it could not walk. The bake navigator
+		// stays for a KSIM_NAVWORLD_BAKE run, where the fighters walk that same bake.
+		if (test::bakeNav())
+			ai.navigator = ksim::KnavNavigator::open(KENSHI_DATA, world, at.rx0, at.rz0, at.rx1, at.rz1, at.last);
+		else
+			ai.navigator = mesh;
+		if (!test::bakeNav() && ai.navigator.get() != sim.navigationOwner().get())
+			throw std::runtime_error("scenario rig: the AI's mesh is not the simulation's (stale recipe)");
 		ai.factions = ksim::FactionBook::build(sim.gameData());
 		sim.enableAi(std::move(ai));
 		context.gameData = gameData;
@@ -83,10 +93,10 @@ struct Rig
 	}
 
 private:
-	static ksim::SpawnOptions spawnOptions()
+	static ksim::SpawnOptions spawnOptions(std::uint64_t seed)
 	{
 		ksim::SpawnOptions spawn;
-		spawn.seed = 7;
+		spawn.seed = seed;
 		return spawn;
 	}
 };

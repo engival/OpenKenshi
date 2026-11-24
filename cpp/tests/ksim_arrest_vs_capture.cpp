@@ -685,9 +685,13 @@ int main(int argc, char** argv)
 		}
 		std::map<std::string, std::string> seen;
 		// A fresh world per case: the wardens' routines and the cages' claims are the town's, and an earlier case leaves them spent.
+		// argv[2]: only these cases (a part of the test: ctest runs the seven in parallel; the id-independence check is per case across the six bumps).
+		const std::string only = argc > 2 ? argv[2] : "abcdefg";
 		for (int bump = 0; bump <= 5; ++bump)
 			for (const char which : {'a', 'b', 'c', 'd', 'e', 'f', 'g'})
 			{
+				if (only.find(which) == std::string::npos)
+					continue;
 				Game game(argv[1]);
 				Stage stage;
 				test::require(findCageHome(*game.sim, stage.home) && !stage.home.wardens.empty(), "a Cage Warden home with cages and wardens is in the world");

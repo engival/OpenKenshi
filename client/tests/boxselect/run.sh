@@ -5,6 +5,7 @@
 # same shots; the default is ours. Port: PORT (47831). The script names characters as @Name@ (charids.sh: a probe run's `dump chars` fills
 # their ids in; exit 4 when one is missing).
 set -u
+export KCLIENT_FRAMELOG=cursor	# the "cursor" log lines this test parses are opt-in (kenshi-jvhw)
 . "$(dirname "${BASH_SOURCE[0]}")/../need_data.sh"
 . "$(dirname "${BASH_SOURCE[0]}")/../charids.sh"
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

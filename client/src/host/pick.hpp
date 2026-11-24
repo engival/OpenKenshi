@@ -89,7 +89,9 @@ float label_height();
 std::vector<ItemLabel> item_labels(bool all, const float* cam = nullptr);	// cam: the mvp to project with (record_ui: the packet's); null: build_mvp
 uint64_t label_at(double mx, double my);
 Pick pick_at(const double dir[3], std::vector<PickSkip>* skipped = nullptr);
-Pick pick_screen(double mx, double my, std::vector<PickSkip>* skipped = nullptr);
+// hover: the per-frame cursor / bands pick; a scripted run's clicks (hover false) wait for the collision gather first (debug.pick_wait), a hover pick never does.
+Pick pick_screen(double mx, double my, std::vector<PickSkip>* skipped = nullptr, bool hover = false);
+void pick_settle();	// the scripted click's wait (no-op for a hover pick, off by debug.pick_wait)
 void menu_query_frame();
 void rmb_hold_menu();
 bool run_menu_action(const hints::Action& a);	// a picked hold-menu row: run, log `sim menu: <log>: sent`, the order sound

@@ -556,8 +556,9 @@ int main(int argc, char** argv)
 				test::require(squad.is_valid() && squad.get<state::SquadInstance>() != nullptr, "the dismissed character has no new squad");
 				const state::Position* position = squad.get<state::Position>();
 				// The squad is made at the character as the command runs; the same tick's depenetration then moves the character (a follower stands within R of its
-				// leader), by at most half an overlap.
-				test::require(position != nullptr && std::hypot(position->x - f.x, position->z - f.z) < 1.0, "the new squad is not at the character's position");
+				// leader). A neighbour of the camera's character yields the whole overlap (k16.6.597: the camera's character is never moved), so up to two
+				// footprints (about 3.4 u measured here), not half an overlap.
+				test::require(position != nullptr && std::hypot(position->x - f.x, position->z - f.z) < 4.0, "the new squad is not at the character's position");
 				const flecs::entity factionState(r.sim.world().ecs().c_ptr(), squad.get<state::SquadInstance>()->faction.id);
 				test::require(factionState.is_valid() && factionState.get<state::FactionState>()->templateSid == "1233-gamedata.base", "the new squad's faction");
 				// event 18

@@ -13,11 +13,16 @@ namespace {
 constexpr Point kStand{ 1.0f, 12.0f, 1.0f };
 // A step longer than this is cut up: Detour's surface walk visits a bounded number of polygons.
 constexpr double kMaxHop = 8.0;
+// The body's wall room may be this much under the radius or the start's room (the float32 mesh, a slide along a wall).
+constexpr float kClearanceSlack = 0.002f;
 // A hop's height change beyond this plus kMaxGradient per unit walked is a cliff the mesh's polygon links cross (a ledge's edge links to the floor below
 // across a drop of 30-66 u), not a stair or ramp: stair risers measure up to about 8 u within 0.3 u walked (k16.8.27), and the hop stops at the edge.
 constexpr double kHopRise = 20.0;
 constexpr double kHopOvershoot = 1.5; // the start snaps to the mesh by up to kStand (1 u a side, 1.42 diagonal) before the slide, which a hop may walk back; the float32 mesh blurs a few hundredths more
 constexpr double kMaxGradient = 3.0;
+// Layer continuity: a hop that lands more than this above or below where it started, with a surface within this reach of the starting height under the end
+// point, stays on that surface (the rule surfaceY uses). A recoil step at a stair's edge took the floor layer under the stair, 9 u down (kenshi-e9s9.18).
+constexpr double kLayerReach = 8.0;
 
 Point toPoint(const Position& p)
 {
@@ -33,12 +38,19 @@ Walker::Walker(const NavMesh& mesh, TravelFilter travel)
 {
 }
 
-StepResult Walker::step(const Position& from, double dx, double dz) const
+StepResult Walker::step(const Position& from, double dx, double dz, double radius, const std::vector<DoorKey>& crossing) const
 {
 	StepResult result;
 	result.at = from;
 	const double length = std::hypot(dx, dz);
 	const int hops = std::max(1, static_cast<int>(std::ceil(length / kMaxHop)));
+	// The wall room a hop must keep: the body's radius, or the start's own when it began nearer (a spawn beside a prop may move away or along, not in).
+	float room = -1.0f;
+	if (radius > 0.0)
+	{
+		const float start = query_.clearanceAt(toPoint(from), kStand, static_cast<float>(radius));
+		room = start < 0.0f ? -1.0f : start - kClearanceSlack;
+	}
 	for (int i = 1; i <= hops; ++i)
 	{
 		// Aim at the true remainder each hop: the target is from + (dx, dz) * i / hops.
@@ -46,7 +58,7 @@ StepResult Walker::step(const Position& from, double dx, double dz) const
 			static_cast<float>(from.z + dz * i / hops) };
 		Point out;
 		bool blocked = false;
-		if (!query_.slide(toPoint(result.at), target, kStand, out, blocked, travel_))
+		if (!query_.slide(toPoint(result.at), target, kStand, out, blocked, travel_, crossing))
 		{
 			result.onMesh = false;
 			return result;
@@ -59,8 +71,45 @@ StepResult Walker::step(const Position& from, double dx, double dz) const
 			result.blocked = true;
 			break;
 		}
+		if (std::fabs(out[1] - result.at.y) > kLayerReach)
+		{
+			Point near;
+			if (query_.nearestPoint(toPoint({ out[0], result.at.y, out[2] }), { 1.0f, static_cast<float>(kLayerReach), 1.0f }, near))
+				out[1] = near[1];
+		}
 		if (std::fabs(out[1] - result.at.y) > kHopRise + kMaxGradient * walked)
 		{
+			result.blocked = true;
+			break;
+		}
+		if (room >= 0.0f && query_.clearanceAt(out, kStand, static_cast<float>(radius)) < room)
+		{
+			// Cut the hop back to the largest fraction that keeps the room (the slide is re-run to each trial end, so it stays on the mesh).
+			Point best = toPoint(result.at);
+			float lo = 0.0f;
+			float hi = 1.0f;
+			for (int k = 0; k < 6; ++k)
+			{
+				const float mid = 0.5f * (lo + hi);
+				const Point trial{ best[0] + (out[0] - best[0]) * mid, best[1], best[2] + (out[2] - best[2]) * mid };
+				Point at;
+				bool hit = false;
+				if (query_.slide(best, trial, kStand, at, hit, travel_, crossing) && query_.clearanceAt(at, kStand, static_cast<float>(radius)) >= room)
+					lo = mid;
+				else
+					hi = mid;
+			}
+			if (lo > 0.0f)
+			{
+				const Point trial{ best[0] + (out[0] - best[0]) * lo, best[1], best[2] + (out[2] - best[2]) * lo };
+				Point at;
+				bool hit = false;
+				if (query_.slide(best, trial, kStand, at, hit, travel_, crossing))
+				{
+					result.moved += std::hypot(at[0] - result.at.x, at[2] - result.at.z);
+					result.at = { at[0], at[1], at[2] };
+				}
+			}
 			result.blocked = true;
 			break;
 		}
@@ -161,20 +210,20 @@ DriveLocal driveLocal(Drive mode, int strafe) noexcept
 	return v;
 }
 
-StepResult Walker::drive(const Position& from, Drive mode, double heading, double gait, double& forwardSpeed, double dt, double accel, int strafe) const
+StepResult Walker::drive(const Position& from, Drive mode, double heading, double gait, double& forwardSpeed, double dt, double accel, int strafe, double radius) const
 {
 	const DriveLocal local = driveLocal(mode, strafe);
 	const double length = std::hypot(local.forward, local.side);
 	if (length <= 0.0)
 	{
 		forwardSpeed = 0.0; // a stop is dead (the server's direct drive does the same); only a start ramps
-		return drive(from, Drive::Stop, heading, 0.0, dt);
+		return drive(from, Drive::Stop, heading, 0.0, dt, 0, radius);
 	}
 	forwardSpeed = rampSpeed(forwardSpeed, local.forward < 0.0 ? -gait * length : gait * length, dt, accel);
-	return drive(from, mode, heading, std::fabs(forwardSpeed) / length, dt, strafe);
+	return drive(from, mode, heading, std::fabs(forwardSpeed) / length, dt, strafe, radius);
 }
 
-StepResult Walker::drive(const Position& from, Drive mode, double heading, double speed, double dt, int strafe) const
+StepResult Walker::drive(const Position& from, Drive mode, double heading, double speed, double dt, int strafe, double radius) const
 {
 	const DriveLocal local = driveLocal(mode, strafe);
 	if (local.forward == 0.0 && local.side == 0.0)
@@ -190,7 +239,7 @@ StepResult Walker::drive(const Position& from, Drive mode, double heading, doubl
 	// (forward x up, Y-up right-handed) = (-cos, sin): -x at heading 0.
 	const double dx = (sn * local.forward - cs * local.side) * speed * dt;
 	const double dz = (cs * local.forward + sn * local.side) * speed * dt;
-	return step(from, dx, dz);
+	return step(from, dx, dz, radius);
 }
 
 bool Walker::onMesh(const Position& p) const

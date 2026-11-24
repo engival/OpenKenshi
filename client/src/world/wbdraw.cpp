@@ -570,7 +570,7 @@ void WorldBuildings::update(const double cam[3], const float mvp[16], float fogD
 				const bool cutHidden = partCutHidden(furniture ? furnitureFloor : def.floor, def.sign, shown);
 				if (cutHidden && (def.blackCap || shadowFar <= 0)) { continue; }
 				if (def.blackCap && def.floor == shown && shown < b.maxFloor) { continue; }	// the cut floor's black cap (BuildingPartDef::blackCap)
-				if (!cutHidden && (furniture || def.kind == 1 || night) && !c.far) { for (uint32_t k = 0; k < def.lightCount; k++) { addLight(b, ii, def, def.firstLight + k, cam, planes, maxDist); } }
+				if (!cutHidden && (furniture || def.kind == 1 || night) && !c.far) { for (uint32_t k = 0; k < def.lightCount; k++) { addLight(b, ii, def, def.firstLight + k, cam, planes, maxDist, rt.mesh >= 0 && meshes_[rt.mesh].state == Ready ? &meshes_[rt.mesh] : nullptr); } }
 				for (uint32_t k = 0; k < def.effectCount && !c.far && !cutHidden; k++) { addEffect(b, ii, (int32_t)pid, &def, def.firstEffect + k, cam, planes); }
 				if (ss == 1 || rt.mesh < 0 || !rt.resolved || meshes_[rt.mesh].state != Ready) { continue; }	// the instance waits whole, or this part has no mesh (the loading stand-in above; never a grey unlit frame, kenshi-k16.2.298.1)
 				const MeshEntry& m = meshes_[rt.mesh];
@@ -861,7 +861,7 @@ uint32_t WorldBuildings::addPart(const BuildingPartDef& def)
 // One light of a drawn part: its sphere culled against the view, kept as a candidate (LightCand) with the power rolled once per instance
 // (brightness + uniform(-variance, variance)); pulseLights applies the effect (PULSE 0.5 + 0.5 sin(4 t), off at <= 0; SHIMMER 0.95 + 0.05 sin(30 t)
 // sin(17 t); t in game minutes) every frame, since it moves with the clock while the cull does not. The radius is the record's, unscaled.
-void WorldBuildings::addLight(const BuildingInstance& b, uint32_t ii, const BuildingPartDef& def, uint32_t li, const double cam[3], const float planes[4][4], double maxDist)
+void WorldBuildings::addLight(const BuildingInstance& b, uint32_t ii, const BuildingPartDef& def, uint32_t li, const double cam[3], const float planes[4][4], double maxDist, const MeshEntry* mesh)
 {
 	const LightDef& l = data_.lights[li];
 	const float q[4] = { b.qw, b.qx, b.qy, b.qz };
@@ -879,6 +879,18 @@ void WorldBuildings::addLight(const BuildingInstance& b, uint32_t ii, const Buil
 	double d[3], rd[3];
 	toMesh(offsetFrame, l.dir, d);
 	rotate(q, d, rd);
+	// The beam drop (render.lamp_beams, kenshi-ac8f): a LIGHT record sits where the authors put it (the Hub's lamps: 6 u below the mount, in the cord), and the lamp's cone began there, above the
+	// shade. The bulb end of the fixture is where the cone leaves: the part mesh's own extent along the spot axis, from the light to the far corner of its bounds. 0 without a loaded mesh.
+	float drop = 0;
+	if (mesh && l.spot)
+	{
+		double po[3], m2[3];
+		toMesh(offsetFrame, def.offset, po);
+		toMesh(offsetFrame, lp, m2);
+		double ext = -(m2[0] * d[0] + m2[1] * d[1] + m2[2] * d[2]);
+		for (int k = 0; k < 3; k++) { ext += d[k] * (d[k] > 0 ? po[k] + mesh->bmax[k] : po[k] + mesh->bmin[k]); }
+		drop = (float)std::clamp(ext * b.scale, 0.0, l.radius * 0.5);
+	}
 	LightCand c;
 	c.rel[0] = (float)rel[0]; c.rel[1] = (float)rel[1]; c.rel[2] = (float)rel[2]; c.rel[3] = l.radius;
 	c.colour[0] = l.colour[0]; c.colour[1] = l.colour[1]; c.colour[2] = l.colour[2];
@@ -889,6 +901,7 @@ void WorldBuildings::addLight(const BuildingInstance& b, uint32_t ii, const Buil
 	c.near = (float)std::max(0.0, dist - l.radius);
 	c.effect = l.effect;
 	c.id = ((uint64_t)ii << 32) | li;
+	c.dir[3] = drop;
 	if (lampOcclusion)
 	{
 		const double world[3] = { b.x + r[0], b.y + r[1], b.z + r[2] };

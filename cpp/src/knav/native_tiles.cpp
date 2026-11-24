@@ -427,9 +427,90 @@ void snapLinks(const std::vector<native::Mesh>& meshes, std::vector<std::vector<
 		}
 }
 
+// Streaming-link edges of an interior and of the mesh it opens onto run along the same line but not always over the same span
+// (the Hub-side Bars' doorways: the interior's door edge is 2 u shorter at one end), so snapLinks' corner match leaves the
+// shorter edge's end on the middle of the longer one and the two never join (the interior is an island). Each such end is a
+// point the longer edge is split at, so the overlapping stretches share their corners. Key: mesh << 32 | edge index.
+using LinkSplits = std::unordered_map<std::uint64_t, std::vector<std::array<double, 3>>>;
+
+LinkSplits splitLinkedEdges(const std::vector<native::Mesh>& meshes, const std::vector<std::vector<std::array<double, 3>>>& vertices)
+{
+	constexpr double kLine = 0.4; // an end this close to the other edge's line (xz) is on it
+	constexpr double kEnd = 0.05; // ... and this far from that edge's own ends is a split, not a corner
+	constexpr double kLevel = 3.0; // the edges must be at one height there
+	struct Link
+	{
+		std::size_t mesh = 0;
+		std::size_t edge = 0;
+		std::array<double, 3> a{}, b{};
+	};
+	std::vector<Link> links;
+	std::vector<std::size_t> interiorLinks;
+	for (std::size_t m = 0; m < meshes.size(); ++m)
+		for (std::size_t e = 0; e < meshes[m].edges.size(); ++e)
+		{
+			const native::Edge& edge = meshes[m].edges[e];
+			if (!edge.linked || edge.oppositeFace >= 0)
+				continue;
+			if (meshes[m].interior())
+				interiorLinks.push_back(links.size());
+			links.push_back({ m, e, vertices[m][edge.a], vertices[m][edge.b] });
+		}
+	LinkSplits splits;
+	const auto lengthOf = [](const Link& l) { return std::hypot(l.b[0] - l.a[0], l.b[2] - l.a[2]); };
+	// The end `p` of `from` as a split of `onto`, when it lies on onto's line strictly inside it.
+	const auto offer = [&](const Link& onto, const std::array<double, 3>& p)
+	{
+		const double length = lengthOf(onto);
+		if (length < 1e-6)
+			return;
+		const double dx = (onto.b[0] - onto.a[0]) / length, dz = (onto.b[2] - onto.a[2]) / length;
+		const double along = (p[0] - onto.a[0]) * dx + (p[2] - onto.a[2]) * dz;
+		const double off = std::fabs((p[0] - onto.a[0]) * dz - (p[2] - onto.a[2]) * dx);
+		if (off > kLine || along < kEnd || along > length - kEnd)
+			return;
+		const double y = onto.a[1] + (onto.b[1] - onto.a[1]) * along / length;
+		if (std::fabs(y - p[1]) > kLevel)
+			return;
+		std::vector<std::array<double, 3>>& list = splits[static_cast<std::uint64_t>(onto.mesh) << 32 | onto.edge];
+		for (const std::array<double, 3>& q : list)
+			if (std::hypot(q[0] - p[0], q[2] - p[2]) < kEnd)
+				return;
+		list.push_back(p);
+	};
+	for (const std::size_t i : interiorLinks)
+		for (const Link& other : links)
+		{
+			const Link& mine = links[i];
+			if (other.mesh == mine.mesh || meshes[other.mesh].interior())
+				continue;
+			// Cheap box test before the line tests.
+			if (std::max(mine.a[0], mine.b[0]) < std::min(other.a[0], other.b[0]) - kLine || std::min(mine.a[0], mine.b[0]) > std::max(other.a[0], other.b[0]) + kLine
+				|| std::max(mine.a[2], mine.b[2]) < std::min(other.a[2], other.b[2]) - kLine || std::min(mine.a[2], mine.b[2]) > std::max(other.a[2], other.b[2]) + kLine)
+				continue;
+			offer(other, mine.a);
+			offer(other, mine.b);
+			offer(mine, other.a);
+			offer(mine, other.b);
+		}
+	for (auto& [key, list] : splits)
+	{
+		const Link* link = nullptr;
+		for (const Link& l : links)
+			if ((static_cast<std::uint64_t>(l.mesh) << 32 | l.edge) == key)
+				link = &l;
+		std::sort(list.begin(), list.end(), [&](const auto& l, const auto& r)
+		{
+			return (l[0] - link->a[0]) * (link->b[0] - link->a[0]) + (l[2] - link->a[2]) * (link->b[2] - link->a[2])
+				< (r[0] - link->a[0]) * (link->b[0] - link->a[0]) + (r[2] - link->a[2]) * (link->b[2] - link->a[2]);
+		});
+	}
+	return splits;
+}
+
 // One face, as the outline of its corners with Detour's winding.
 Outline faceOutline(const native::Mesh& mesh, std::uint32_t meshIndex, const std::vector<std::array<double, 3>>& vertices,
-	const native::Face& face)
+	const native::Face& face, const LinkSplits& splits)
 {
 	Outline outline;
 	for (std::uint32_t k = 0; k < face.numEdges; ++k)
@@ -446,6 +527,13 @@ Outline faceOutline(const native::Mesh& mesh, std::uint32_t meshIndex, const std
 		}
 		outline.points.push_back({ v[0], v[1], v[2] });
 		outline.kinds.push_back(kind);
+		// The points a streaming link is split at (splitLinkedEdges), along the edge, each leaving by the same edge.
+		if (const auto split = splits.find(static_cast<std::uint64_t>(meshIndex) << 32 | e); split != splits.end())
+			for (const std::array<double, 3>& p : split->second)
+			{
+				outline.points.push_back({ p[0], p[1], p[2] });
+				outline.kinds.push_back(kind);
+			}
 	}
 	if (outline.points.size() > 1 && outline.points.back().x == outline.points.front().x && outline.points.back().y == outline.points.front().y
 		&& outline.points.back().z == outline.points.front().z)
@@ -478,7 +566,7 @@ struct FaceRef
 };
 
 std::optional<BakedTile> buildTile(const NavConfig& c, const std::vector<native::Mesh>& meshes,
-	const std::vector<std::vector<std::array<double, 3>>>& vertices, const std::vector<FaceRef>& faces, int tx, int tz, const NativeDoorKeys& doorKeys, NativeTileStats& stats)
+	const std::vector<std::vector<std::array<double, 3>>>& vertices, const LinkSplits& splits, const std::vector<FaceRef>& faces, int tx, int tz, const NativeDoorKeys& doorKeys, NativeTileStats& stats)
 {
 	const double x0 = c.originX + tx * static_cast<double>(c.tileSize);
 	const double z0 = c.originZ + tz * static_cast<double>(c.tileSize);
@@ -501,7 +589,7 @@ std::optional<BakedTile> buildTile(const NavConfig& c, const std::vector<native:
 		if (face.numEdges < 3)
 			continue;
 		std::vector<Outline> triangles;
-		if (!earClip(faceOutline(mesh, faces[f].mesh, vertices[faces[f].mesh], face), triangles))
+		if (!earClip(faceOutline(mesh, faces[f].mesh, vertices[faces[f].mesh], face, splits), triangles))
 			++stats.fanned;
 		Clipped entry{ f, {} };
 		for (const Outline& triangle : triangles)
@@ -553,7 +641,7 @@ std::optional<BakedTile> buildTile(const NavConfig& c, const std::vector<native:
 			if (face.data == 4 || face.data == 5)
 			{
 				poly.area = Area::DoorOpen;
-				poly.door = doorKeys ? doorKeys(centre) : 0;
+				poly.door = face.door != 0 ? face.door : doorKeys ? doorKeys(centre) : 0; // the generator keys its door faces itself
 				++stats.doorPolys;
 				if (poly.door == 0)
 					++stats.unkeyedDoors;
@@ -618,8 +706,18 @@ std::optional<BakedTile> buildTile(const NavConfig& c, const std::vector<native:
 	};
 	const auto partnerOf = [&](std::size_t p, int a, int b, const EdgeTag& tag) -> int
 	{
+		if (tag.kind == EdgeKind::Wall)
+			return -1;
 		if (const auto it = edgeOwners.find(edgeKey(static_cast<std::uint32_t>(b), static_cast<std::uint32_t>(a))); it != edgeOwners.end())
-			return static_cast<int>(it->second.front());
+		{
+			// A wall on the other face's reversed edge does not partner; a Shared edge may still find its opposite below.
+			const auto& other = polys[it->second.front()].piece;
+			bool wallThere = false;
+			for (std::size_t k = 0; k < other.corners.size(); ++k)
+				wallThere |= other.corners[k] == b && other.corners[(k + 1) % other.corners.size()] == a && other.kinds[k].kind == EdgeKind::Wall;
+			if (!wallThere)
+				return static_cast<int>(it->second.front());
+		}
 		if (tag.kind == EdgeKind::Shared)
 		{
 			const native::Edge& edge = meshes[tag.mesh].edges[static_cast<std::size_t>(tag.edge)];
@@ -685,6 +783,7 @@ std::optional<BakedTile> buildTile(const NavConfig& c, const std::vector<native:
 			const EdgeKind kind = poly.piece.kinds[k].kind;
 			if (const int partner = partnerOf(p, a, b, poly.piece.kinds[k]); partner >= 0)
 			{
+				++stats.partnered;
 				row[kMaxCorners + k] = static_cast<unsigned short>(partner);
 				continue;
 			}
@@ -887,10 +986,11 @@ std::vector<BakedTile> nativeTiles(const NavConfig& config, const std::vector<na
 	for (const native::Mesh& mesh : meshes)
 		vertices.push_back(weldedVertices(mesh));
 	snapLinks(meshes, vertices);
+	const LinkSplits splits = splitLinkedEdges(meshes, vertices);
 	NativeTileStats local;
 	std::vector<BakedTile> tiles;
 	for (const TileCoord& coord : coords)
-		if (auto tile = buildTile(config, meshes, vertices, buckets[coord], coord.x, coord.z, doorKeys, local))
+		if (auto tile = buildTile(config, meshes, vertices, splits, buckets[coord], coord.x, coord.z, doorKeys, local))
 			tiles.push_back(std::move(*tile));
 	if (stats)
 		*stats = local;

@@ -97,7 +97,7 @@ Seen play(const std::uint64_t seed, const double wakeAfter)
 	for (int dz = -1; dz <= 1; ++dz)
 		for (int dx = -1; dx <= 1; ++dx)
 			hub.push_back({ simlink::kHubZoneX + dx, simlink::kHubZoneZ + dz });
-	sim.enableNavigation(MeshNavigator::openNative(KENSHI_DATA, hub, {}, context.gameData.get(), NativeCacheOptions{}));
+	sim.enableNavigation(MeshNavigator::openNative(KENSHI_DATA, hub, {}, context.gameData.get(), NativeCacheOptions{ {}, true, kworld::dataHash(order) })); // the disk cache (KENSHI_NAV_CACHE under ctest): the stale check's compare is the open's cost (k16.15.57)
 	const scenario::File file = scenario::parseFile(std::string(KSIM_SCENARIOS_DIR) + "/slavers_downed.kscen");
 	const std::uint64_t firstId = sim.world().ecs().get<state::Ids>()->next;
 	const std::uint64_t kPlayer = firstId + 2;
@@ -215,7 +215,7 @@ Seen play(const std::uint64_t seed, const double wakeAfter)
 				note(who + " goal " + std::to_string(stats.goalEnum), now);
 			if (stats.stepEnum != 0xFFFF)
 				note(who + " step " + std::to_string(stats.stepEnum), now);
-			if (seen.liftReach < 0.0 && id != kBoss && (stats.goalEnum == 168 || stats.goalEnum == 170))
+			if (seen.liftReach < 0.0 && id != kBoss && (stats.goalEnum == 168 || stats.goalEnum == 170 || stats.stepEnum == 168 || stats.stepEnum == 170)) // the lift is the cuffer's step 168 / 170 (the goal enum no longer shows 168 / 170 there)
 			{
 				// The lift starts: how far is the nearest OTHER guard with a kit (the lifter is busy lifting) from the slave? Past 58's 40 u reach (healDistance) none can
 				// be offered the aid yet, and the lift cannot wait for it (the seed 1151889715 case, measured here instead of assumed).
@@ -360,8 +360,11 @@ int main()
 		// Which branch a seed pins is the fight's outcome (does the captive come round before the cuff), which every unrelated change to the fights or the
 		// entity Ids has moved (the survey notes above). So the branch is read off the run, not hard-coded per seed: a captive that was carried is the down
 		// branch, one that never was is the awake branch, and each branch's own checks (the aid, the carry, 65 then 171) still have to hold. A run that fits neither fails.
+		// k16.6.637 (due-stamped sensor, hunger and quiet medical at 1 Hz): the scan and hunger dice moved every fight. Seed 101 now wakes before the cuff and is KO'd
+		// again by blood loss at 77 s under a 78 s aid (no branch fits: the "came round" test reads the last KO); 100 replaces it (KSIM_SEEDS survey: 100, 102, 103,
+		// 1151889715, 1-4 and 706960716 pass).
 		int pinned = 0;
-		for (const std::uint64_t seed : {std::uint64_t{706960716}, std::uint64_t{101}, std::uint64_t{3}, std::uint64_t{4}, std::uint64_t{1}, std::uint64_t{2},
+		for (const std::uint64_t seed : {std::uint64_t{706960716}, std::uint64_t{100}, std::uint64_t{3}, std::uint64_t{4}, std::uint64_t{1}, std::uint64_t{2},
 			std::uint64_t{1151889715}})
 		{
 			const Seen straight = play(seed, -1.0);

@@ -39,6 +39,9 @@ constexpr double kHouseZ = 3192.0;
 constexpr double kHouseFloorY = 1576.5;
 // The longest honest step: a sprint is about 20 u/s, a lunge or a dodge a few times that; a teleport is metres.
 constexpr double kMaxStep = 4.0;
+// The step a fighter turns unconscious or dead is a placement, not movement (user 2026-11-22, kenshi-9zwr: "a knockout ground position is NOT movement"): the
+// body is put at its rest point, kMaxStep + the knockback + the downhill slide cap (CombatArena::rollRagdoll).
+constexpr double kKoPlaceStep = 4.0 + 3.0 + 8.0;
 constexpr double kMaxRise = 1.5;
 // The house floor slopes a little; the ground outside is about 40 u lower.
 constexpr double kLevelSlack = 8.0;
@@ -110,12 +113,13 @@ struct Rig
 			const state::Fighter& f = me(ids[i]);
 			const state::Fighter& was = last[i];
 			const double moved = std::hypot(f.x - was.x, f.z - was.z);
+			const bool koStep = (f.unconscious && !was.unconscious) || (f.dead && !was.dead);
 			std::string what;
 			if (!nav->walker().onMesh({f.x, f.y, f.z}))
 				what = "off the mesh";
 			else if (std::fabs(f.y - wall.y) > kLevelSlack)
 				what = "on another level (y " + std::to_string(f.y) + ", the floor is " + std::to_string(wall.y) + ")";
-			else if (moved > kMaxStep)
+			else if (moved > (koStep ? kKoPlaceStep : kMaxStep))
 				what = "teleported " + std::to_string(moved) + " u in one step";
 			else if (std::fabs(f.y - was.y) > kMaxRise)
 				what = "jumped " + std::to_string(f.y - was.y) + " in height in one step";

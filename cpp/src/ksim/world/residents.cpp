@@ -204,6 +204,7 @@ std::uint64_t leaderOf(const CombatArena& combat, const std::vector<std::pair<st
 // How far past the group's route progress the leader is sent (the carrot); its route is re-issued every carry step, so the leader never
 // runs out of walk.
 constexpr double kCarryLookahead = 40.0;
+constexpr double kCarrotSame = 6.0; // the leader keeps its route while a re-issue would end this near the old one
 constexpr double kCarryReachY = 60.0; // vertical reach of the carrot's surface lookup
 constexpr double kScenarioTownReach = 2500.0; // scenarioSquad: a new squad within this of a town is its resident (UNSURE, ours)
 constexpr std::uint32_t kCarryNoRouteTicks = 200; // 10 s without a route to the carrot: the leader is placed at it
@@ -385,26 +386,29 @@ void Simulation::stepPlayerAreas()
 	if (!started)
 		return;
 	std::vector<state::GroundPoint> centres;
-	std::set<std::int32_t> regions;
 	for (const CombatArena::Member& member : combat_->members())
 	{
-		if (!member.fighter.playerControlled || member.fighter.dead)
-			continue;
-		if (regions.insert(regions_->regionOf(member.fighter.x, member.fighter.z)).second)
+		if (member.fighter.playerControlled && !member.fighter.dead)
 			centres.push_back({member.fighter.x, member.fighter.z});
 	}
-	// Full detail is the union of the bubbles and the camera's view (SIMLINK.md 5): the set_view focus is an area too.
-	if (const state::ViewFocus* view = world_.ecs().get<state::ViewFocus>(); view != nullptr && regions.insert(regions_->regionOf(view->x, view->z)).second)
-		centres.push_back({view->x, view->z});
-	if (centres.empty())
+	// Full detail is the loaded-zone rule (rwh.202): a +-340 u box round each character, and the camera's 3x3 (SIMLINK.md 5).
+	const std::optional<state::ViewFocus> view = cameraFocus(ecsMutable(), centres);
+	if (!view)
 		return;
-	std::set<std::int32_t> current;
-	if (const state::PlayerAreas* areas = world_.ecs().get<state::PlayerAreas>())
+	// The heading of the first area since the last pass: syncNavCoverage prefetches the zones ahead of it.
+	const state::GroundPoint first = centres.empty() ? state::GroundPoint{view->x, view->z} : centres[0];
+	if (travelKnown_)
 	{
-		for (const state::GroundPoint& point : areas->centres)
-			current.insert(regions_->regionOf(point.x, point.z));
+		const double dx = first.x - travelX_;
+		const double dz = first.z - travelZ_;
+		const double length = std::hypot(dx, dz);
+		headX_ = length > 1.0 ? dx / length : 0.0;
+		headZ_ = length > 1.0 ? dz / length : 0.0;
 	}
-	if (current != regions)
+	travelX_ = first.x;
+	travelZ_ = first.z;
+	travelKnown_ = true;
+	if (regions_->loadedZones(centres, view) != regions_->fullZones())
 		regions_->setPlayerAreas(ecsMutable(), centres);
 }
 
@@ -436,11 +440,26 @@ void Simulation::knowWorldSquads()
 
 void Simulation::stepResidents()
 {
-	if (combat_ == nullptr || gameData_ == nullptr || combatData_ == nullptr || clockTick() % routines::kResidentIntervalTicks != 0)
+	if (combat_ == nullptr || gameData_ == nullptr || combatData_ == nullptr)
 		return;
 	flecs::world& ecs = ecsMutable();
 	if (residentData_ == nullptr)
 		residentData_ = std::make_shared<ResidentData>(*gameData_);
+	if (!promotionSaved_.queue.empty())
+	{
+		// The queue a save held, by squad Id (restored once, before the first pass or drain).
+		std::map<std::uint64_t, flecs::entity> byId;
+		ecs.each([&](flecs::entity squad, const state::Id& id, const state::SquadInstance&) { byId.emplace(id.value, squad); });
+		for (const state::RunStates::Promotion& saved : promotionSaved_.queue)
+			if (const auto found = byId.find(saved.squad); found != byId.end())
+				residentData_->queued.emplace_back(found->second, saved.world);
+		promotionSaved_.queue.clear();
+	}
+	if (clockTick() % routines::kResidentIntervalTicks != 0)
+	{
+		promoteQueued(); // the rest of the pass's promotions, a few a tick
+		return;
+	}
 
 	// A resident that died stops running a routine and gives up its reservation (the original keeps the bed; ours frees it:
 	// kinspect item 58, more permissive). Its body stays in the arena for looting.
@@ -516,11 +535,14 @@ void Simulation::stepResidents()
 	for (const auto& [id, squad] : worldDemote)
 		demoteWorldSquad(squad);
 	// One cap for both kinds of promotion, residents first.
+	// The chosen ones are built a few per tick (kPromotesPerTick), the first ones now: a region crossing no longer builds a whole area in one tick.
+	residentData_->queued.clear();
 	std::size_t budget = static_cast<std::size_t>(routines::kResidentSquadsPerPass);
 	for (std::size_t i = 0; i < promote.size() && budget != 0; ++i, --budget)
-		promoteResidents(promote[i].second);
+		residentData_->queued.emplace_back(promote[i].second, false);
 	for (std::size_t i = 0; i < worldPromote.size() && budget != 0; ++i, --budget)
-		promoteWorldSquad(worldPromote[i].second);
+		residentData_->queued.emplace_back(worldPromote[i].second, true);
+	promoteQueued();
 	// T3d: a claim whose owner is gone is given back: a table of a squad that was wiped, a trader squad that is no longer staying.
 	std::set<std::uint64_t> live;
 	ecs.each([&](const state::Id& id, const state::Routine&) { live.insert(id.value); });
@@ -537,6 +559,68 @@ void Simulation::stepResidents()
 		releaseBarTable(squad);
 	routineBook_.releaseDead([&](std::uint64_t owner) { return live.count(owner) != 0; });
 	logWorldSquads();
+}
+
+void Simulation::promoteQueued()
+{
+	std::vector<std::pair<flecs::entity, bool>>& queued = residentData_->queued;
+	// A fresh world's start (arriveUntil_) builds the whole pass at once: the Hub's residents are all there before the first frame.
+	const bool burst = clockTick() < arriveUntil_;
+	std::size_t done = 0;
+	std::size_t taken = 0;
+	const auto members = [&] { return residentStats_.promotedMembers + residentStats_.worldPromotedMembers; };
+	const std::uint64_t membersBefore = members();
+	for (; taken < queued.size() && (burst || (done < promoteSquadsPerTick_ && members() - membersBefore < promoteMembersPerTick_)); ++taken)
+	{
+		const auto [squad, world] = queued[taken];
+		// Still what the pass saw: alive, at Full detail, not promoted by another route since.
+		if (!squad.is_alive() || squad.get<state::SquadInstance>() == nullptr || squad.get<state::Position>() == nullptr)
+			continue;
+		const Detail* detail = squad.get<Detail>();
+		if (detail == nullptr || detail->level != DetailLevel::Full)
+			continue;
+		if (world ? residentData_->world.count(squad.get<state::Id>()->value) != 0 : squad.has<state::SquadRoutine>())
+			continue;
+		// Its ground must be on the mesh: a member that finds none is skipped for good (buildMember), so a squad waits for its zone (the
+		// next pass chooses it again) while the streaming brings it in.
+		const state::Position* at = squad.get<state::Position>();
+		if (navigation_ != nullptr && !navigation_->covers(at->x, at->z))
+			continue;
+		if (world)
+			promoteWorldSquad(squad);
+		else
+			promoteResidents(squad);
+		++done;
+	}
+	queued.erase(queued.begin(), queued.begin() + static_cast<std::ptrdiff_t>(taken));
+}
+
+bool Simulation::promoteForOrder(std::uint64_t id)
+{
+	if (combat_ == nullptr || residentData_ == nullptr)
+		return false;
+	if (combat_->find(id) != nullptr)
+		return true;
+	flecs::entity squad;
+	ecsMutable().each([&](flecs::entity member, const state::Id& key, const state::CharacterInstance&)
+	{
+		if (key.value == id)
+			squad = member.target<state::MemberOf>();
+	});
+	if (!squad.is_valid() || squad.get<state::SquadInstance>() == nullptr || squad.get<state::Position>() == nullptr)
+		return false;
+	// As promoteQueued: a member whose ground is not on the mesh would be skipped for good, so the squad waits for its zone.
+	const state::Position* at = squad.get<state::Position>();
+	if (navigation_ != nullptr && !navigation_->covers(at->x, at->z))
+		return false;
+	if (inRoutineMode(squad, *squad.get<state::SquadInstance>(), ai_.get(), residentData_->packages))
+	{
+		if (!squad.has<state::SquadRoutine>())
+			promoteResidents(squad);
+	} else if (residentData_->world.count(squad.get<state::Id>()->value) == 0) {
+		promoteWorldSquad(squad);
+	}
+	return combat_->find(id) != nullptr;
 }
 
 std::optional<state::Fighter> Simulation::templateFighter(flecs::entity member, const state::SquadInstance& instance, std::size_t index, std::uint64_t& base)
@@ -1046,18 +1130,16 @@ void Simulation::prepareWorldCarry()
 			return;
 		const bool holding = squadFighting(*combat_, targetedByPlayer, members);
 		double slaveGap = 0.0;
-		bool holdsPlayer = false;
 		if (const auto board = boards_.find(id.value); board != boards_.end())
 		{
 			for (const std::uint64_t slaveId : board->second.owned)
 			{
 				const state::Fighter* slave = combat_->find(slaveId);
-				holdsPlayer = holdsPlayer || (slave != nullptr && slave->playerControlled && !slave->dead);
 				if (slave != nullptr && !slave->dead && !slave->down && !slave->unconscious && slave->carriedBy == 0 && slave->followTarget != 0)
 					slaveGap = std::max(slaveGap, std::hypot(slave->x - leader->x, slave->z - leader->z));
 			}
 		}
-		ai_->carried()[id.value] = AiSystem::Carry{leader->x, leader->z, holding, slaveGap, holdsPlayer};
+		ai_->carried()[id.value] = AiSystem::Carry{leader->x, leader->z, holding, slaveGap};
 		residentData_->carried.push_back({id.value, squad, leaderId, holding});
 		if (position->x != leader->x || position->z != leader->z)
 			moves.emplace_back(id.value, leader->x, leader->z);
@@ -1184,9 +1266,26 @@ void Simulation::stepWorldSquads()
 		} else {
 			points = {{leader->x, leader->y, leader->z}, {toX, leader->y, toZ}};
 		}
+		// A carrot that stands still (a leg's last stretch, an approach end at the mesh edge) gives the same route end every step: the leader keeps
+		// walking its own route to it. Re-issuing it from where the walk has got to restarted it from a start the planner snaps off the wall
+		// clearance, back to where it came from, and a leader at a pinch walked in place for 400 s (kenshi-k16.6.706, ksim_slaver_route npc).
+		if (leader->walking() && leader->routeSeq == 0 && !points.empty())
+		{
+			const auto toCarrot = [&](double x, double z) { return std::hypot(toX - x, toZ - z); };
+			const double oldEnd = toCarrot(leader->route.back().x, leader->route.back().z);
+			// An approach route that ends no nearer the carrot than the walk's own (the planner's pick of the mesh edge flips with the start
+			// at a pinch: two edge points, the leader walking 10 u towards one, re-issued, 10 u towards the other) keeps the walk too.
+			// Not a walk the walker already found shut (routeTries: it was re-planned from a block): that one ends in a wall, and keeping it leaves
+			// the leader standing until the next step (ksim_world_hub: a patrol leader stood 8+ ticks after kenshi-k16.6.706).
+			if (std::hypot(leader->route.back().x - points.back().x, leader->route.back().z - points.back().z) <= kCarrotSame
+				|| (approach && leader->routeTries == 0 && toCarrot(points.back().x, points.back().z) > oldEnd - kCarrotSame))
+			{
+				leader->routeSource = state::Fighter::PlanSource::Plan; // as a re-issue sets it (a loaded walk has none: it is not saved)
+				continue;
+			}
+		}
 		leader->clearRoute();
-		leader->route = std::move(points);
-		leader->routeNext = 0;
+		setRoute(*leader, std::move(points), navigation_.get(), body(*leader));
 		++leader->routeVersion;
 		leader->routeSeq = 0;
 		leader->routeChase = false;

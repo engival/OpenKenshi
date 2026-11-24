@@ -1,3 +1,4 @@
+#include "ksim/dev/test_phases.hpp"
 #include "ksim/core/simulation.hpp"
 #if KSIM_PROFILE
 #include "ksim/nav/navigator.hpp"
@@ -22,6 +23,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iterator>
@@ -528,7 +530,7 @@ std::size_t Simulation::worldRuntimeEntries() const
 {
 	return worldTaskBlocks_.size() + carryIdleSince_.size() + eatenBites_.size() + eatenQueue_.size() + eatenUntil_.size() + tortureStrip_.size()
 		+ lockOrders_.size() + buildOrders_.size() + arrestOrders_.size() + smashOrders_.size() + cropOrders_.size() + standingRun_.size()
-		+ limbCooldown_.size() + limbPlay_.size() + alarmDwell_.size() + announced_.size() + fightPairs_.size() + memberScores_.size()
+		+ limbPlay_.size() + alarmDwell_.size() + announced_.size() + fightPairs_.size() + memberScores_.size()
 		+ occupiers_.size() + raidLeaders_.size() + producerOffMesh_.size() + talkSeqs_.size() + buyback_.size() + selfAidSince_.size() + (dialogue_ != nullptr ? dialogue_->worldEntries() : 0);
 }
 
@@ -572,6 +574,8 @@ SaveLoadResult Simulation::reload(std::istream& in, bool force)
 	// that was replaced: kept, a second NEW_GAME (new_world, then NEW_GAME) saw its squads as already built and promoted none. The
 	// world-squad log's next line is a tick of the old clock.
 	residentData_.reset();
+	barBookKnown_ = false; // the first bar pass of the reloaded world, as a fresh process has it (k16.6.390)
+	readPromotionSaved();
 	homeSeatsKnown_ = false;
 	worldSquadLogNext_ = 0;
 	const RegionConfig regionConfig = regions_->config();
@@ -597,11 +601,13 @@ SaveLoadResult Simulation::reload(std::istream& in, bool force)
 	else if (gameData_ != nullptr)
 		enableWeather(*gameData_);
 	if (gameData_ != nullptr && ecs.get<state::WildernessState>() != nullptr)
-		wild_ = std::make_unique<WildernessSpawner>(*gameData_, world_.dataDir());
+		wild_ = std::make_unique<WildernessSpawner>(*gameData_, world_.dataDir(), ecs);
 	else
 		wild_.reset();
 	stepUnlocks(); // a save with no completed research gets `_Default Start` before the first snapshot
 	furnishedZones_.clear(); // the entities are the save's: the covered zones are checked again, nothing is spawned twice
+	for (const std::uint32_t zone : promotionSaved_.furnished)
+		furnishedZones_.insert(static_cast<int>(zone));
 	syncNavCoverage();
 	furnishNavCoverage();
 	restoreBoards(); // the old world's Boards are gone with its squads
@@ -623,15 +629,30 @@ static std::uint64_t settleTicksOf(double seconds)
 Simulation Simulation::newGame(std::string_view dataDir, const kworld::LoadOrder& order,
 	const SpawnOptions& options, SpawnReport* report, const RegionConfig& regions)
 {
-	auto gameData = std::make_shared<const kdata::GameData>(kworld::loadMergedGameData(order));
+	KSIM_PHASE(World);
+	const auto stage = [&options](const std::string& text) { if (options.stageHook) options.stageHook(text); };
+	auto gameData = [&order] { KSIM_PHASE(Data); return std::make_shared<const kdata::GameData>(kworld::loadMergedGameData(order)); }();
+	{
+		std::uintmax_t bytes = 0;
+		std::error_code ignored;
+		for (const kworld::LoadOrderEntry& entry : order.files)
+		{
+			const std::uintmax_t size = std::filesystem::file_size(entry.path, ignored);
+			bytes += ignored ? 0 : size;
+		}
+		stage("game data parsed (" + std::to_string(order.files.size()) + " files, " + std::to_string(bytes) + " B read)");
+	}
 	World world = buildWorld(*gameData, dataDir, order);
+	stage("world layout built");
 	flecs::world& ecs = world.ecsMutable();
 	// The world starts the settle earlier (TOWN_LIFE_SLICE 5.40), so a NEW_GAME applied on its first tick reaches the first frame at the start
 	// time with the clock never having gone backwards.
 	SpawnOptions built = options;
 	built.startTick -= std::min<std::uint64_t>(settleTicksOf(options.settleSeconds), built.startTick);
-	SpawnReport spawned = spawnDefaultWorld(ecs, *gameData,
-		kworld::Towns::join(*gameData, dataDir), built, &world.gateSites(), &world.buildingSites());
+	const kworld::Towns towns = kworld::Towns::join(*gameData, dataDir);
+	stage("towns joined");
+	SpawnReport spawned = spawnDefaultWorld(ecs, *gameData, towns, built, &world.gateSites(), &world.buildingSites());
+	stage("default world spawned");
 	std::unique_ptr<WildernessSpawner> spawner;
 	if (options.wildernessByDensity)
 	{
@@ -647,7 +668,7 @@ Simulation Simulation::newGame(std::string_view dataDir, const kworld::LoadOrder
 		for (const flecs::entity entity : persistent)
 			removeSquadEntity(ecs, entity);
 		spawned.squads -= persistent.size();
-		spawner = std::make_unique<WildernessSpawner>(*gameData, dataDir);
+		spawner = std::make_unique<WildernessSpawner>(*gameData, dataDir, ecs);
 	}
 	placeWilderness(ecs, *gameData, dataDir, options.seed);
 	if (spawner != nullptr)
@@ -657,6 +678,7 @@ Simulation Simulation::newGame(std::string_view dataDir, const kworld::LoadOrder
 		spawned.squads += wild.squads;
 		spawned.characters += wild.characters;
 	}
+	stage("wilderness placed and seeded");
 	if (report != nullptr)
 		*report = spawned;
 	Simulation simulation(std::move(world), options.seed, regions);
@@ -668,6 +690,7 @@ Simulation Simulation::newGame(std::string_view dataDir, const kworld::LoadOrder
 	simulation.seedEconomy(options.economy);
 	simulation.arriveUntil_ = simulation.clockTick() + routines::kArriveTicks;
 	simulation.setNewGameSettle(options.settleSeconds);
+	stage("weather, traders and economy seeded");
 	return simulation;
 }
 
@@ -678,7 +701,8 @@ Simulation Simulation::loadGame(std::string_view dataDir, const kworld::LoadOrde
 	std::ifstream in(path, std::ios::binary);
 	if (!in)
 		throw SaveError("cannot open " + path);
-	auto gameData = std::make_shared<const kdata::GameData>(kworld::loadMergedGameData(order));
+	KSIM_PHASE(World);
+	auto gameData = [&order] { KSIM_PHASE(Data); return std::make_shared<const kdata::GameData>(kworld::loadMergedGameData(order)); }();
 	World world = buildWorld(*gameData, dataDir, order);
 	return restore(std::move(world), in, regions, force, result, std::move(gameData));
 }
@@ -692,7 +716,7 @@ Simulation Simulation::restore(World world, std::istream& in,
 		&& world.ecs().get<state::WildernessState>() != nullptr;
 	std::unique_ptr<WildernessSpawner> spawner;
 	if (wilderness)
-		spawner = std::make_unique<WildernessSpawner>(*gameData, world.dataDir());
+		spawner = std::make_unique<WildernessSpawner>(*gameData, world.dataDir(), world.ecs());
 	Simulation simulation(std::move(world), 1, regions);
 	simulation.gameData_ = gameData;
 	if (result != nullptr)
@@ -702,6 +726,15 @@ Simulation Simulation::restore(World world, std::istream& in,
 		simulation.enableWeather(*simulation.gameData_);
 	if (spawner != nullptr)
 		simulation.attachWilderness(std::move(gameData), std::move(spawner));
+	simulation.readPromotionSaved(); // before restoreBoards drops the RunStates singleton
+	// EVENT 51 bookkeeping is not saved. The record holds no "a witness saw it" bit, so the announced state is derived: a committed
+	// record (a witness reacted and the bounty went in) was announced, any other loaded act is still pending and its first witness
+	// after the load names it (cause by the crime, container unknown: 0). An act seen but not committed before the save may resend once.
+	simulation.world_.ecs().each([&](const state::Id& id, const state::CrimeRecord& held)
+	{
+		if (held.crime == crime::kTheft || held.crime == crime::kLooting || held.crime == crime::kBurglary)
+			simulation.caughtActs_[id.value] = {0, static_cast<std::uint8_t>(held.crime == crime::kBurglary ? 2 : 1), held.committed};
+	});
 	simulation.restoreBoards(); // the saved runtime state first; ensureBlackboards then only fills the squads the save did not hold
 	simulation.ensureBlackboards();
 	return simulation;
@@ -1123,6 +1156,8 @@ std::string Simulation::setGameOption(std::string_view key, double value)
 		if (!(value >= state::WorldOptions::kDamageScaleMin && value <= state::WorldOptions::kDamageScaleMax))
 			return "'gdm' out of range 0.5..4";
 		options.damageScale = value;
+	} else if (key == "feedAnimals" || key == "shareFood") {
+		(key == "feedAnimals" ? options.feedAnimals : options.shareFood) = value != 0.0;
 	} else if (key == "ht") {
 		if (!(value >= state::WorldOptions::kHungerTimeMin && value <= state::WorldOptions::kHungerTimeMax))
 			return "'ht' out of range 0.25..8";
@@ -1221,12 +1256,14 @@ void Simulation::setClockTick(std::uint64_t tick)
 
 void Simulation::tick()
 {
+	KSIM_PHASE(Tick);
 	KSIM_PROFILE_BEGIN();
 	flecs::world& ecs = ecsMutable();
 	const std::uint64_t now = ++ecs.get_mut<state::Clock>()->tick;
 	applyCommands(now);
 	ensureBlackboards(); // a command may have spawned squads
-	syncNavCoverage(); // a SetPlayerAreas / NEW_GAME command may have moved the areas
+	if (navCoverageNow_)
+		syncNavCoverage(); // a SetPlayerAreas / NEW_GAME command moved the areas: the coverage follows at once (the per-tick spread runs after stepPlayerAreas)
 	stepUnlocks();
 	stepDiscovery(false);
 	stepKnownFactions();
@@ -1263,8 +1300,9 @@ void Simulation::tick()
 			instancesChanged();
 		KSIM_PROFILE_MARK(AiStrategic);
 		ensureBlackboards(); // the respawns and the strategic step may have built squads
-		if (now % kSquadIntervalTicks == 0)
+		if (barTablesDue_ || now % kSquadIntervalTicks == 0)
 		{
+			barTablesDue_ = false;
 			attachBarTables();
 			attachSlaveDepots();
 			KSIM_PROFILE_SUB(BarDepots);
@@ -1272,6 +1310,14 @@ void Simulation::tick()
 		// Every tick: each does the squads of this tick's slice (inSlice), so the second's work is spread over its 20 ticks.
 		prepareWorldCarry();
 		KSIM_PROFILE_SUB(CarryPrep);
+		std::set<std::uint64_t> fighting;
+		if (combat_ != nullptr) // at every speed: a squad in a fight keeps the second (k16.6.633, k16.6.640)
+		{
+			for (const CombatArena::Member& m : combat_->members())
+				if (m.fighter.squad != 0 && inFight(m.fighter))
+					fighting.insert(m.fighter.squad);
+		}
+		ai_->setCadenceScale(cadence_, std::move(fighting));
 		ai_->squadStep(ecs, *regions_, now);
 		KSIM_PROFILE_SUB(SquadStep);
 		logDeliveryFailures();
@@ -1321,7 +1367,7 @@ void Simulation::tick()
 	KSIM_PROFILE_SUB(Torture);
 	KSIM_PROFILE_MARK(Tasks);
 	stepPlayerAreas();
-	syncNavCoverage(); // before stepResidents builds anyone on the new areas
+	syncNavCoverage(true); // before stepResidents builds anyone on the new areas
 	KSIM_PROFILE_SUB(PlayerAreas);
 	stepResidents();
 	KSIM_PROFILE_SUB(Residents);
@@ -1338,6 +1384,7 @@ void Simulation::tick()
 	stepDialogue(now);
 	KSIM_PROFILE_MARK(Crime);
 	stepIndividualGoals();
+	stepRunAwayGoals();
 	stepProspect();
 	stepOrderQueues();
 	stepFarOrders();
@@ -1350,7 +1397,7 @@ void Simulation::tick()
 	KSIM_PROFILE_MARK(Economy);
 	syncDoorPaint();
 	regions_->tick(ecs, now);
-	syncLineOfSight(); // the Full set follows the player areas: a region's hull trees come and go with it (task AZ)
+	syncLineOfSight(true); // the Full set follows the player areas: a region's hull trees come and go with it (task AZ)
 	// Last, so a squad the residents built or a den the wilderness drew this tick is gone before the next tick's AI (task BM).
 	KSIM_PROFILE_MARK(Nav);
 	stepScenarioHold();
@@ -1390,7 +1437,11 @@ void Simulation::settleNewGame()
 	settleDue_ = false;
 	arriveUntil_ = clockTick() + routines::kArriveTicks;
 	settling_ = true;
+	if (ai_ != nullptr)
+		ai_->setSettling(true);
 	run(settleTicks_);
+	if (ai_ != nullptr)
+		ai_->setSettling(false);
 	settling_ = false;
 }
 
@@ -1410,6 +1461,7 @@ void Simulation::enableAi(AiSystem::Config config)
 		}
 	}
 	ai_ = std::make_unique<AiSystem>(std::move(config), seed_);
+	barTablesDue_ = true;
 }
 
 void Simulation::enableCombat(std::shared_ptr<const CombatData> data, CombatSettings settings)
@@ -1530,20 +1582,59 @@ void Simulation::disableLineOfSight() noexcept
 		combat_->environmentMutable().lineOfSight = nullptr; // a null std::function's assignment does not throw
 }
 
-void Simulation::syncLineOfSight()
+void Simulation::readPromotionSaved()
+{
+	promotionSaved_ = PromotionSaved{};
+	travelKnown_ = false;
+	const state::RunStates* run = world_.ecs().get<state::RunStates>();
+	if (run == nullptr)
+		return;
+	promotionSaved_ = {run->promotions, run->streaming, run->navZones, run->navFurnished, run->hasLos, run->losRegions};
+	furnishedZones_.clear();
+	for (const std::uint32_t zone : run->navFurnished)
+		furnishedZones_.insert(static_cast<int>(zone));
+	travelKnown_ = run->travelKnown;
+	travelX_ = run->travelX;
+	travelZ_ = run->travelZ;
+	headX_ = run->headX;
+	headZ_ = run->headZ;
+}
+
+void Simulation::syncLineOfSight(bool spread)
 {
 	if (los_ == nullptr || regions_ == nullptr)
 		return;
+	if (promotionSaved_.los)
+	{
+		// A loaded save's trees are those it had built (a spread build may have been part way); the rest follow as in the straight run.
+		const std::set<std::uint32_t> kept(promotionSaved_.regions.begin(), promotionSaved_.regions.end());
+		const std::vector<bool>& want = regions_->fullRegions();
+		for (std::int32_t region = 0; region < static_cast<std::int32_t>(want.size()); ++region)
+		{
+			if (want[static_cast<std::size_t>(region)] && kept.count(static_cast<std::uint32_t>(region)) != 0)
+				los_->ensure(region);
+			else
+				los_->drop(region);
+		}
+		promotionSaved_.los = false;
+		spread = true; // the rest of this call is the per-tick one: no region beyond the saved ones is built now
+	}
 	// The doors' open state for sight: a door that is open (0) or broken (3) passes it. Before the regions, so a tree built this tick reads it.
 	if (!doorQuery_)
 		doorQuery_.emplace(world_.ecs().query<const state::Door>());
 	doorQuery_->each([this](const state::Door& door) { los_->setDoorOpen(door.key, door.state == 0 || door.state == 3); });
 	const std::vector<bool>& full = regions_->fullRegions();
+	bool built = false;
 	for (std::int32_t region = 0; region < static_cast<std::int32_t>(full.size()); ++region)
 	{
 		if (full[static_cast<std::size_t>(region)])
+		{
+			// A region's hull trees cost 20-80 ms: the per-tick call builds one a tick (a new area's regions follow in region order).
+			if (spread && built && !los_->loaded(region))
+				continue;
+			built = built || !los_->loaded(region);
 			los_->ensure(region);
-		else
+		} else
 			los_->drop(region);
 	}
 }
@@ -1632,6 +1723,8 @@ void Simulation::stepCombat(std::uint64_t now)
 		return;
 	const int steps = std::max(1, combatSettings_.substeps);
 	combat_->setTime(static_cast<double>(now - 1) * kTickSeconds);
+	combat_->setPhaseStep((now - 1) * static_cast<std::uint64_t>(steps));
+	combat_->publishDue(now, steps); // the one list the pre-pass and the loops outside the arena run on (kenshi-k16.6.639)
 	if (los_ != nullptr)
 		los_->setTick(now); // the sight pair cache ages in ticks
 	// Perception's weather: the region under each observer (the shared_ptr keeps the system alive; no pointer to this).
@@ -1750,27 +1843,36 @@ void Simulation::stepCombat(std::uint64_t now)
 	// stamp of the dialogue memory's sightings (state::Fighter::met).
 	combat_->environmentMutable().dayFraction = std::fmod(static_cast<double>(now), kTicksPerGameDay) / kTicksPerGameDay;
 	combat_->environmentMutable().tick = now;
+	combat_->environmentMutable().cadenceScale = cadence_;
 	// The depenetration leaves a seated patron, a caged prisoner and an operator alone (the exe skips a character in a bed / cage, char+0x2f8, and one operating a machine, +0xb8;
 	// UNSURE whether sitting sets +0x2f8, kinspect BQ16 section 4).
 	{
 		knowBarSeats();
 		knowHomeSeats();
-		std::unordered_set<std::uint64_t> exempt;
+		// Kept between ticks: only the members due this tick are re-judged (a stale id of a removed member is dropped when the set outgrows the arena).
+		std::unordered_set<std::uint64_t>& exempt = combat_->pushExemptMutable();
 		const auto& members = combat_->members();
+		if (exempt.size() > members.size() * 2 + 16)
+			exempt.clear();
 		for (std::size_t i = 0; i < members.size(); ++i)
 		{
+			if (!members[i].due)
+				continue;
 			const state::Routine* routine = flecs::entity(world_.ecs().c_ptr(), combatEntities_[i]).get<state::Routine>();
 			// A town resident's (the town scorer's: its squad holds a SquadRoutine) non-urgent goal walks; a world squad's selector goals keep the mover default.
 			bool strolls = false;
 			if (routine != nullptr && routines::walksGoal(routine->goal) && !perception::inCombat(members[i].fighter))
 			{
 				const flecs::entity squad = flecs::entity(world_.ecs().c_ptr(), combatEntities_[i]).target<state::MemberOf>();
-				strolls = squad.is_valid() && squad.has<state::SquadRoutine>();
+				// A world squad's town patrol walks too (36 / 22: vanilla patrols use the walk band, rwh.73, kenshi-k16.6.599); its other
+				// selector goals (a raid's 216 assault) keep the mover default.
+				strolls = squad.is_valid() && (squad.has<state::SquadRoutine>() || routine->goal == routines::task::PatrolTown
+					|| routine->goal == routines::task::Patrol);
 			}
 			state::Fighter* mutableFighter = combat_->find(members[i].id);
 			mutableFighter->strolling = strolls;
 			// A goal-43 floor-sitter stays pushable (as when it stood); only a chair holds its place.
-			const bool floorSit = routine != nullptr && routine->goal == routines::task::StayInHome && routine->target.kind != static_cast<std::uint8_t>(routines::SiteKind::Seat);
+			const bool floorSit = routine != nullptr && routine->goal == routines::task::StayInHome && !routines::isHomeSlot(static_cast<routines::SiteKind>(routine->target.kind));
 			// A town resident standing about (at its node, a post, anywhere with nothing to do) is outside the push, as pusher and as neighbour: the
 			// original runs the depenetration only on a character that is simulating, and a barman at his node did not move 0.01 u while a player
 			// walked through him 2.2 u away (kenshi-rwh.95 section 3, rwh.58). OURS: the exe's gate is not decoded, this is its observable half. Standing =
@@ -1779,8 +1881,9 @@ void Simulation::stepCombat(std::uint64_t now)
 			const bool standing = routine != nullptr && !perception::inCombat(fighter) && !fighter.taskRunning() && !perception::isMoving(fighter);
 			if (standing || (seatedAt(i) && !floorSit) || operateAction(members[i].id).has_value() || fighter.cageBuilding != 0)
 				exempt.insert(members[i].id);
+			else
+				exempt.erase(members[i].id);
 		}
-		combat_->setPushExempt(std::move(exempt));
 	}
 	// Task BP: each shackled slave's captor as a faction id, for combat's enemy test (a captor's squad and its allies leave its captive
 	// alone). The cuff writes `captorSid` at any moment, so it is resolved here every tick, not on the bond set's timer; derived, never saved.
@@ -1799,6 +1902,8 @@ void Simulation::stepCombat(std::uint64_t now)
 			});
 			for (const CombatArena::Member& member : members)
 			{
+				if (!member.due)
+					continue;
 				const auto at = member.fighter.slaveState == 1 && !member.fighter.captorSid.empty()
 					? factions.find(member.fighter.captorSid) : factions.end();
 				const std::uint64_t captor = at != factions.end() ? at->second : 0;
@@ -1808,21 +1913,52 @@ void Simulation::stepCombat(std::uint64_t now)
 			}
 		}
 	}
+	// kenshi-k16.6.673 (special-case, user 2026-11-21): a follower whose followed actor holds a first aid interact on it holds still
+	// (followStep). Derived each tick from the medics' InteractTask; only a patient that follows that medic is held.
+	{
+		const auto& members = combat_->members();
+		for (std::size_t i = 0; i < members.size(); ++i)
+			combat_->find(members[i].id)->heldForAid = false;
+		for (std::size_t i = 0; i < members.size(); ++i)
+		{
+			const state::InteractTask* task = ecsMutable().entity(combatEntities_[i]).get<state::InteractTask>();
+			if (task == nullptr || task->action != static_cast<std::uint8_t>(InteractAction::FirstAid) || members[i].fighter.dead)
+				continue;
+			state::Fighter* patient = combat_->find(task->target);
+			// Order 0x3e rides the target's own squad package (140269ff0): the poster holds a same-squad patient (kenshi-k16.6.674), whatever
+			// it is doing; a patient in another squad holds only through the follow rule (6.673). No cross-squad hold: the original has none.
+			if (patient != nullptr && (patient->followTarget == members[i].id || (patient->squad != 0 && patient->squad == members[i].fighter.squad)))
+				patient->heldForAid = true;
+		}
+	}
 	KSIM_PROFILE_SUB(CombatPre);
 #if KSIM_PROFILE
 	combat_->setProfiler(&profiler_);
 #endif
 	for (int i = 0; i < steps; ++i)
 		combat_->step(kTickSeconds / steps);
+	combat_->settleDue(now);
 	for (const CombatArena::SeverNote& note : combat_->takeSevers())
 		onLimbSevered(note.who, note.part, note.item);
 	for (const CombatArena::DeathNote& note : combat_->takeDeaths())
 		onNpcDeath(note.who, note.killer);
 	KSIM_PROFILE_SUB(CombatStep);
 	flecs::world& ecs = ecsMutable();
+	// Only a member that stepped, was hit or linked by one, or was written from outside (find, touch) differs from its ECS copy.
 	const auto& members = combat_->members();
+	std::size_t copied = 0;
 	for (std::size_t i = 0; i < members.size(); ++i)
+	{
+		if (!combat_->takeDirty(i))
+			continue;
 		ecs.entity(combatEntities_[i]).set<state::Fighter>(members[i].fighter);
+		++copied;
+	}
+#if KSIM_PROFILE
+	profiler_.probe(profile::Probe::MirrorCopied, static_cast<double>(copied));
+	profiler_.probe(profile::Probe::MirrorSkipped, static_cast<double>(members.size() - copied));
+#endif
+	(void)copied;
 	KSIM_PROFILE_SUB(CombatMirror);
 }
 
@@ -2161,6 +2297,7 @@ void Simulation::apply(const Command& command)
 	}
 	case CommandType::SetPlayerAreas:
 		regions_->setPlayerAreas(ecs, command.points);
+		navCoverageNow_ = true;
 		syncLineOfSight(); // the newly Full regions get their hull trees, the rest are freed (task AZ)
 		break;
 	case CommandType::SetSquadCentre:
@@ -2411,8 +2548,7 @@ void Simulation::apply(const Command& command)
 					route.push_back({command.points[i].x, command.heights[i], command.points[i].z});
 				if (!f->route.empty())
 					f->clearWhy = state::Fighter::kClearNewOrder; // the order replaces a live route
-				f->route = std::move(route);
-				f->routeNext = 0;
+				setRoute(*f, std::move(route), navigation_.get(), body(*f));
 				++f->routeVersion;
 				f->routeSeq = static_cast<std::uint32_t>(command.object);
 				f->routeChase = false; // a move order replaces an attack chase's route; it must not inherit its flag
@@ -2575,6 +2711,14 @@ std::uint64_t Simulation::rngState(Subsystem subsystem) const
 {
 	return rng_[static_cast<std::size_t>(subsystem)].state();
 }
+
+#if KSIM_DEV
+std::vector<StatePart> Simulation::stateParts() const
+{
+	const ArenaMirror mirror(*this);
+	return ksim::stateParts(world_.ecs());
+}
+#endif
 
 std::uint64_t Simulation::stateHash() const
 {

@@ -3,12 +3,10 @@
 // teleports - one unit leaves the source):
 //   1. the animal's own main inventory;
 //   2. its own worn backpack's contents;
-//   3. a squadmate's main inventory and its worn backpack (the exe reads the squadmate's BACKPACK only and only for the player's
-//      faction; ours widens to the whole inventory, any squad - UNSURE, noted at the code);
+//   3. a squadmate's worn backpack only (never its main inventory), and only with both switches on (rwh.203);
 //   4. an outdoor storage box that holds food (the exe's food finder rejects a building with an interior for an animal, so food
 //      kept indoors is not eaten: that is the negative case here).
-// The exe's two switches (DAT_142134690+0x114 animal auto-eat, +0x115 squad share) are not world options in ours, so both
-// paths are always on (UNSURE).
+// The exe's two switches (DAT_142134690+0x114 Feed Animals, +0x115 Share Food) default OFF; ours are WorldOptions::feedAnimals / shareFood (Simulation::setGameOption).
 // A bare world (Simulation::load), no AI and no navmesh: an inventory, a squad, a box and stepMeals are all the fixture needs.
 
 #include "ksim/combat/combat_data.hpp"
@@ -215,22 +213,36 @@ void ownBackpack(Rig& rig)
 
 void squadMate(Rig& rig)
 {
+	// Both switches default OFF (rwh.203): a squadmate's backpack food is not eaten.
+	test::require(rig.sim.worldOptions() == nullptr || (!rig.sim.worldOptions()->feedAnimals && !rig.sim.worldOptions()->shareFood), "the two switches default off");
+	rig.hungry(rig.animal);
+	rig.wearBackpackWithFood(rig.mate, 2);
+	rig.tick(30);
+	test::require(rig.fighterOf(rig.animal).hunger <= 1.0 && rig.carried(rig.mate, rig.food) == 2, "the animal ate a squadmate's backpack with the switches off");
+	rig.clearSources();
+	std::cout << "  switches off: refused\n";
+	// One switch alone is not enough.
+	test::require(rig.sim.setGameOption("feedAnimals", 1.0).empty(), "set feedAnimals");
+	rig.hungry(rig.animal);
+	rig.wearBackpackWithFood(rig.mate, 2);
+	rig.tick(30);
+	test::require(rig.fighterOf(rig.animal).hunger <= 1.0 && rig.carried(rig.mate, rig.food) == 2, "the animal ate with Share Food off");
+	rig.clearSources();
+	test::require(rig.sim.setGameOption("shareFood", 1.0).empty(), "set shareFood");
+	// A squadmate's MAIN inventory is never searched (the equipped backpack only).
 	rig.hungry(rig.animal);
 	rig.invent(rig.mate, {{rig.food, 2}});
-	rig.tick(2);
-	test::require(rig.fighterOf(rig.animal).hunger > 1.0, "the animal does not eat a squadmate's food");
-	test::require(rig.carried(rig.mate, rig.food) == 1, "the squadmate's pack did not lose one unit ("
-		+ std::to_string(rig.carried(rig.mate, rig.food)) + " left)");
-	std::cout << "  squadmate's inventory: one unit eaten\n";
+	rig.tick(30);
+	test::require(rig.fighterOf(rig.animal).hunger <= 1.0 && rig.carried(rig.mate, rig.food) == 2, "the animal ate a squadmate's main inventory");
+	std::cout << "  squadmate's main inventory: refused\n";
 	rig.clearSources();
-	// The same through the squadmate's worn backpack (the exe's own source, dt24_eat section 9).
 	rig.hungry(rig.animal);
 	rig.wearBackpackWithFood(rig.mate, 2);
 	rig.tick(2);
 	test::require(rig.fighterOf(rig.animal).hunger > 1.0, "the animal does not eat a squadmate's backpack food");
 	test::require(rig.carried(rig.mate, rig.food) == 1, "the squadmate's backpack did not lose one unit ("
 		+ std::to_string(rig.carried(rig.mate, rig.food)) + " left)");
-	std::cout << "  squadmate's backpack: one unit eaten\n";
+	std::cout << "  squadmate's backpack (both switches on): one unit eaten\n";
 	rig.clearSources();
 }
 

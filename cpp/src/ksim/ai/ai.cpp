@@ -108,7 +108,6 @@ constexpr double kPostReach = 2.0;
 // (layout furniture, 2026-11-03), so the walk ends on its rim: half the table plus the agent radius from the centre, 6.7 to 17 u in the
 // v8 soak. Under that the squad re-walked to the table every step without moving (88 stuck episodes, 27 on v7).
 constexpr double kBarReach = 20.0;
-constexpr std::uint64_t kBarRetryTicks = 20; // a trader with no SquadRoutine yet asks for its table again after this many ticks
 
 // Local goals offered per selection (a point that cannot be reached by walking
 // falls to the next one). A walk may stray kLocalLeash radii from the anchor (a
@@ -710,7 +709,7 @@ void UtilityGroupLayer::advance(GroupContext& context, GroupResult& result) cons
 			// The delivery's own goal point: the depot, or the mesh point toward it when the depot is off the mesh (k16.6.21 step 2).
 			again.x = ai.goalX;
 			again.z = ai.goalZ;
-			again.far = context.holdsPlayer && !navigator_->covers(again.x, again.z);
+			again.far = context.carried && !navigator_->covers(again.x, again.z);
 		} else {
 			again.x = town != towns_.end() ? town->x : context.homeX;
 			again.z = town != towns_.end() ? town->z : context.homeZ;
@@ -934,7 +933,7 @@ bool UtilityGroupLayer::deliverySelect(GroupContext& context, GroupResult& resul
 			result.deliveryFailed = holding ? AiReason::None : AiReason::OutsideWindow;
 			result.deliveryEdge = holding ? 0 : 2;
 			// An off-mesh depot: the squad goes on from the edge as a token (k16.7.15).
-			if (!context.holdsPlayer && !navigator_->covers(site->x, site->z) && startTokenLeg(context, *site, result))
+			if (!context.carried && !navigator_->covers(site->x, site->z) && startTokenLeg(context, *site, result))
 				return true;
 			ai.route.clear();
 			ai.length = 0.0;
@@ -954,9 +953,9 @@ bool UtilityGroupLayer::deliverySelect(GroupContext& context, GroupResult& resul
 	delivery.x = site->x;
 	delivery.z = site->z;
 	delivery.targetId = site->id;
-	// A squad with the player captive (built, k16.6.468) walks an off-mesh depot one zone at a time, as the exe's far move goal (k16.6.482);
-	// any other squad is a token off the mesh and takes the edge walk and the token leg (k16.7.15).
-	delivery.far = context.holdsPlayer && !navigator_->covers(site->x, site->z);
+	// A built squad (in detail: the area follows the player, k16.6.468) walks an off-mesh depot one zone at a time, as the exe's far move goal
+	// (k16.6.482, k16.6.672), whatever it carries; only a token (unloaded) takes the edge walk and the token leg (k16.7.15).
+	delivery.far = context.carried && !navigator_->covers(site->x, site->z);
 	const auto failedBefore = result.failures;
 	if (!adopt(context, delivery, result))
 	{
@@ -972,7 +971,9 @@ bool UtilityGroupLayer::deliverySelect(GroupContext& context, GroupResult& resul
 			result.deliveryEdge = 1;
 			return true;
 		}
-		if (!context.holdsPlayer && !navigator_->covers(site->x, site->z) && startTokenLeg(context, *site, result))
+		// A token takes the leg; so does a built squad standing off the loaded mesh (no far route from there: the area does not reach
+		// on, it is demoted to a token next pass), whatever it carries (k16.6.672).
+		if ((!context.carried || result.deliveryFailed == AiReason::OffMesh) && !navigator_->covers(site->x, site->z) && startTokenLeg(context, *site, result))
 			return true;
 		if (holding)
 		{
@@ -989,6 +990,41 @@ bool UtilityGroupLayer::deliverySelect(GroupContext& context, GroupResult& resul
 		context.trip->town = delivery.target;
 	}
 	return true;
+}
+
+// A built squad's goal off the loaded mesh: walked zone by zone (the far route), the same for every owner of a TravelTo (k16.6.672).
+bool UtilityGroupLayer::farLeg(GroupContext& context, const TownSite& site, GroupResult& result) const
+{
+	Candidate far;
+	far.kind = GoalKind::TravelTo;
+	far.target = state::EntityRef{site.entity};
+	far.x = site.x;
+	far.z = site.z;
+	far.targetId = site.id;
+	far.far = true;
+	if (!adopt(context, far, result))
+		return false;
+	if (context.trip != nullptr)
+	{
+		context.trip->staying = false;
+		context.trip->town = far.target;
+	}
+	return true;
+}
+
+// The way on to an off-mesh town: a built squad's far walk, a token's edge walk and token leg (k16.7.15).
+bool UtilityGroupLayer::offMeshLeg(GroupContext& context, const TownSite& site, GroupResult& result) const
+{
+	if (context.carried)
+	{
+		// No far route: a squad off the loaded mesh, or whose route failed as off the mesh, goes on as a token. One whose start failed on the mesh
+		// (a pinch: NoRoute) is built at Full detail and is not dropped to a token for it; it tries its next pick (kenshi-k16.6.744).
+		const std::size_t offMesh = static_cast<std::size_t>(AiReason::OffMesh);
+		const std::size_t before = result.failures[offMesh];
+		return farLeg(context, site, result)
+			|| ((!navigator_->covers(context.x, context.z) || result.failures[offMesh] != before) && startTokenLeg(context, site, result));
+	}
+	return deliveryEdge(context, site, result) || startTokenLeg(context, site, result);
 }
 
 bool UtilityGroupLayer::deliveryEdge(GroupContext& context, const TownSite& site, GroupResult& result) const
@@ -1162,7 +1198,7 @@ bool UtilityGroupLayer::tokenCircuit(GroupContext& context, GroupResult& result)
 			unit(splitMix64(seed_ ^ splitMix64(context.squadId) ^ splitMix64(0xc17c0000ULL + trip.arrivals))) * static_cast<double>(nearest4.size())));
 		const std::uint64_t key = facts[nearest4[first]].key;
 		const auto pick = std::find_if(towns_.begin(), towns_.end(), [&](const TownSite& town) { return town.id == key; });
-		if (pick != towns_.end() && startTokenLeg(context, *pick, result))
+		if (pick != towns_.end() && (context.carried && !navigator_->covers(pick->x, pick->z) ? farLeg(context, *pick, result) : startTokenLeg(context, *pick, result)))
 		{
 			trip.lastTown = trip.town;
 			trip.staying = false;
@@ -1218,8 +1254,10 @@ void UtilityGroupLayer::circuitSelect(GroupContext& context, GroupResult& result
 	if (here == nullptr && trip.staying)
 	{
 		const auto stay = std::find_if(towns_.begin(), towns_.end(), [&](const TownSite& town) { return town.entity == trip.town.id; });
-		if (stay != towns_.end() && distance(context.x, context.z, stay->x, stay->z)
-			<= std::max(UtilityGroupLayer::kHomeRadius + routines::kPlacementReach, stay->radius)) // the bar finder's reach is the town circle (k16.6.254)
+		const double reach = stay != towns_.end() ? std::max(UtilityGroupLayer::kHomeRadius + routines::kPlacementReach, stay->radius) : 0.0; // the bar finder's reach is the town circle (k16.6.254)
+		// The walk to the table is part of the stay: its route may bend outside the reach (a detour round the mesh): the walk keeps the stay within twice the reach (k16.6.428).
+		const bool walkingToTable = stay != towns_.end() && ai.goal == GoalKind::TravelTo && ai.target.id == trip.town.id && distance(context.x, context.z, stay->x, stay->z) <= 2.0 * reach;
+		if (stay != towns_.end() && (walkingToTable || distance(context.x, context.z, stay->x, stay->z) <= reach))
 			here = &*stay;
 	}
 	// The no-town -> town transition is the only thing that stamps an arrival (kinspect item 54 TQ10): the squad is in the town it was heading
@@ -1240,7 +1278,9 @@ void UtilityGroupLayer::circuitSelect(GroupContext& context, GroupResult& result
 			if (context.bar != nullptr && context.hasPosition)
 			{
 				const std::optional<std::array<double, 2>> table = context.bar->claim(context.squadEntity, here->entity);
-				if (table && distance(context.x, context.z, (*table)[0], (*table)[1]) > kBarReach)
+				// A walk that has just ended stands where its path ran out (the navigator's end, not the seat): the squad idles there, it does not walk again.
+				if (table && !(result.arrived && distance(ai.goalX, ai.goalZ, (*table)[0], (*table)[1]) < 1.0)
+					&& distance(context.x, context.z, (*table)[0], (*table)[1]) > kBarReach)
 				{
 					Candidate walk;
 					walk.kind = GoalKind::TravelTo;
@@ -1260,11 +1300,6 @@ void UtilityGroupLayer::circuitSelect(GroupContext& context, GroupResult& result
 			ai.length = 0.0;
 			ai.along = 0.0;
 			ai.until = context.now + std::max<std::uint64_t>(1, static_cast<std::uint64_t>(std::ceil((leave - hours) * kTicksPerHour)));
-			// A squad stamped on its first step (spawned in a town: a scenario, a load) has no SquadRoutine yet (attachBarTables adds it a step
-			// later), so the claim above found nothing for that reason alone: look again at the next squad step instead of standing the whole stay
-			// (k16.6.254).
-			if (context.bar != nullptr && !context.squadEntity.has<state::SquadRoutine>())
-				ai.until = std::min(ai.until, context.now + kBarRetryTicks);
 			ai.goal = GoalKind::Idle;
 			ai.target = trip.town;
 			ai.since = context.now;
@@ -1280,7 +1315,7 @@ void UtilityGroupLayer::circuitSelect(GroupContext& context, GroupResult& result
 	{
 		const auto goal = std::find_if(towns_.begin(), towns_.end(), [&](const TownSite& town) { return town.entity == trip.town.id; });
 		if (goal != towns_.end() && !navigator_->covers(goal->x, goal->z) && (here == nullptr || here->entity != goal->entity)
-			&& (deliveryEdge(context, *goal, result) || startTokenLeg(context, *goal, result)))
+			&& offMeshLeg(context, *goal, result))
 			return;
 	}
 	// Leaving, or in the open: the table is given back (the claim lives as long as the stay), then one of the 4 nearest eligible towns, uniform.
@@ -1341,7 +1376,7 @@ void UtilityGroupLayer::circuitSelect(GroupContext& context, GroupResult& result
 			// pick is not steered to covered towns; a squad that already stands at the edge finds nothing nearer and tries the next.
 			const state::TraderTrip before = trip;
 			if (navigator_->covers(site->x, site->z) ? adopt(context, visit, result)
-				: deliveryEdge(context, *site, result) || startTokenLeg(context, *site, result))
+				: offMeshLeg(context, *site, result))
 			{
 				if (before.staying)
 					trip.lastTown = before.town;
@@ -1733,6 +1768,7 @@ void AiSystem::squadStep(flecs::world& ecs, RegionEngine& engine, std::uint64_t 
 				fresh.insert(id);
 		}
 	}
+	const std::vector<bool>& fullRegions = engine.fullRegions();
 	// The second's first tick walks the whole list (a squad with no goal steps at once, `fresh`); the others only their own slice.
 	for (const auto& [id, raw] : tick % 20 == 0 ? squads_ : slices_[tick % 20])
 	{
@@ -1740,7 +1776,23 @@ void AiSystem::squadStep(flecs::world& ecs, RegionEngine& engine, std::uint64_t 
 			continue;
 		if (!ecs.is_alive(raw))
 			continue;
+		// Game speed above 1 (k16.6.633): a squad steps every cadenceScale_ seconds, on its own tick of that period (the step reads the
+		// elapsed time, GroupAI::lastStep). A player squad keeps the second. Fresh squads step at once.
+		if (cadenceScale_ > 1 && fresh.count(id) == 0 && tick % (20 * cadenceScale_) != id % (20 * cadenceScale_)
+			&& fightingSquads_.count(id) == 0 && !flecs::entity(ecs.c_ptr(), raw).has<state::PlayerSquad>())
+			continue;
 		const flecs::entity entity(ecs.c_ptr(), raw);
+		// A squad outside every active region steps every kFarSquadPeriod ticks (k16.6.640), on its own tick of that period; the step reads
+		// the elapsed time. A player squad keeps the second. The period is a function of the id and the squad's region only.
+		// The settle is the pre-gate world (k16.6.670): every squad steps at 1 Hz there; the cost is one-time.
+		if (fresh.count(id) == 0 && !fullRegions.empty() && !settling_)
+		{
+			const state::Position* where = entity.get<state::Position>();
+			const std::uint64_t period = std::max<std::uint64_t>(farSquadPeriod_, 20 * cadenceScale_);
+			if (where != nullptr && tick % period != id % period && !fullRegions[static_cast<std::size_t>(std::max(0, engine.regionOf(where->x, where->z)))]
+				&& fightingSquads_.count(id) == 0 && !entity.has<state::PlayerSquad>())
+				continue;
+		}
 		if (entity.get<state::SquadInstance>() == nullptr || entity.has<state::StragglerOf>())
 			continue; // a straggler token is walked by Simulation::stepStragglers (k16.6.53)
 		if (entity.get<state::GroupAI>() == nullptr)
@@ -1761,6 +1813,10 @@ void AiSystem::squadStep(flecs::world& ecs, RegionEngine& engine, std::uint64_t 
 		}
 		if (resolved.behaviour == Behaviour::TradeCircuit && entity.get<state::TraderTrip>() == nullptr)
 			entity.set<state::TraderTrip>(state::TraderTrip{});
+		// The bar table's component goes on with the trip, before the step holds references into the entity: a trader that stay-selects on
+		// its first step can claim its table at once (k16.7.117).
+		if (resolved.behaviour == Behaviour::TradeCircuit && !entity.has<state::SquadRoutine>())
+			entity.set<state::SquadRoutine>(state::SquadRoutine{});
 		state::GroupAI& ai = *entity.get_mut<state::GroupAI>();
 		// Resting: nothing to look at until the dwell is over (only an
 		// individual layer, for squads in full detail, still wants a call).
@@ -1841,7 +1897,6 @@ void AiSystem::squadStep(flecs::world& ecs, RegionEngine& engine, std::uint64_t 
 			context.carried = true;
 			context.holding = carry->second.holding;
 			context.slaveGap = carry->second.slaveGap;
-			context.holdsPlayer = carry->second.holdsPlayer;
 			context.x = carry->second.x;
 			context.z = carry->second.z;
 		}

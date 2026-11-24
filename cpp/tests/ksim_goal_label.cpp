@@ -147,9 +147,12 @@ int main()
 			state::Fighter* f = rig.fighter(id);
 			test::require(f != nullptr, "the fighter is in the arena");
 
-			f->goal.kind = state::IndividualKind::Flee; // DA_RUN_AWAY: RUN_AWAY_FORCED 280
+			state::Routine run; // DA_RUN_AWAY: RUN_AWAY_FORCED 280, an order-named Routine
+			run.goal = 280;
+			run.plan = {280};
+			e.set<state::Routine>(run);
 			test::require(rig.goal(id) == "Running away", "a fleeing character: the exe's \"Running away\", got \"" + rig.goal(id) + "\"");
-			f->goal.kind = state::IndividualKind::None;
+			e.remove<state::Routine>();
 
 			f->carrying = 1; // any id: the carrier's own goal
 			test::require(rig.goal(id) == "Lifting", "a carrier: the exe's \"Lifting\", got \"" + rig.goal(id) + "\"");

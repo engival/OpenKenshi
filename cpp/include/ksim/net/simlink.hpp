@@ -24,7 +24,9 @@
 #include "knav/navmesh.hpp"
 #include "kworld/loadorder.hpp"
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -47,6 +49,17 @@
 
 namespace ksim::simlink {
 
+/// Tick-loop catch-up policy (kenshi-k16.6.634). `lag` is how far behind the next due tick the loop is, `interval` the wall seconds per
+/// tick, `perSnapshot` the deliberate batch (the loop sleeps until the whole batch is due, so (perSnapshot - 1) intervals of lag is
+/// normal). Returns the lag to keep. Speed 1: unchanged, the whole lag until 1 s, then a resync (lag 0). Speed above 1: lag beyond the
+/// batch plus 2 intervals is dropped, so a slow tick is not repaid as a burst. A pure function of its arguments.
+inline double catchUpLag(double lag, double interval, int perSnapshot, bool fast)
+{
+	if (!fast)
+		return lag > 1.0 ? 0.0 : lag;
+	return std::min(lag, (perSnapshot - 1 + 2) * interval);
+}
+
 inline constexpr std::uint32_t kMagic = 0x4D49534B; // 'KSIM'
 inline constexpr std::uint16_t kProtocol = 8; // bump in the same commit as any incompatible wire / snapshot / server-args change (SIMLINK.md "Protocol version"); the client has its own copy
 // INTERACTABLE `kind` (SIMLINK.md section 13).
@@ -55,6 +68,7 @@ inline constexpr std::uint8_t kInteractableItem = 2;
 inline constexpr std::uint8_t kInteractableContainer = 3;
 inline constexpr std::uint8_t kInteractableProducer = 4; // a deposit, mine or drill (state::Producer); carries the kind-4 tail
 inline constexpr std::uint8_t kInteractableBed = 5; // a real layout bed (Simulation::bedViews); carries the kind-5 tail (client-approved 2026-11-06)
+inline constexpr std::uint8_t kInteractableMachine = 12; // a placed machine with no producer entity of its own (converter, power, turret, furnace; kenshi-k16.5.26)
 // move_to `flags` (SIMLINK.md section 7): bit 0 queue, bit 1 the y field is the clicked surface height.
 inline constexpr std::uint8_t kMoveQueue = 1;
 inline constexpr std::uint8_t kMoveYValid = 2;
@@ -513,8 +527,10 @@ private:
 	{
 		std::uint32_t version = 0;
 		bool unconscious = false;
+		bool low = false; // last sent as a low-detail figure (outside the bounds, inside the interest)
 		std::uint32_t routeSent = 0; // the routeVersion the client last heard of
 		std::uint32_t routeSeqSent = 0; // the seq of the route the client last heard of (the clear carries it)
+		std::uint64_t medicalTick = 0; // the tick of the last CHAR_MEDICAL sent (its staggered 8-tick bucket is not re-sent)
 		RouteDiag diagSent{}; // the diag the client last heard: a change re-sends the CHAR_ROUTE
 	};
 	struct Look
@@ -605,6 +621,10 @@ private:
 		std::uint64_t occupant = 0;
 		// Kind 3 (Container) tail, after the ownership tail: `building` above (0 = a scenario stand-in) and the piece's index in its layout (0xFFFF = none).
 		std::uint16_t piece = 0xFFFF;
+		// Kind 12 (Machine) tail, after the ownership tail: the machine kind (machines::Kind: 1 converter, 2 power, 3 turret, 4 furnace), the input
+		// and output ITEM records; `building` above carries a turret's key (the mounted tail's) for kind 12 (written as u64 turret).
+		std::uint8_t machineKind = 0;
+		std::string input;
 		// Kind 2 severed limb (item function 0x11) only, after the ownership tail: the tint (task limb-tint), 0..1 as the exe stores it.
 		bool limbTint = false;
 		float skin[3] = {};
@@ -665,7 +685,7 @@ private:
 	void writeAppearance(RecordWriter& out, std::uint64_t tick, const CombatArena::Member& m, std::uint32_t version);
 	// playerTeams: the teams of this session's player characters (flag bit 14 is set for a living non-player of another team).
 	void writeDynamic(RecordWriter& out, std::uint64_t tick, const CombatArena::Member& m, std::uint32_t version,
-		const std::set<std::int32_t>& playerTeams);
+		const std::set<std::int32_t>& playerTeams, bool lowDetail = false);
 	void writeRoute(RecordWriter& out, std::uint64_t tick, const CombatArena::Member& m, std::uint32_t seq);
 	RouteDiag routeDiag(const CombatArena::Member& m) const;
 	void writeMedical(RecordWriter& out, std::uint64_t tick, const CombatArena::Member& m);
@@ -833,6 +853,7 @@ private:
 	bool taskKnown_ = false;
 	std::uint8_t progressLevel_ = 1; // order 98: 0 none, 1 the original's bars of the player's characters, 2 every task of the player's, 3 plus everyone in view
 	bool taskForce_ = false; // the level changed: the next tick sends the list whatever the change test says
+	std::unordered_map<std::uint64_t, std::uint32_t> machineRowsSent_; // BUILDING rows of machines / containers in view: version the client last heard
 	std::map<std::uint64_t, std::uint32_t> buildingsSent_; // BUILDING: each building's version as the client last heard it
 	std::map<std::uint64_t, JobsView> jobsSent_; // JOBS: each player character's list as the client last heard it
 	const std::unordered_map<std::uint64_t, std::uint64_t>* squadOf_ = nullptr; // character -> squad Id (the Simulation's cache), set each sendTick

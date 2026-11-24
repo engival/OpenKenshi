@@ -64,4 +64,15 @@ inline std::vector<std::uint8_t> clientFrame(const std::uint8_t* frame, std::siz
 	return out;
 }
 
+// A test split into named parts for ctest (kenshi-k16.5.21): the part names in `parts` (argv[from..]) pick which cases run; no names = all.
+inline bool wantPart(int argc, char** argv, int from, std::string_view name)
+{
+	if (argc <= from)
+		return true;
+	for (int i = from; i < argc; ++i)
+		if (name == argv[i])
+			return true;
+	return false;
+}
+
 } // namespace test

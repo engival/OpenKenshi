@@ -42,7 +42,6 @@ constexpr std::uint16_t kGoToDeliverSlaves = 192;
 constexpr std::uint16_t kMoveOnFreeWillFast = 67; // the Summoned individual goal
 constexpr std::uint16_t kLiftPerson = 68;
 constexpr std::uint16_t kManTheGate = 180;
-constexpr std::uint16_t kRunAwayForced = 280;
 constexpr std::uint16_t kRunAway = 35;
 constexpr std::uint16_t kAttackEnemies16 = 16;
 
@@ -171,9 +170,9 @@ LiveGoal liveGoal(const state::Fighter& f, const flecs::entity& entity, const Co
 		out.name = taskName(out.task);
 		return out;
 	}
-	if (f.goal.kind == state::IndividualKind::Flee || f.goal.kind == state::IndividualKind::RunAway)
+	if (f.goal.kind == state::IndividualKind::RunAway)
 	{
-		out.task = f.goal.kind == state::IndividualKind::RunAway ? kRunAway : kRunAwayForced;
+		out.task = kRunAway;
 		out.source = kSourceFlee;
 		out.target = f.goal.target;
 		at(f.goal.target);
@@ -288,6 +287,26 @@ bool Simulation::combatMode(const state::Fighter& fighter) const
 	return !fighter.unconscious && !fighter.dead
 		&& (fighter.technique >= 0 || fighter.state == state::CombatState::Attack || fighter.state == state::CombatState::Defend
 			|| (fighter.target != 0 && fighter.state != state::CombatState::Approach && !farHub));
+}
+
+double Simulation::bodyBulkStat(std::uint64_t id) const
+{
+	const state::Fighter* f = combat_ != nullptr ? combat_->find(id) : nullptr;
+	if (f == nullptr)
+		return 1.0;
+	// rwh.240 section 3: max(strength * ageMult, weapon smith, armour smith). The sim has no ageMult (1.0). The smiths are the template
+	// STATS record's numbers (nothing trains them), 1 with no record, as in charStats ids 27 / 28.
+	double stat = f->skills.strength;
+	const flecs::entity entity = fighterEntity(id);
+	const state::CharacterInstance* character = entity.is_valid() ? entity.get<state::CharacterInstance>() : nullptr;
+	const kdata::Record* record = character != nullptr && gameData_ != nullptr ? gameData_->find(character->templateSid) : nullptr;
+	const kdata::RefCategory* statsRef = record != nullptr ? record->findRefs("stats") : nullptr;
+	if (statsRef != nullptr && !statsRef->entries.empty())
+	{
+		if (const kdata::Record* statsRecord = gameData_->find(statsRef->entries.front().targetID))
+			stat = std::max({stat, static_cast<double>(statsRecord->floatOr("weapon smith", 1.0f)), static_cast<double>(statsRecord->floatOr("armour smith", 1.0f))});
+	}
+	return stat;
 }
 
 Simulation::CharStats Simulation::charStats(std::uint64_t id) const

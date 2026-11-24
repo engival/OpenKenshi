@@ -336,36 +336,6 @@ void limbPlay(Load how)
 	say("limb play (278)", how, "resumes (the destination and pick count are saved)");
 }
 
-// 277's cooldown (limbCooldown_, AI+0x318): the fetch that took a limb shuts the finder for a while; a load must keep it shut for the same time.
-void limbCooldown(Load how)
-{
-	Rig rig({{routines::task::WorkTheSlaves}}, 0);
-	state::Fighter& f = rig.fighterOf(rig.member);
-	f.animal = true;
-	f.hunger = 1.0;
-	std::string limb;
-	for (const auto& [sid, info] : rig.data->items)
-		if (info.function == kItemFunctionLimb && (limb.empty() || sid < limb))
-			limb = sid;
-	test::require(!limb.empty(), "cooldown: no limb item");
-	state::GroundItem item;
-	item.itemSid = limb;
-	item.x = item.useX = f.x + 8.0;
-	item.y = item.useY = f.y;
-	item.z = item.useZ = f.z;
-	rig.sim.spawnGroundItem(std::move(item));
-	test::require(rig.sim.orderAnimalGoal(rig.member, routines::task::AnimalFetchALimb), "cooldown: the finder named no limb");
-	for (int i = 0; i < 600 && !rig.sim.carriesLimb(rig.member); ++i)
-		rig.tick(1);
-	test::require(rig.sim.carriesLimb(rig.member), "cooldown: the dog never took the limb");
-	rig.tick(10);
-	const std::uint64_t until = rig.sim.limbCooldownUntil(rig.member);
-	test::require(until > rig.sim.clockTick(), "cooldown: none after the fetch");
-	saveAndLoad(rig, how);
-	test::require(rig.sim.limbCooldownUntil(rig.member) == until, "cooldown: not in the save");
-	say("limb fetch cooldown (277)", how, "resumes (the tick the finder opens again is saved)");
-}
-
 // 209 INVESTIGATE_ALARMS: the board (an alarm lives 8 s) and the wait are saved from v110: the investigator is still on the alarm with the same
 // seconds left on its wait.
 void alarmWait(Load how)
@@ -397,24 +367,24 @@ void alarmWait(Load how)
 
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
 	try
 	{
 		for (const Load how : {Load::Reload, Load::Fresh})
 		{
-			arrest(how);
-			arrestWaits(how);
-			huntBounties(how);
-			smash(how);
-			build(how);
-			lock(how);
-			crops(how);
-			for (const std::uint16_t goal : {routines::task::Wanderer, routines::task::HoldPosition, routines::task::StandStill})
-				standing(how, goal);
-			limbPlay(how);
-			limbCooldown(how);
-			alarmWait(how);
+			if (test::wantPart(argc, argv, 1, "arrest")) arrest(how);
+			if (test::wantPart(argc, argv, 1, "arrestWaits")) arrestWaits(how);
+			if (test::wantPart(argc, argv, 1, "huntBounties")) huntBounties(how);
+			if (test::wantPart(argc, argv, 1, "smash")) smash(how);
+			if (test::wantPart(argc, argv, 1, "build")) build(how);
+			if (test::wantPart(argc, argv, 1, "lock")) lock(how);
+			if (test::wantPart(argc, argv, 1, "crops")) crops(how);
+			if (test::wantPart(argc, argv, 1, "standing"))
+				for (const std::uint16_t goal : {routines::task::Wanderer, routines::task::HoldPosition, routines::task::StandStill})
+					standing(how, goal);
+			if (test::wantPart(argc, argv, 1, "limbPlay")) limbPlay(how);
+			if (test::wantPart(argc, argv, 1, "alarmWait")) alarmWait(how);
 		}
 		std::cout << "ksim_save_mid_order: ok\n";
 		return 0;

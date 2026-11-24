@@ -88,14 +88,58 @@ struct Case
 	// What is wrong with whom, as the records a token's members would hold: written once the squad is a token (a wound given in detail would
 	// kill or wake the member before the player is far enough for the demotion).
 	std::vector<std::pair<flecs::entity, state::MemberDelta>> records;
+	std::size_t helper = 1; // the member that holds the kit
 };
 
-Case prepare(bool on, Hurt hurt, bool kit)
+// How the squad's helper is chosen: any member (the scene's wilderness squad), or from the slaver caravan (its packages carry 58 JOB_MEDIC)
+// the first member whose goal list does / does not hold it (rwh.204: only the Medic role treats a downed ally).
+enum class Helper
+{
+	Any,
+	Medic,
+	NotMedic,
+};
+
+Case prepare(bool on, Hurt hurt, bool kit, Helper who = Helper::Any)
 {
 	std::unique_ptr<Simulation> box = newGameBoxed(*gOrder, gCombat, gNav, 23);
 	Simulation& sim = *box;
 	sim.setOffscreenMedical(on);
 	Scene scene = pick(sim, 3);
+	std::size_t helper = 1;
+	if (who != Helper::Any)
+	{
+		helper = 0;
+		// A squad of 3+ not at war with the player, with a member (not the first) whose goal list does / does not hold 58; it is set down by the
+		// player (as pick() does for the scene's squads) and built there.
+		flecs::entity player;
+		ecsOf(sim).each([&](flecs::entity e, const state::PlayerFaction&, const state::FactionState&) { player = e; });
+		std::vector<flecs::entity> squads;
+		ecsOf(sim).each([&](flecs::entity squad, const state::SquadInstance& instance, const state::Position&)
+		{
+			if (squad != scene.squad && instance.source != state::SpawnSource::Dismissed
+				&& (instance.faction.id == 0 || !ecsOf(sim).is_alive(instance.faction.id)
+					|| factionRelation(*sim.gameData(), ecsOf(sim).entity(instance.faction.id), player) > FactionBook::kHostile))
+				squads.push_back(squad);
+		});
+		std::sort(squads.begin(), squads.end(), [](flecs::entity a, flecs::entity b) { return idOf(a) < idOf(b); });
+		for (const flecs::entity squad : squads)
+		{
+			std::vector<flecs::entity> members = membersOf(sim, squad);
+			std::sort(members.begin(), members.end(), [](flecs::entity a, flecs::entity b) { return idOf(a) < idOf(b); });
+			for (std::size_t i = 1; members.size() >= 3 && members.size() <= 8 && helper == 0 && i < members.size(); ++i)
+				helper = sim.canTreatAllies(members[i]) == (who == Helper::Medic) ? i : 0;
+			if (helper != 0)
+			{
+				scene.squad = squad;
+				scene.members = members;
+				break;
+			}
+		}
+		test::require(helper != 0, "a world squad with a member of the wanted role");
+		sim.moveSquad(scene.squad, scene.x + 250.0, scene.z + 80.0);
+		runUntil(sim, [&] { return inArena(sim, scene.members) == scene.members.size(); }, 1200, "the squad was built beside the player");
+	}
 	withoutKits(sim, scene.members);
 	const std::string bread = itemNamed(sim, "Bread");
 	give(scene.members[0], bread);
@@ -116,15 +160,15 @@ Case prepare(bool on, Hurt hurt, bool kit)
 		f.blood -= 60.0;
 		break;
 	}
-	Case c{std::move(box), sim, std::move(scene), bread, {}};
+	Case c{std::move(box), sim, std::move(scene), bread, {}, helper};
 	c.records.emplace_back(c.scene.members[0], *state::MemberDelta::between(f, whole));
 	if (kit)
 	{
-		give(c.scene.members[1], itemNamed(sim, "Basic First Aid Kit"));
-		state::Fighter medic = fighterOf(sim, c.scene.members[1]);
+		give(c.scene.members[helper], itemNamed(sim, "Basic First Aid Kit"));
+		state::Fighter medic = fighterOf(sim, c.scene.members[helper]);
 		const state::Fighter unskilled = medic;
 		medic.skills.medic = 60.0;
-		c.records.emplace_back(c.scene.members[1], *state::MemberDelta::between(medic, unskilled));
+		c.records.emplace_back(c.scene.members[helper], *state::MemberDelta::between(medic, unskilled));
 	}
 	return c;
 }
@@ -305,13 +349,27 @@ void run()
 		depart(alone);
 		runMinutes(alone.sim, 120);
 		const bool diedAlone = alone.scene.members[0].has<state::Fighter>() && alone.scene.members[0].get<state::Fighter>()->dead;
-		Case aided = prepare(true, Hurt::Treatable, true);
+		Case aided = prepare(true, Hurt::Treatable, true, Helper::Medic);
 		depart(aided);
 		runMinutes(aided.sim, 120);
 		const bool diedAided = aided.scene.members[0].has<state::Fighter>() && aided.scene.members[0].get<state::Fighter>()->dead;
 		std::cout << "treatable wound: died alone " << diedAlone << ", died with a kit " << diedAided << "\n";
 		test::require(diedAlone && !diedAided, "a squadmate's first aid saves a member who dies without it");
-		test::require(!holds(aided.scene.members[1], itemNamed(aided.sim, "Basic First Aid Kit")) || aided.scene.members[1].has<state::MemberDelta>(), "the kit was used");
+		test::require(!holds(aided.scene.members[aided.helper], itemNamed(aided.sim, "Basic First Aid Kit")) || aided.scene.members[aided.helper].has<state::MemberDelta>(), "the kit was used");
+	}
+
+	// Roles (rwh.204, dt45): the same dying member and a kit-holding squadmate; only a member in the Medic role (58 in its goal list) treats it (the case above gives the kit to one).
+	{
+		const auto diedWith = [](Helper who)
+		{
+			Case c = prepare(true, Hurt::Treatable, true, who);
+			depart(c);
+			runMinutes(c.sim, 120);
+			return c.scene.members[0].has<state::Fighter>() && c.scene.members[0].get<state::Fighter>()->dead;
+		};
+		const bool plainDies = diedWith(Helper::NotMedic);
+		std::cout << "caravan: non-Medic kit-holder let the member die " << plainDies << "\n";
+		test::require(plainDies, "a member outside the Medic role does not treat a downed squadmate");
 	}
 
 	// Setting off: a body no player area covers is destroyed (the zone unloads with it; a persistent platoon would keep it, which we do not model).

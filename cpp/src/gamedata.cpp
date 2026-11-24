@@ -3,6 +3,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <string>
+#include <string_view>
+#include <type_traits>
+#include <unordered_map>
+#include <utility>
 
 namespace kdata {
 
@@ -17,36 +21,120 @@ bool recordIsRemoved(const Record& record)
 	return false;
 }
 
-template <typename Field>
-void mergeFields(std::vector<Field>& target, const std::vector<Field>& source)
+// Overlay identity of one entry: a domain tag plus either a number or bytes. No allocation, so large lists
+// can be indexed by hash (kenshi-k16.15.46); `sv` points into the entry, so the target is reserved before indexing.
+struct MergeKey
 {
+	std::uint8_t kind = 0;
+	std::int32_t num = 0;
+	std::string_view sv;
+	bool operator==(const MergeKey& other) const noexcept
+	{
+		return kind == other.kind && num == other.num && sv == other.sv;
+	}
+};
+
+struct MergeKeyHash
+{
+	std::size_t operator()(const MergeKey& key) const noexcept
+	{
+		return std::hash<std::string_view>()(key.sv) * 31u + key.kind * 7u + static_cast<std::size_t>(key.num);
+	}
+};
+
+constexpr std::size_t kIndexedMergeMin = 24;
+
+// Merge `source` into `target` by key: replace the first entry with the same key, else append; `removal` entries
+// delete the first match. Same result as a linear first-match scan per incoming entry; a hash index replaces the scan
+// on long lists (unique target keys only, else the scan runs).
+template <typename T, typename KeyOf, typename Removal>
+void mergeKeyed(std::vector<T>& target, const std::vector<T>& source, KeyOf keyOf, Removal removal)
+{
+	if (source.empty())
+		return;
+	bool indexed = target.size() >= kIndexedMergeMin;
+	std::unordered_map<MergeKey, std::size_t, MergeKeyHash> index;
+	if (indexed)
+	{
+		target.reserve(target.size() + source.size());
+		index.reserve((target.size() + source.size()) * 2);
+		for (std::size_t i = 0; i < target.size() && indexed; ++i)
+			indexed = index.emplace(keyOf(target[i]), i).second;
+	}
+	if (!indexed)
+	{
+		for (const auto& incoming : source)
+		{
+			const MergeKey key = keyOf(incoming);
+			auto existing = std::find_if(target.begin(), target.end(), [&](const T& entry) { return keyOf(entry) == key; });
+			if (removal(incoming))
+			{
+				if (existing != target.end())
+					target.erase(existing);
+			}
+			else if (existing != target.end())
+				*existing = incoming;
+			else
+				target.push_back(incoming);
+		}
+		return;
+	}
+	std::vector<char> dead(target.size(), 0);
+	bool anyDead = false;
 	for (const auto& incoming : source)
 	{
-		auto existing = std::find_if(target.begin(), target.end(),
-			[&](const Field& field) { return field.key == incoming.key; });
-		if (existing == target.end())
+		auto found = index.find(keyOf(incoming));
+		if (removal(incoming))
+		{
+			if (found != index.end())
+			{
+				dead[found->second] = 1;
+				anyDead = true;
+				index.erase(found);
+			}
+		}
+		else if (found != index.end())
+		{
+			const std::size_t at = found->second;
+			index.erase(found);
+			target[at] = incoming;
+			index.emplace(keyOf(target[at]), at);
+		} else {
 			target.push_back(incoming);
-		else
-			*existing = incoming;
+			dead.push_back(0);
+			index.emplace(keyOf(target.back()), target.size() - 1);
+		}
+	}
+	if (anyDead)
+	{
+		std::size_t kept = 0;
+		for (std::size_t i = 0; i < target.size(); ++i)
+			if (!dead[i])
+			{
+				if (kept != i)
+					target[kept] = std::move(target[i]);
+				++kept;
+			}
+		target.erase(target.begin() + static_cast<std::ptrdiff_t>(kept), target.end());
 	}
 }
 
-std::string referenceKey(const RefEntry& entry)
+template <typename Field>
+void mergeFields(std::vector<Field>& target, const std::vector<Field>& source)
+{
+	mergeKeyed(target, source, [](const Field& field) { return MergeKey{ 0, 0, field.key }; },
+		[](const Field&) { return false; });
+}
+
+MergeKey referenceKey(const RefEntry& entry)
 {
 	// v8+ identity is the target stringID. Pre-v8 entries are opaque; two
 	// entries are only equal if all eight bytes match.
 	// UNSURE: MOD_FORMAT.md does not define overlay identity for the
 	// opaque pre-v8 form; raw bytes are the simplest choice.
 	if (entry.opaqueEntry)
-	{
-		std::string key;
-		key.reserve(9);
-		key.push_back('\0');
-		for (auto byte : entry.opaque)
-			key.push_back(static_cast<char>(std::to_integer<unsigned char>(byte)));
-		return key;
-	}
-	return entry.targetID;
+		return MergeKey{ 1, 0, std::string_view(reinterpret_cast<const char*>(entry.opaque.data()), entry.opaque.size()) };
+	return MergeKey{ 0, 0, entry.targetID };
 }
 
 bool referenceIsRemoval(const RefEntry& entry)
@@ -76,75 +164,35 @@ void mergeReferences(std::vector<RefCategory>& target,
 	for (const auto& incomingCategory : source)
 	{
 		auto category = findCategory(target, incomingCategory.category);
-		for (const auto& incoming : incomingCategory.entries)
+		if (category == nullptr)
 		{
-			auto key = referenceKey(incoming);
-			bool removal = referenceIsRemoval(incoming);
-			if (category == nullptr)
-			{
-				// A removal of something absent is a no-op and must not
-				// create an empty category.
-				if (removal)
-					continue;
-				target.push_back(RefCategory{ incomingCategory.category, {} });
-				category = &target.back();
-			}
-			auto existing = std::find_if(category->entries.begin(),
-				category->entries.end(),
-				[&](const RefEntry& entry) { return referenceKey(entry) == key; });
-			if (removal)
-			{
-				if (existing != category->entries.end())
-					category->entries.erase(existing);
-			}
-			else if (existing != category->entries.end())
-			{
-				*existing = incoming;
-			}
-			else
-			{
-				category->entries.push_back(incoming);
-			}
+			// A removal of something absent is a no-op and must not
+			// create an empty category.
+			if (std::all_of(incomingCategory.entries.begin(), incomingCategory.entries.end(), referenceIsRemoval))
+				continue;
+			target.push_back(RefCategory{ incomingCategory.category, {} });
+			category = &target.back();
 		}
+		mergeKeyed(category->entries, incomingCategory.entries, referenceKey, referenceIsRemoval);
 	}
 }
 
-std::string instanceKey(const Instance& instance)
+MergeKey instanceKey(const Instance& instance)
 {
 	// UNSURE: the spec keys instances by "instance ID" but does not say how
-	// to compare the v15+ string form with the older i32 form. Prefixing
-	// keeps the two domains apart (a record overlay normally uses one form).
-	return instance.idIsString
-		? "s:" + instance.id
-		: "i:" + std::to_string(instance.idInt);
+	// to compare the v15+ string form with the older i32 form. Keeping the
+	// two domains apart (a record overlay normally uses one form).
+	return instance.idIsString ? MergeKey{ 0, 0, instance.id } : MergeKey{ 1, instance.idInt, {} };
 }
 
 void mergeInstances(std::vector<Instance>& target, const std::vector<Instance>& source,
 	std::int32_t fileVersion)
 {
-	for (const auto& incoming : source)
-	{
-		auto key = instanceKey(incoming);
-		auto existing = std::find_if(target.begin(), target.end(),
-			[&](const Instance& instance) { return instanceKey(instance) == key; });
-		// MOD_FORMAT.md "Record": an empty targetStringID deletes the
-		// instance. Before v8 there is no target field, so no deletion form.
-		// UNSURE: deletion is only meaningful for v8+; assumed here.
-		bool deletion = fileVersion >= 8 && incoming.targetStringID.empty();
-		if (deletion)
-		{
-			if (existing != target.end())
-				target.erase(existing);
-		}
-		else if (existing != target.end())
-		{
-			*existing = incoming;
-		}
-		else
-		{
-			target.push_back(incoming);
-		}
-	}
+	// MOD_FORMAT.md "Record": an empty targetStringID deletes the
+	// instance. Before v8 there is no target field, so no deletion form.
+	// UNSURE: deletion is only meaningful for v8+; assumed here.
+	mergeKeyed(target, source, instanceKey,
+		[fileVersion](const Instance& incoming) { return fileVersion >= 8 && incoming.targetStringID.empty(); });
 }
 
 void mergeRecord(Record& target, const Record& source, std::int32_t fileVersion)
@@ -187,15 +235,32 @@ void mergeRecord(Record& target, const Record& source, std::int32_t fileVersion)
 
 void GameData::apply(const File& file)
 {
+	applyImpl(file);
+}
+
+void GameData::apply(File&& file)
+{
+	applyImpl(file);
+}
+
+template <typename F>
+void GameData::applyImpl(F& file)
+{
+	std::vector<char> dead;
 	// UNSURE: the v17 header `deletes` block is not mentioned by the load
 	// semantics section; it is ignored. No shipped file exercises it here.
-	for (const auto& record : file.records)
+	for (auto& record : file.records)
 	{
 		if (recordIsRemoved(record))
 		{
 			auto existing = index_.find(record.stringID);
 			if (existing != index_.end())
-				removeAt(existing->second);
+			{
+				// Removed in place and compacted once after the file: a per-removal erase + index rebuild is O(n) each.
+				dead.resize(records_.size(), 0);
+				dead[existing->second] = 1;
+				index_.erase(existing);
+			}
 			continue;
 		}
 
@@ -206,18 +271,23 @@ void GameData::apply(const File& file)
 			// (ItemAlreadyDefined/MISSING) are not part of the required
 			// overlay rules; an unknown stringID is always inserted.
 			index_.emplace(record.stringID, records_.size());
-			records_.push_back(record);
+			if constexpr (std::is_const_v<F>)
+				records_.push_back(record);
+			else
+				records_.push_back(std::move(record));
 		}
 		else
 		{
 			mergeRecord(records_[existing->second], record, file.version);
 		}
 	}
+	if (std::find(dead.begin(), dead.end(), 1) != dead.end())
+		compact(dead);
 }
 
 const Record* GameData::find(std::string_view stringID) const
 {
-	auto existing = index_.find(std::string(stringID));
+	auto existing = index_.find(stringID);
 	if (existing == index_.end())
 		return nullptr;
 	return &records_[existing->second];
@@ -232,11 +302,17 @@ std::vector<const Record*> GameData::byType(std::int32_t type) const
 	return matches;
 }
 
-void GameData::removeAt(std::size_t position)
+void GameData::compact(const std::vector<char>& dead)
 {
-	records_.erase(records_.begin() + static_cast<std::ptrdiff_t>(position));
-	// Rebuild the index: later positions shift down. Removals are rare
-	// (at most a few hundred in the shipped data).
+	std::size_t kept = 0;
+	for (std::size_t i = 0; i < records_.size(); ++i)
+		if (i >= dead.size() || !dead[i])
+		{
+			if (kept != i)
+				records_[kept] = std::move(records_[i]);
+			++kept;
+		}
+	records_.erase(records_.begin() + static_cast<std::ptrdiff_t>(kept), records_.end());
 	index_.clear();
 	for (std::size_t i = 0; i < records_.size(); ++i)
 		index_.emplace(records_[i].stringID, i);

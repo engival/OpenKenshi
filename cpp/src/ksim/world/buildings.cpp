@@ -635,6 +635,12 @@ std::shared_ptr<BuildingGeometry> Simulation::buildingGeometry() const
 	return buildingGeometry_;
 }
 
+void Simulation::setGameSpeed(double speed) noexcept
+{
+	gameSpeed_ = speed;
+	cadence_ = speed >= 3.0 ? 3u : speed >= 2.0 ? 2u : 1u;
+}
+
 void Simulation::setBuildSpeed(double ka) noexcept
 {
 	buildSpeed_ = std::clamp(ka, kKaMin, kKaMax);
@@ -844,6 +850,20 @@ std::string Simulation::runBuildPlace(const BuildOrder& order, bool commit)
 		t->radius = shape.radius;
 	}
 	entity.set<state::PlayerBuilding>(std::move(building));
+	if (!order.scenario)
+	{
+		kworld::PlacedInstance placed;
+		placed.instanceID = "player/" + std::to_string(id);
+		placed.buildingID = record.stringID;
+		placed.x = order.x;
+		placed.y = order.y;
+		placed.z = order.z;
+		placed.qw = order.qw;
+		placed.qx = order.qx;
+		placed.qy = order.qy;
+		placed.qz = order.qz;
+		standBuilding(std::move(placed));
+	}
 	return "";
 }
 

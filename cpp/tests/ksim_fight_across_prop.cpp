@@ -38,7 +38,7 @@ constexpr double kMaxGap = 20.0;
 constexpr double kMaxWalk = 45.0; // a short way round
 constexpr double kSwingGap = 8.0; // closer than this the endpoints are in the mesh's inset band round the prop, where walkLeg refuses
 constexpr int kPairs = 3;
-constexpr double kSeconds = 40.0;
+constexpr double kSeconds = 120.0; // equal fighters dodge and block most swings: a fixed-seed pair can go 40 s with one side landing none
 
 struct Pair { knav::Position a, b; };
 

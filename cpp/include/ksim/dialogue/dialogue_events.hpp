@@ -149,6 +149,8 @@ public:
 	virtual std::uint64_t interjector(std::uint64_t speaker) const { (void)speaker; return 0; }
 	// The character is in a conversation: a new event for it is dropped (DIALOGUE_SELECTION_LIVE: no queue).
 	virtual bool busy(std::uint64_t id) const { (void)id; return false; }
+	// Q3 "one at a time" per speaker squad: some member of the speaker's squad is in a conversation (an event for the speaker is dropped).
+	virtual bool squadBusy(std::uint64_t id) const { (void)id; return false; }
 	// The speaker's lock map entry for a root (an interned sid of the book; DA_LOCK_THIS_DIALOG, a line's locks / unlocks): true and `locked`
 	// set when it has one, false = the record's own `locked` holds.
 	virtual bool lockState(std::uint64_t speaker, std::uint32_t record, bool& locked) const { (void)speaker; (void)record; (void)locked; return false; }
@@ -292,7 +294,9 @@ public:
 
 	// Consumes the queue: sorts it, evaluates at most kEvalsPerTick events, keeps the rest (they age), appends the results to
 	// the log and returns this step's. `tick` is the current sim tick.
-	std::vector<DialoguePick> step(const DialogueWorld& world, std::uint64_t tick);
+	// `commit`, when given, runs on each pick right after its evaluation and before the next event's, so the world it changes (a started
+	// conversation, a repetition stamp) is seen by the rest of the tick's events in order (Q3 / Q4). It may push events (they wait).
+	std::vector<DialoguePick> step(const DialogueWorld& world, std::uint64_t tick, const std::function<void(DialoguePick&)>& commit = {});
 
 	// The next line of a conversation (DIALOGUE.md 3.3, monologues): the selector over the children of `line`, gated for `speaker` (the
 	// conversation's owner) and `target`. Picked (line, voice set), NoneSurvived (the conversation ends) or SpeakerGone.

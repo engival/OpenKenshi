@@ -74,6 +74,9 @@ struct Environment
 	// The sim's absolute tick (the Simulation sets it every step): the stamp a sighting writes into the observer's dialogue memory
 	// (state::Fighter::met, DC_TARGET_LAST_SEEN_X_HOURS_AGO).
 	std::uint64_t tick = 0;
+	// Decision-cadence scale (Simulation::cadenceScale: min(game speed, 3), 1 at speed 1); the scan interval of a non-player, non-fighting
+	// character is multiplied by it (k16.6.633).
+	std::uint32_t cadenceScale = 1;
 	double dayFraction = 0.5; // time of day, 0..1 (hours / 24); noon by default
 	int weatherType = 0; // 0 none, 1 dust storm, 2 acid, 3 burning, 4 gas, 5 rain (WeatherAffecting)
 	double weatherStrength = 0.0; // 0..1
@@ -187,8 +190,9 @@ bool aware(const state::Fighter& observer, std::uint64_t target) noexcept;
 // The exe's SensorRecord seen_now: the last scan knew the target by sight (or a force-notice), never by the noise roll alone.
 bool knownNow(const state::Fighter& observer, std::uint64_t target) noexcept;
 // The exe's FRESH strength (rwh.212): SensorRecord +0x38 (seen_now) || +0x39 (sensed this update; sight, else hearing). The fight-start
-// resolvers (goals 16, 15, 143) gate on it; a remembered record that no scan sensed lately does not pass. Our "this update" is one
-// scan interval (kScanMax), since scans are round-robin.
+// resolvers (goals 16, 15, 143) gate on it; a remembered record that the observer's last scan did not sense does not pass. The +0x39 flag
+// is per scan: sinceSensed is zeroed by a scan that senses the target and only grows at that observer's next scan, so it reads 0 exactly
+// until then (saved with the record: no extra state).
 bool sensedNow(const state::Fighter& observer, std::uint64_t target) noexcept;
 // Aware and sighted within `maxAge` seconds (the follow task's "leader perceived").
 bool seenWithin(const state::Fighter& observer, std::uint64_t target, double maxAge) noexcept;

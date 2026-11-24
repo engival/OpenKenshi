@@ -128,7 +128,7 @@ std::vector<Field> fighterFields(const state::Fighter& f, std::uint64_t player, 
 	field(out, "diceSeed", f.diceSeed);
 	field(out, "rng", f.rng);
 	field(out, "comfortRolls", f.comfortRolls);
-	field(out, "senseClock", f.senseClock);
+	field(out, "senseAt", f.senseAt);
 	field(out, "engaged", static_cast<std::uint64_t>(f.engaged.size()));
 	field(out, "slots", static_cast<std::uint64_t>(f.slots.size()));
 	for (const state::FighterPart& part : f.parts)

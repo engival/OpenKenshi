@@ -2,6 +2,7 @@
 
 #include "ksim/core/rng.hpp"
 #include "ksim/save/save.hpp"
+#include "ksim/world/nest_sources.hpp"
 #include "ksim/world/spawn.hpp"
 #include "ksim/world/squad_alive.hpp"
 
@@ -18,10 +19,6 @@ namespace ksim {
 namespace {
 
 using state::SpawnSource;
-
-// A nest TOWN's squad lists, as the default-world spawner reads them.
-constexpr const char* kNestLists[] = {"residents", "default resident", "bar squads",
-	"roaming squads"};
 
 template <typename Func>
 void forEachRef(const kdata::Record& record, std::string_view category, Func&& func)
@@ -84,20 +81,18 @@ void sortDue(std::vector<std::uint64_t>& due)
 
 struct WildernessSpawner::Impl
 {
-	Impl(const kdata::GameData& gameData, std::string_view dataDir)
+	Impl(const kdata::GameData& gameData, std::string_view dataDir, const flecs::world& ecs)
 		: data(gameData)
 		, ground(dataDir)
 	{
 		const std::int32_t squadType = kworld::itemTypeByName("SQUAD_TEMPLATE");
 		const std::int32_t townType = kworld::itemTypeByName("TOWN");
-		// A scratch builder only for its world-state test.
-		flecs::world scratch;
-		RngStream unused(1);
-		const SquadBuilder judge(scratch, gameData, unused);
+		worldstate::Facts facts;
+		worldstate::collectStatuses(ecs, facts);
 		const auto usable = [&](const std::string& sid) -> const kdata::Record*
 		{
 			const kdata::Record* record = data.find(sid);
-			if (record == nullptr || record->type != squadType || !judge.worldStateHolds(*record))
+			if (record == nullptr || record->type != squadType || !worldstate::listHolds(data, facts, *record))
 				return nullptr;
 			return record;
 		};
@@ -120,18 +115,13 @@ struct WildernessSpawner::Impl
 					def.homelessWeight += entry.v0;
 				}
 			});
-			forEachRef(*group, "nests", [&](const kdata::RefEntry& entry)
+			forEachLiveNest(data, facts, townType, *group, [&](const kdata::Record& nest, const kdata::RefEntry& entry)
 			{
-				const kdata::Record* nest = data.find(entry.targetID);
-				// A nest TOWN's own `world state` gates it as a squad's does ("Fog Deathyard Invasion" holds only once the west hive queen is
-				// not okay): a nest whose state fails is no source of this group.
-				if (nest == nullptr || nest->type != townType || entry.v0 <= 0 || !judge.worldStateHolds(*nest))
-					return;
 				NestEntry nestEntry;
 				nestEntry.weight = entry.v0;
-				for (const char* list : kNestLists)
+				for (const std::string_view list : kNestSquadLists)
 				{
-					forEachRef(*nest, list, [&](const kdata::RefEntry& member)
+					forEachRef(nest, list, [&](const kdata::RefEntry& member)
 					{
 						if (const kdata::Record* squad = usable(member.targetID))
 							nestEntry.squads.push_back(squad);
@@ -392,8 +382,8 @@ struct WildernessSpawner::Impl
 	std::vector<SlotDef> slots;
 };
 
-WildernessSpawner::WildernessSpawner(const kdata::GameData& gameData, std::string_view dataDir)
-	: impl_(std::make_unique<Impl>(gameData, dataDir))
+WildernessSpawner::WildernessSpawner(const kdata::GameData& gameData, std::string_view dataDir, const flecs::world& ecs)
+	: impl_(std::make_unique<Impl>(gameData, dataDir, ecs))
 {
 }
 

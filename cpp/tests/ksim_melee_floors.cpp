@@ -8,6 +8,9 @@
 //     ordered). The NPC's chase plans to the player's 3D point, so it walks the stair up and the two fight.
 //  3. no route (AS): the player on the Storm House's roof island, an NPC on the ground: no walk reaches the player,
 //     so the NPC drops the target within a few seconds instead of standing under it.
+//  4. the vertical reach (kenshi-rwh.214: the box's 25 u half-extent is vertical, centre ~6 u up, target feet..feet+20):
+//     two fighters side by side on open ground, the enemy `gap` u higher. 18 u up (inside the 31 u top, under the chase's own 20 u floor gate) trades hits;
+//     a storey (60 u) and 45 u (outside the top for the attacker, outside the -39 floor for the enemy) land none.
 //
 // The AQ part used to order the player up the stair; that is now the fighter's own chase (routeFrom with the target's
 // click height), which is the AS change.
@@ -47,7 +50,7 @@ constexpr double kSiteZ = -28400.0;
 constexpr double kFloorGapMin = 120.0; // ground floor to floor 1 (the tower's 127), at the same x and z
 constexpr double kHouseX = 400.0;
 constexpr double kHouseZ = 400.0;
-constexpr double kOneFloor = 20.0; // kFloorApart: a hit within this height gap is on one floor
+constexpr double kOneFloor = 28.45; // the swing box: 25 u half-height + the target hull 3.45 (rwh.199 §17-19); a storey is >= 50
 
 const kdata::Record* recordNamed(const kdata::GameData& gd, const char* type, const char* name)
 {
@@ -152,7 +155,7 @@ struct Rig
 	std::uint32_t seq = 0;
 	std::vector<CombatEvent> events;
 
-	explicit Rig(const Tower& t)
+	explicit Rig(const Tower& t, bool navigation = true)
 		: tower(t)
 	{
 		sim = std::make_unique<Simulation>(Simulation::load(KENSHI_DATA, 91));
@@ -161,7 +164,8 @@ struct Rig
 		CombatSettings settings;
 		settings.substeps = 2;
 		sim->enableCombat(tower.data, settings);
-		sim->enableNavigation(tower.nav);
+		if (navigation)
+			sim->enableNavigation(tower.nav);
 	}
 
 	std::uint64_t add(const char* character, std::uint64_t team, const knav::Position& at, bool playerControlled)
@@ -297,6 +301,30 @@ int main()
 			test::require(droppedAt >= 0, "the NPC gives up a target no walk reaches, instead of standing under it");
 			test::require(npc.aggroBlockId == rig.player && npc.aggroBlock > 0.0, "the unreachable target is blocked (addBlockedTarget)");
 			test::require(rig.hitsBetween() == 0, "no hit lands on a roof island");
+		}
+
+		// 4. The vertical reach (rwh.214), on the flat site: the player at the ground floor spot, the enemy beside it `gap` higher.
+		// The navmesh is off for this case, so the heights stay exactly as set.
+		{
+			const auto trial = [&](double gap)
+			{
+				Rig rig(tower, false);
+				knav::Position at = tower.low;
+				rig.player = rig.add("Escaped Servant", 0, at, true);
+				at.x += 8.0f;
+				at.y += static_cast<float>(gap);
+				rig.enemy = rig.add("Escaped Servant", 1, at, false);
+				rig.sim->enqueue(Command::fighterAttack(state::Id{ rig.player }, state::Id{ rig.enemy }));
+				for (int n = 0; n < 400 && rig.hits(rig.enemy, rig.player) == 0; ++n)
+					rig.tick();
+				std::printf("  4. enemy %.0f u up: player hit it %d times, it hit the player %d (y gap now %.1f, dist %.1f)\n", gap,
+					rig.hits(rig.enemy, rig.player), rig.hits(rig.player, rig.enemy), rig.f(rig.enemy).y - rig.f(rig.player).y,
+					std::hypot(rig.f(rig.enemy).x - rig.f(rig.player).x, rig.f(rig.enemy).z - rig.f(rig.player).z));
+				return rig.hits(rig.enemy, rig.player);
+			};
+			test::require(trial(18.0) > 0, "a target 18 u up is inside the swing box (top at 31 u; the chase treats > 20 u as another floor, kFloorApart)");
+			test::require(trial(45.0) == 0, "a target 45 u up is outside the swing box");
+			test::require(trial(60.0) == 0, "a storey (60 u) apart is not hit");
 		}
 
 		std::printf("ksim_melee_floors ok\n");

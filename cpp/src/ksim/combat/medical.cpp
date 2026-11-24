@@ -76,19 +76,21 @@ void Simulation::stepMeals()
 		}
 		return {};
 	};
-	// The animals' wider search (task animal-feed; dt24_eat section 9, FUN_1405d29c0): after the eater's own pack (the caller),
-	// a squadmate's, then an outdoor food container. The food teleports - one unit leaves the source (the exe's 1405d0780 eats
-	// the picked item). The exe's two switches (DAT_142134690+0x114 the animal auto-eat, +0x115 the squad share) are not world
-	// options here (UNSURE); ours runs both always. UNSURE also: the exe shares a squadmate's BACKPACK only and only for
-	// player-faction characters, and its building finder weighs ownership; ours widens to the whole inventory of a squadmate, any
-	// squad, and takes from any unlocked container.
+	// The animals' wider search (task animal-feed; dt24_eat section 9, FUN_1405d29c0; rwh.203): after the eater's own pack (the caller),
+	// a squadmate's BACKPACK (the exe reads the equipped container only, never the main inventory), then an outdoor food container. The
+	// food teleports - one unit leaves the source (the exe's 1405d0780 eats the picked item). The squad pass needs both switches (+0x114
+	// Feed Animals, +0x115 Share Food: WorldOptions::feedAnimals / shareFood, global, default off). UNSURE: the exe shares for the
+	// player's faction only, and its building finder weighs ownership; ours takes any squad's and any unlocked container.
 	const auto foodForAnimal = [&](std::uint64_t id, flecs::entity entity) -> std::string
 	{
 		const state::Fighter* me = combat_->find(id);
 		if (me == nullptr)
 			return {};
 		std::vector<std::uint64_t> mates;
-		if (const flecs::entity squad = entity.target<state::MemberOf>(); squad.is_valid())
+		if (const state::WorldOptions* options = worldOptions(); options == nullptr || !options->feedAnimals || !options->shareFood)
+		{
+			// the squad pass is off
+		} else if (const flecs::entity squad = entity.target<state::MemberOf>(); squad.is_valid())
 		{
 			ecs.query_builder<const state::Id>().with<state::MemberOf>(squad).build()
 				.each([&](const state::Id& other) { if (other.value != id) mates.push_back(other.value); });
@@ -103,7 +105,7 @@ void Simulation::stepMeals()
 						mates.push_back(member);
 			});
 		}
-		// 2. a squadmate's inventory and worn backpack within 200 u.
+		// 2. a squadmate's worn backpack within 200 u.
 		for (const std::uint64_t mate : mates)
 		{
 			const state::Fighter* other = combat_->find(mate);
@@ -114,11 +116,28 @@ void Simulation::stepMeals()
 			if (held == nullptr)
 				continue;
 			state::Inventory inventory = *held;
-			const std::string food = foodIn(inventory);
+			state::Inventory::Entry* bag = inventory.wornBackpack();
+			if (bag == nullptr)
+				continue;
+			std::string food;
+			for (const std::int32_t function : {kItemFunctionFoodRestricted, kItemFunctionFood})
+			{
+				for (auto entry = bag->contents.begin(); food.empty() && entry != bag->contents.end(); ++entry)
+				{
+					const ItemInfo* info = entry->slot == state::Inventory::kCarried ? combat_->data().item(entry->itemSid) : nullptr;
+					if (info == nullptr || info->function != function)
+						continue;
+					food = entry->itemSid;
+					if (--entry->count == 0)
+						bag->contents.erase(entry);
+					break;
+				}
+				if (!food.empty())
+					break;
+			}
 			if (food.empty())
 				continue;
-			if (!inventory.removeCarried(food, 1))
-				continue;
+			++inventory.version;
 			otherEntity.set<state::Inventory>(std::move(inventory));
 			return food;
 		}
@@ -192,7 +211,7 @@ bool Simulation::treat(std::uint64_t medicId, std::uint64_t patientId)
 	if (const state::Inventory* held = entity.get<state::Inventory>())
 		inventory = *held;
 	bool taken = false;
-	const bool treated = treatBodies(*medic, *patient, medicId == patientId, entity.get<state::Inventory>() != nullptr ? &inventory : nullptr, taken, kTickSeconds);
+	const bool treated = treatBodies(*medic, *patient, medicId == patientId, entity.get<state::Inventory>() != nullptr ? &inventory : nullptr, taken, kTickSeconds, clockTick());
 	if (taken)
 		entity.set<state::Inventory>(std::move(inventory));
 	return treated;
@@ -200,7 +219,7 @@ bool Simulation::treat(std::uint64_t medicId, std::uint64_t patientId)
 
 // The step of treat() on bodies the caller holds (the arena's, or the stored members of the off-screen medical step: stored_medical.cpp, which
 // calls it with the same numbers). `inventory` is the medic's own (null: no kit can be taken); `taken` is set when a kit left it.
-bool Simulation::treatBodies(state::Fighter& medic, state::Fighter& patient, bool self, state::Inventory* inventory, bool& taken, double dt) const
+bool Simulation::treatBodies(state::Fighter& medic, state::Fighter& patient, bool self, state::Inventory* inventory, bool& taken, double dt, std::uint64_t aidTick) const
 {
 	if (patient.dead)
 		return false;
@@ -245,12 +264,18 @@ bool Simulation::treatBodies(state::Fighter& medic, state::Fighter& patient, boo
 	const double quality = kit->quality; // the merged load order's value (Basic kit 5: the live runtime reading)
 	// The wound step (FUN_14064d800) treats the newest wound only; the bandage step (FUN_140649a00) runs once the wound list is
 	// empty (MEDICAL_HUNGER_LIVE (c), kinspect 32). A robotic kit never touches wounds.
+	// One stream per patient (rwh.154, live: ~7 pool points/s net with 3-8 medics, the group is not N times faster; the task's "done" reads the
+	// medical state alone, so every medic ends on the same frame): the first medic to reach the body in a tick does the work, the others on it that
+	// tick only check what is left (a zero budget) and spend their kit. aidTick = ~0 (the off-screen step): no sharing.
+	const bool worked = aidTick != ~std::uint64_t{0} && patient.aidTick == aidTick;
+	patient.aidTick = aidTick;
 	if (!robotKit && !patient.wounds.empty())
 	{
-		rules.clotWounds(patient, skill, quality, robotKit, dt);
+		if (!worked)
+			rules.clotWounds(patient, skill, quality, robotKit, dt);
 	} else {
 		bool more = false;
-		rules.bandage(patient, rules.bandageRate(skill, quality, robotKit), robotKit, dt, more);
+		rules.bandage(patient, worked ? 0.0 : rules.bandageRate(skill, quality, robotKit), robotKit, dt, more);
 		if (!more)
 			return false;
 	}
@@ -272,6 +297,8 @@ void Simulation::stepSelfAid()
 	const auto& members = combat_->members();
 	for (std::size_t i = 0; i < members.size(); ++i)
 	{
+		if (!members[i].due)
+			continue; // (kenshi-k16.6.639)
 		if (!members[i].fighter.down)
 		{
 			if (!selfAidSince_.empty())

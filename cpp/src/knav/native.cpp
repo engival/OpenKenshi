@@ -381,6 +381,13 @@ private:
 // An hkaiNavMesh object into world coordinates: its vertices are tenths of a game unit from `base`.
 void fill(Mesh& mesh, const Value& nav)
 {
+	for (const auto& [key, v] : nav.members)
+	{
+		if (v.kind == Value::Kind::Int)
+			mesh.scalars.emplace_back(key, static_cast<double>(v.i));
+		else if (v.kind == Value::Kind::Real)
+			mesh.scalars.emplace_back(key, v.r);
+	}
 	for (const Value& v : nav.listOf("vertices"))
 	{
 		if (v.floats.size() < 3)

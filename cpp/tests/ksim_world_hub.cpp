@@ -113,12 +113,15 @@ int main(int argc, char** argv)
 			if (line.rfind(prefix, 0) != 0)
 				return;
 			const std::uint64_t id = std::stoull(line.substr(prefix.size()));
-			ecsOf(sim).each([&](const state::Id& squadId, const state::SquadInstance&, const Detail& detail)
+			ecsOf(sim).each([&](flecs::entity squad, const state::Id& squadId, const state::SquadInstance&, const Detail& detail)
 			{
 				if (squadId.value != id)
 					return;
 				placedDemotes += id == placed ? 1 : 0;
-				if (detail.level == DetailLevel::Full)
+				// A squad at Full detail is also demoted at the edge of the mesh: it starts an off-mesh token leg (residents.cpp `leaving`, k16.7.15).
+				const state::GroupAI* groupAi = squad.get<state::GroupAI>();
+				const bool leaving = groupAi != nullptr && UtilityGroupLayer::tokenLeg(*groupAi);
+				if (detail.level == DetailLevel::Full && !leaving)
 					badDemotes.push_back(line);
 			});
 		});
@@ -129,6 +132,8 @@ int main(int argc, char** argv)
 				sid = record->stringID;
 		}
 		sim.enqueue(Command::newGame(sid, "Tester", 1));
+		// The den is Full only by the loaded-zone rule (rwh.202): the camera looks at it, its 3x3 zones are loaded (the Wanderer's +-340 u box is not).
+		sim.enqueue(Command::setView(-48880.0, -823.0));
 		sim.run(3);
 		out << "start tick " << sim.clockTick() << ", ai " << withAi << "\n";
 

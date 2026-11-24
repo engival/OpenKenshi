@@ -97,7 +97,19 @@ namespace ksim {
 // 117: BoardStates' occupancy map and each board's occupyTown (task ds/slice-load-parity, k16.6.403): the map the last second boundary built, so a load mid-second
 // answers 'the town is ours' as the unbroken run does; an older save rebuilds the map from the boards at its first tick.
 // 118: Fighter::fought (task ds/k16.6-fought-saved, k16.6.361): the has-fought mark behind the quiet-squad stand-down, saved with the character; MemberDelta bit kFought. An older save loads it false. (115 is reserved for k16.6.403.)
-inline constexpr std::uint32_t kSaveVersion = 118;
+// 126: RunStates' promotion work in flight (task ds/k16.6.614): the resident promotion queue, the streaming mesh's covered / furnished zones, the built hull-tree regions and the
+// travel heading, so a save taken mid-spread continues as the straight run; an older save loads none (everything wanted is loaded at once). 119-125 are other items' (renumbered at the ksim merge).
+// 128: the route corridor (task ds/e9s9.4, k-e9s9.4, PATH_WALK.md 3a): Fighter::portals (left, right, clearances, route point; the polygon ref is not saved), portalNext, vx / vz,
+// and the DoorStep stash's portals and portalNext. An older save's walkers get their corridor from setRoute's installer on load (no re-plan).
+// (127 is k16.17.13.14's, renumbered at the ksim merge.)
+// 129: RunStates::FarOrder cur / onMarker and FarMarker width (task ds/e9s9.10, rwh.268): a save taken mid-road keeps the marker handover (coded as 131, renumbered at the ksim merge).
+// 130: Fighter's due-stamps (task ds/k16.6.637, k16.6.607 item 6; v125 was reserved for it, but 126 merged first; 127 is k16.17.13.14's, 128 e9s9.4's, 129 e9s9.10's): `senseAt`
+// (the sensor's last-scan stamp, in place of the counted `senseClock`), `medStep` and `hungerStep` (the arena steps of the last medical and hunger update: hunger and a
+// medically quiet member's medical run once a second). An older save converts the remaining time at its first step.
+// 131: WorldOptions::feedAnimals / shareFood (task ds/k16.6.514): the Feed Animals and Share Food game options (exe +0x114 / +0x115, global, default off); an older save loads both off.
+// 132: Fighter::age (task ds/k16.17.13.14): a squad animal's rolled age (rwh.193 section 5); an older file loads 1. (121 was its first number, then 131; renumbered at the ksim merge.)
+// 133: Fighter::offPath (task ds/rmw6, kenshi-rmw6; coded as 131, then 132; renumbered at the ksim merge: 131 is k16.6.514's, 132 is k16.17.13.14's): the walk's time off its route, so a save mid-walk re-paths on the straight run's tick.
+inline constexpr std::uint32_t kSaveVersion = 133;
 
 class SaveError : public std::runtime_error
 {
@@ -128,6 +140,18 @@ SaveInfo readSaveInfo(std::istream& in, std::uint64_t fileSize);
 
 // The instance state, encoded (the save body).
 std::vector<std::uint8_t> encodeState(const flecs::world& ecs);
+
+#if KSIM_DEV
+// Dev: the hash of each saved component of each instance (instance Id, component name, FNV of its fields), by Id then component order.
+// A straight and a loaded run that hash differently are diffed with it to name the entity and component (k16.6.390).
+struct StatePart
+{
+	std::uint64_t id;
+	std::string kind;
+	std::uint64_t hash;
+};
+std::vector<StatePart> stateParts(const flecs::world& ecs);
+#endif
 
 // version: the layout hashed; a migration test passes the previous one, whose bytes a build of that version hashes the same.
 std::uint64_t stateHash(const flecs::world& ecs, std::uint32_t version = kSaveVersion);

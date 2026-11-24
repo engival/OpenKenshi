@@ -90,6 +90,7 @@ struct Rig
 		return sim->spawnFighter(std::move(f)).get<state::Id>()->value;
 	}
 	state::Fighter& f(std::uint64_t id) { return *const_cast<CombatArena*>(sim->combat())->find(id); }
+	std::uint16_t routineGoal(std::uint64_t id) { return sim->routineGoalOf(id); }
 	void tick(int n = 1)
 	{
 		for (int i = 0; i < n; ++i)
@@ -200,10 +201,13 @@ int main(int argc, char** argv)
 		Rig rig(nav);
 		const std::uint64_t runner = rig.add(4, 0, kHubX + 80.0, kHubZ);
 		const std::uint64_t speaker = rig.add(8, 1, kHubX, kHubZ);
-		check(rig.sim->giveIndividualGoal(runner, IndividualKind::Flee, speaker), "280 given");
+		check(rig.sim->orderRunAwayGoal(runner, speaker), "280 given");
 		const double startX = rig.f(runner).x;
 		const double startZ = rig.f(runner).z;
-		check((rig.f(runner).goal.x - startX) * (startX - rig.f(speaker).x) > 0.0, "280 aims away from the speaker");
+		double runX = 0.0;
+		double runZ = 0.0;
+		check(rig.sim->runAwayPoint(runner, runX, runZ) && rig.routineGoal(runner) == routines::task::RunAwayForced, "280 is the runner's Routine, not a Fighter goal");
+		check((runX - startX) * (startX - rig.f(speaker).x) > 0.0, "280 aims away from the speaker");
 		bool fought = false;
 		double furthest = 0.0;
 		for (int i = 0; i < 20 * 30; ++i)
@@ -215,7 +219,7 @@ int main(int argc, char** argv)
 		// The first goal lies ~870 u from the start on either Hub bake; the second leg is a re-roll after arriving, so which way it goes (on from the
 		// start or back toward it) changes with the smallest mesh edit (k16.7.18's interior carve: 922 u here, 1,232 before). Pinned: the first leg.
 		check(!fought && furthest >= 800.0, "280 runs " + std::to_string(static_cast<int>(furthest)) + " u and takes no fight");
-		check(rig.f(runner).goal.kind == IndividualKind::Flee, "280 keeps running (the exe's task has no end of its own; ours the 120 s cap)");
+		check(rig.routineGoal(runner) == routines::task::RunAwayForced && rig.f(runner).goal.kind == IndividualKind::None, "280 keeps running (the exe's task has no end of its own; ours the 120 s cap)");
 	}
 
 	// A runner that is not moving re-rolls: 1000..1400 u from where it stands, within a second.
@@ -223,14 +227,18 @@ int main(int argc, char** argv)
 		Rig rig(nav);
 		const std::uint64_t runner = rig.add(4, 0, kHubX + 80.0, kHubZ);
 		const std::uint64_t foe = rig.add(8, 1, kHubX, kHubZ);
-		check(rig.sim->giveIndividualGoal(runner, IndividualKind::Flee, foe), "280 given for the re-roll case");
+		check(rig.sim->orderRunAwayGoal(runner, foe), "280 given for the re-roll case");
 		rig.tick(10);
-		const double oldX = rig.f(runner).goal.x;
-		const double oldZ = rig.f(runner).goal.z;
+		double oldX = 0.0;
+		double oldZ = 0.0;
+		double newX = 0.0;
+		double newZ = 0.0;
+		rig.sim->runAwayPoint(runner, oldX, oldZ);
 		rig.f(runner).clearRoute(); // not moving
 		rig.tick(21);
-		const double reach = dist(rig.f(runner), rig.f(runner).goal.x, rig.f(runner).goal.z);
-		check(rig.f(runner).goal.kind == IndividualKind::Flee && (oldX != rig.f(runner).goal.x || oldZ != rig.f(runner).goal.z),
+		rig.sim->runAwayPoint(runner, newX, newZ);
+		const double reach = dist(rig.f(runner), newX, newZ);
+		check(rig.routineGoal(runner) == routines::task::RunAwayForced && (oldX != newX || oldZ != newZ),
 			"a runner that is not moving gets a new point");
 		check(reach > 700.0 && reach < 1500.0, "the new point is 1000..1400 u out (" + std::to_string(static_cast<int>(reach)) + " from where it stood)");
 	}
@@ -243,9 +251,9 @@ int main(int argc, char** argv)
 		rig.f(foe).target = runner;
 		rig.tick(60);
 		check(rig.f(runner).goal.kind == IndividualKind::None, "off the mesh 35 is not taken (nowhere to run)");
-		rig.sim->giveIndividualGoal(runner, IndividualKind::Flee, foe);
+		rig.sim->orderRunAwayGoal(runner, foe);
 		rig.tick(60);
-		check(rig.f(runner).goal.kind == IndividualKind::None, "off the mesh 280 never stays stuck holding the goal");
+		check(rig.routineGoal(runner) == 0 && !rig.f(runner).fleeing, "off the mesh 280 never stays stuck holding the goal");
 	}
 
 	std::printf("ksim_run_away: ok\n");

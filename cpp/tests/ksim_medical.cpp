@@ -8,11 +8,13 @@
 
 #include "test_util.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
@@ -117,9 +119,13 @@ int main()
 		// ---- hunger: standing, walking, encumbered, KO'd ----
 		const std::uint64_t idle = spawn(0, 3.0, false);
 		const std::uint64_t ticks = 1200; // a minute of play: 0.55 game hours
-		sim.run(ticks);
-		const double hours = static_cast<double>(ticks) / hourTicks;
-		near((3.0 - fighterOf(sim, idle).hunger) / hours, 1.0 / T, 2e-5, "hunger / game hour, standing (M 1, T 96 h)");
+		sim.run(1);
+		const std::uint64_t firstStamp = fighterOf(sim, idle).hungerStep; // the arena step the 1 s hunger slice counts from
+		const double firstHunger = fighterOf(sim, idle).hunger;
+		sim.run(ticks - 1);
+		// Hunger runs once a second (k16.6.637): the loss is the time up to the member's last slice, which the stamp says (arena steps of 1/substeps tick).
+		const double hours = static_cast<double>(fighterOf(sim, idle).hungerStep - firstStamp) * (Simulation::kTickSeconds / std::max(1, settings.substeps)) / (hourTicks * Simulation::kTickSeconds);
+		near((firstHunger - fighterOf(sim, idle).hunger) / hours, 1.0 / T, 2e-5, "hunger / game hour, standing (M 1, T 96 h)");
 		test::require(!fighterOf(sim, idle).unconscious, "a fed fighter is awake");
 
 		{
@@ -425,6 +431,81 @@ int main()
 			test::require(after.skills.medic > 24.16, "First Aid gained XP");
 			test::require(entityOf(medic).get<state::Inventory>()->carried(robotKit) == 1, "the unused robotic kit was not opened");
 			std::printf("ok  first aid done: pool %.1f, kit left %.1f, First Aid %.4f\n", pooled, after.kitCharges, after.skills.medic);
+		}
+		// ---- k16.6.174 (rwh.154): several medics on one patient are one serial stream, and the aid ends on the medical state alone ----
+		{
+			const auto aid = [&](int medics, double& rate, double& endSpread)
+			{
+				const std::uint64_t patient = spawn(5000.0 + 100.0 * medics, 3.0, false);
+				state::Fighter* p = const_cast<state::Fighter*>(sim.combat()->find(patient));
+				p->wounds.clear();
+				p->bleeding = 0.0;
+				p->koTimer = 3000.0; // stays down: the aid's work is what is measured
+				double missing = 0.0;
+				for (state::FighterPart& part : p->parts)
+				{
+					part.health = part.maxHealth - (part.type == 3 ? 55.0 : part.type == 0 ? 60.0 : 20.0); // head, torso, limbs: a heavy profile
+					part.pool = 0.0;
+					missing += part.maxHealth - part.health;
+				}
+				std::vector<std::uint64_t> crew;
+				for (int m = 0; m < medics; ++m)
+				{
+					const std::uint64_t id = spawn(5000.0 + 100.0 * medics + 2.0 * (m + 1), 3.0, false);
+					flecs::entity e = entityOf(id);
+					const_cast<state::Fighter*>(sim.combat()->find(id))->skills.medic = 24.16;
+					state::Inventory inv = *e.get<state::Inventory>();
+					inv.add(basicKit, 1);
+					e.set<state::Inventory>(inv);
+					state::InteractTask task;
+					task.target = patient;
+					task.action = 10;
+					e.set<state::InteractTask>(task);
+					crew.push_back(id);
+				}
+				sim.run(5); // the orders are picked up and the kits opened
+				const auto pooled = [&]
+				{
+					double sum = 0.0;
+					for (const state::FighterPart& part : fighterOf(sim, patient).parts)
+						sum += part.pool;
+					return sum;
+				};
+				const double p0 = pooled();
+				sim.run(40); // 2 s
+				rate = (pooled() - p0) / 2.0;
+				std::vector<int> ended(crew.size(), -1);
+				for (int t = 0; t < 4000; ++t)
+				{
+					sim.run(1);
+					for (std::size_t m = 0; m < crew.size(); ++m)
+						if (ended[m] < 0 && entityOf(crew[m]).get<state::InteractTask>() == nullptr)
+							ended[m] = t;
+					if (std::find(ended.begin(), ended.end(), -1) == ended.end())
+						break;
+				}
+				test::require(std::find(ended.begin(), ended.end(), -1) == ended.end(), "every medic's aid ended");
+				endSpread = *std::max_element(ended.begin(), ended.end()) - *std::min_element(ended.begin(), ended.end());
+				const state::Fighter& after = fighterOf(sim, patient);
+				test::require(after.wounds.empty(), "the aid ended with the wound list empty");
+				double healthLost = 0.0;
+				for (const state::FighterPart& part : after.parts)
+				{
+					test::require(std::fabs(part.pool - (part.maxHealth - part.wear - part.health)) < 1.0e-6, "every part's bandage pool is at max - health when the aid ends");
+					healthLost += part.maxHealth - part.health;
+				}
+				test::require(std::fabs(healthLost - missing) < 2.0, "the patient is bandaged, not healed: health stays where it was");
+			};
+			double one = 0.0;
+			double four = 0.0;
+			double spread1 = 0.0;
+			double spread4 = 0.0;
+			aid(1, one, spread1);
+			aid(4, four, spread4);
+			std::printf("ok  net pool rate: 1 medic %.2f/s, 4 medics %.2f/s; end spread %g ticks\n", one, four, spread4);
+			test::require(one > 4.0 && one < 9.0, "one medic: ~7 pool points/s band 4-9 (rwh.154 6.4-7.8 net; skill 24 vs quality 5 gives 5.06 live)");
+			test::require(four < one * 1.15 && four > one * 0.85, "four medics bandage no faster than one (rwh.154: the group is not N times faster)");
+			test::require(spread4 <= 2.0, "all medics end on the same frame (rwh.154: within 0.03 s)");
 		}
 		return 0;
 	} catch (const std::exception& e) {
