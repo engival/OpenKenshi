@@ -143,6 +143,33 @@ int main(int argc, char** argv)
 		sim.run(1);
 		test::require(!fighter->down, "raising the health above the KO point clears the down flag");
 
+		// ---- task 65 GET_UP (rwh.322): ends at 0.86 x the 8.6667 s clip; a still-down or caged wake ends it on the first tick ----
+		fighter->cageBuilding = 0;
+		fighter->down = false;
+		fighter->unconscious = true;
+		fighter->koTimer = 0.5;
+		sim.run(1);
+		for (int t = 0; t < 100 && fighter->unconscious; ++t)
+			sim.run(1);
+		test::require(!fighter->unconscious && fighter->getUpLeft > 0.0, "a plain KO wake starts 65 (down " + std::to_string(fighter->down) + ", left " + std::to_string(fighter->getUpLeft) + ")");
+		const double wake = fighter->getUpLeft;
+		test::require(std::fabs(wake - 0.86 * 8.6667) < 0.1, "65 runs 0.86 x the clip (" + std::to_string(wake) + " s left at the wake)");
+		int ticks = 0;
+		while (fighter->getUpLeft > 0.0 && ticks < 2000)
+		{
+			sim.run(1);
+			++ticks;
+		}
+		test::require(std::fabs(ticks * kTickSeconds - wake) < 0.1, "65 ends after " + std::to_string(ticks * kTickSeconds) + " s, not the whole clip");
+		fighter->unconscious = true;
+		fighter->koTimer = 0.5;
+		fighter->cageBuilding = 1;
+		for (int t = 0; t < 100 && (t == 0 || fighter->unconscious); ++t)
+			sim.run(1);
+		sim.run(2);
+		test::require(fighter->getUpLeft == 0.0, "a caged wake ends 65 at once");
+		fighter->cageBuilding = 0;
+
 		// ---- a severed limb is always down, fires the same writer (3.0 floor), and leaks (H + pool) x -0.002 ----
 		leg->health = -10.0;
 		leg->pool = 0.0;

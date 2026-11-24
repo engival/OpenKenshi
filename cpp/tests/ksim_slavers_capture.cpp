@@ -49,6 +49,12 @@ struct Seen
 	std::map<std::string, double> last;
 	int peak = 0; // the most members on goal 58 on the new slave at once
 	double liftReach = -1.0; // u from the slave to the nearest kitted guard at the tick the lift (168 / 170) first starts; < 0 while no lift has been seen (k16.7.118)
+	std::vector<double> koEnds; // the player's KO ends with the body not carried (a wake), absolute ticks
+	std::vector<double> getUps; // the starts of the player's goal 65 (rising edges), absolute ticks
+	double last171 = -1.0; // the start of the player's last run of goal 171
+	bool prevKo = false;
+	bool prevUp = false;
+	bool prev171 = false;
 	int kitted = 0; // the caravan guards (not the Boss, who stands outside 58's 40 u reach) spawned with a first aid kit (the template's `inventory`)
 };
 
@@ -187,6 +193,9 @@ Seen play(const std::uint64_t seed, const double wakeAfter)
 				note("outsider targets", now);
 		if (player->unconscious)
 			note("player ko", now);
+		if (seen.prevKo && !player->unconscious && player->carriedBy == 0)
+			seen.koEnds.push_back(now);
+		seen.prevKo = player->unconscious;
 		if (player->slaveState == 1)
 			note("player slave", now);
 		if (player->carriedBy != 0)
@@ -213,6 +222,15 @@ Seen play(const std::uint64_t seed, const double wakeAfter)
 			const std::string who = id == kPlayer ? "player" : id == kBoss ? "leader" : "slaver";
 			if (stats.goalEnum != 0xFFFF)
 				note(who + " goal " + std::to_string(stats.goalEnum), now);
+			if (id == kPlayer)
+			{
+				if (stats.goalEnum == 65 && !seen.prevUp)
+					seen.getUps.push_back(now);
+				if (stats.goalEnum == 171 && !seen.prev171)
+					seen.last171 = now;
+				seen.prevUp = stats.goalEnum == 65;
+				seen.prev171 = stats.goalEnum == 171;
+			}
 			if (stats.stepEnum != 0xFFFF)
 				note(who + " step " + std::to_string(stats.stepEnum), now);
 			if (seen.liftReach < 0.0 && id != kBoss && (stats.goalEnum == 168 || stats.goalEnum == 170 || stats.stepEnum == 168 || stats.stepEnum == 170)) // the lift is the cuffer's step 168 / 170 (the goal enum no longer shows 168 / 170 there)
@@ -277,9 +295,17 @@ void pin(const Seen& seen, const std::uint64_t seed, const bool awake, const boo
 	const bool cameRound = has("player ko") && seen.last.at("player ko") < at("player slave");
 	if (healed || (awake && !cameRound && !has("player carried")))
 	{
-		// Up by the cuff's end: 65 GET_UP while it is treated, then 171 FOLLOW_SLAVEMASTER (walks), never carried.
-		test::require(has("player goal 171") && (healed || (has("player goal 65") && at("player goal 171") >= seen.last.at("player goal 65"))),
-			tag + "65 GET_UP under the aid, then 171 FOLLOW_SLAVEMASTER");
+		// Up by the cuff's end: 65 GET_UP, then 171 FOLLOW_SLAVEMASTER (walks), never carried. 65 is the generic wake of every KO (rwh195_ko_orders_static:
+		// leaving a KO is the medical recompute, then task 65), so it comes at the wake, before the aid, and again after a later re-KO (seed 2: KO'd again at 84 s,
+		// 65 until 92.7 s): the pin is the first 65 before the first 171.
+		test::require(has("player goal 171") && (healed || (has("player goal 65") && at("player goal 171") >= at("player goal 65"))),
+			tag + "65 GET_UP at the wake, then 171 FOLLOW_SLAVEMASTER");
+		// Every wake runs 65 (the KO's end starts it within a tick), and the last 171 starts after the last 65: a captive KO'd again (seed 2, 84 s) gets its
+		// 65 again and walks on after it.
+		test::require(seen.getUps.size() == seen.koEnds.size() && !seen.getUps.empty(), tag + "each wake runs 65 (" + std::to_string(seen.getUps.size()) + " runs, " + std::to_string(seen.koEnds.size()) + " wakes)");
+		for (std::size_t i = 0; i < seen.getUps.size(); ++i)
+			test::require(seen.getUps[i] >= seen.koEnds[i] - 1 && seen.getUps[i] <= seen.koEnds[i] + 4, tag + "65 starts at wake " + std::to_string(i) + " (tick " + std::to_string(seen.getUps[i]) + " vs wake " + std::to_string(seen.koEnds[i]) + ")"); // both are absolute ticks
+		test::require(seen.last171 >= seen.getUps.back(), tag + "the last 171 follows the last 65");
 		test::require(!has("player carried"), tag + "an awake slave walks, it is not carried");
 	} else if (has("player ko") && seen.last.at("player ko") < at("player slave")) {
 		// An unhealed fight's outcome (k16.6.406, seed 1: out 3.6-12.05 s, cuffed 17.4 s): the captive came round by itself before the cuff, so it walks (171)

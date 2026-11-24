@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #if defined(KSIM_PROFILE) && KSIM_PROFILE
 #include "knav/route_measure.hpp"
 #if KSIM_PROFILE
@@ -128,6 +129,14 @@ constexpr double kRestSnapReach = 6.0;
 // (19 of 51 chop left-3 reactions end at 1.20-1.21 s); any other reaction is `mid blow light` (1.133 s clip, ends at 1.11 s: 58 of
 // 106 combo reactions, Engival's 66 of 66), and a heavy hit during a reaction restarts it with that light clip (the combo's second
 // impact). The re-roll against nearby attackers (1.6-3.0 s, `stumble()`) is retired.
+// Task 65 GET_UP plays "standing up 3" (8.6667 s, docs/reference/combat/data/anim_clips.tsv; the clip name is CLIENT_GOALS.md's). Task_GetUp ends when
+// the clip progress passes 0.86 (exe constant, kenshi-rwh.322), not at the clip end: 0.86 x 8.6667 = ~7.45 s. UNSURE (rwh.322 U1-U4): that the progress is
+// linear in time; who reads the busy flag char+0x278 (we hold move and turn for the task, not decoded); whether goal 32 preempts a running 65 on a hit that
+// does not KO (we do not: the task has no hit or order test, only a KO or a carry stops it). A posture > 0 start (crawl: `down`) or a bed / cage ends it on the
+// first tick; beds are not modelled in combat, so only the cage (cageBuilding) is tested.
+constexpr double kGetUpClipSeconds = 8.6667;
+constexpr double kGetUpEndProgress = 0.86;
+constexpr double kGetUpSeconds = kGetUpClipSeconds * kGetUpEndProgress;
 constexpr double kStumbleTime = 1.11; // the light reaction: `mid blow light` ends at 1.11 s
 constexpr double kStumbleHeavyTime = 1.2;
 // A player's move walk under attack (COMBAT_MOVE_LIVE.md, kenshi-rwh.172 live): a light hit zeroes the velocity for 1-3 frames and the walk
@@ -4675,6 +4684,21 @@ struct CombatArena::Ctx
 			f.driveStrafe = 0;
 			return;
 		}
+		// Leaving a KO is the medical recompute, then task 65 GET_UP for everyone (rwh195_ko_orders_static; BAR_FIGHT_LOOP.md "KO"): it runs the
+		// stand-up clip with the body still. A body carried at the wake is put down awake and gets no get-up here.
+		if (f.unconscious)
+		{
+			f.koSeen = true;
+			f.getUpLeft = 0.0;
+		} else if (f.koSeen) {
+			f.koSeen = false;
+			if (f.carriedBy == 0) // posture > 0 (down) or a cage: the task starts and ends on its first tick
+				f.getUpLeft = f.down || f.cageBuilding != 0 ? dt : kGetUpSeconds;
+		} else if (f.getUpLeft > 0.0) {
+			// A carry, a cage or a limb collapse during the task ends it (the crawl branch below returns before the still gate, and a frozen clock
+			// would keep reporting 65 over the crawl: k16.6.764 review point 3).
+			f.getUpLeft = f.carriedBy != 0 || f.cageBuilding != 0 || f.down ? 0.0 : std::max(0.0, f.getUpLeft - dt); // runs down wherever the step returns below
+		}
 		tickSlots(m);
 		trackPending(m);
 		f.actionTimer = std::max(f.actionTimer - dt, -1.0);
@@ -4767,6 +4791,11 @@ struct CombatArena::Ctx
 				if (t == nullptr || t->fighter.dead || t->fighter.unconscious)
 					f.orderTarget = 0;
 			}
+			f.forwardSpeed = 0.0;
+			return;
+		}
+		if (f.getUpLeft > 0.0)
+		{
 			f.forwardSpeed = 0.0;
 			return;
 		}
@@ -5307,9 +5336,11 @@ struct CombatArena::Ctx
 	// velocity step (so it runs at the head of CombatArena::step, on the positions the last step left), with no dt: along the line away from the ONE
 	// neighbour with the largest push (not the sum), m = (R - |d|) x (0.5 + (r_n - r_s) / R), R = r_s + r_n (the race footprints, unscaled), clamped to
 	// [0, 10], horizontal distance only (|dy| < 20). Neighbours and pushers are the same set: not dead, KO'd, carried, asleep
-	// (the +0x2f8 bed stand-in) or exempt through CombatArena::setPushExempt (seated, operating a machine). A conscious down crawler IS a neighbour
+	// (the +0x2f8 bed stand-in) or exempt through CombatArena::setPushExempt (seated, operating a machine). A KO'd (ragdoll) body is in nobody's
+	// list and has none (rwh.317 answer 1: FUN_14085a070 skips a carried or ragdolled character; live an NPC walked to 1.6 u of one). A conscious down crawler IS a neighbour
 	// (kinspect finding/bar_pile_throwout.md 4: the exe's push has no down check; only the ragdoll list is gated); its own push is x0.02 like the
-	// sneaking posture's. The pusher's posture (sneak, crouched, down) scales its own push to x0.02. The pushes run one after the other in Id order, each
+	// sneaking posture's. The pusher's posture (sneak, crouched, down) scales its own push to x0.02 (UNSURE: the exe's +0xe0 is also set by a clip with the
+	// collapse-part flags 0x10 / 0x20, ksim's technique data carries none here; validity row, deferred: playtesting). The pushes run one after the other in Id order, each
 	// on the positions the previous ones left, so two equal humans resolve 0.75 of an overlap per step, not all of it (a lunge's per-step root motion
 	// leaves a steady overlap of about 1.33 x the step, the live resting distances below R). UNSURE: the exe's perception list (rebuilt 8 characters per
 	// frame, R + 40, 40 + 20 cap) is not modelled, every neighbour within R counts; the off-screen / dt >= 0.5 exemptions have no counterpart (every arena
@@ -5349,10 +5380,10 @@ struct CombatArena::Ctx
 				continue;
 			const double ra = footprintOf(a);
 			std::vector<std::pair<std::uint64_t, int>> contacts;
+			std::uint64_t bestId = 0;
 			double bestMag = 0.0;
 			double bestX = 0.0;
 			double bestZ = 0.0;
-			std::uint64_t bestId = 0;
 			auto from = std::lower_bound(bodies.begin(), bodies.end(), a.x - window, [](const Body& b, double v) { return b.x < v; });
 			for (; from != bodies.end() && from->x <= a.x + window; ++from)
 			{
@@ -5393,15 +5424,8 @@ struct CombatArena::Ctx
 			self.contacts = std::move(contacts);
 			if (bestMag < kDepenetrateMin)
 				continue;
-			// A fighter under a technique's strafe lock gives way to nobody but its own target's push: the clip's root motion is the only
-			// thing that moves its body (ENGAGEMENT 9.1, `integrate`). Its target steps out of a lunge itself; any other neighbour (a
-			// squadmate in the way, a second swinger) is pushed through, or two swinging allies stack (1 vs 10: closest pair 0.5-2.4 u,
-			// the capture's 6.98; k16.6.27). Pushed mid-clip it slid under the animation at up to 37 u/s (task BE: 4,612
-			// clip-tick pushes in the Hub brawl, median 3 u/s, tail 20-37). UNSURE whether the exe's depenetration pass also spares
-			// a locked fighter (not decoded); the lock's "code does not move the character" is what we follow. A block clip is not
-			// locked (no root motion; the state-1 footwork moves it), so a blocker is still pushed.
-			if (rootLocked(a) && bestId == a.target)
-				continue;
+			// No exemption for a fighter under a technique's strafe lock, its own target's push included (rwh.259 answer 2: FUN_1401476f0 reads no
+			// strafe lock, no stagger state and no animation; a swinging or staggered fighter is pushed like anyone). Retired: the target exemption (k16.6.27).
 			if (a.sneak || a.crouched || a.down)
 				bestMag *= kDepenetratePosture; // a crawler gives way like a sneaker (live, bar_pile_throwout.md 4)
 			// The camera's character is never moved (k16.6.597, user 2026-11-21): the others yield, and a neighbour that would have shared the overlap

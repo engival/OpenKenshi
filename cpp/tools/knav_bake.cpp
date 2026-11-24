@@ -362,6 +362,10 @@ int main(int argc, char** argv)
 		knav::setBakeTuning(tuning);
 		const std::string dataDir = KENSHI_DATA;
 
+#ifdef _WIN32
+		if (!cacheRoot.empty())
+			std::cerr << "knav_bake: the result cache is POSIX-only; baking uncached\n";
+#else
 		if (!cacheRoot.empty() && !trace)
 		{
 			// Thread count and the output path do not change the bytes (knav_bake_threads).
@@ -402,6 +406,7 @@ int main(int argc, char** argv)
 						knavcache::linkFile(data / "bake.knav", out);
 				});
 		}
+#endif
 		return worldDir.empty() ? bakeSingle(dataDir, out, min, max, threads, radius, prune)
 			: bakeWorld(dataDir, worldDir, regions, threads, radius, prune, trace);
 	} catch (const std::exception& e) {

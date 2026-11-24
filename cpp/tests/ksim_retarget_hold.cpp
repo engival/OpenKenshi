@@ -100,14 +100,17 @@ Retargets retargets(const kdata::GameData& gd, const std::shared_ptr<const Comba
 			if (f->target != 0 && f->target != last[i])
 			{
 				++out.changes;
+				const bool flip = arena.find(f->target)->target == ids[i];
 				if (last[i] != 0 && (step - lastChange[i]) * kDt < 1.0 - 1e-9)
 				{
-					if (gone[i] || lost(last[i]) || arena.find(f->target)->target == ids[i])
+					if (gone[i] || lost(last[i]) || flip)
 						++out.forced;
 					else
 						++out.quick;
 				}
-				lastChange[i] = step;
+				// Only a re-pick restarts the hold clock (rwh.113, combat.cpp retarget timer): a counter flip (setTarget onto whoever targets us) does not.
+				if (!flip)
+					lastChange[i] = step;
 			}
 			last[i] = f->target;
 		}

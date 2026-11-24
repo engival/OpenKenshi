@@ -134,6 +134,18 @@ LiveGoal liveGoal(const state::Fighter& f, const flecs::entity& entity, const Co
 	// person/creature is disabled, so their goal (and AI goal) is always "Aimless"", kenshi-k16.6.204).
 	if (f.carriedBy != 0)
 		return out;
+	if (!f.unconscious && f.getUpLeft > 0.0)
+	{
+		out.task = kGetUp; // leaving a KO runs 65 for everyone, before any goal resumes (rwh195)
+		out.source = kSourceRoutine;
+		if (f.slaveState == 1) // a waking slave's 65 keeps its master as the target, as the old capture-only label did
+		{
+			out.target = f.followTarget;
+			at(out.target);
+		}
+		out.name = taskName(out.task);
+		return out;
+	}
 	// An enslaved character (kenshi-k16.6.116, rwh.99 section 4; the user 2026-11-13: "the goal shouldn't be 'aimless'"): the Goal row is the committed goal's
 	// name, never the 187 Obedient Slave row (a do-nothing order is not a goal). Following the master is the committed goal 171 FOLLOW_SLAVEMASTER. In the camp
 	// it is the master-package goal that commits (the routine slot below), else Aimless.
@@ -339,14 +351,12 @@ Simulation::CharStats Simulation::charStats(std::uint64_t id) const
 	// user 2026-11-06). Down but conscious keeps its goal.
 	LiveGoal live = liveGoal(f, entity, combat_.get());
 	std::uint16_t stepOverride = kNoTask;
-	// The capture's aftermath (rwh.89 sections 3-6): the new slave comes round under the first aid on 65 GET_UP, then walks on 171
+	// The capture's aftermath (rwh.89 sections 3-6): the new slave comes round on 65 GET_UP (liveGoal: every KO wake runs it, k16.6.764), then walks on 171
 	// FOLLOW_SLAVEMASTER (carried, it keeps the carrier's goal); the delivering squad's leader runs 192 GO_TO_SOMEWHERE_FOR_DELIVERING_SLAVES
 	// with the depot town as its target (the original's nav target is the slave camp's own point), its task 53.
 	if (f.slaveState == 1 && !f.dead && !f.unconscious && f.carriedBy == 0 && live.task == kNoTask)
 	{
-		if (aided(id))
-			live.task = kGetUp;
-		else if (f.followTarget != 0)
+		if (f.followTarget != 0)
 			live.task = kFollowSlaveMaster;
 		if (live.task != kNoTask)
 		{

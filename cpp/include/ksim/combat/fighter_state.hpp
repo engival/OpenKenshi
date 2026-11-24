@@ -740,6 +740,8 @@ struct Fighter
 	bool rightArmOk = true; // +0x165
 	bool leftArmOk = true; // +0x166
 	bool down = false; // a leg or torso part collapsed (ragdoll)
+	double getUpLeft = 0.0; // task 65 GET_UP: seconds of the get-up clip left after a KO ends (rwh195, rwh.322: 0.86 of the 8.67 s clip; not saved)
+	bool koSeen = false; // the previous step saw it unconscious (the wake edge that starts 65; not saved)
 	// The ragdoll's rest pose (task BG, PHYSICS.md 2-3; save v76): while the body is prone (CHAR_DYNAMIC flag bit 5: down,
 	// unconscious or dead) it lies at `restYaw`, the head-to-feet direction in the character yaw convention (toward
 	// (sin yaw, cos yaw), 0 = +Z). Rolled once per ragdoll start from the fighter's own stream (CombatArena::rollRagdoll,

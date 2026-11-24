@@ -225,7 +225,15 @@ void show(const char* what, const Trace& t)
 
 int main()
 {
-	::setenv("KSIM_PATH_WALK", "1", 0); // (KSIM_PATH_WALK=0 compares the knob off) before the first walkOrder: the knob is read once
+	// Before the first walkOrder: the knob is read once (KSIM_PATH_WALK=0 compares the knob off). Unset -> on.
+	if (std::getenv("KSIM_PATH_WALK") == nullptr)
+	{
+#ifdef _WIN32
+		_putenv_s("KSIM_PATH_WALK", "1");
+#else
+		::setenv("KSIM_PATH_WALK", "1", 1);
+#endif
+	}
 	try
 	{
 		if (!std::filesystem::is_directory(knav::native::navtilesDir(KENSHI_DATA)))

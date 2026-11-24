@@ -2,6 +2,9 @@
 // <root>/<key>/{.lock,.complete|.failed,data/...}. Held .lock = a bake is running (the kernel drops it if the holder dies).
 #pragma once
 
+// POSIX only (pipe / flock / utimensat / inode checks): on Windows knav_bake runs uncached (kenshi-k16.6.804).
+#ifndef _WIN32
+
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -272,3 +275,5 @@ inline int cached(const std::string& root, const std::string& keyText, const std
 }
 
 } // namespace knavcache
+
+#endif // _WIN32

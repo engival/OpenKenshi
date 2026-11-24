@@ -1941,6 +1941,9 @@ add_test(NAME knav_bake_hub_single
 add_test(NAME knav_bake_cache_reuse
 	COMMAND ${CMAKE_COMMAND} -DBAKE=$<TARGET_FILE:knav_bake> -DWORK=${CMAKE_CURRENT_BINARY_DIR}/bake_cache_reuse
 		-P ${CMAKE_CURRENT_SOURCE_DIR}/tests/knav_bake_cache_reuse.cmake)
+if(WIN32)
+	set_tests_properties(knav_bake_cache_reuse PROPERTIES DISABLED TRUE)	# the bake cache is POSIX-only (tools/knav_bake_cache.hpp, kenshi-k16.6.804)
+endif()
 add_test(NAME knav_deterministic
 	COMMAND ${CMAKE_COMMAND} -E compare_files
 		${CMAKE_CURRENT_BINARY_DIR}/hub.knav ${CMAKE_CURRENT_BINARY_DIR}/hub_single.knav)

@@ -37,7 +37,7 @@ namespace
 {
 
 constexpr std::int64_t kForceTicks = 400; // the forced aid's span (20 s) after the cuff
-constexpr std::int64_t kLiftBoundTicks = 1200; // the lift starts within 60 s of the aid's end
+constexpr std::int64_t kLiftBoundTicks = 1200; // the lift starts within 60 s of the aid's end (OURS)
 
 int play(const std::uint64_t seed, const bool forceAid = false)
 {
@@ -87,6 +87,7 @@ int play(const std::uint64_t seed, const bool forceAid = false)
 	std::int64_t liftTicks = 0;
 	std::uint64_t liftStart = 0;
 	std::int64_t attachTick = -1;
+	std::int64_t aidEnd = -1; // the last tick a medic was on the body (Simulation::aided)
 	bool loopWrong = false;
 	for (int i = 0; i < 9000; ++i)
 	{
@@ -116,6 +117,8 @@ int play(const std::uint64_t seed, const bool forceAid = false)
 				body->koTimer = 1.0e6;
 			}
 		}
+		if (bodyId != 0 && sim.aided(bodyId))
+			aidEnd = static_cast<std::int64_t>(sim.clockTick());
 		if (const std::optional<Simulation::CaptureAction> action = sim.captureAction(capturer))
 		{
 			if (action->clip == "medic")
@@ -162,8 +165,11 @@ int play(const std::uint64_t seed, const bool forceAid = false)
 				&& when(" target " + std::to_string(bodyId) + " score") < done)
 			return 0;
 		test::require(liftTicks > 0, "a capture interrupted by an aid still lifts" + tag);
-		test::require(liftTicks > 0 && static_cast<std::int64_t>(liftStart) <= done + kForceTicks + kLiftBoundTicks,
-			"the lift follows the aid's end within " + std::to_string(kLiftBoundTicks) + " ticks (started " + std::to_string(static_cast<std::int64_t>(liftStart) - done - kForceTicks) + ")" + tag);
+		// The bound runs from the aid's real end (the last tick a medic was on the body), not from the forced hold's end: the aid lasts as long as the
+		// injuries take (seed 2 after k16.6.671's push change: the capturer is its own medic and treats ~89 s, rwh.111 58; an 'OURS' 60 s from the hold's end
+		// was calibrated on a fight whose aid ended with it). SLAVERY.md 8b: the lift (170) waits for the aid, then follows within the walk.
+		test::require(liftTicks > 0 && aidEnd >= 0 && static_cast<std::int64_t>(liftStart) <= std::max<std::int64_t>(aidEnd, done + kForceTicks) + kLiftBoundTicks,
+			"the lift follows the aid's end within " + std::to_string(kLiftBoundTicks) + " ticks (started " + std::to_string(static_cast<std::int64_t>(liftStart) - std::max<std::int64_t>(aidEnd, done + kForceTicks)) + " after it)" + tag);
 		return 1; // the medics took the cuffed body
 	}
 	return liftTicks > 0 ? 1 : 0; // lifted on this seed

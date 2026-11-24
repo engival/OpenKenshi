@@ -20,10 +20,11 @@ int main()
 {
 	try
 	{
-		std::string text = (fs::temp_directory_path() / "ksim_nav_cache_prune_XXXXXX").string();
-		if (mkdtemp(text.data()) == nullptr)
-			throw test::Failure("mkdtemp failed");
-		const fs::path root = text;
+		// A fresh unique directory (mkdtemp is not portable: macOS hides it in strict C++20, MinGW lacks it; kenshi-k16.6.804).
+		const fs::path root = fs::temp_directory_path()
+			/ ("ksim_nav_cache_prune_" + std::to_string(static_cast<long long>(std::chrono::steady_clock::now().time_since_epoch().count())));
+		if (!fs::create_directory(root))
+			throw test::Failure("temp dir exists: " + root.string());
 		const auto now = fs::file_time_type::clock::now();
 		// w5 oldest .. w9 newest, but w5 is the tree in use: touching it on open makes it the newest.
 		for (int i = 5; i <= 9; ++i)
@@ -52,7 +53,7 @@ int main()
 			"names that are not w<N>_<hex> trees are left alone");
 		test::require(ksim::MeshNavigator::pruneCacheRoot(root.string(), "w5_00ab12cd", 3).empty(), "a second prune removes nothing");
 
-		fs::remove_all(root); // root is a mkdtemp path of this test
+		fs::remove_all(root); // root is this test's own fresh directory
 		std::cout << "ksim_nav_cache_prune: ok\n";
 		return 0;
 	}

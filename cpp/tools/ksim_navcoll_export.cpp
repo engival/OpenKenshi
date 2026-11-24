@@ -42,6 +42,7 @@
 #include <fstream>
 #include <iostream>
 #include <list>
+#include <numbers>
 #include <map>
 #include <sstream>
 #include <string>
@@ -338,7 +339,7 @@ void exportCase(Context& ctx, const knav::NavMesh& mesh, const std::string& navS
 	{
 		std::ofstream out(dir / "region.txt");
 		const auto& p = target.placed;
-		const double yaw = std::atan2(2 * (p.qw * p.qy + p.qx * p.qz), 1 - 2 * (p.qy * p.qy + p.qx * p.qx)) * 180 / M_PI;
+		const double yaw = std::atan2(2 * (p.qw * p.qy + p.qx * p.qz), 1 - 2 * (p.qy * p.qy + p.qx * p.qx)) * 180 / std::numbers::pi;
 		out << "case " << caseName << "\nbuilding " << (rec != nullptr ? rec->name : "?") << "\nid " << p.buildingID << "\ninstance " << target.id
 			<< "\nposition " << p.x << " " << p.y << " " << p.z << "\nyaw_deg " << yaw << "\nquat_wxyz " << p.qw << " " << p.qx << " " << p.qy << " " << p.qz
 			<< "\nscale " << p.scale << "\nlayout " << p.interiorLayout
