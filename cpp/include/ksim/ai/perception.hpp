@@ -194,6 +194,11 @@ bool knownNow(const state::Fighter& observer, std::uint64_t target) noexcept;
 // is per scan: sinceSensed is zeroed by a scan that senses the target and only grows at that observer's next scan, so it reads 0 exactly
 // until then (saved with the record: no extra state).
 bool sensedNow(const state::Fighter& observer, std::uint64_t target) noexcept;
+// Which sense holds the target in the observer's record (CHAR_STATS row 34 engageSense; values match SIMLINK.md): 0 no aware record, 1 sight
+// (seen_now: known by sight or force-noticed), 2 hearing (sensed by the last scan's noise roll, not seen_now), 3 remembered (aware, but the
+// last scan sensed nothing). 4, a shot from an unsensed attacker, is the fight's own and never returned here. sensedNow == (1 or 2).
+enum class Sense : std::uint8_t { None = 0, Sight = 1, Hearing = 2, Remembered = 3 };
+Sense senseOf(const state::Fighter& observer, std::uint64_t target) noexcept;
 // Aware and sighted within `maxAge` seconds (the follow task's "leader perceived").
 bool seenWithin(const state::Fighter& observer, std::uint64_t target, double maxAge) noexcept;
 // A scan itself sensed the target (known or sighted) within `maxAge` seconds; the attacker's `notice` does not count. The chase

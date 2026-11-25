@@ -109,7 +109,9 @@ namespace ksim {
 // 131: WorldOptions::feedAnimals / shareFood (task ds/k16.6.514): the Feed Animals and Share Food game options (exe +0x114 / +0x115, global, default off); an older save loads both off.
 // 132: Fighter::age (task ds/k16.17.13.14): a squad animal's rolled age (rwh.193 section 5); an older file loads 1. (121 was its first number, then 131; renumbered at the ksim merge.)
 // 133: Fighter::offPath (task ds/rmw6, kenshi-rmw6; coded as 131, then 132; renumbered at the ksim merge: 131 is k16.6.514's, 132 is k16.17.13.14's): the walk's time off its route, so a save mid-walk re-paths on the straight run's tick.
-inline constexpr std::uint32_t kSaveVersion = 133;
+// 134: PlayerBuilding::placement (task ds/k16.7.156; coded as 133, renumbered at the ksim merge: 133 is rmw6's; the lead assigns the final number): the id of the placement a stood building has in the world; a load stands it again (collision, nav, doors). An older
+// save's player buildings are not stood on load (their placement was not saved). 
+inline constexpr std::uint32_t kSaveVersion = 134;
 
 class SaveError : public std::runtime_error
 {

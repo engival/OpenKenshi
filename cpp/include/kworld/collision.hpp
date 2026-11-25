@@ -173,6 +173,8 @@ struct CollisionCoverage
 	std::size_t furnitureWithCollision = 0; // ... that added shapes
 };
 
+struct FeaturePlacement;
+
 // Resolves record file names (case-insensitively, under dataDir), caches
 // parsed collision files and places buildings and foliage in the world.
 class CollisionLibrary
@@ -209,12 +211,22 @@ public:
 	bool addFoliage(const FoliageInstance& instance, std::vector<WorldShape>& out,
 		CollisionCoverage& coverage);
 
+	// Appends the collision of one map feature (features.dat) whose record names a `collision` file: placed with its pose and
+	// per-axis scale, NavUse::Walkable, unfilled (a bridge is walked under as well as over, BRIDGE_FEATURE.md). False when the
+	// record has no readable collision (hidden markers, render-only pieces) or the rotation is not finite.
+	bool addFeature(const FeaturePlacement& placement, std::vector<WorldShape>& out);
+	// How far from its position a placed feature's collision can reach (the largest vertex distance of its model times the largest scale
+	// axis), 0 when it has no readable collision. Lets a window gather a feature whose bound spans into it from a farther cell
+	// (kenshi-k16.7.197).
+	double featureReach(const FeaturePlacement& placement);
+
 private:
 	// nullptr when the record names no file, the file is absent or bad.
 	const CollisionModel* model(const std::string& recordPath, bool& unreadable);
 	bool partHasMesh(const kdata::Record& part) const;
 
 	const kdata::GameData& gameData_;
+	std::unordered_map<std::string, double> reach_; // collision file -> largest vertex distance (featureReach)
 	std::unordered_map<std::string, std::string> files_; // lower-case relative path -> path
 	std::map<std::string, std::unique_ptr<CollisionModel>> models_; // null = unreadable
 };
@@ -226,6 +238,11 @@ std::vector<std::array<float, 4>> interiorMaskHull(const std::vector<WorldShape>
 // World placement of one model: pos + R(qw, qx, qy, qz) * (scale * v).
 void placeModel(const CollisionModel& model, const std::array<double, 3>& pos,
 	const std::array<double, 4>& quatWxyz, double scale, NavUse use, bool fill,
+	std::vector<WorldShape>& out);
+
+// As above with a per-axis scale (map features: kenshi-k16.7.194); a negative product mirrors, the winding is flipped to match.
+void placeModel(const CollisionModel& model, const std::array<double, 3>& pos,
+	const std::array<double, 4>& quatWxyz, const std::array<double, 3>& scale, NavUse use, bool fill,
 	std::vector<WorldShape>& out);
 
 } // namespace kworld

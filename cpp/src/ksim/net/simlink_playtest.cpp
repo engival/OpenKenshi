@@ -34,6 +34,8 @@ constexpr MetricName kMetricNames[] = {
 	{ "fight_s", "game seconds from the first engagement to the last" },
 	{ "player_downed_s", "game seconds from the start to the first player character down" },
 	{ "captured", "1 when a player character was carried or shackled during the run" },
+	{ "first_engage_basis", "the engage basis (CHAR_STATS row 34 engageBasis, SIMLINK.md) of the earliest target set in the run" },
+	{ "first_engage_goal", "the AI_TASK enum of the goal that set that first target (CHAR_STATS row 16)" },
 };
 
 // A name that is a file name only: no path, no traversal. The scenario's name is the stem of `scenarios/<name>.kscen`.
@@ -99,6 +101,14 @@ void ScenarioRun::sample(const Simulation& sim, std::uint64_t tick)
 		}
 		if (playerTarget && !isPlayer)
 			everTargetedPlayer.insert(member.id);
+		if (f.target != 0 && f.engageTick != 0
+			&& (firstTriggerTick == 0 || f.engageTick < firstTriggerTick || (f.engageTick == firstTriggerTick && member.id < firstTriggerId)))
+		{
+			firstTriggerTick = f.engageTick;
+			firstTriggerBasis = f.engageBasis;
+			firstTriggerGoal = f.engageGoal;
+			firstTriggerId = member.id;
+		}
 		// Down is every arena member's, so bodies_down ("fighters that were in the fight and are down", SIMLINK.md "Metrics")
 		// counts the NPCs it always meant to; firstDownTick stays the player's (player_downed_s).
 		if (f.down || f.unconscious || f.dead || f.koTimer > 0.0)
@@ -188,6 +198,15 @@ double ScenarioRun::value(std::string_view metric, std::uint64_t tick, std::uint
 	}
 	if (metric == "captured")
 		return playerCarried ? 1.0 : 0.0;
+	if (metric == "first_engage_basis" || metric == "first_engage_goal")
+	{
+		if (firstTriggerTick == 0)
+		{
+			valid = 0;
+			return 0.0;
+		}
+		return metric == "first_engage_basis" ? firstTriggerBasis : firstTriggerGoal;
+	}
 	(void)tick;
 	valid = 0;
 	return 0.0;

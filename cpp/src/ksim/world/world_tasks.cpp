@@ -855,6 +855,20 @@ void Simulation::stepWorldTasks()
 		// a character (a box, a gone body) is erased without a query.
 		const state::Fighter* member = combat_->find(it->first.first);
 		const state::Fighter* target = combat_->find(it->first.second);
+		if (member != nullptr && target == nullptr && navigation_ != nullptr && !member->dead)
+		{
+			// A producer the member's Use order gave up on (interact.cpp): the same query through the order's own route.
+			const InteractTarget deposit = findInteractTarget(ecsMutable(), combat_.get(), it->first.second, this);
+			if (deposit.kind == InteractKind::Producer)
+			{
+				const Route route = routeToInteract(*navigation_, *member, deposit, static_cast<std::uint8_t>(InteractAction::Use), false, body(*member));
+				if (route.found)
+					it = worldTaskBlocks_.erase(it);
+				else
+					(it++)->second = now + kBlockTicks;
+				continue;
+			}
+		}
 		bool reachable = member == nullptr || target == nullptr || member->dead || target->dead || navigation_ == nullptr;
 		if (!reachable)
 			reachable = navigation_->routeFrom({member->x, member->y, member->z}, target->x, target->z, target->y, false, body(*member)).found;

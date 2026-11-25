@@ -126,7 +126,8 @@ pick_server "$TREE" "$BUILD/cpp/OpenKenshi-server"
 START_PORT=$PORT start_server_on_free_port "$OUT/server.log" env -C "$TREE" "$SERVER" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen "127.0.0.1:@PORT@" --scenario newgame
 SPID=$SERVER_PID; PORT=$SERVER_PORT
 trap 'kill "$SPID" 2>/dev/null; wait "$SPID" 2>/dev/null' EXIT
-printf '300 quit\n' > "$OUT/newgame.txt"
+# `wait world 300`: the script clock holds until first_world_frame (a cold nav cache makes the server start take ~100 s), bounded at 300 s; then 300 frames, then quit
+printf '0 wait world 300\n300 quit\n' > "$OUT/newgame.txt"
 nice -n 10 "$HERE/headless.sh" -- "$KCLIENT" --data "$DATA" --debug --simlink "127.0.0.1:$PORT" --set render.thread=lockstep --sg-owner-logic \
 	--script "$OUT/newgame.txt" >"$OUT/newgame.log" 2>&1
 RC=$?
@@ -137,6 +138,7 @@ then
 fi
 [ "$RC" = 0 ] || fail "the new-game run exited $RC, see $OUT/newgame.log"
 grep -q 'render.thread=lockstep: the logic thread starts' "$OUT/newgame.log" || fail "the logic thread never started: render.thread=lockstep did not reach the client, see $OUT/newgame.log"
+! grep -q '^wait world: no first_world_frame' "$OUT/newgame.log" || fail "no first_world_frame within 300 s, see $OUT/newgame.log (and the server's nav zone lines in $OUT/server.log)"
 grep -q '^first_world_frame' "$OUT/newgame.log" || fail "no first_world_frame, see $OUT/newgame.log"
 ! grep -q '\[sg\]\[error\]' "$OUT/newgame.log" || fail "[sg][error] in the new-game run, see $OUT/newgame.log"
 echo "lockstep_check: ok   a lockstep new game with --sg-owner-logic ran its script to 300 frames, 0 [sg][error] ($OUT/newgame.log)"

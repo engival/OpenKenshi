@@ -483,6 +483,24 @@ Command Command::setView(double x, double z)
 	return command;
 }
 
+Command Command::setCameraFollow(std::uint64_t session, std::uint64_t id)
+{
+	Command command;
+	command.type = CommandType::SetCameraFollow;
+	command.subject = session;
+	command.object = id;
+	return command;
+}
+
+Command Command::setGameOption(std::uint8_t option, bool on)
+{
+	Command command;
+	command.type = CommandType::SetGameOption;
+	command.subject = option;
+	command.value = on ? 1 : 0;
+	return command;
+}
+
 Simulation::Simulation(World world, std::uint64_t seed, const RegionConfig& regions)
 	: world_(std::move(world))
 	, seed_(seed)
@@ -531,7 +549,7 @@ std::size_t Simulation::worldRuntimeEntries() const
 	return worldTaskBlocks_.size() + carryIdleSince_.size() + eatenBites_.size() + eatenQueue_.size() + eatenUntil_.size() + tortureStrip_.size()
 		+ lockOrders_.size() + buildOrders_.size() + arrestOrders_.size() + smashOrders_.size() + cropOrders_.size() + standingRun_.size()
 		+ limbPlay_.size() + alarmDwell_.size() + announced_.size() + fightPairs_.size() + memberScores_.size()
-		+ occupiers_.size() + raidLeaders_.size() + producerOffMesh_.size() + talkSeqs_.size() + buyback_.size() + selfAidSince_.size() + (dialogue_ != nullptr ? dialogue_->worldEntries() : 0);
+		+ occupiers_.size() + raidLeaders_.size() + talkSeqs_.size() + buyback_.size() + selfAidSince_.size() + (dialogue_ != nullptr ? dialogue_->worldEntries() : 0);
 }
 
 bool Simulation::holdsOrder(std::uint64_t id) const
@@ -612,6 +630,8 @@ SaveLoadResult Simulation::reload(std::istream& in, bool force)
 	furnishNavCoverage();
 	restoreBoards(); // the old world's Boards are gone with its squads
 	ensureBlackboards();
+	if (restandBuildings() != 0) // the saved player buildings the world's placements lack (kenshi-k16.7.156)
+		rebuildLineOfSight();
 	return loaded;
 }
 
@@ -737,6 +757,8 @@ Simulation Simulation::restore(World world, std::istream& in,
 	});
 	simulation.restoreBoards(); // the saved runtime state first; ensureBlackboards then only fills the squads the save did not hold
 	simulation.ensureBlackboards();
+	if (simulation.restandBuildings() != 0)
+		simulation.rebuildLineOfSight();
 	return simulation;
 }
 
@@ -795,7 +817,7 @@ flecs::entity Simulation::placeTownSquad(std::string_view templateSid, double x,
 					faction = entity.id();
 			});
 	RngStream rng(streamSeed(streamSeed(seed_, kSpawnStream), static_cast<std::size_t>(x) ^ (static_cast<std::size_t>(z) << 32)));
-	SquadBuilder builder(ecsMutable(), *gameData_, rng);
+	SquadBuilder builder(ecsMutable(), *gameData_, rng, gameHoursIn(clockTick()));
 	const flecs::entity placed = builder.build(*squad, faction, 0, state::SpawnSource::TownBar, true, x, z);
 	instancesChanged();
 	return placed;
@@ -1528,6 +1550,7 @@ void Simulation::enableNavigation(std::shared_ptr<const MeshNavigator> navigatio
 		combat_->setNavigation(navigation_);
 	syncNavCoverage(); // a streaming mesh follows the saved areas of a loaded game before anyone routes
 	furnishNavCoverage();
+	restandBuildings(true); // the stood buildings of a loaded game: collision and nav on the new mesh
 }
 
 void Simulation::setGameData(std::shared_ptr<const kdata::GameData> gameData)
@@ -1540,6 +1563,14 @@ void Simulation::maybeEnableLineOfSight()
 {
 	if (los_ != nullptr || gameData_ == nullptr || regions_ == nullptr || world_.placements().empty())
 		return;
+	enableLineOfSight();
+}
+
+void Simulation::rebuildLineOfSight()
+{
+	if (los_ == nullptr)
+		return;
+	disableLineOfSight();
 	enableLineOfSight();
 }
 
@@ -1717,9 +1748,39 @@ void Simulation::adoptFighter(flecs::entity entity, state::Fighter fighter)
 	combatEntities_.insert(combatEntities_.begin() + (at - members.begin()), entity.id());
 }
 
+bool Simulation::liveCharacter(std::uint64_t id)
+{
+	if (combat_ != nullptr)
+	{
+		if (const state::Fighter* f = combat_->find(id))
+			return !f->dead;
+	}
+	bool found = false;
+	ecsMutable().each([&](const state::Id& key, const state::CharacterInstance&) { found = found || key.value == id; });
+	return found;
+}
+
 void Simulation::stepCombat(std::uint64_t now)
 {
-	if (combat_ == nullptr || combat_->empty())
+	if (combat_ == nullptr)
+		return;
+	// The characters the sessions' cameras follow (order 52): one per session, passive (nothing is promoted for it). A dead one is cleared here, silently;
+	// one that left the world is found by a scan every 32 ticks. One only out of the arena stays asked for and protects nothing until it is back in.
+	{
+		const bool scan = now % 32 == 0;
+		std::unordered_set<std::uint64_t> followed;
+		for (auto it = cameraFollow_.begin(); it != cameraFollow_.end();)
+		{
+			const state::Fighter* f = combat_->find(it->second);
+			const bool dead = f != nullptr ? f->dead && !combat_->empty() : false; // an arena not yet repopulated after a load clears nobody
+			if (dead || (f == nullptr && scan && !liveCharacter(it->second)))
+				it = cameraFollow_.erase(it);
+			else
+				followed.insert((it++)->second);
+		}
+		combat_->setCameraFollow(std::move(followed));
+	}
+	if (combat_->empty())
 		return;
 	const int steps = std::max(1, combatSettings_.substeps);
 	combat_->setTime(static_cast<double>(now - 1) * kTickSeconds);
@@ -2655,6 +2716,15 @@ void Simulation::apply(const Command& command)
 	}
 	case CommandType::SetView:
 		ecs.set<state::ViewFocus>(state::ViewFocus{command.x, command.z});
+		break;
+	case CommandType::SetCameraFollow:
+		if (command.object == 0)
+			cameraFollow_.erase(command.subject);
+		else
+			cameraFollow_[command.subject] = command.object;
+		break;
+	case CommandType::SetGameOption:
+		setGameOption(command.subject == 0 ? "feedAnimals" : "shareFood", command.value);
 		break;
 	case CommandType::SetDoorState:
 	{

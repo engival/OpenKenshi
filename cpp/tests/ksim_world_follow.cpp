@@ -23,6 +23,7 @@
 #include "test_util.hpp"
 #include "sim_access.hpp"
 #include "ksim/dev/build_paths.hpp"
+#include <unistd.h>
 
 #include <algorithm>
 #include <cmath>
@@ -444,7 +445,7 @@ void scenario(const kworld::LoadOrder& order, const std::shared_ptr<const Combat
 // A save in the middle of a carried walk loads to the same hash and goes on identically (the carried set is derived from the arena).
 void saveLoad(const kworld::LoadOrder& order, const std::shared_ptr<const CombatData>& combat)
 {
-	const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_world_follow_test.ksav";
+	const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_world_follow_test_" + std::to_string(getpid()) + ".ksav";
 	Simulation straight = newGame(order, combat, true, 21);
 	setDownTraveller(straight, startOf(straight));
 	straight.run(200);

@@ -206,8 +206,18 @@ bool knownNow(const Fighter& observer, std::uint64_t target) noexcept
 
 bool sensedNow(const Fighter& observer, std::uint64_t target) noexcept
 {
+	const Sense s = senseOf(observer, target);
+	return s == Sense::Sight || s == Sense::Hearing;
+}
+
+Sense senseOf(const Fighter& observer, std::uint64_t target) noexcept
+{
 	const SightRecord* r = find(observer, target);
-	return r != nullptr && r->seen && (r->knownNow || r->sinceSensed <= 0.0);
+	if (r == nullptr || !r->seen)
+		return Sense::None;
+	if (r->knownNow)
+		return Sense::Sight;
+	return r->sinceSensed <= 0.0 ? Sense::Hearing : Sense::Remembered;
 }
 
 bool seenWithin(const Fighter& observer, std::uint64_t target, double maxAge) noexcept

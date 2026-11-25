@@ -654,9 +654,36 @@ std::optional<BakedTile> buildTile(const NavConfig& c, const std::vector<native:
 			polys.push_back(std::move(poly));
 		}
 	}
+	// Coincident polygons (the same corners, any winding: a door piece the interior and the zone side both hold, a zone-side face over its twin)
+	// are one: two or four copies neighbour each other over every edge and Detour's raycast, which has no iteration cap, bounces between them for
+	// ever when its ray ends outside the pair (ksim_newgame_starts_0 ran 25 min in a door route; kenshi-k16.7.145). The door copy keeps its key.
+	{
+		std::map<std::vector<int>, std::size_t> seen;
+		std::vector<TilePoly> unique;
+		for (TilePoly& poly : polys)
+		{
+			std::vector<int> key = poly.piece.corners;
+			std::sort(key.begin(), key.end());
+			const auto [at, inserted] = seen.try_emplace(std::move(key), unique.size());
+			if (inserted)
+			{
+				unique.push_back(std::move(poly));
+				continue;
+			}
+			TilePoly& kept = unique[at->second];
+			if (poly.area == Area::DoorOpen && kept.area != Area::DoorOpen)
+			{
+				kept.area = poly.area;
+				kept.door = poly.door;
+			}
+			++stats.duplicates;
+		}
+		polys = std::move(unique);
+	}
 	if (polys.empty())
 		return std::nullopt;
 	stats.maxPolys = std::max(stats.maxPolys, static_cast<int>(polys.size()));
+	stats.tilePolys.push_back({ tx, tz, static_cast<int>(polys.size()) });
 	if (polys.size() > static_cast<std::size_t>(kMaxPolysPerTile) || tile.verts.size() >= 0xffff)
 	{
 		++stats.overfull;
@@ -736,6 +763,44 @@ std::optional<BakedTile> buildTile(const NavConfig& c, const std::vector<native:
 							best = static_cast<int>(other);
 						}
 					}
+				if (best < 0)
+				{
+					// The opposite face is not in this tile: it collapsed on the 1/8 u grid (a sliver thinner than a quantum). Look through it:
+					// the faces across its other edges are this edge's neighbours, the one overlapping most along it first (breadth first, a few faces deep).
+					const native::Mesh& source = meshes[tag.mesh];
+					std::vector<std::int32_t> queue{ edge.oppositeFace };
+					std::vector<std::int32_t> visited;
+					for (std::size_t head = 0; head < queue.size() && head < 8 && best < 0; ++head)
+					{
+						const std::int32_t face = queue[head];
+						if (face < 0 || std::find(visited.begin(), visited.end(), face) != visited.end())
+							continue;
+						visited.push_back(face);
+						const native::Face& far = source.faces[static_cast<std::size_t>(face)];
+						for (std::uint32_t e2 = far.startEdge; e2 < far.startEdge + far.numEdges; ++e2)
+						{
+							const native::Edge& edge2 = source.edges[e2];
+							if (edge2.oppositeEdge < 0 || static_cast<std::int32_t>(e2) == edge.oppositeEdge)
+								continue;
+							const auto owners = nativeOwners.find(edgeKey(tag.mesh, static_cast<std::uint32_t>(edge2.oppositeEdge)));
+							if (owners == nativeOwners.end())
+							{
+								queue.push_back(edge2.oppositeFace);
+								continue;
+							}
+							for (const auto& [other, k2] : owners->second)
+							{
+								const auto& corners = polys[other].piece.corners;
+								const double shared = overlap(a, b, corners[k2], corners[(k2 + 1) % corners.size()]);
+								if (other != p && shared > most)
+								{
+									most = shared;
+									best = static_cast<int>(other);
+								}
+							}
+						}
+					}
+				}
 				if (best >= 0)
 					return best;
 			}

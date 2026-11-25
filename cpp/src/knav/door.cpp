@@ -32,7 +32,7 @@ DoorPaint doorPaint(const DoorSetting& setting) noexcept
 	return { static_cast<std::uint16_t>(areaFlag(area) | locked), static_cast<std::uint8_t>(area) };
 }
 
-void paintDoor(dtNavMesh& mesh, std::uint32_t polyRef, const DoorSetting& setting)
+void paintDoor(dtNavMesh& mesh, dtPolyRef polyRef, const DoorSetting& setting)
 {
 	const DoorPaint paint = doorPaint(setting);
 	mesh.setPolyArea(polyRef, paint.area);

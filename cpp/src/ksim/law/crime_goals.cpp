@@ -202,6 +202,143 @@ void Simulation::noticeAlliesNear(std::uint64_t id)
 	}
 }
 
+// The crime goals' task handlers, selected by the package goal's task type (the runner's shape: a registry finder, the walk point, and a
+// step run each tick while the goal is the member's). The finders mirror the exe's (AlarmFinder 14092a810, BuildingFinder_Cages 1408cf3c0 /
+// 1408cf6a0, BountyFinder 14099bfc0) but are our own predicates, not a shared registry (kenshi-k16.6.747); `step` returns true when the goal ends. Members of Simulation, so the handlers see its state.
+struct Simulation::CrimeTask
+{
+	std::uint16_t task;
+	std::uint64_t (Simulation::*find)(std::uint64_t id) const; // an alarm id or a character id, 0 = none
+	bool alarm; // the target is an alarm (the walk stops 30 u off it), else a character (the walk goes to it)
+	bool (Simulation::*step)(std::uint64_t id, const state::Fighter& me, state::Routine& r, double dt); // dt: the seconds since its last due pass (k16.6.639)
+};
+
+std::uint64_t Simulation::alarmFinder209(std::uint64_t id) const
+{
+	const alarm::Alarm* hit = pickAlarm(id, false);
+	return hit != nullptr ? hit->id : 0;
+}
+
+std::uint64_t Simulation::alarmFinder210(std::uint64_t id) const
+{
+	const alarm::Alarm* hit = pickAlarm(id, true);
+	return hit != nullptr ? hit->id : 0;
+}
+
+// Task_InvestigateAlarms (140354260): walk to a point 30 u off the alarm (the walk point); within 100 u of it start the 10 s wait
+// (this+0x7c, counted down by the frame delta), then delete the alarm. The 210 tick's ally notify (1405cb0a0, per sensed
+// ally) force-notices the ally (perception::notice, the red / green arrow's record, red_arrow_rules.md section 5); its mode-4
+// temporary enemy is skipped for an ally (1406744a0). OURS (UNSURE, deferred: playtesting): "sensed" is read as every ally of
+// mine within the 100 u arrival radius, not only one already in my sight list: sight never lists a friendly sneaker.
+bool Simulation::investigateStep(std::uint64_t id, const state::Fighter& f, state::Routine& r, bool notifyAllies, double dt)
+{
+	const alarm::Alarm* held = alarms_.find(r.chainTarget);
+	if (held == nullptr)
+		return true;
+	if (std::hypot(f.x - held->x, f.z - held->z) >= alarm::kCloseEnough)
+	{
+		alarmDwell_.erase(id);
+		return false;
+	}
+	if (notifyAllies)
+		noticeAlliesNear(id);
+	double& left = alarmDwell_.try_emplace(id, alarm::kDwellSeconds).first->second;
+	left -= dt;
+	if (left > 0.0)
+		return false;
+	std::ostringstream line;
+	line << "investigate " << r.goal << " member " << id << " cleared alarm " << held->id << " kind " << static_cast<int>(held->kind);
+	logTask(line.str());
+	alarms_.erase(r.chainTarget); // 14092c300
+	return true;
+}
+
+bool Simulation::stepInvestigate209(std::uint64_t id, const state::Fighter& f, state::Routine& r, double dt) { return investigateStep(id, f, r, false, dt); }
+bool Simulation::stepInvestigate210(std::uint64_t id, const state::Fighter& f, state::Routine& r, double dt) { return investigateStep(id, f, r, true, dt); }
+
+// 212: the confiscation, the stolen items go from the occupant into my own inventory (dt41_E section 5), equipment first.
+bool Simulation::stepLoot212(std::uint64_t id, const state::Fighter& f, state::Routine& r, double)
+{
+	state::Fighter* occupant = combat_->find(r.chainTarget);
+	if (occupant == nullptr || occupant->dead || occupant->cageBuilding == 0)
+		return true;
+	if (std::hypot(f.x - occupant->x, f.z - occupant->z) > kConfiscateReach)
+		return false; // the scorer's walk is still on
+	confiscate212(id, r.chainTarget);
+	return true;
+}
+
+// 211: the lock task 110 releases the prisoner.
+bool Simulation::stepRelease211(std::uint64_t id, const state::Fighter&, state::Routine& r, double)
+{
+	if (lockOrders_.count(id) != 0)
+		return false;
+	const state::Fighter* prisoner = combat_->find(r.chainTarget);
+	if (prisoner == nullptr || prisoner->cageBuilding == 0)
+		return true;
+	orderLockTask(id, routines::task::ReleasePrisoner, r.chainTarget);
+	return false;
+}
+
+// 204: the arrest chain (arrest.cpp) takes the target once it is down; the goal ends with the order.
+bool Simulation::stepArrest204(std::uint64_t id, const state::Fighter&, state::Routine& r, double)
+{
+	const state::Fighter* victim = combat_->find(r.chainTarget);
+	if (victim == nullptr || victim->dead || victim->cageBuilding != 0)
+		return true;
+	return arrestOrders_.count(id) == 0 && !orderArrest(id, r.chainTarget, goap::kLiftPersonSnatchingInTown);
+}
+
+const Simulation::CrimeTask* Simulation::crimeTask(std::uint16_t task)
+{
+	static const CrimeTask table[] = {
+		{routines::task::InvestigateAlarms, &Simulation::alarmFinder209, true, &Simulation::stepInvestigate209},
+		{routines::task::InvestigateAlarmsAlliesOnly, &Simulation::alarmFinder210, true, &Simulation::stepInvestigate210},
+		{routines::task::LootStolenGoods, &Simulation::lootedPrisoner212, false, &Simulation::stepLoot212},
+		{routines::task::PoliceFreePrisoners, &Simulation::prisonerToFree211, false, &Simulation::stepRelease211},
+		{routines::task::HuntBounties, &Simulation::bountyTarget204, false, &Simulation::stepArrest204},
+	};
+	for (const CrimeTask& entry : table)
+		if (entry.task == task)
+			return &entry;
+	return nullptr;
+}
+
+bool Simulation::isCrimeGoal(std::uint16_t task) { return crimeTask(task) != nullptr; }
+
+std::uint64_t Simulation::crimeFinder(std::uint16_t task, std::uint64_t id) const
+{
+	const CrimeTask* entry = crimeTask(task);
+	return entry != nullptr ? (this->*entry->find)(id) : 0;
+}
+
+bool Simulation::crimeWalkPoint(std::uint16_t task, std::uint64_t id, std::uint64_t target, double& x, double& z) const
+{
+	const CrimeTask* entry = crimeTask(task);
+	const state::Fighter* me = entry != nullptr && combat_ != nullptr ? combat_->find(id) : nullptr;
+	if (me == nullptr)
+		return false;
+	if (!entry->alarm)
+	{
+		const state::Fighter* body = combat_->find(target);
+		if (body == nullptr)
+			return false;
+		x = body->x;
+		z = body->z;
+		return true;
+	}
+	// The walk point is 30 u off the alarm on my side of it (140354260).
+	const alarm::Alarm* hit = alarms_.find(target);
+	if (hit == nullptr)
+		return false;
+	const double dx = me->x - hit->x;
+	const double dz = me->z - hit->z;
+	const double d = std::hypot(dx, dz);
+	x = d > alarm::kStandOff ? hit->x + dx / d * alarm::kStandOff : me->x;
+	z = d > alarm::kStandOff ? hit->z + dz / d * alarm::kStandOff : me->z;
+	return true;
+}
+
 void Simulation::stepCrimeGoals()
 {
 	if (combat_ == nullptr)
@@ -214,17 +351,14 @@ void Simulation::stepCrimeGoals()
 			continue; // (kenshi-k16.6.639)
 		flecs::entity actor = ecsMutable().entity(combatEntities_[i]);
 		const state::Routine* current = actor.get<state::Routine>();
-		if (current == nullptr)
-			continue;
-		const std::uint16_t goal = current->goal;
-		if (goal != routines::task::InvestigateAlarms && goal != routines::task::InvestigateAlarmsAlliesOnly
-			&& goal != routines::task::LootStolenGoods && goal != routines::task::PoliceFreePrisoners && goal != routines::task::HuntBounties)
+		const CrimeTask* handler = current != nullptr ? crimeTask(current->goal) : nullptr;
+		if (handler == nullptr)
 			continue;
 		const std::uint64_t id = members[i].id;
 		state::Routine r = *current;
 		const state::Fighter& f = *combat_->find(id);
 		// The goal ends: the scorer takes the member back at once (a resident's own re-score), nothing is held.
-		const auto end = [&]()
+		if (f.dead || f.unconscious || f.down || (this->*handler->step)(id, f, r, members[i].dueTicks * kTickSeconds))
 		{
 			alarmDwell_.erase(id);
 			r.goal = 0;
@@ -232,74 +366,6 @@ void Simulation::stepCrimeGoals()
 			r.chainTarget = 0;
 			r.nextScore = 0;
 			actor.set<state::Routine>(std::move(r));
-		};
-		if (f.dead || f.unconscious || f.down)
-		{
-			end();
-			continue;
-		}
-		if (goal == routines::task::InvestigateAlarms || goal == routines::task::InvestigateAlarmsAlliesOnly)
-		{
-			// Task_InvestigateAlarms (140354260): walk to a point 30 u off the alarm (the scorer's walk); within 100 u of it start the
-			// 10 s wait (this+0x7c, counted down by the frame delta), then delete the alarm. The 210 tick's notify (1405cb0a0, per sensed
-			// ally) force-notices the ally (perception::notice, the red / green arrow's record, red_arrow_rules.md section 5); its mode-4
-			// temporary enemy is skipped for an ally (1406744a0). OURS (UNSURE, deferred: playtesting): "sensed" is read as every ally of
-			// mine within the 100 u arrival radius, not only one already in my sight list: sight never lists a friendly sneaker.
-			const alarm::Alarm* held = alarms_.find(r.chainTarget);
-			if (held == nullptr)
-			{
-				end();
-				continue;
-			}
-			if (std::hypot(f.x - held->x, f.z - held->z) >= alarm::kCloseEnough)
-			{
-				alarmDwell_.erase(id);
-				continue;
-			}
-			if (goal == routines::task::InvestigateAlarmsAlliesOnly)
-				noticeAlliesNear(id);
-			double& left = alarmDwell_.try_emplace(id, alarm::kDwellSeconds).first->second;
-			left -= members[i].dueTicks * kTickSeconds;
-			if (left > 0.0)
-				continue;
-			std::ostringstream line;
-			line << "investigate " << goal << " member " << id << " cleared alarm " << held->id << " kind " << static_cast<int>(held->kind);
-			logTask(line.str());
-			alarms_.erase(r.chainTarget); // 14092c300
-			end();
-		} else if (goal == routines::task::LootStolenGoods) {
-			// The confiscation: the stolen items go from the occupant into my own inventory (dt41_E section 5), equipment first.
-			state::Fighter* occupant = combat_->find(r.chainTarget);
-			if (occupant == nullptr || occupant->dead || occupant->cageBuilding == 0)
-			{
-				end();
-				continue;
-			}
-			if (std::hypot(f.x - occupant->x, f.z - occupant->z) > kConfiscateReach)
-				continue; // the scorer's walk is still on
-			confiscate212(id, r.chainTarget);
-			end();
-		} else if (goal == routines::task::PoliceFreePrisoners) {
-			if (lockOrders_.count(id) == 0)
-			{
-				const state::Fighter* prisoner = combat_->find(r.chainTarget);
-				if (prisoner == nullptr || prisoner->cageBuilding == 0)
-				{
-					end();
-					continue;
-				}
-				orderLockTask(id, routines::task::ReleasePrisoner, r.chainTarget);
-			}
-		} else {
-			// HUNT_BOUNTIES: the arrest chain (arrest.cpp) takes the target once it is down; the goal ends with the order.
-			const state::Fighter* victim = combat_->find(r.chainTarget);
-			if (victim == nullptr || victim->dead || victim->cageBuilding != 0)
-			{
-				end();
-				continue;
-			}
-			if (arrestOrders_.count(id) == 0 && !orderArrest(id, r.chainTarget, goap::kLiftPersonSnatchingInTown))
-				end();
 		}
 	}
 }

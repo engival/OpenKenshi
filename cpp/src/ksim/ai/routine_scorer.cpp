@@ -1090,19 +1090,8 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 		const routines::BuildingSites* building = residentData_->sites.find(key);
 		if (building == nullptr)
 			return false;
-		if (f.slaveState != 1)
-		{
-			const flecs::entity mine = f.faction != 0 ? ecs.entity(f.faction) : flecs::entity();
-			const state::FactionState* mineState = mine.is_valid() ? mine.get<state::FactionState>() : nullptr;
-			bool allowed = building->ownerFaction.empty() || (mineState != nullptr && building->ownerFaction == mineState->templateSid);
-			if (!allowed && mine.is_valid())
-				ecs.each([&](flecs::entity entity, const state::FactionState& faction)
-				{
-					allowed = allowed || (faction.templateSid == building->ownerFaction && factionRelation(*gameData_, entity, mine) >= FactionBook::kAlly);
-				});
-			if (!allowed)
-				return false;
-		}
+		if (!ownerPermits(id, building->ownerFaction))
+			return false;
 		struct Kind
 		{
 			routines::SiteKind kind;
@@ -2027,37 +2016,18 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 		}
 		case routines::task::InvestigateAlarms:
 		case routines::task::InvestigateAlarmsAlliesOnly:
-		{
-			// Task_InvestigateAlarms (dt41_E): the nearest alarm of my town (14092a810). The walk point is 30 u off the alarm on my side
-			// of it (140354260); stepCrimeGoals runs the wait and deletes the alarm.
-			const alarm::Alarm* hit = pickAlarm(id, candidate.task == routines::task::InvestigateAlarmsAlliesOnly);
-			skip = hit == nullptr;
-			if (skip)
-				break;
-			const double dx = f.x - hit->x;
-			const double dz = f.z - hit->z;
-			const double d = std::hypot(dx, dz);
-			e.x = d > alarm::kStandOff ? hit->x + dx / d * alarm::kStandOff : f.x;
-			e.z = d > alarm::kStandOff ? hit->z + dz / d * alarm::kStandOff : f.z;
-			e.spot = true;
-			e.chainTarget = hit->id;
-			break;
-		}
 		case routines::task::LootStolenGoods:
 		case routines::task::PoliceFreePrisoners:
 		case routines::task::HuntBounties:
 		{
-			// 212 / 211 / 204: the finder names the character (the looted / the served prisoner / the bounty); the walk is to it.
-			const std::uint64_t who = candidate.task == routines::task::LootStolenGoods ? lootedPrisoner212(id)
-				: candidate.task == routines::task::PoliceFreePrisoners ? prisonerToFree211(id) : bountyTarget204(id);
-			const state::Fighter* body = who != 0 ? combat_->find(who) : nullptr;
-			skip = body == nullptr;
+			// 209 / 210 / 212 / 211 / 204 (crime_goals.cpp): the task handler's registry finder names the alarm or the character; the walk
+			// point is the handler's (30 u off an alarm, the body itself otherwise); its step runs the rest.
+			const std::uint64_t target = crimeFinder(candidate.task, id);
+			skip = target == 0 || !crimeWalkPoint(candidate.task, id, target, e.x, e.z);
 			if (skip)
 				break;
-			e.x = body->x;
-			e.z = body->z;
 			e.spot = true;
-			e.chainTarget = who;
+			e.chainTarget = target;
 			break;
 		}
 		case routines::task::TakeIntruderOutsideTown:
@@ -2610,9 +2580,7 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 		} else if (goal == routines::task::FindCageAndPutIn) {
 			r.plan = best->plan; // the caging chain (G4); the routine keeps the carried body it names
 			r.step = 0;
-		} else if ((goal == routines::task::InvestigateAlarms || goal == routines::task::InvestigateAlarmsAlliesOnly
-			|| goal == routines::task::LootStolenGoods || goal == routines::task::PoliceFreePrisoners
-			|| goal == routines::task::HuntBounties) && best->chainTarget != 0) {
+		} else if (isCrimeGoal(goal) && best->chainTarget != 0) {
 			r.chainTarget = best->chainTarget; // the alarm / the prisoner / the target: stepCrimeGoals' hand
 			r.chainElapsed = -1.0;
 			r.plan.clear();
@@ -2938,7 +2906,9 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 		if (operates)
 		{
 			const state::InteractTask* task = member.get<state::InteractTask>();
-			if (task == nullptr || task->target != best->site.object || task->action != static_cast<std::uint8_t>(InteractAction::Use))
+			const auto blocked = worldTaskBlocks_.find({id, best->site.object}); // a deposit this member's Use order gave up on (interact.cpp)
+			if ((task == nullptr || task->target != best->site.object || task->action != static_cast<std::uint8_t>(InteractAction::Use))
+				&& (blocked == worldTaskBlocks_.end() || blocked->second <= now))
 				beginInteract(id, best->site.object, static_cast<std::uint8_t>(InteractAction::Use), 0, {}, false);
 		}
 	}
@@ -3719,6 +3689,29 @@ bool Simulation::resolveDoorRow(std::uint64_t id, std::uint16_t task, const Home
 	return doors.needOpen && planTownGoal(id, task, false).found();
 }
 
+bool Simulation::ownerPermits(std::uint64_t id, const std::string& ownerFaction) const
+{
+	const state::Fighter* who = combat_ != nullptr ? combat_->find(id) : nullptr;
+	if (ownerFaction.empty() || (who != nullptr && who->slaveState == 1))
+		return true;
+	const flecs::entity self = fighterEntity(id);
+	const state::Allegiance* allegiance = self.is_valid() ? self.get<state::Allegiance>() : nullptr;
+	if (allegiance == nullptr || allegiance->factionSid.empty())
+		return false;
+	if (allegiance->factionSid == ownerFaction)
+		return true;
+	flecs::entity mine;
+	flecs::entity owner;
+	world_.ecs().each([&](flecs::entity entity, const state::FactionState& faction)
+	{
+		if (faction.templateSid == allegiance->factionSid)
+			mine = entity;
+		if (faction.templateSid == ownerFaction)
+			owner = entity;
+	});
+	return mine.is_valid() && owner.is_valid() && factionRelation(*gameData_, owner, mine) >= FactionBook::kAlly;
+}
+
 bool Simulation::cageTaken(const routines::Site& site) const
 {
 	// A cage holding someone is not free (T3e2). The occupancy is the captives' own saved cage fields (Fighter::cageBuilding /
@@ -3770,9 +3763,6 @@ std::optional<Simulation::SiteChoice> Simulation::pickSite(const state::Routine&
 		const bool finderGoal = goal == routines::task::PretendLabour || goal == routines::task::PretendLabourPretend;
 		const state::Fighter* who = combat_ != nullptr ? combat_->find(id) : nullptr;
 		const kworld::ZoneCell around = kworld::zoneCellOf(who != nullptr ? who->x : anchorX, who != nullptr ? who->z : anchorZ);
-		const flecs::entity self = fighterEntity(id);
-		const state::Allegiance* allegiance = self.is_valid() ? self.get<state::Allegiance>() : nullptr;
-		const std::string mineSid = allegiance != nullptr ? allegiance->factionSid : std::string();
 		for (const ProducerSite& producer : world_.producerSites())
 		{
 			if (!finderGoal)
@@ -3796,20 +3786,8 @@ std::optional<Simulation::SiteChoice> Simulation::pickSite(const state::Routine&
 			}
 			if (!inMask)
 				continue;
-			if (!producer.ownerFaction.empty() && (who == nullptr || who->slaveState != 1) && producer.ownerFaction != mineSid)
-			{
-				flecs::entity mine;
-				flecs::entity owner;
-				world_.ecs().each([&](flecs::entity entity, const state::FactionState& faction)
-				{
-					if (faction.templateSid == mineSid)
-						mine = entity;
-					if (faction.templateSid == producer.ownerFaction)
-						owner = entity;
-				});
-				if (!mine.is_valid() || !owner.is_valid() || factionRelation(*gameData_, owner, mine) < FactionBook::kAlly)
-					continue;
-			}
+			if (!ownerPermits(id, producer.ownerFaction))
+				continue;
 			offer({routines::SiteKind::Work, producer.id, 0}, producer.x, producer.z);
 		}
 	} else {

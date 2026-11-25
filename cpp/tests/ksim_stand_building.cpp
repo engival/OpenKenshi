@@ -5,11 +5,14 @@
 // Runs against the install (KENSHI_DATA); exit 77 without the navtiles.
 
 #include "ksim/core/simulation.hpp"
+#include "ksim/core/command.hpp"
+#include "ksim/save/save.hpp"
 #include "ksim/nav/navigator.hpp"
 #include "ksim/net/simlink_scenario.hpp"
 #include "knav/native.hpp"
 #include "kworld/collision.hpp"
 #include "kworld/coords.hpp"
+#include "kworld/gamedata.hpp"
 #include "kworld/loadorder.hpp"
 #include "test_util.hpp"
 
@@ -98,6 +101,85 @@ int main()
 		test::require(reached > 0, "a route from outside reaches the door");
 		// The same instance id is not placed twice.
 		test::require(sim.standBuilding(placed).placed == 0, "sim.standBuilding(placed).placed == 0");
+
+		// A constructed building survives our own save and load (kenshi-k16.7.156): the PlayerBuilding records its placement, a load stands it again.
+		{
+			Simulation game = Simulation::newGame(KENSHI_DATA, order, spawn);
+			game.setGameData(gameData);
+			const kdata::Record* faction = nullptr;
+			for (const kdata::Record* record : gameData->byType(kworld::itemTypeByName("FACTION")))
+				if (record->name == "Nameless")
+					faction = record;
+			test::require(faction != nullptr, "the Nameless faction record");
+			game.createPlayerFaction(faction->stringID);
+			game.enableNavigation(MeshNavigator::openNative(KENSHI_DATA, {zone}, {}, gameData.get(), NativeCacheOptions{}));
+			BuildOrder build;
+			for (const std::string& sid : game.unlockedBuildings(game.completedResearch()))
+			{
+				const kdata::Record* record = gameData->find(sid);
+				if (record != nullptr && record->findRefs("doors") != nullptr && !record->findRefs("doors")->entries.empty())
+				{
+					build.record = sid;
+					break;
+				}
+			}
+			test::require(!build.record.empty(), "an unlocked building with doors");
+			build.x = 29990.818;
+			build.z = -83488.695;
+			build.y = game.groundHeight(build.x, build.z).value_or(0.0);
+			game.enqueue(Command::buildPlace(build));
+			game.run(3);
+			std::string constructed;
+			game.world().ecs().each([&](const state::PlayerBuilding& b) { constructed = b.placement; });
+			test::require(!constructed.empty(), "the construction recorded its placement");
+			test::require(game.world().placements().size() == placementsBefore + 1, "the construction stood a placement");
+			// The interior of an imported placement (layout, label, hand, relative y) is saved with the building and stands again with it.
+			game.world().ecs().each([&](flecs::entity entity, const state::PlayerBuilding&)
+			{
+				state::PlayerBuilding* building = entity.get_mut<state::PlayerBuilding>();
+				building->interiorLayout = "TestLayout";
+				building->label = "TestLabel";
+				building->townHand = 77;
+				building->relativeY = 1.5;
+			});
+			const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_stand_building.ksav";
+			const std::uint64_t held = game.stateHash();
+			game.saveGame(path);
+			Simulation loaded = Simulation::loadGame(KENSHI_DATA, order, path, false, nullptr, RegionConfig{});
+			std::remove(path.c_str());
+			test::require(loaded.stateHash() == held, "the save round-trips its hash");
+			test::require(loaded.world().placements().size() == placementsBefore + 1, "the load stood the placement again");
+			test::require(loaded.world().doorSites().size() > doorsBefore, "the load has the building's doors");
+			test::require(loaded.world().buildingSites().size() == sitesBefore + 1, "the load has the building's site");
+			const auto& site = loaded.world().buildingSites().back();
+			test::require(site.interiorLayout == "TestLayout" && site.label == "TestLabel" && site.townHand == 77,
+				"the re-stand carries the interior layout, label and town hand");
+			loaded.setGameData(gameData);
+			loaded.enableNavigation(MeshNavigator::openNative(KENSHI_DATA, {zone}, {}, gameData.get(), NativeCacheOptions{}));
+			const MeshNavigator& after = *loaded.navigation();
+			int under = 0;
+			for (double dx = -30; dx <= 30; dx += 5)
+				for (double dz = -30; dz <= 30; dz += 5)
+					if (after.walker().snap({build.x + dx, build.y + 2.0, build.z + dz}, 3.0, nullptr, 3.0))
+						++under;
+			int fresh = 0;
+			for (double dx = -30; dx <= 30; dx += 5)
+				for (double dz = -30; dz <= 30; dz += 5)
+					if (nav.walker().snap({build.x + dx, build.y + 2.0, build.z + dz}, 3.0, nullptr, 3.0))
+						++fresh;
+			std::cout << "constructed building: walkable probes " << under << " after the load, " << fresh << " on the mesh without it\n";
+			test::require(under != fresh, "the loaded mesh carries the building's collision");
+			// An older save's player building has no placement: it loads as before. Only the version just before the placement field
+			// (v133) lacks it; once the save moves on, the previous version has it and this case ends (as ksim_save_stamps).
+			if (kSaveVersion == 134)
+			{
+				const std::string oldPath = std::string(KSIM_BINARY_DIR) + "/ksim_stand_building_old.ksav";
+				writeSaveFile(oldPath, game.world().ecs(), game.world().loadOrder(), {}, kSaveVersion - 1);
+				Simulation old = Simulation::loadGame(KENSHI_DATA, order, oldPath, false, nullptr, RegionConfig{});
+				std::remove(oldPath.c_str());
+				test::require(old.world().placements().size() == placementsBefore, "an old save's building is not stood");
+			}
+		}
 		return 0;
 	}
 	catch (const std::exception& e)

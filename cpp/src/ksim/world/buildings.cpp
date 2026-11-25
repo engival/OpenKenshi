@@ -849,6 +849,8 @@ std::string Simulation::runBuildPlace(const BuildOrder& order, bool commit)
 		t->z = shape.z;
 		t->radius = shape.radius;
 	}
+	if (!order.scenario)
+		building.placement = "player/" + std::to_string(id);
 	entity.set<state::PlayerBuilding>(std::move(building));
 	if (!order.scenario)
 	{
@@ -863,6 +865,7 @@ std::string Simulation::runBuildPlace(const BuildOrder& order, bool commit)
 		placed.qy = order.qy;
 		placed.qz = order.qz;
 		standBuilding(std::move(placed));
+		rebuildLineOfSight();
 	}
 	return "";
 }
@@ -1418,6 +1421,119 @@ void Simulation::stepConstructionOrders(const std::function<bool(std::uint64_t, 
 		const ConstructionStep step = stepConstructionTask(actor, it->second, [&](double x, double z) { return walk(actor, x, z); });
 		it = step == ConstructionStep::Working ? std::next(it) : buildOrders_.erase(it);
 	}
+}
+
+std::size_t Simulation::restandBuildings(bool navOnly)
+{
+	if (gameData_ == nullptr || (navOnly && navigation_ == nullptr))
+		return 0;
+	std::set<std::string> have;
+	for (const kworld::PlacedInstance& placed : world_.placements())
+		have.insert(placed.instanceID);
+	std::vector<kworld::PlacedInstance> standing;
+	ecsMutable().each([&](const state::PlayerBuilding& building)
+	{
+		if (building.placement.empty() || (!navOnly && have.count(building.placement) != 0))
+			return;
+		kworld::PlacedInstance placed;
+		placed.instanceID = building.placement;
+		placed.buildingID = building.recordSid;
+		placed.x = building.x;
+		placed.y = building.y;
+		placed.z = building.z;
+		placed.qw = building.qw;
+		placed.qx = building.qx;
+		placed.qy = building.qy;
+		placed.qz = building.qz;
+		placed.relativeY = building.relativeY;
+		placed.interiorLayout = building.interiorLayout;
+		placed.label = building.label;
+		placed.townHand = building.townHand;
+		world_.ecs().each([&](const state::Id& id, const state::FactionState& faction)
+		{
+			if (id.value == building.ownerFaction)
+				placed.ownerFaction = faction.templateSid;
+		});
+		if (gameData_->find(placed.buildingID) != nullptr) // as standBuildings skips an unknown record
+			standing.push_back(std::move(placed));
+	});
+	if (!navOnly)
+		return standBuildings(std::move(standing)).placed;
+	// A new navigator over a world that already holds the placements: only the collision and the patch bake (the cell and scale as standBuildings fills them).
+	for (kworld::PlacedInstance& one : standing)
+	{
+		one.positionCell = one.cell = kworld::zoneCellOf(one.x, one.z);
+		one.scale = gameData_->find(one.buildingID)->floatOr("scale", 1.0f);
+		one.hasScale = true;
+	}
+	return navigation_->standBuildings(standing);
+}
+
+std::uint64_t Simulation::importPlayerBuilding(const kworld::PlacedInstance& placed, std::uint64_t ownerFaction, const ImportBuildingState& at)
+{
+	const kdata::Record* record = gameData_ != nullptr ? gameData_->find(placed.buildingID) : nullptr;
+	if (record == nullptr)
+		return 0;
+	state::PlayerBuilding building;
+	building.recordSid = record->stringID;
+	building.ownerFaction = ownerFaction;
+	building.x = placed.x;
+	building.y = placed.y;
+	building.z = placed.z;
+	building.qw = placed.qw;
+	building.qx = placed.qx;
+	building.qy = placed.qy;
+	building.qz = placed.qz;
+	building.mats = buildingCost(*record);
+	building.maxHp = maxHp(*record);
+	building.placedTick = clockTick();
+	building.placement = placed.instanceID;
+	building.relativeY = placed.relativeY;
+	building.interiorLayout = placed.interiorLayout;
+	building.label = placed.label;
+	building.townHand = placed.townHand;
+	building.built = at.complete;
+	building.paused = at.paused && !at.complete;
+	building.broken = at.broken;
+	building.switchedOn = at.powerOn;
+	building.ruin = at.destroyed;
+	// `construction progress` is the material count delivered (a finished building reads its full cost: Storm House 16, Defensive Wall II 2 in towntest_2), not a fraction.
+	double cost = 0.0;
+	for (const state::BuildMaterial& row : building.mats)
+		cost += row.need;
+	const double fraction = at.destroyed ? kRuinHpFraction : at.complete ? 1.0 : std::clamp(cost > 0.0 ? at.progress / cost : 0.0, 0.0, 1.0);
+	building.hp = fraction * building.maxHp;
+	for (state::BuildMaterial& row : building.mats)
+		row.have = at.complete ? row.need : static_cast<decltype(row.have)>(row.need * fraction);
+	building.status = statusOf(building);
+	flecs::entity entity = state::createInstance(ecsMutable());
+	entity.set<state::PlayerBuilding>(std::move(building));
+	return entity.get<state::Id>()->value;
+}
+
+std::uint64_t Simulation::importPlayerTown(std::uint64_t ownerFaction, const std::string& name, const std::vector<std::uint64_t>& buildings)
+{
+	if (buildings.empty())
+		return 0;
+	flecs::world& ecs = ecsMutable();
+	flecs::entity town = state::createInstance(ecs);
+	const std::uint64_t townId = town.get<state::Id>()->value;
+	std::vector<std::pair<double, double>> at;
+	std::vector<std::uint64_t> members;
+	for (const std::uint64_t id : buildings)
+	{
+		const flecs::entity entity = findBuilding(ecs, id);
+		state::PlayerBuilding* building = entity.is_valid() ? entity.get_mut<state::PlayerBuilding>() : nullptr;
+		if (building == nullptr)
+			continue;
+		building->town = townId;
+		at.emplace_back(building->x, building->z);
+		members.push_back(id);
+	}
+	std::sort(members.begin(), members.end());
+	const TownShape shape = playerTownShape(at);
+	town.set<state::PlayerTown>(state::PlayerTown{name.empty() ? std::string(kDefaultTownName) : name, ownerFaction, shape.x, shape.z, shape.radius, std::move(members)});
+	return townId;
 }
 
 } // namespace ksim

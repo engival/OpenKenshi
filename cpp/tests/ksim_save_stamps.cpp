@@ -98,24 +98,28 @@ void testOldSave(const kdata::GameData& gd, const std::shared_ptr<const CombatDa
 	const std::uint64_t id = sim.spawnFighter(std::move(f)).get<state::Id>()->value;
 	test::require(ecsFighter(sim, id)->offPath == 2.5, "the ECS holds the time off route");
 
-	const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_save_stamps_prev.ksav";
-	writeSaveFile(path, sim.world().ecs(), sim.world().loadOrder(), {}, kSaveVersion - 1);
-	Simulation old = Simulation::loadGame(KENSHI_DATA, kworld::vanillaLoadOrder(KENSHI_DATA), path, false, nullptr, RegionConfig{});
-	std::remove(path.c_str());
-	old.enableCombat(data, settings);
-	const state::Fighter* read = ecsFighter(old, id);
-	test::require(read != nullptr && read->offPath == 0.0, "a previous-version file loads the time off route as 0");
-	old.run(200);
-	const state::Fighter* now = std::as_const(*old.combat()).find(id);
-	test::require(now != nullptr && now->senseAt > state::Fighter::kNoStamp * 0.5, "the sensor stamp is placed");
-	test::require(now->medStep != state::Fighter::kNoStep && now->hungerStep != state::Fighter::kNoStep && now->hunger < 2.0, "the stamps are placed and the member got hungry");
-	test::require(same(*ecsFighter(old, id), *now), "the loaded member is mirrored");
-	std::printf("ok  a previous-version save loads (offPath 0) and plays on\n");
+	// The previous version lacks offPath only while this build is v133; a later save moves the previous version past it (the case ends, as the v130 one did).
+	if (kSaveVersion == 133)
+	{
+		const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_save_stamps_prev.ksav";
+		writeSaveFile(path, sim.world().ecs(), sim.world().loadOrder(), {}, kSaveVersion - 1);
+		Simulation old = Simulation::loadGame(KENSHI_DATA, kworld::vanillaLoadOrder(KENSHI_DATA), path, false, nullptr, RegionConfig{});
+		std::remove(path.c_str());
+		old.enableCombat(data, settings);
+		const state::Fighter* read = ecsFighter(old, id);
+		test::require(read != nullptr && read->offPath == 0.0, "a previous-version file loads the time off route as 0");
+		old.run(200);
+		const state::Fighter* now = std::as_const(*old.combat()).find(id);
+		test::require(now != nullptr && now->senseAt > state::Fighter::kNoStamp * 0.5, "the sensor stamp is placed");
+		test::require(now->medStep != state::Fighter::kNoStep && now->hungerStep != state::Fighter::kNoStep && now->hunger < 2.0, "the stamps are placed and the member got hungry");
+		test::require(same(*ecsFighter(old, id), *now), "the loaded member is mirrored");
+		std::printf("ok  a previous-version save loads (offPath 0) and plays on\n");
+	}
 
 	// The current version round-trips.
 	const std::string again = std::string(KSIM_BINARY_DIR) + "/ksim_save_stamps_v132.ksav";
-	const std::uint64_t held = old.stateHash();
-	old.saveGame(again);
+	const std::uint64_t held = sim.stateHash();
+	sim.saveGame(again);
 	Simulation loaded = Simulation::loadGame(KENSHI_DATA, kworld::vanillaLoadOrder(KENSHI_DATA), again, false, nullptr, RegionConfig{});
 	std::remove(again.c_str());
 	test::require(loaded.stateHash() == held, "a v132 save loads to its hash");

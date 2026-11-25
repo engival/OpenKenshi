@@ -76,6 +76,7 @@ int main(int argc, char** argv)
 		for (const auto& [task, count] : report.ordersSkipped)
 			std::cout << " task " << task << " x" << count;
 		std::cout << "\n";
+		std::cout << "player buildings: " << report.playerBuildings << " imported as PlayerBuilding entities (" << report.playerTowns << " PlayerTowns), " << report.savedBuildings << " of the save's own buildings stood\n";
 		if (report.hasCamera)
 			std::cout << "camera: (" << report.cameraPos[0] << ", " << report.cameraPos[1] << ", " << report.cameraPos[2] << ") zoom " << report.cameraZoom << ", floor " << (report.hasCameraFloor ? std::to_string(report.cameraFloor) : std::string("absent")) << "; selected "
 				<< report.selected << ", selection " << report.selection.size() << "\n";

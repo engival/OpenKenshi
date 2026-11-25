@@ -41,12 +41,23 @@ struct AreaBuilding
 	PlacedInstance placed;
 	BuildingNav nav;
 	std::shared_ptr<const std::vector<WorldShape>> shapes; // empty for IGNORE
+	// The building's interior-mask boxes / hulls (CollisionLibrary::addInteriorMask) when the surface generator can take it (walkable path
+	// mode, `interior terrain` 0, a mask): the building's identity for knav::surfgen and the tile assembly (kenshi-k16.7.145). Null otherwise.
+	std::shared_ptr<const std::vector<WorldShape>> mask;
+	// Where `mask` is set: the same shapes and mask placed at the identity pose (the building's own frame, the placement's scale), for
+	// knav::surfgen (Input::pose turns its mesh into the world). Undoing the world placement instead is lossy: float vertices near x 51,000
+	// carry 0.004 u of noise, the size of surfgen's lattice, and flush pieces stop meeting (the Hub bar lost its entry).
+	std::shared_ptr<const std::vector<WorldShape>> localShapes;
+	std::shared_ptr<const std::vector<WorldShape>> localMask;
 };
 
 struct AreaGeometry
 {
 	std::vector<AreaBuilding> buildings; // placement order
 	std::shared_ptr<const std::vector<WorldShape>> foliage;
+	// Map features' collision (kenshi-k16.7.194), Walkable and unfilled. Not in flatShapes() nor areaDigest(): the Recast bake and its
+	// cache key stay as they were; knav::ground reads it.
+	std::shared_ptr<const std::vector<WorldShape>> features;
 	CollisionCoverage coverage;
 
 	// Every shape, buildings in id order then foliage: the order NavWorld rebuilds in.

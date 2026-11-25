@@ -44,6 +44,7 @@
 #include "nav_source.hpp"
 #include "sim_access.hpp"
 #include "ksim/dev/build_paths.hpp"
+#include <unistd.h>
 
 #ifndef KENSHI_DATA
 #error KENSHI_DATA must be defined
@@ -295,7 +296,7 @@ std::string describe(Simulation& sim, const std::vector<flecs::entity>& squads)
 
 void shoppingAndSave(const kworld::LoadOrder& order, const std::shared_ptr<const CombatData>& combat)
 {
-	const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_town_bar.save";
+	const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_town_bar_" + std::to_string(getpid()) + ".save";
 	Simulation straight = newGame(order);
 	enable(straight, combat);
 	const std::vector<flecs::entity> squads = barSquads(straight, kHubX, kHubZ);

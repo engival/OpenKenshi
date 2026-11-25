@@ -3,7 +3,7 @@
 # whether the patrol follows you in, whether the crew joins, and whether the aggro comes off when you break contact.
 # Only the player is ever ordered (the scenario places the world; SCENARIO_IMPORT.md "Rule").
 KSCEN 2
-scenario title=Caught%20outside%20the%20Bar setup=The%20player%20stands%20outside%20the%20Hub%27s%20Bar%20blackmarket%2C%20a%20Dust%20Bandit%20patrol%20of%20eleven%20on%20the%20open%20ground%20past%20the%20door. look_for=Attack%20a%20bandit%2C%20run%20into%20the%20Bar%20and%20up%20the%20stairs%2C%20then%20rejoin.%20Do%20they%20follow%20through%20the%20door%3F%20Does%20the%20crew%20join%3F%20Does%20the%20aggro%20come%20off%20when%20you%20break%20contact%3F%20Do%20they%20stand%20inside%20you%3F bead=kenshi-h2v.1 metrics=targeted_player,crew_join_s,bodies_down,fight_s,player_downed_s
+scenario title=Caught%20outside%20the%20Bar setup=The%20player%20stands%20outside%20the%20Hub%27s%20Bar%20blackmarket%2C%20a%20Dust%20Bandit%20patrol%20of%20eleven%20on%20the%20open%20ground%20past%20the%20door. look_for=Attack%20a%20bandit%2C%20run%20into%20the%20Bar%20and%20up%20the%20stairs%2C%20then%20rejoin.%20Do%20they%20follow%20through%20the%20door%3F%20Does%20the%20crew%20join%3F%20Does%20the%20aggro%20come%20off%20when%20you%20break%20contact%3F%20Do%20they%20stand%20inside%20you%3F bead=kenshi-h2v.1 metrics=targeted_player,crew_join_s,bodies_down,fight_s,player_downed_s,first_engage_basis,first_engage_goal
 source save=playtest game=1.0.68 radius=0 centre=-50592,-1211 leader=Wanderer
 clock day=1 hour=14 minute=0
 squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0

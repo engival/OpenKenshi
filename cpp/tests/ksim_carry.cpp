@@ -369,6 +369,12 @@ int main(int argc, char** argv)
 			const double strength = rig.f(player).skills.strength * CombatRules::effectiveStat(rig.f(player), CombatRules::kStatStrength);
 			const double expectedRatio = (rig.data->k.carryWeightMult * strength + 15.0 - 1.5) / 28.5;
 			test::require(expectedRatio < 1.0 && std::fabs(rig.f(player).encumbrance - expectedRatio) < 1e-9, "encumbrance at strength 10: " + std::to_string(rig.f(player).encumbrance) + " vs " + std::to_string(expectedRatio));
+			// The first walk's 400-tick cap can end it still at the unladen speed (the farthest route is as long as the mesh makes it): stop and settle, so the
+			// run below starts from rest and its peak is the encumbered speed, not the first walk's leftover speed less the ramp.
+			rig.sim->enqueue(Command::fighterStop(state::Id{player}, false));
+			for (int t = 0; t < 100 && (rig.f(player).walking() || rig.f(player).forwardSpeed != 0.0); ++t)
+				rig.tick();
+			test::require(!rig.f(player).walking() && rig.f(player).forwardSpeed == 0.0, "the carrier did not come to rest after the first walk");
 			const Route back = rig.farRoute(player, 400.0);
 			rig.walk(player, back);
 			double slow = 0.0;

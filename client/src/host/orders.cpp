@@ -212,14 +212,20 @@ bool foreign_container_walk(uint64_t id, bool queue)
 	return app.sim.moveTo(at, queue);
 }
 
+Pick force_pick_thing(Pick p)
+{
+	if (g_forcePickThing)	// script `mouse force ID`: the click is for that thing wherever the pointer is (dev tools only; 0 otherwise)
+	{
+		if (const simlink::Interactable* ft = app.sim.thing(g_forcePickThing)) { p = Pick{}; p.id = g_forcePickThing; p.kind = ft->kind == simlink::Interactable::kContainer ? Pick::Container : ft->kind == simlink::Interactable::kDoor ? Pick::Door : ft->kind == simlink::Interactable::kBed ? Pick::Bed : ft->machineLike() ? Pick::Producer : Pick::Item; }
+	}
+	return p;
+}
+
 void sim_click(double mx, double my, bool right, bool shift)
 {
 	std::vector<PickSkip> clickSkipped;
 	Pick p = pick_screen(mx, my, &clickSkipped);
-	if (g_forcePickThing)
-	{
-		if (const simlink::Interactable* ft = app.sim.thing(g_forcePickThing)) { p = Pick{}; p.id = g_forcePickThing; p.kind = ft->kind == simlink::Interactable::kContainer ? Pick::Container : ft->kind == simlink::Interactable::kDoor ? Pick::Door : ft->kind == simlink::Interactable::kBed ? Pick::Bed : ft->machineLike() ? Pick::Producer : Pick::Item; }
-	}
+	p = force_pick_thing(p);
 #ifdef KCLIENT_DEV_TOOLS
 	if (g_forcePickChar) { p = Pick{}; p.kind = Pick::Character; p.id = g_forcePickChar; }
 	if (g_forcePickGround.kind == Pick::Ground) { p = g_forcePickGround; }

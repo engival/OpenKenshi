@@ -1094,7 +1094,42 @@ struct CombatArena::Ctx
 	// ---- targets ----
 	// `goal` is the AI_TASK whose goal picked the target (task AT, the Goal row): recorded even when the target does not change, since a
 	// player's attack order re-picks the same enemy every tick. 0 keeps the goal in hand; a dropped target clears it.
-	void setTarget(Member& m, std::uint64_t id, std::uint16_t goal = 0)
+	// `why` is CHAR_STATS row 34 (k16.5.37): what pulled `m` onto the target, kept on the fighter while the target stays.
+	struct Why
+	{
+		std::uint8_t basis = 0;
+		std::uint8_t sense = 0;
+		std::uint64_t cause = 0;
+	};
+
+	// Why `m` fights `other` under `goal` (SIMLINK.md CHAR_STATS row 34): a defence goal names the attack, otherwise the relation that made it an
+	// enemy, else the package goal's own admission (the troublemaker 34). Call it before markHostile, which makes the pair enemies.
+	Why engageWhy(const Member& m, const Member& other, std::uint16_t goal, perception::Sense sense)
+	{
+		const Fighter& f = m.fighter;
+		Why why{0, static_cast<std::uint8_t>(sense), 0};
+		if (goal == routines::task::SelfPreservation)
+		{
+			why.basis = 2;
+			why.cause = other.id;
+		} else if (goal == routines::task::ProtectAllies || goal == routines::task::ProtectOwnSquad || goal == routines::task::ProtectAlliesStayInTown) {
+			why.basis = 3;
+			why.cause = other.fighter.target;
+		} else if (f.team != other.fighter.team) {
+			why.basis = 4;
+		} else if (hostileTo(f, other.fighter.squad)) {
+			why.basis = 5;
+		} else if (enemy(f, other.fighter)) {
+			why.basis = 4;
+		} else {
+			why.basis = goal == 34 ? 6 : 7;
+		}
+		return why;
+	}
+
+	void setTarget(Member& m, std::uint64_t id, std::uint16_t goal = 0) { setTarget(m, id, goal, Why{}); }
+
+	void setTarget(Member& m, std::uint64_t id, std::uint16_t goal, const Why& why)
 	{
 		Fighter& f = m.fighter;
 		if (id != 0)
@@ -1103,9 +1138,16 @@ struct CombatArena::Ctx
 				id = 0;
 		}
 		if (id == 0)
+		{
 			f.combatGoal = 0;
-		else if (goal != 0)
+			f.engageBasis = 0;
+			f.engageSense = 0;
+			f.engageCause = 0;
+			f.engageTick = 0;
+			f.engageGoal = 0;
+		} else if (goal != 0) {
 			f.combatGoal = goal;
+		}
 		if (f.target == id)
 			return;
 		if (f.target != 0)
@@ -1119,11 +1161,17 @@ struct CombatArena::Ctx
 		f.target = id;
 		if (id != 0)
 		{
+			f.engageBasis = why.basis;
+			f.engageSense = why.sense;
+			f.engageCause = why.cause;
+			f.engageTick = arena.environment_.tick;
+			f.engageGoal = f.combatGoal;
 			m.fightTier = true;
 			f.comfortRolls += 1.0; // a melee task start: the comfort radii re-roll (BQ12 a)
 			Member* now = member(id);
 			if (now != nullptr && unsensedShooter(f, m.id, now->fighter, goal))
 			{
+				f.engageSense = 4;
 				learn(m, id, false);
 				now = nullptr;
 			}
@@ -1303,15 +1351,16 @@ struct CombatArena::Ctx
 		}
 		if (best != nullptr)
 		{
+			// The goal this join runs (task AT, the Goal row): SELF_PRESERVATION for my own attacker, PROTECT_ALLIES for an ally's.
+			const std::uint16_t joinGoal = best->fighter.target == m.id ? 32 : 15;
+			const Why why = engageWhy(m, *best, joinGoal, perception::senseOf(f, best->id)); // before the learn and the flip below change the record and the relation
 			// onTargetedBy runs on the VICTIM (dt23): the joined squad takes my squad as a personal hostile; my own table gets nothing
 			// (the attack task holds the target).
 			if (!enemy(f, best->fighter))
 				markHostile(*best, f);
 			if (best->fighter.target != m.id)
 				learn(m, best->id); // 140858f40(...,0): the winner is force-noticed into my senses
-			// The goal this join runs (task AT, the Goal row): SELF_PRESERVATION for my own attacker, PROTECT_ALLIES for an ally's.
-			const std::uint16_t joinGoal = best->fighter.target == m.id ? 32 : 15;
-			setTarget(m, best->id, joinGoal);
+			setTarget(m, best->id, joinGoal, why);
 			if (std::vector<CombatArena::FightCandidate> none; fightTraced(m))
 				traceFight(m, best->id, joinGoal, false, none); // reported when made, not at the next full pick
 		}
@@ -1800,7 +1849,7 @@ struct CombatArena::Ctx
 			Member* ordered = member(f.orderTarget);
 			if (ordered != nullptr && targetable(ordered->fighter))
 			{
-				setTarget(m, ordered->id, kAttackOrderGoal);
+				setTarget(m, ordered->id, kAttackOrderGoal, Why{1, static_cast<std::uint8_t>(perception::senseOf(f, ordered->id)), 0});
 				if (std::vector<CombatArena::FightCandidate> none; fightTraced(m))
 					traceFight(m, ordered->id, kAttackOrderGoal, true, none);
 				return ordered;
@@ -1875,9 +1924,10 @@ struct CombatArena::Ctx
 		}
 		// The picked fighter that is no enemy of mine (the goal 34 troublemaker): the personal type-4 entry goes into ITS squad's map,
 		// keyed by mine (dt23). My own table gets nothing - the task holds the target and my swing admits its current target.
+		const Why why = engageWhy(m, *best, goal, perception::senseOf(f, best->id));
 		if (!enemy(f, best->fighter))
 			markHostile(*best, f);
-		setTarget(m, best->id, goal);
+		setTarget(m, best->id, goal, why);
 		emit(CombatEvent::Kind::Goal, m.id, best->id, goal); // the pick's task type (task CF fixtures; the wire's goal label too)
 		if (traced)
 			traceFight(m, best->id, goal, false, seen);
@@ -2645,7 +2695,7 @@ struct CombatArena::Ctx
 					&& rules.attackChanceRoll(CombatRules::attackValue(D), CombatRules::attackValue(a.fighter), D.rng))
 				{
 					D.pending = CombatState::Attack;
-					setTarget(d, a.id);
+					setTarget(d, a.id, 0, Why{9, static_cast<std::uint8_t>(perception::senseOf(D, a.id)), a.id});
 					traceCounter(d);
 					return result(D.target == a.id ? 1 : 5);
 				}
@@ -2686,7 +2736,7 @@ struct CombatArena::Ctx
 		{
 			D.pending = CombatState::Attack;
 			setState(d, CombatState::Between);
-			setTarget(d, a.id);
+			setTarget(d, a.id, 0, Why{9, static_cast<std::uint8_t>(perception::senseOf(D, a.id)), a.id});
 			traceCounter(d);
 		}
 		return result(D.target == a.id ? 1 : 5);
@@ -5379,6 +5429,7 @@ struct CombatArena::Ctx
 			if (moveWalking(self))
 				continue;
 			const double ra = footprintOf(a);
+			const bool selfFollowed = arena.followed(self.id);
 			std::vector<std::pair<std::uint64_t, int>> contacts;
 			std::uint64_t bestId = 0;
 			double bestMag = 0.0;
@@ -5390,6 +5441,8 @@ struct CombatArena::Ctx
 				// A player character on its move walk pushes the bodies it passes (rwh.188) but not a squadmate of its own (the group walks through itself).
 				if (from->m == &self || (a.playerControlled && moveWalking(*from->m)))
 					continue;
+				if (selfFollowed && !arena.followed(from->m->id))
+					continue; // a followed character yields to nobody but another followed one (the NPC rule between the two)
 				const Fighter& b = from->m->fighter;
 				const double rb = footprintOf(b);
 				const double R = ra + rb;
@@ -5430,9 +5483,7 @@ struct CombatArena::Ctx
 				bestMag *= kDepenetratePosture; // a crawler gives way like a sneaker (live, bar_pile_throwout.md 4)
 			// The camera's character is never moved (k16.6.597, user 2026-11-21): the others yield, and a neighbour that would have shared the overlap
 			// with it yields all of it.
-			if (self.id == arena.cameraFollow_)
-				continue;
-			if (bestId == arena.cameraFollow_)
+			if (!selfFollowed && arena.followed(bestId))
 				bestMag = std::min(bestMag * 2.0, pushCap(a)); // a walk-aside, never a jump
 			// A player character moves at most a walk step per tick under any push, from any pusher (k16.6.597, ksim decision 2026-11-21); NPC-on-NPC
 			// keeps the exe's rule.
@@ -5465,8 +5516,7 @@ struct CombatArena::Ctx
 	{
 		Fighter& a = self.fighter;
 		const double ra = footprintOf(a);
-		if (self.id == arena.cameraFollow_)
-			return; // the camera's character stays; its neighbours yield in separate()
+		const bool selfFollowed = arena.followed(self.id); // the camera's character stays; its neighbours yield in separate()
 		double budget = pushCap(a, false); // one tick's walk, never a jump; what is left of the overlap is walked off by separate()
 		for (int pass = 0; pass < kSettlePasses && budget > 0.0; ++pass)
 		{
@@ -5476,7 +5526,7 @@ struct CombatArena::Ctx
 			for (const Member& other : arena.members_)
 			{
 				// A squadmate still on its own move walk is passing through, not standing here: it is no one to step off from (it settles at its own stop).
-				if (&other == &self || !pushes(other) || moveWalking(other))
+				if (&other == &self || !pushes(other) || moveWalking(other) || (selfFollowed && !arena.followed(other.id)))
 					continue;
 				const Fighter& b = other.fighter;
 				const double rb = footprintOf(b);
@@ -5941,7 +5991,7 @@ bool CombatArena::orderFight(std::uint64_t id, std::uint64_t target, std::uint16
 		return false;
 	if (!ctx.enemy(it->fighter, foe->fighter))
 		ctx.markHostile(*foe, it->fighter);
-	ctx.setTarget(*it, target, task);
+	ctx.setTarget(*it, target, task, Ctx::Why{8, static_cast<std::uint8_t>(perception::senseOf(it->fighter, target)), 0});
 	ctx.emit(CombatEvent::Kind::Goal, id, target, task);
 	// The selector's commit is a pick too: reported here, not at the member's next pickTarget (a walker's combat step runs late).
 	if (std::vector<CombatArena::FightCandidate> none; ctx.fightTraced(*it))

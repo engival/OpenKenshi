@@ -28,6 +28,7 @@
 #include "test_util.hpp"
 #include "sim_access.hpp"
 #include "ksim/dev/build_paths.hpp"
+#include <unistd.h>
 
 #include <algorithm>
 #include <cmath>
@@ -825,7 +826,7 @@ void shooEscalation(const kworld::LoadOrder& order, const std::shared_ptr<const 
 // Determinism and save / load mid-night.
 void determinism(const kworld::LoadOrder& order, const std::shared_ptr<const CombatData>& combat)
 {
-	const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_town_beds_test.ksav";
+	const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_town_beds_test_" + std::to_string(getpid()) + ".ksav";
 	std::uint64_t midnight = 0;
 	const std::uint64_t first = shopNight(order, combat, false, path, &midnight);
 	const std::uint64_t second = shopNight(order, combat, false, "", nullptr);

@@ -120,33 +120,6 @@ void applySpec(state::Fighter& fighter, const CharacterSpec& spec, const Creator
 	look.stance = spec.stance;
 }
 
-// The CHARACTER record's spawn bounty (rwh.193 §2, Character::vf111): chance c fires at randInt(0,100) < c (c/101), no player exemption; the amount is
-// `bounty amount` + int(randInt(0, fuzz*2) * 0.5) per faction of `bounty factions`, United Cities (defaultEmpireFactionSID) when the list is empty.
-std::vector<std::pair<std::string, std::int32_t>> rollSpawnBounty(const kdata::GameData& gameData, const std::string& character, std::uint64_t& rngState)
-{
-	std::vector<std::pair<std::string, std::int32_t>> out;
-	const kdata::Record* record = gameData.find(character);
-	if (record == nullptr || record->intOr("bounty chance", 0) <= 0)
-		return out;
-	RngStream rng(rngState == 0 ? 1 : rngState);
-	if (rng.between(0, 100) < record->intOr("bounty chance", 0))
-	{
-		const std::int32_t fuzz = record->intOr("bounty amount fuzz", 0);
-		const std::int32_t amount = record->intOr("bounty amount", 0) + static_cast<std::int32_t>(static_cast<double>(rng.between(0, fuzz * 2)) * 0.5);
-		forEachRef(*record, "bounty factions", [&](const kdata::RefEntry& entry) { out.emplace_back(entry.targetID, amount); });
-		if (out.empty())
-		{
-			for (const kdata::Record* faction : gameData.byType(kworld::itemTypeByName("FACTION")))
-			{
-				if (faction->name == "United Cities")
-					out.emplace_back(faction->stringID, amount);
-			}
-		}
-	}
-	rngState = rng.state();
-	return out;
-}
-
 } // namespace
 
 StartCatalog StartCatalog::build(const kdata::GameData& gameData, std::string_view dataDir)
@@ -648,7 +621,7 @@ void Simulation::runNewGame(const Command& command)
 
 	// Every character is built before anything changes: a record the combat data cannot build refuses the whole start.
 	std::vector<state::Fighter> fighters;
-	std::vector<std::vector<std::pair<std::string, std::int32_t>>> bounties; // per fighter: (faction, amount) the CHARACTER record rolled
+	std::vector<std::optional<state::CrimeRecord>> bounties; // per fighter: the CHARACTER record's spawn bounty, when it rolled one
 	try
 	{
 		for (std::size_t i = 0; i < wanted.size(); ++i)
@@ -665,7 +638,7 @@ void Simulation::runNewGame(const Command& command)
 				applySpec(fighter, specs[i], *creatorCatalog());
 			else if (!specs.empty())
 				fighter.name = specs[i].name;
-			bounties.push_back(rollSpawnBounty(*gameData_, member.character, fighterRng));
+			bounties.push_back(crime::rollSpawnBounty(*gameData_, member.character, fighterRng, gameHoursIn(clockTick())));
 			fighter.team = 0;
 			fighter.playerControlled = true;
 			if (combatSettings_.newGameStealth >= 0.0)
@@ -753,13 +726,8 @@ void Simulation::runNewGame(const Command& command)
 			++pack.version;
 			entity.set<state::Inventory>(std::move(pack));
 		}
-		if (const auto& rolled = bounties[outcome.members.size()]; !rolled.empty())
-		{
-			state::CrimeRecord crime;
-			for (const auto& [faction, amount] : rolled)
-				crime::addFlat(crime, faction, amount, gameHoursIn(clockTick()));
-			entity.set<state::CrimeRecord>(std::move(crime));
-		}
+		if (bounties[outcome.members.size()])
+			entity.set<state::CrimeRecord>(*bounties[outcome.members.size()]);
 		addPlayerMember(squad, id);
 		if (outcome.members.empty())
 		{

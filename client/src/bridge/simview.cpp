@@ -670,6 +670,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		holdEmpty_ = false;
 		selectedOnce_ = false;	// the loaded game starts with its squad selected, as a new connection does
 		rosterWarm_ = false;	// a load's roster is a first roster too
+		followOnce_ = false;	// the session id may not survive a reconnect: send it again
 		viewOnce_ = false;	// resend the interest and the view focus: the new world's session may not hold them
 		foreign_.clear();
 		splashes_.clear();
@@ -1556,9 +1557,11 @@ void SimView::answers()
 		{
 			static const char* const kResult[] = { "done", "refused on arrival", "unreachable", "target gone", "actor down", "cancelled", "partial", "full", "too hard" };
 			if (e.result == 8)	// too hard (SIMLINK event 13 result 8; approved kenshi-k16.6.376, implemented k16.6.377): a lock pick reached the lock and its
-			{					// skill is below the floor, so no pick ran. Only the cage pick still ends that way (action 18): since ksim 7fd41c98 (k16.6.501) a
-								// door or container pick (3) below the floor is unplannable, so the sim drops the order and sends no event 13 at all (rwh.178);
-								// a shackle pick (15) is always above the floor (its lock level is fixed at 20, ksim lock_tasks.cpp kShackleLockLevel).
+			{					// skill is below the floor, so no pick ran. Only the cage pick of a CAGED picker still ends that way (action 18):
+								// a door / container pick (3), a cage pick (18) or a shackle pick (15) whose chance on the raw stat is below the floor is unplannable
+								// (ksim 7fd41c98 k16.6.501, ad178251 k16.6.571, rwh.178): the sim drops the order, no walk, no event 13. The shackle lock level is fixed
+								// at 20, so a shackle pick's chance is always above the floor (kShackleLockLevel, lock_tasks.cpp). A caged picker whose raw stat clears the floor but stat - 10 does not still walks
+								// and gets result 8 (kenshi-v3tc).
 				// The player's line is OURS: the original has no text for it (LOCKS_EQUIP_STOCK_STATIC D-lockpick-zero); the host's message box shows it.
 				if (isPlayer(e.a) && e.dir == 18) { lockTooHard_++; }
 				if (e.dir < 15 || e.dir > 17) { printf("interact done: %llu on %llu: action %u result 8 too hard\n", (unsigned long long)e.a, (unsigned long long)e.b, (unsigned)e.dir); }	// the shackle orders print their own line below
@@ -1573,6 +1576,7 @@ void SimView::answers()
 				printf("shackles: %llu on %llu: action %u result %u: %s\n", (unsigned long long)e.a, (unsigned long long)e.b, (unsigned)e.dir, (unsigned)e.result, text);
 				continue;
 			}
+			if (e.dir == 21 || e.dir == 11) { printf("interact done: %llu on %llu: action %u (%s door) result %u: %s\n", (unsigned long long)e.a, (unsigned long long)e.b, (unsigned)e.dir, e.dir == 21 ? "lock" : "unlock", (unsigned)e.result, e.result < 9 ? kResult[e.result] : "?"); }
 			say("interact " + std::to_string(e.dir) + " on " + std::to_string(e.b) + ": " + (e.result < 9 ? kResult[e.result] : "?"));
 			continue;
 		}
@@ -1703,6 +1707,12 @@ void SimView::answers()
 		{
 			if (e.kind == 10) { profileStatus_ = dec_.str(e.str); }
 			sent_.erase((uint32_t)e.a);
+			quiet_.erase((uint32_t)e.a);
+			continue;
+		}
+		if (followSeq_ && (uint32_t)e.a == followSeq_)	// set_camera_follow: applied or bad_target, never news
+		{
+			followSeq_ = 0;
 			quiet_.erase((uint32_t)e.a);
 			continue;
 		}
@@ -1875,6 +1885,19 @@ void SimView::view(double x, double z)
 	}
 	viewOnce_ = true;
 	if (!out.empty()) { send(out, "view"); }
+}
+
+void SimView::cameraFollow(uint64_t id)
+{
+	if (mode_ != Live || !helloSent_ || fd_ == kutil::net::kNoSocket) { return; }
+	if (followOnce_ && id == followSent_) { return; }
+	std::vector<uint8_t> out;
+	followSeq_ = orders_.setCameraFollow(out, id);
+	quiet_.insert(followSeq_);
+	followSent_ = id;
+	followOnce_ = true;
+	printf("simlink: set_camera_follow %llu (order %u)\n", (unsigned long long)id, followSeq_);
+	send(out, "camera_follow");
 }
 
 bool SimView::drive(uint64_t id, uint8_t drive, float heading, int strafe)

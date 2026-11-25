@@ -17,6 +17,20 @@ namespace
 	using simlink::io::Writer;
 }
 
+// The names of CHAR_STATS row 34's tables (docs/formats/SIMLINK.md); nullptr for 0 / a value past the table.
+const char* CharStats::engageBasisName(uint8_t basis)
+{
+	static const char* const names[] = { "none", "player attack order", "attacked by target", "ally attacked", "faction enemy", "personal hostile entry",
+		"troublemaker", "package goal", "selector commit", "counter-flip" };
+	return basis < sizeof names / sizeof *names ? names[basis] : nullptr;
+}
+
+const char* CharStats::engageSenseName(uint8_t sense)
+{
+	static const char* const names[] = { "n/a", "sight", "hearing", "remembered", "shot from unsensed" };
+	return sense < sizeof names / sizeof *names ? names[sense] : nullptr;
+}
+
 bool SimLinkDecoder::feed(const uint8_t* data, size_t n)
 {
 	if (!error_.empty()) { return false; }
@@ -260,6 +274,13 @@ bool SimLinkDecoder::frame(uint16_t type, const uint8_t* p, size_t n)
 			c.bountyTags.resize(r.u8());
 			for (CharStats::BountyTag& t : c.bountyTags) { t.crimes = r.u32(); t.claim = r.u8(); t.hoursLeft = r.f32(); }
 		}
+		if (!r.bad && r.n - r.at >= 18)	// the engage trigger (row 34, k16.5.37): the last 18 bytes today; row 33's bytes will land after them, so read by the frame length
+		{
+			c.engageBasis = r.u8();
+			c.engageSense = r.u8();
+			c.engageCause = r.u64();
+			c.engageTick = r.u64();
+		}
 		if (!r.bad) { charStats[id] = std::move(c); }
 		break;
 	}
@@ -378,6 +399,31 @@ bool SimLinkDecoder::frame(uint16_t type, const uint8_t* p, size_t n)
 		{
 			relations = std::move(rows);
 			relationsSerial++;
+		}
+		break;
+	}
+	case kTownState:
+	{
+		r.u64();
+		std::vector<TownState> v(r.u16());
+		for (TownState& t : v)
+		{
+			t.town = r.u32();
+			t.owner = r.u32();
+			t.flags = r.u8();
+			t.live = r.u16();
+			t.residentsMaxCur = (int32_t)r.u32(); t.residentsMaxDes = (int32_t)r.u32(); t.residentsActual = (int32_t)r.u32();
+			t.roamingMaxCur = (int32_t)r.u32(); t.roamingMaxDes = (int32_t)r.u32(); t.roamingPop = (int32_t)r.u32(); t.roamingSquads = (int32_t)r.u32();
+			t.residentFactions.resize(r.u8());
+			for (uint32_t& f : t.residentFactions) { f = r.u32(); }
+			t.hostile.resize(r.u8());
+			for (uint32_t& f : t.hostile) { f = r.u32(); }
+			if (r.bad) { break; }
+		}
+		if (!r.bad)
+		{
+			townStates = std::move(v);
+			townStateSerial++;
 		}
 		break;
 	}
@@ -1224,7 +1270,7 @@ bool SimLinkDecoder::frame(uint16_t type, const uint8_t* p, size_t n)
 		}
 		if (e.kind == 9 && resetSeq && e.a == resetSeq)
 		{
-			chars.clear(); things.clear(); thingsSerial++; medical.clear(); inventories.clear(); detect.clear(); seenBy.clear(); detectedBy.clear(); jobs.clear(); research.clear(); unlocked.clear(); researchState = {}; discovered.clear(); relations.clear(); buildings.clear(); playerTowns.clear(); tasks.clear(); prospect = {}; squads.clear(); playerSquads = {}; weather.clear(); beamGroups.clear(); beamsTick = 0; bounds.clear(); trade = {}; itemStats.clear(); menus.clear(); cages.clear();
+			chars.clear(); things.clear(); thingsSerial++; medical.clear(); inventories.clear(); detect.clear(); seenBy.clear(); detectedBy.clear(); jobs.clear(); research.clear(); unlocked.clear(); researchState = {}; discovered.clear(); relations.clear(); townStates.clear(); buildings.clear(); playerTowns.clear(); tasks.clear(); prospect = {}; squads.clear(); playerSquads = {}; weather.clear(); beamGroups.clear(); beamsTick = 0; bounds.clear(); trade = {}; itemStats.clear(); menus.clear(); cages.clear();
 			resetSeq = 0;
 			resetSerial++;
 		}
@@ -1773,6 +1819,15 @@ uint32_t OrderWriter::setInterest(std::vector<uint8_t>& out, float x, float z, f
 	w.put(x);
 	w.put(z);
 	w.put(radius);
+	return seq_;
+}
+
+uint32_t OrderWriter::setCameraFollow(std::vector<uint8_t>& out, uint64_t id)
+{
+	Writer w(out, kOrder);
+	w.put(++seq_);
+	w.put((uint16_t)52);
+	w.put(id);
 	return seq_;
 }
 

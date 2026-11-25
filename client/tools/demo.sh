@@ -190,10 +190,17 @@ do
 	launch_server "$LOG" "$WANT_PORT" env -C "$ROOT" "$SERVER" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen "127.0.0.1:@PORT@" --debug-view "${SCENARGS[@]}" "${NAVARGS[@]}" ${EXTRA[@]+"${EXTRA[@]}"}
 	SPID=$SERVER_PID; PORT=$SERVER_PORT
 	echo "demo.sh: server pid $SPID (${SCENFILE:-$SCENARIO}, port $PORT, navworld $NAVWORLD, AI bake $AI), waiting for world + navmesh bake..."
-	for ((i = 0; i < 120; i++))
+	# A cold nav cache makes the start slow (one zone's ground takes 10-100 s; kenshi-oi32): keep waiting while the server is alive and still printing.
+	# Any new log output (a `nav zone` or stage line) resets the stall timer (150 s: a zone's line comes only when it finishes, and one took 102 s); 600 s is the overall bound.
+	WAIT_START=$SECONDS WAIT_PROGRESS=$SECONDS WAIT_SIZE=0 WAIT_WHY=
+	while :
 	do
 		grep -q '^listening ' "$LOG" && break
 		kill -0 "$SPID" 2>/dev/null || break
+		size=$(stat -c %s "$LOG" 2>/dev/null || echo 0)
+		if [ "$size" != "$WAIT_SIZE" ]; then WAIT_SIZE=$size WAIT_PROGRESS=$SECONDS; fi
+		if [ $((SECONDS - WAIT_PROGRESS)) -ge 150 ]; then WAIT_WHY="no new server output for 150 s"; break; fi
+		if [ $((SECONDS - WAIT_START)) -ge 600 ]; then WAIT_WHY="not up after the overall bound of 600 s"; break; fi
 		sleep 0.5
 	done
 	grep -q '^listening ' "$LOG" && break
@@ -205,7 +212,7 @@ do
 		tail -n 20 "$LOG" >&2
 		exit 1
 	fi
-	echo "demo.sh: server not listening after 60 s; log tail:" >&2
+	echo "demo.sh: server not listening ($WAIT_WHY); log tail:" >&2
 	tail -n 20 "$LOG" >&2
 	exit 1
 done

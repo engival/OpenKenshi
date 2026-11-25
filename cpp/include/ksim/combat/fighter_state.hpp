@@ -804,6 +804,16 @@ struct Fighter
 	// preservation, 16 / 15 / 143 / 34 / 21 the join goals; 0 = unknown (a load, a target set outside a goal). Set where the target is
 	// picked, cleared with it.
 	std::uint16_t combatGoal = 0;
+	// Why and when the current target was first set (CHAR_STATS row 34, SIMLINK.md; k16.5.37): the basis (1 player order, 2 attacked by the target,
+	// 3 an ally / squadmate attacked, 4 faction / team enemy, 5 personal hostile entry, 6 troublemaker, 7 other package goal, 8 selector commit,
+	// 9 counter-flip; 0 none), the sense that admitted it (perception::Sense, 4 = shot from unsensed), the character whose attack or fight pulled
+	// this one in (0 = none) and the sim tick. Set where the target changes (CombatArena Ctx::setTarget), cleared with it; transient, never saved
+	// (a load mid-fight reads none until the next target).
+	std::uint8_t engageBasis = 0;
+	std::uint8_t engageSense = 0;
+	std::uint64_t engageCause = 0;
+	std::uint64_t engageTick = 0;
+	std::uint16_t engageGoal = 0; // the combatGoal in hand when the target was set (SCENARIO first_engage_goal); sim-side only, not on the wire
 	std::vector<FighterSlot> slots; // attack slots owned by this fighter (as a victim)
 	std::vector<std::uint64_t> engaged; // +0x1f8 engaged attackers
 	std::uint32_t overflow = 0; // +0x210 / +0x214 folded: the refusals of the previous step (crowd_melee.md §10), written by the arena's step

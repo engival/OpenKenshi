@@ -649,6 +649,8 @@ struct App
 	double lastSelectAt = -1;
 	uint64_t lastRmbChar = 0;	// the last right click on an own character, and when: a second one within kDoubleClick is the direct drive (k16.2.238.1)
 	double lastRmbCharAt = -1;
+	int scriptHeld = 0;	// frames the script clock was held by a `wait world` (run_script: the clock is frames - scriptHeld)
+	std::chrono::steady_clock::time_point waitWorldStart{};	// when the pending `wait world` began holding
 	int frames = 0;	// the frames drawn so far: logic's copy of FrameStats::frames, set at logic_frame's start (the render side counts them)
 	std::vector<Cmd> cmds;
 	std::string sceneName;

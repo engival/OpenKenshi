@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <map>
 
-class dtNavMesh;
+#include <DetourNavMesh.h> // dtPolyRef (64-bit: DT_POLYREF64)
 
 namespace knav {
 
@@ -84,6 +84,6 @@ DoorPaint doorPaint(const DoorSetting& setting) noexcept;
 
 // Paints one door polygon of a Detour mesh from a setting: its area (open / closed) and the
 // locked flag bit.
-void paintDoor(dtNavMesh& mesh, std::uint32_t polyRef, const DoorSetting& setting);
+void paintDoor(dtNavMesh& mesh, dtPolyRef polyRef, const DoorSetting& setting);
 
 } // namespace knav

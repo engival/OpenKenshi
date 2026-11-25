@@ -19,6 +19,7 @@
 #include "knav/navmesh.hpp"
 #include "knav/route.hpp"
 #include "knav/walk.hpp"
+#include "knav/zone_gen.hpp"
 #include "kworld/coords.hpp"
 
 #include <array>
@@ -26,6 +27,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -210,11 +212,11 @@ struct NativeCacheOptions
 	// The load order's content hash (kworld::dataHash), the tree's world key: one tree per mod set, order and game data.
 	// 0 = no key, so no tree: the cache stays off (a test or a tool that has no load order).
 	std::uint64_t worldKey = 0;
-	// Probe only (ksim_nav_islands --oracle, kenshi-k16.7.53): skip the stale-tile check, so the mesh is the shipped navtiles as
-	// converted, the original's own, with no rebake. nativeReport() then has no decisions.
-	bool shippedOnly = false;
 	// The bake sources' hash in the tree name (KNAV_BAKE_SRC_HASH, kenshi-k16.7.161). Empty = the one compiled in; a test injects one.
 	std::string bakeSrcHash;
+	// Trees kept under the root, the newest by mtime (the tree in use always stays). 0 = the default (3: a few mod sets or recipes).
+	// A test's private cache dir sets 1: every recipe or bake-source change otherwise leaves a dead ~3.4 GB tree (kenshi-k16.6.814).
+	std::size_t keepTrees = 0;
 };
 // The default cache root from an environment lookup (getenv-like, null = unset): KENSHI_NAV_CACHE, else
 // $XDG_CACHE_HOME/kenshi-sim/navmesh, else %LOCALAPPDATA%/kenshi-sim/navmesh, else %APPDATA%/..., else
@@ -431,6 +433,10 @@ public:
 		std::size_t zonesScanned = 0; // zones decided so far (lazily: a zone is decided when a coverage wants it)
 		double checkMs = 0.0; // the hashes
 		double bakeMs = 0.0; // the rebakes
+		std::size_t buildingsGenerated = 0; // the surface generator's buildings (zone bakes, a zone counts each time it is baked)
+		std::size_t buildingsFailed = 0; // the generator threw: left to Recast
+		std::size_t tilesAssembled = 0;
+		std::vector<std::string> tilesFellBack; // "zone x,z tile x,z": the assembly failed, the tile is Recast with every shape
 	};
 	// The decision on a zone from the last conversion that saw it (nullptr when it has not been decided).
 	const NativeTileReport* nativeReport(kworld::ZoneCell zone) const;
@@ -498,6 +504,7 @@ private:
 	// both read; declaration order matters: the hash source refers into the gatherer, the gatherer into the terrain).
 	void openNativeData();
 	std::vector<knav::BakedTile> bakeNativeZone(kworld::ZoneCell zone) const;
+	std::vector<knav::BakedTile> bakeNativeZoneFresh(kworld::ZoneCell zone) const;
 	std::vector<knav::BakedTile> convertNativeRegion(int rx, int rz) const;
 	bool applyStaleCheck(std::vector<knav::BakedTile>& tiles, kworld::ZoneCell zone) const;
 
@@ -525,6 +532,8 @@ private:
 	std::function<void(const std::string&)> log_;
 	mutable std::map<int, NativeTileReport> staleReports_; // openNative: by zone index, last conversion
 	mutable NativeStaleStats staleStats_;
+	mutable std::mutex bakeMemoMutex_;
+	mutable std::vector<std::pair<kworld::ZoneCell, std::vector<knav::BakedTile>>> bakeMemo_; // the last bakeNativeZone results
 	mutable std::map<int, std::vector<knav::BakedTile>> nativeRegions_; // openNative: the converted tiles of each region held now
 	mutable std::vector<int> nativeRecent_; // ... in use order, most recent first (the small LRU beside the resident regions)
 	mutable std::set<int> zones_; // resident zone indices (kworld::zoneIndexOf)

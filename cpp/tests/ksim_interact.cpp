@@ -140,6 +140,8 @@ struct Rig
 		std::uint8_t action, result;
 	};
 	std::vector<Done> done; // event 13
+	bool menuSeen = false; // MENU_ENTRIES (61), the last one
+	std::uint32_t menuEntries = 0;
 	std::map<std::uint32_t, Reply> replies;
 	// The navmesh tile stream as received (SIMLINK.md section 12).
 	struct NavParams
@@ -407,6 +409,10 @@ struct Rig
 					r.piece = at<std::uint16_t>(body, 82);
 				}
 				inters[r.id] = r;
+			} else if (type == ks::kMenuEntries) {
+				// tick u64, u32 clientSeq, u64 id, u64 target, u32 entries
+				menuSeen = true;
+				menuEntries = at<std::uint32_t>(body, 28);
 			} else if (type == ks::kEvent) {
 				const std::uint16_t kind = at<std::uint16_t>(body, 8);
 				if (kind == 9)
@@ -480,6 +486,18 @@ struct Rig
 			w.u64("target", target);
 			w.u8("action", action);
 			w.u8("queue", queue);
+		});
+	}
+
+	// Order 99 (menu query); the answer lands in menuSeen / menuEntries.
+	std::uint32_t menuQuery(std::uint64_t actor, std::uint64_t target)
+	{
+		menuSeen = false;
+		menuEntries = 0;
+		return order(99, [&](ks::BinaryWriter& w)
+		{
+			w.u64("id", actor);
+			w.u64("target", target);
 		});
 	}
 
@@ -868,7 +886,7 @@ int main(int argc, char** argv)
 		rig.expectReject(rig.interact(self, self, 8), "bad_target"); // lift yourself
 		rig.expectReject(rig.interact(self, rig.duel.enemy, 13), "not_allowed"); // put down somebody who is not carried
 		rig.expectReject(rig.interact(self, doors.front().id, 13), "bad_target");
-		rig.expectReject(rig.interact(self, doors.front().id, 21), "bad_value"); // above the last action (20, the cage orders)
+		rig.expectReject(rig.interact(self, doors.front().id, 22), "bad_value"); // above the last action (21, lock door)
 		rig.expectReject(rig.interact(self, doors.front().id, 0), "bad_value");
 		rig.expectReject(rig.interact(self, doors.front().id, 99), "bad_value");
 		rig.expectReject(rig.interact(self, doors.front().id, 1, 2), "bad_value"); // queue above 1
@@ -1972,6 +1990,75 @@ int main(int argc, char** argv)
 				door->state = 1;
 				++door->version;
 				std::cout << "doors: unlock order " << ticks * kTickSeconds << " s, close re-locks an always-locks door\n";
+				// (7) The wire's lock order (order 60 action 21, kenshi-k16.6.816): MENU_ENTRIES bit 19 / 20, event 13 naming 21, INTERACTABLES state 2.
+				{
+					d.mutableFighter(pid).x = door->x + 60.0;
+					d.mutableFighter(pid).y = door->y;
+					d.mutableFighter(pid).z = door->z;
+					door->state = 1;
+					door->ownerSid = sid;
+					++door->version;
+					d.run(2);
+					d.menuQuery(pid, doorId);
+					test::require(d.menuSeen && d.menuEntries == kMenuLockDoor, "a shut owned door answers bit 19 only: " + std::to_string(d.menuEntries));
+					// Each refusal once: not a door, queued, a flag, a door that is not shut, a stranger's door.
+					d.expectReject(d.interact(pid, d.duel.enemy, kLockDoorAction), "bad_target");
+					d.expectReject(d.interact(pid, doorId, kLockDoorAction, 1), "bad_value");
+					d.expectReject(d.interactFlags(pid, doorId, kLockDoorAction, 1), "bad_value");
+					door->ownerSid = "someone-else";
+					++door->version;
+					d.run(2);
+					d.menuQuery(pid, doorId);
+					test::require(d.menuSeen && d.menuEntries == 0, "a stranger's shut door answers no bit");
+					d.expectReject(d.interact(pid, doorId, kLockDoorAction), "not_allowed");
+					door->ownerSid = sid;
+					door->state = 0;
+					++door->version;
+					d.run(2);
+					d.menuQuery(pid, doorId);
+					test::require(d.menuSeen && d.menuEntries == 0, "an open door answers no bit");
+					d.expectReject(d.interact(pid, doorId, kLockDoorAction), "not_allowed");
+					door->state = 3;
+					++door->version;
+					d.run(2);
+					d.expectReject(d.interact(pid, doorId, kLockDoorAction), "not_allowed"); // broken
+					door->state = 1;
+					++door->version;
+					d.run(2);
+					// The order walks, locks, and says so: event 13 action 21 result 0, state 2 on the INTERACTABLES stream.
+					const std::size_t fromWire = d.done.size();
+					d.expectApplied(d.interact(pid, doorId, kLockDoorAction));
+					int wireTicks = 0;
+					while (!d.doneFor(doorId, fromWire) && wireTicks++ < 800)
+						d.tick();
+					const auto locked = d.doneFor(doorId, fromWire);
+					test::require(locked && locked->action == kLockDoorAction && locked->result == 0 && door->state == 2, "the wire lock order did not lock the door and answer event 13 action 21 result 0");
+					d.run(2);
+					test::require(d.inters.count(doorId) == 1 && d.inters.at(doorId).state == 2, "INTERACTABLES does not show the locked door (state 2)");
+					d.menuQuery(pid, doorId);
+					test::require(d.menuSeen && d.menuEntries == kMenuUnlockDoor, "a locked owned door answers bit 20 only: " + std::to_string(d.menuEntries));
+					d.expectReject(d.interact(pid, doorId, kLockDoorAction), "not_allowed"); // locked already
+					// Unlock (action 11) answers event 13 the same way: action 11, result 0.
+					const std::size_t fromUnlock = d.done.size();
+					d.expectApplied(d.interact(pid, doorId, 11));
+					int openTicks = 0;
+					while (!d.doneFor(doorId, fromUnlock) && openTicks++ < 800)
+						d.tick();
+					const auto opened = d.doneFor(doorId, fromUnlock);
+					test::require(opened && opened->action == 11 && opened->result == 0 && door->state == 1, "the wire unlock order did not unlock the door");
+					// A replacing order cancels a running lock: event 13 result 5 for action 21.
+					d.mutableFighter(pid).x = door->x + 60.0;
+					const std::size_t fromCancel = d.done.size();
+					d.expectApplied(d.interact(pid, doorId, kLockDoorAction));
+					d.run(2);
+					d.expectApplied(d.moveTo(pid, door->x + 80.0, door->z));
+					d.run(2);
+					const auto cancelled = d.doneFor(doorId, fromCancel);
+					test::require(cancelled && cancelled->action == kLockDoorAction && cancelled->result == 5, "a replaced lock order did not end with event 13 action 21 result 5");
+					std::cout << "doors: wire lock order (action 21) in " << wireTicks * kTickSeconds << " s, menu bits 19 / 20, event 13 action 21\n";
+					door->state = 1;
+					++door->version;
+				}
 			}
 		}
 

@@ -176,6 +176,8 @@ NavMesh NavMesh::fromTiles(const NavConfig& config, std::vector<BakedTile> tiles
 	NavMesh nav;
 	nav.config_ = config;
 	nav.tiles_ = std::move(tiles);
+	// tile() looks up by binary search: the tiles of several zone bakes joined by the caller arrive zone by zone
+	std::sort(nav.tiles_.begin(), nav.tiles_.end(), [](const BakedTile& a, const BakedTile& b) { return TileCoord{ a.x, a.z } < TileCoord{ b.x, b.z }; });
 	nav.mesh_ = { dtAllocNavMesh(), dtFreeNavMesh };
 
 	dtNavMeshParams params{};
@@ -574,7 +576,7 @@ std::size_t NavMesh::prune(const std::vector<Point>& seeds, const Point& reach, 
 		for (int p = 0; p < tile->header->polyCount; ++p)
 		{
 			const dtPolyRef ref = refOf(tile, p);
-			if (doorOfRef_.contains(static_cast<std::uint32_t>(ref)))
+			if (doorOfRef_.contains(ref))
 				continue;
 			if (!reached.contains(ref))
 			{
@@ -1904,7 +1906,7 @@ bool NavQuery::standsOnLocked(const Point& point, const Point& halfExtents, Door
 	const dtMeshTile* tile = mesh_.detour().getTileAt(loc.tileX, loc.tileZ, 0);
 	if (tile == nullptr)
 		return false;
-	const auto found = mesh_.doorOfRef_.find(static_cast<std::uint32_t>(mesh_.detour().getPolyRefBase(tile) | static_cast<dtPolyRef>(loc.poly)));
+	const auto found = mesh_.doorOfRef_.find(mesh_.detour().getPolyRefBase(tile) | static_cast<dtPolyRef>(loc.poly));
 	if (found == mesh_.doorOfRef_.end() || mesh_.appliedDoors().get(found->second).state != DoorState::Locked)
 		return false;
 	// Inside the leaf, not pressed against its edge: a walker the lock just stopped stands at the boundary (the slide ends exactly on it)
@@ -1941,7 +1943,7 @@ bool NavQuery::passesOtherLocked(const std::vector<DoorKey>& doors, DoorKey held
 }
 
 
-bool NavQuery::refusedByComponents(std::uint32_t startRef, std::uint32_t endRef, const Point& end, float radius, bool exemptFirst) const
+bool NavQuery::refusedByComponents(dtPolyRef startRef, dtPolyRef endRef, const Point& end, float radius, bool exemptFirst) const
 {
 	constexpr std::size_t kMaxRadiusClasses = 32;
 	ClearanceCache& cc = *clearance_;
@@ -2529,7 +2531,7 @@ bool NavQuery::doorFrame(DoorKey door, Point& centre, double& axisX, double& axi
 	if (refs == mesh_.doorRefs_.end())
 		return false;
 	std::vector<Point> verts;
-	for (const std::uint32_t ref : refs->second)
+	for (const dtPolyRef ref : refs->second)
 	{
 		const dtMeshTile* tile = nullptr;
 		const dtPoly* poly = nullptr;

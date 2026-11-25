@@ -15,7 +15,7 @@
 //   ksim_navcoll_export --list X Z R               the buildings within R of (X, Z): id, record, position
 //
 // NAV: `native` = the runtime mesh (MeshNavigator::openNative: the shipped navtiles converted, stale tiles rebaked, nav cache under
-// OUTDIR/_navcache), `native-shipped` = the same with the stale check off (the shipped navtiles as converted), a navworld bake directory
+// OUTDIR/_navcache), a navworld bake directory
 // (region files, loadRegion with 1 region of margin) or one .knav cache file. Writes OUTDIR/<case>/ (see the
 // README.md it writes): region.txt nav_faces.tsv nav_edges.tsv nav_face_data.tsv nav_detail_tris.tsv col_shapes.tsv col_<n>.obj terrain.tsv.
 // Game-derived geometry: never commit the output.
@@ -697,12 +697,11 @@ int main(int argc, char** argv)
 			}
 			std::unique_ptr<knav::NavMesh> own;
 			const knav::NavMesh* mesh = nullptr;
-			if (nav == "native" || nav == "native-shipped")
+			if (nav == "native")
 			{
 				ksim::NativeCacheOptions cache;
 				cache.dir = (out / "_navcache").string();
 				cache.worldKey = kworld::dataHash(kworld::resolveLoadOrder(KENSHI_DATA));
-				cache.shippedOnly = nav == "native-shipped";
 				std::vector<kworld::ZoneCell> zones;
 				for (int dz = -1; dz <= 1; ++dz)
 					for (int dx = -1; dx <= 1; ++dx)
@@ -716,8 +715,7 @@ int main(int argc, char** argv)
 				own = std::make_unique<knav::NavMesh>(loadNav(nav, cell));
 				mesh = own.get();
 			}
-			const std::string source = nav == "native" ? "the runtime mesh (MeshNavigator::openNative, the sim's default: shipped navtiles converted to Detour, stale tiles rebaked with our recipe)"
-				: nav == "native-shipped" ? "the shipped navtiles converted to Detour, no stale-tile rebake (openNative shippedOnly)"
+			const std::string source = nav == "native" ? "the runtime mesh (MeshNavigator::openNative, the sim's default: our own tiles: knav::ground + surfgen)"
 				: "navworld bake / cache file " + nav + " (knav_bake output, not the runtime default)";
 			exportCase(ctx, *mesh, source, out / c.name, c.name, area, *best, c);
 		}

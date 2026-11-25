@@ -107,6 +107,8 @@ enum FrameType : std::uint16_t
 	kDiscovered = 37, // DISCOVERED: the places the player faction has discovered and visited (SIMLINK.md section 6) // UNLOCKS: the player faction's completed research and the buildings it enables (SIMLINK.md section 6)
 	kTaskProgress = 39, // TASK_PROGRESS: the player characters' timed tasks with a bar (SIMLINK.md section 6)
 	kFactionRelations = 38, // FACTION_RELATIONS: the player faction's relation to the other factions (SIMLINK.md section 6)
+	kGameOptions = 67, // GAME_OPTIONS: the global option switches and the new-game floats, to every session (SIMLINK.md GAME_OPTIONS; kenshi-k16.6.797)
+	kTownState = 66, // TOWN_STATE: the visited towns' owner, flags and population for the map tooltip (SIMLINK.md TOWN_STATE)
 	kClock = 40,
 	kWeather = 41,
 	kTrade = 53, // TRADE: an open trade's prices and the trader's wallet, to the trading session (SIMLINK.md section 6; 43 is NAV_PARAMS)
@@ -406,6 +408,16 @@ struct OrderLogEntry
 	bool immediate = false; // applied between ticks while paused (SIMLINK.md section 7): a replay applies it first on its tick
 };
 
+// What GAME_OPTIONS (type 67) carries; the defaults are a world with no WorldOptions singleton.
+struct GameOptionsView
+{
+	std::uint8_t flags = 0; // bit 0 feed_animals, bit 1 share_food
+	float chanceOfDeath = 1.0f;
+	float damageScale = 1.0f;
+	float hungerTime = 4.0f;
+	bool operator==(const GameOptionsView&) const = default;
+};
+
 class Session;
 
 // State shared by the sessions of one server run.
@@ -417,6 +429,7 @@ struct ServerContext
 	std::map<std::uint64_t, CharLook> looks; // by fighter Id
 	std::size_t squadLimit = 0; // 0 = every squad
 	std::vector<OrderLogEntry> orderLog;
+	std::uint64_t nextSessionKey = 1; // the key a Session takes for the sim state it owns (order 52 camera follow)
 	bool paused = false; // the admin's pause order
 	bool pausedUntilOrder = false; // --paused: `paused` was set by the server; the first speed or pause order of a client releases it
 	bool idle = false; // SimLinkServer: no ready session is connected (the default pause policy); never set by an order
@@ -663,6 +676,7 @@ private:
 	// Puts this session's camera (order 51) back into the world state after a load or a new world: the reload removes
 	// state::ViewFocus when the save or the pristine mark has none.
 	void restoreViewFocus();
+	void restoreCameraFollow(); // re-applies follow_ after a load / new_world (not saved)
 	// NEW_GAME (111, simlink.cpp): the frame's shape is checked here, the rest by Simulation::checkNewGame; an accepted one is a NewGame
 	// command for the next tick and the reply (62) goes out from sendTick when it applies.
 	bool handleNewGame(const std::uint8_t* payload, std::size_t size, RecordWriter& out);
@@ -769,6 +783,8 @@ private:
 	void writePlayerSquads(RecordWriter& out, std::uint64_t tick, const PlayerSquadsView& view);
 	void writeResearchState(RecordWriter& out, std::uint64_t tick, bool hasFaction, const std::vector<std::string>& completed);
 	void writeUnlocks(RecordWriter& out, std::uint64_t tick, const std::vector<std::string>& research, const std::vector<std::string>& buildings);
+	void writeGameOptions(RecordWriter& out, std::uint64_t tick, const GameOptionsView& view);
+	void writeTownState(RecordWriter& out, std::uint64_t tick, const std::vector<Simulation::TownStateRow>& rows);
 	void writeFactionRelations(RecordWriter& out, std::uint64_t tick, const std::vector<Simulation::FactionRelationRow>& rows);
 	void writeTaskProgress(RecordWriter& out, std::uint64_t tick, const std::vector<Simulation::TaskProgressRow>& rows);
 	void writeDiscovered(RecordWriter& out, std::uint64_t tick, const std::vector<Simulation::DiscoveredPlace>& places);
@@ -819,6 +835,8 @@ private:
 	// world's state::ViewFocus (residents, discovery) is re-applied from it after a load or a new world.
 	bool hasView_ = false;
 	float viewX_ = 0, viewZ_ = 0;
+	std::uint64_t key_ = 0; // this session's key in the sim commands that carry session state (order 52)
+	std::uint64_t follow_ = 0; // order 52: the character the camera follows, the last one sent (0 = none); dropped with the session
 	std::unordered_map<std::uint64_t, Simulation::CharStats> charStatsSent_; // CHAR_STATS: what the client last heard per character
 	bool charStatsNow_ = false; // the next send skips CHAR_STATS' 1 Hz slot (a paused order: the clock does not move, so the slot never comes)
 	std::unordered_map<std::uint64_t, Look> looks_;
@@ -847,6 +865,11 @@ private:
 	bool discoveredKnown_ = false;
 	std::vector<Simulation::FactionRelationRow> relationsSent_; // FACTION_RELATIONS: the list the client last heard
 	bool relationsKnown_ = false;
+	GameOptionsView gameOptionsSent_; // GAME_OPTIONS as the client last heard it
+	bool gameOptionsKnown_ = false;
+	std::vector<Simulation::TownStateRow> townSent_; // TOWN_STATE: the list the client last heard
+	std::uint64_t townSentTick_ = 0;
+	bool townKnown_ = false; // a frame was sent once: the 5 s gap applies from then on
 	std::vector<Simulation::TaskProgressRow> taskSent_; // TASK_PROGRESS: the list the client last heard
 	std::uint64_t taskSentTick_ = 0;
 	std::uint64_t lastSendTick_ = 0; // the tick of the last sendTick: interval-aligned sends fire when a batch crossed a boundary

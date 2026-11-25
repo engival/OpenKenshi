@@ -33,4 +33,5 @@ const char* binPath(const char* rel);
 #define KSIM_HEIGHT_SWEEP_GAPS ksim::dev::srcPath("tests/data/height_sweep_known_gaps.tsv")
 #define KSIM_DEFAULT_SCRIPT ksim::dev::srcPath("data/behaviour/default/faction_intent.lua")
 #define KSIM_FAR_SCEN ksim::dev::srcPath("tests/data/far_attack.kscen")
+#define KSIM_GAME_OPTIONS_FIXTURE ksim::dev::srcPath("tests/fixtures/game_options.hex")
 #define KSIM_FIXTURE ksim::dev::srcPath("tests/fixtures/cage_prisoner_cages.hex")

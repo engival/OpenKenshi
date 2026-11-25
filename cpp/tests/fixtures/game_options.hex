@@ -1,0 +1,5 @@
+# GAME_OPTIONS (type 67) frames from ksim_simlink, tick zeroed (rewrite: KSIM_WRITE_FIXTURE=1 ksim_simlink).
+# Whole frames: u32 length, u16 type, body: u64 tick, u8 flags, f32 cod, f32 gdm, f32 ht (SIMLINK.md section 6).
+# connect = both bits 0 (the defaults); changed = after order 121 {0,1}{1,1}: flags 3.
+connect 1700000043000000000000000000000000803f0000803f00008040
+changed 1700000043000000000000000000030000803f0000803f00008040

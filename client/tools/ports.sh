@@ -63,12 +63,23 @@ bind_retry()
 }
 start_server_on_free_port()
 {
-	local log=$1 want=${START_PORT-${PORT:-}} try i
+	local log=$1 want=${START_PORT-${PORT:-}} try t0 tp sz n
 	shift
 	for try in 1 2 3
 	do
 		launch_server "$log" "$want" "$@"
-		for i in $(seq 240); do grep -q "^listening" "$log" && break; ps -p $SERVER_PID > /dev/null || break; sleep 0.5; done
+		# A cold nav cache makes the start slow (a zone's ground took 102 s; kenshi-oi32): wait while the server is alive and still printing (any new log
+		# output resets a 150 s stall timer), under an overall bound of 600 s.
+		t0=$SECONDS tp=$SECONDS sz=0
+		while :
+		do
+			grep -q "^listening" "$log" && break
+			ps -p $SERVER_PID > /dev/null || break
+			n=$(stat -c %s "$log" 2>/dev/null || echo 0)
+			if [ "$n" != "$sz" ]; then sz=$n tp=$SECONDS; fi
+			if [ $((SECONDS - tp)) -ge 150 ] || [ $((SECONDS - t0)) -ge 600 ]; then break; fi
+			sleep 0.5
+		done
 		grep -q "^listening" "$log" && return 0
 		bind_retry "$log" "$want" "$try" && continue
 		break

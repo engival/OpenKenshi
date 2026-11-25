@@ -1,0 +1,2 @@
+zone-placed ore nodes (Iron / Copper Resource records): 1335; foliage instances with a building type: 16718
+nearest such foliage rock in xz (u): p10 61.5 p50 393.8 p90 1000000000000000019884624838656.0 p99 1000000000000000019884624838656.0 max 1000000000000000019884624838656.0; within 40 u: 100

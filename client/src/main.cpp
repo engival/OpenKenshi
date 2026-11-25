@@ -1813,7 +1813,27 @@ void run_script(bool post)
 {
 	for (Cmd& c : app.cmds)
 	{
-		if (c.done || c.frame > app.frames || (c.op == "screenshot" || c.op == "quit" || c.op == "probe") != post) { continue; }
+		// `wait world [SECONDS]` (kenshi-oi32): holds the script clock until first_world_frame (a cold nav cache makes a server start take ~100 s, so a fixed frame
+		// count would quit first). Commands after it count their frames from the release; none runs while it holds. Gives up after SECONDS (default 300): prints the reason, quits.
+		if (c.op == "wait" && !c.done && c.frame <= app.frames - app.scriptHeld)
+		{
+			if (app.firstWorldFrame) { c.done = true; printf("wait world: first_world_frame after %d held frames\n", app.scriptHeld); continue; }
+			if (post) { break; }
+			const auto now = std::chrono::steady_clock::now();
+			if (app.waitWorldStart == std::chrono::steady_clock::time_point{}) { app.waitWorldStart = now; }
+			const double limit = c.args.size() > 1 ? atof(c.args[1].c_str()) : 300.0;
+			if (std::chrono::duration<double>(now - app.waitWorldStart).count() > limit)
+			{
+				c.done = true;
+				printf("wait world: no first_world_frame within %.0f s\n", limit);
+				fflush(stdout);
+				request_quit();
+				break;
+			}
+			app.scriptHeld++;
+			break;
+		}
+		if (c.done || c.frame > app.frames - app.scriptHeld || (c.op == "screenshot" || c.op == "quit" || c.op == "probe") != post) { continue; }
 		if (c.op == "lab" && app.opt.debug && dev::labWait()) { continue; }	// the lab's GPU init / resize is a render-queue job: the op runs once its packet is drawn
 		c.done = true;
 		if (c.op == "probe" && !c.args.empty() && c.args[0] == "height" && !app.opt.debug) { script_error(c.frame, c.op.c_str()); }	// the height probe needs --debug
@@ -3652,7 +3672,8 @@ static void prospect_order()
 // types 8 and 10 never; camps (type 0) only within 3258.4 of a player character. Unvisited: the TOWN's `unexplored name` (Town+0x158; empty:
 // the real name) and no tooltip. No NewDiscovered badge: the original sets it only for map items (14075f550), which the wire does not report;
 // walking near a place (event 19) only logs "Discovered {1}" (Steam shots 2026-11-05 14:47: no badge on a fresh discovery).
-// Relations are not on the wire: every place is Neutral; the visited tooltip (faction, relation, residents) waits for them.
+// A visited town's tooltip (kenshi-k16.2.439.2, the original's order) is TOWN_STATE (66) + the owner's FACTION_RELATIONS (38) value; its tint follows
+// that relation (the player's own faction: Player; >= 50 Ally, < 0 Enemy: UNSURE, the original's thresholds are not traced). A discovered-only place has none.
 // A place's name before it is visited: the TOWN's `unexplored name`, else its real one.
 static std::string place_name(const std::string& sid, const std::string& name)
 {
@@ -3679,11 +3700,63 @@ void crime_log()
 	for (uint16_t k : app.sim.takeCrimeLog()) { ui::message(k == 51 ? "Got caught stealing." : "Alarm raised"); }
 }
 
-// Event 13 result 8 on a cage pick (kenshi-k16.2.346; the only case the sim still sends since 7fd41c98, kenshi-888g.1): a lock too hard for the
-// picker, a message-bar line. The text is OURS: the original has none (LOCKS_EQUIP_STOCK_STATIC D-lockpick-zero).
+// Event 13 result 8 on a cage pick (kenshi-k16.2.346): a lock too hard for the picker, a message-bar line. Since ksim ad178251 (k16.6.571) the sim
+// sends it for a CAGED picker only: a cage / shackle / door pick below the 5% floor on the raw stat is unplannable (no walk, no event 13), and
+// only a caged picker whose raw stat clears the floor but stat minus the caged-picker penalty (10) does not still walks and ends result 8
+// (kenshi-v3tc). The text is OURS: the original has none (LOCKS_EQUIP_STOCK_STATIC D-lockpick-zero).
 void lock_too_hard_log()
 {
 	for (uint32_t n = app.sim.takeLockTooHard(); n > 0; --n) { ui::message("This lock is too hard to pick"); }
+}
+
+// A faction's display name: the FACTION_RELATIONS row's (the FACTION page's), else the record's own name.
+static std::string faction_name(const simlink::SimLinkDecoder& d, uint32_t f)
+{
+	for (const auto& r : d.relations) { if (r.faction == f && !r.name.empty()) { return r.name; } }
+	const std::string n = app.chars.nameOf(d.str(f));
+	return n.empty() ? d.str(f) : n;
+}
+
+// The tooltip's rich text. A clear live bit shows ???; not known: the whole stats block; dead: the Dead text for its three rows (UNSURE which: the
+// resident rows); an owner of 0 has no Faction / Relations rows. Residents max and Roaming max are placeholders on the sim today (live 0x7a).
+static std::string town_tip(const simlink::SimLinkDecoder& d, const simlink::SimLinkDecoder::TownState& t, const std::string& name)
+{
+	using TS = simlink::SimLinkDecoder::TownState;
+	std::string s = "{TipTitle}" + name;
+	const auto row = [&](const char* label, const std::string& v) { s += std::string("\n") + label + "\t" + v; };
+	if (t.owner)
+	{
+		row("Faction:", faction_name(d, t.owner));
+		const auto r = std::find_if(d.relations.begin(), d.relations.end(), [&](const auto& x) { return x.faction == t.owner; });
+		if (r != d.relations.end()) { row("Relations:", std::to_string((int)r->value)); }
+	}
+	const bool known = t.flags & TS::kKnown;
+	const auto val = [&](uint16_t bit, const std::string& v) { return known && (t.live & bit) ? v : std::string("???"); };
+	const auto pair = [](int a, int b) { return std::to_string(a) + "/" + std::to_string(b); };
+	if (t.flags & TS::kDead && known)
+	{
+		row("Residents max:", "Dead");
+		row("Actual Num Residents:", "Dead");
+	}
+	else
+	{
+		row("Residents max:", val(TS::kResidentsMax, pair(t.residentsMaxCur, t.residentsMaxDes)));
+		row("Actual Num Residents:", val(TS::kResidentsActual, std::to_string(t.residentsActual)));
+	}
+	row("Roaming currentMax/desiredMax:", val(TS::kRoamingMax, pair(t.roamingMaxCur, t.roamingMaxDes)));
+	row("Roaming Population:", val(TS::kRoamingPop, std::to_string(t.roamingPop)));
+	row("Num Roaming Squads:", val(TS::kRoamingSquads, std::to_string(t.roamingSquads)));
+	if ((t.flags & TS::kTownClass) && known && (t.live & TS::kResidentFactions))
+	{
+		s += "\n{TipMarkup}Residents:";
+		for (uint32_t f : t.residentFactions) { s += "\n{TipText}-" + faction_name(d, f); }
+	}
+	if (known && (t.live & TS::kHostile) && !t.hostile.empty())
+	{
+		s += "\n{TipMarkup}Hostile Occupiers:";
+		for (uint32_t f : t.hostile) { s += "\n{TipText}-" + faction_name(d, f); }
+	}
+	return s;
 }
 
 void map_places(ui::MapState& ms)
@@ -3717,6 +3790,20 @@ void map_places(ui::MapState& ms)
 		p.x = t.x;
 		p.z = t.z;
 		p.name = v->second ? t.name : place_name(t.sid, t.name);
+		if (v->second)
+		{
+			const auto ts = std::find_if(d.townStates.begin(), d.townStates.end(), [&](const auto& e) { return d.str(e.town) == t.sid; });
+			if (ts != d.townStates.end())
+			{
+				p.tip = town_tip(d, *ts, t.name);
+				if (ts->owner == d.playerSquads.factionName) { p.relation = ui::MapRelation::kPlayer; }
+				else
+				{
+					const auto r = std::find_if(d.relations.begin(), d.relations.end(), [&](const auto& x) { return x.faction == ts->owner; });
+					if (r != d.relations.end()) { p.relation = r->value >= 50 ? ui::MapRelation::kAlly : r->value < 0 ? ui::MapRelation::kEnemy : ui::MapRelation::kNeutral; }
+				}
+			}
+		}
 		ms.places.push_back(std::move(p));
 	}
 }

@@ -14,6 +14,7 @@
 #include <unordered_map>
 
 #include "kdata/format.hpp"
+#include "kworld/buildingparts.hpp"
 #include "kworld/collision.hpp"
 #include "kworld/coords.hpp"
 #include "kworld/features.hpp"
@@ -325,28 +326,26 @@ struct Resolver
 		return true;
 	}
 
-	// `parts` of a BUILDING / BUILDING_PART: group 0 rolls each part by its chance, other groups pick one by chance weight.
-	void collect(const kdata::Record& owner, const kdata::Record& building, uint64_t seed, std::vector<uint32_t>& into, int depth)
+	// The parts a BUILDING (or door, furniture target) shows at world (x, z): kworld's pick, the same call the sim's collision makes
+	// (the original's x/z-seeded rand, kenshi-k16.2.404). `seed` only feeds the material rolls.
+	void collect(const kdata::Record& owner, const kdata::Record& building, uint64_t seed, float x, float z, kworld::PartStage stage, std::vector<uint32_t>& into)
 	{
-		const kdata::RefCategory* c = owner.findRefs("parts");
-		if (!c || depth > 3) { return; }
-		std::map<int, kdata::RefCategory> groups;
-		for (const kdata::RefEntry& e : c->entries)
+		const std::vector<kworld::PickedPart> picks = kworld::selectBuildingPartTree(gd, owner, x, z, stage);
+		size_t at = 0;
+		walk(picks, at, 0, building, seed, into);
+	}
+
+	// The picks at `depth` from `at` on, each followed by the deeper picks that belong to it (pre-order).
+	void walk(const std::vector<kworld::PickedPart>& picks, size_t& at, int depth, const kdata::Record& building, uint64_t seed, std::vector<uint32_t>& into)
+	{
+		while (at < picks.size() && picks[at].depth == depth)
 		{
-			if (e.v0 == kdata::kReferenceRemoved) { continue; }
-			if (e.v0 == 0)	// group 0: each part rolled independently, v1 = absolute chance in percent
-			{
-				if (roll(seed, owner.stringID + "/" + std::to_string(&e - c->entries.data())) < e.v1) { include(e.targetID, building, seed, into, depth); }
-			} else { groups[e.v0].entries.push_back(e); }
-		}
-		for (auto& [g, cat] : groups)
-		{
-			const kdata::RefEntry* e = pick(cat, seed, owner.stringID + "/g" + std::to_string(g), [](const kdata::RefEntry& x) { return x.v1; });
-			if (e) { include(e->targetID, building, seed, into, depth); }
+			const std::string& id = picks[at++].id;
+			include(id, building, seed, into, picks, at, depth);
 		}
 	}
 
-	void include(const std::string& sid, const kdata::Record& building, uint64_t seed, std::vector<uint32_t>& into, int depth)
+	void include(const std::string& sid, const kdata::Record& building, uint64_t seed, std::vector<uint32_t>& into, const std::vector<kworld::PickedPart>& picks, size_t& at, int depth)
 	{
 		const kdata::Record* part = gd.find(sid);
 		if (!part) { return; }
@@ -364,7 +363,7 @@ struct Resolver
 			for (int k = 0; k < 3; k++) { aimPivot[k] = base[k]; }	// base already holds this part's own offset
 			aimSpeed = part->floatOr("rotation speed max", 0.0f);
 		}
-		collect(*part, building, seed, into, depth + 1);
+		walk(picks, at, depth + 1, building, seed, into);
 		aiming = savedAiming;
 		aimSpeed = savedSpeed;
 		for (int k = 0; k < 3; k++) { aimPivot[k] = savedPivot[k]; }
@@ -372,14 +371,11 @@ struct Resolver
 		for (int k = 0; k < 3; k++) { base[k] -= o[k]; }
 	}
 
-	// A BUILDING's `interior` / `interior mask` list as parts of the given kind. Every live entry counts: the v0/v1 of these refs are 0/0 or 0/100
-	// (INTERIORS.md), and a 0 chance on a mask cannot mean "never".
-	void collectAll(const kdata::Record& building, const char* category, int partKind, uint64_t seed, std::vector<uint32_t>& into)
+	// A BUILDING's `interior` / `interior mask` list as parts of the given kind (kworld's pick; the seed resets per stage).
+	void collectAll(const kdata::Record& building, kworld::PartStage stage, int partKind, uint64_t seed, float x, float z, std::vector<uint32_t>& into)
 	{
-		const kdata::RefCategory* c = building.findRefs(category);
-		if (!c) { return; }
 		kind = partKind;
-		for (const kdata::RefEntry& e : c->entries) { if (e.v0 != kdata::kReferenceRemoved) { include(e.targetID, building, seed, into, 0); } }
+		collect(building, building, seed, x, z, stage, into);
 		kind = 0;
 	}
 };
@@ -574,12 +570,13 @@ void addFurniture(BuildingSet& set, Resolver& rs, const kdata::GameData& gd, con
 		if (!target) { continue; }
 		std::vector<uint32_t> chosen;
 		rs.kind = exterior ? 0 : 3;
-		rs.collect(*target, *target, hashString(p.instanceID + "/" + it.id), chosen, 0);
-		rs.kind = 0;
-		if (chosen.empty()) { set.furnitureNoGeometry++; continue; }
+		// the furniture piece is its own Building: its pick is seeded from its own world x/z
 		const double local[3] = { it.pos[0] * pb.scale, it.pos[1] * pb.scale, it.pos[2] * pb.scale };
 		double rot[3];
 		rotateBy(pq, local, rot);
+		rs.collect(*target, *target, hashString(p.instanceID + "/" + it.id), (float)(pb.x + rot[0]), (float)(pb.z + rot[2]), kworld::PartStage::Exterior, chosen);
+		rs.kind = 0;
+		if (chosen.empty()) { set.furnitureNoGeometry++; continue; }
 		BuildingInstance f;
 		f.x = pb.x + rot[0]; f.y = pb.y + rot[1]; f.z = pb.z + rot[2];
 		f.qw = pb.qw * it.quat[0] - pb.qx * it.quat[1] - pb.qy * it.quat[2] - pb.qz * it.quat[3];
@@ -634,7 +631,7 @@ BuildingSet BuildingSet::load(const std::string& dataDir, bool features)
 			const kdata::Record* squad = p.squadTemplate.empty() ? nullptr : gd.find(p.squadTemplate);
 			rs.ruined = squad && squad->boolOr("building ruined", false);
 			set.ruinedPlacements += rs.ruined;
-			rs.collect(*building, *building, hashString(p.instanceID), chosen, 0);
+			rs.collect(*building, *building, hashString(p.instanceID), (float)p.x, (float)p.z, kworld::PartStage::Exterior, chosen);
 			if (chosen.empty()) { rs.ruined = false; set.noGeometry++; continue; }
 			BuildingInstance b;
 			b.x = p.x; b.y = p.y; b.z = p.z;
@@ -646,8 +643,8 @@ BuildingSet BuildingSet::load(const std::string& dataDir, bool features)
 			const size_t shellParts = chosen.size();
 			if (!rs.ruined)	// a ruin has no interior: the Hub's ruined Storm Houses have no stairs up in the original (STORM_HOUSE_INTERIOR_LIVE.md "Notes for the bake"); its debris is the shell's `destroyed mesh`
 			{
-				rs.collectAll(*building, "interior", 1, hashString(p.instanceID), chosen);
-				rs.collectAll(*building, "interior mask", 2, hashString(p.instanceID), chosen);
+				rs.collectAll(*building, kworld::PartStage::Interior, 1, hashString(p.instanceID), (float)p.x, (float)p.z, chosen);
+				rs.collectAll(*building, kworld::PartStage::InteriorMask, 2, hashString(p.instanceID), (float)p.x, (float)p.z, chosen);
 			}
 			const bool wasRuined = rs.ruined;
 			rs.ruined = false;
@@ -678,7 +675,7 @@ BuildingSet BuildingSet::load(const std::string& dataDir, bool features)
 					const kdata::Record* door = gd.find(e.targetID);
 					if (!door) { continue; }
 					std::vector<uint32_t> leaf;
-					rs.collect(*door, *door, hashString(p.instanceID + "/" + door->stringID), leaf, 0);
+					rs.collect(*door, *door, hashString(p.instanceID + "/" + door->stringID), (float)p.x, (float)p.z, kworld::PartStage::Door, leaf);
 					if (leaf.empty()) { continue; }
 					BuildingInstance d = b;
 					d.parent = (int32_t)index;
@@ -728,7 +725,7 @@ BuildingSet BuildingSet::load(const std::string& dataDir, bool features)
 				}
 			}
 			std::vector<uint32_t> chosen;
-			rs.collect(*r, *r, hashString(r->stringID), chosen, 0);
+			rs.collect(*r, *r, hashString(r->stringID), 0.0f, 0.0f, kworld::PartStage::Exterior, chosen);	// no placement: the record itself, x/z 0
 			if (chosen.empty()) { continue; }
 			set.storage[r->stringID] = { (uint32_t)set.partRefs.size(), (uint32_t)chosen.size() };
 			set.partRefs.insert(set.partRefs.end(), chosen.begin(), chosen.end());
@@ -737,7 +734,7 @@ BuildingSet BuildingSet::load(const std::string& dataDir, bool features)
 		{
 			if (set.storage.count(r->stringID)) { continue; }
 			std::vector<uint32_t> chosen;
-			rs.collect(*r, *r, hashString(r->stringID), chosen, 0);
+			rs.collect(*r, *r, hashString(r->stringID), 0.0f, 0.0f, kworld::PartStage::Exterior, chosen);	// no placement: the record itself, x/z 0
 			if (chosen.empty()) { continue; }
 			BuildingSet::Shell sh;
 			sh.first = (uint32_t)set.partRefs.size();

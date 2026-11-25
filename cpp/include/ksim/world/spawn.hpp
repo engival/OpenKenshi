@@ -116,7 +116,9 @@ struct SpawnReport
 class SquadBuilder
 {
 public:
-	SquadBuilder(flecs::world& ecs, const kdata::GameData& gameData, RngStream& rng);
+	// `nowHours`: the game clock in hours, which stamps every spawned character's bounty (no default: a caller must name the clock;
+	// a builder that only judges world states passes 0).
+	SquadBuilder(flecs::world& ecs, const kdata::GameData& gameData, RngStream& rng, double nowHours);
 
 	// The world's facts, read from the world on first use.
 	const worldstate::Facts& facts() const;
@@ -143,6 +145,7 @@ private:
 	flecs::world& ecs_;
 	const kdata::GameData& data_;
 	RngStream& rng_;
+	double nowHours_;
 	std::int32_t squadType_ = 0;
 	std::int32_t stateType_ = 0;
 	std::unordered_set<std::int32_t> characterTypes_;

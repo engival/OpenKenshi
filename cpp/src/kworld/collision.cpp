@@ -1,7 +1,9 @@
 #include "kworld/collision.hpp"
 
 #include "kdata/gamedata.hpp"
+#include "kworld/buildingparts.hpp"
 #include "kworld/error.hpp"
+#include "kworld/features.hpp"
 #include "kworld/gamedata.hpp"
 
 #include <algorithm>
@@ -654,6 +656,15 @@ void placeModel(const CollisionModel& model, const std::array<double, 3>& pos,
 	const std::array<double, 4>& quat, double scale, NavUse use, bool fill,
 	std::vector<WorldShape>& out)
 {
+	placeModel(model, pos, quat, std::array<double, 3>{ scale, scale, scale }, use, fill, out);
+}
+
+void placeModel(const CollisionModel& model, const std::array<double, 3>& pos,
+	const std::array<double, 4>& quat, const std::array<double, 3>& scale3, NavUse use, bool fill,
+	std::vector<WorldShape>& out)
+{
+	const double scale = std::cbrt(std::abs(scale3[0] * scale3[1] * scale3[2]));	// boxes' half extents only; the vertices carry the true scale
+	const bool mirrored = scale3[0] * scale3[1] * scale3[2] < 0;
 	const auto [w, x, y, z] = quat;
 	// Ogre Quaternion * Vector3: v + w t + q.xyz x t, t = 2 q.xyz x v.
 	const auto rotate = [&](double vx, double vy, double vz) -> std::array<double, 3>
@@ -675,7 +686,7 @@ void placeModel(const CollisionModel& model, const std::array<double, 3>& pos,
 		world.max = { -1e30f, -1e30f, -1e30f };
 		for (std::size_t i = 0; i + 2 < shape.vertices.size(); i += 3)
 		{
-			const auto r = rotate(shape.vertices[i] * scale, shape.vertices[i + 1] * scale, shape.vertices[i + 2] * scale);
+			const auto r = rotate(shape.vertices[i] * scale3[0], shape.vertices[i + 1] * scale3[1], shape.vertices[i + 2] * scale3[2]);
 			const std::array<float, 3> p = {
 				static_cast<float>(pos[0] + r[0]),
 				static_cast<float>(pos[1] + r[1]),
@@ -698,6 +709,9 @@ void placeModel(const CollisionModel& model, const std::array<double, 3>& pos,
 		const auto actor = rotate(shape.actor[0] * scale, shape.actor[1] * scale, shape.actor[2] * scale);
 		for (int axis = 0; axis < 3; ++axis)
 			world.actor[axis] = static_cast<float>(pos[axis] + actor[axis]);
+		if (mirrored)	// a mirroring scale flips the winding
+			for (std::size_t i = 0; i + 2 < world.indices.size(); i += 3)
+				std::swap(world.indices[i + 1], world.indices[i + 2]);
 		if (!world.indices.empty())
 			out.push_back(std::move(world));
 	}
@@ -719,86 +733,6 @@ std::string normalisePath(std::string path)
 	strip("./");
 	strip("data/");
 	return path;
-}
-
-// FNV-1a over the key parts: a stable stand-in for the game's random roll
-// (the Python reference uses blake2b; the streams differ, the scheme is the same).
-double roll(std::initializer_list<std::string_view> parts, int group)
-{
-	std::uint64_t hash = 1469598103934665603ull;
-	const auto mix = [&](std::uint8_t byte) { hash = (hash ^ byte) * 1099511628211ull; };
-	for (const std::string_view part : parts)
-	{
-		for (const char c : part)
-			mix(static_cast<std::uint8_t>(c));
-		mix(0);
-	}
-	mix(static_cast<std::uint8_t>(group));
-	// The low bits of FNV are weak: fold the high half down.
-	hash ^= hash >> 32;
-	hash *= 0x9e3779b97f4a7c15ull;
-	return static_cast<double>(hash >> 11) / 9007199254740992.0;
-}
-
-struct PartChoice
-{
-	std::string id;
-	int weight;
-};
-
-// Parts chosen for one placed instance (fcs.def, BUILDING_MATERIALS.md):
-// parts ref v0 = group, v1 = chance. Group 0: each part rolled alone, v1 an
-// absolute percentage. Group N > 0: exactly one part, weighted by v1.
-std::vector<std::string> selectParts(const kdata::Record& building, std::string_view instanceID,
-	std::string_view category = "parts")
-{
-	std::vector<std::pair<int, std::vector<PartChoice>>> groups;
-	if (const auto* parts = building.findRefs(category))
-	{
-		for (const auto& entry : parts->entries)
-		{
-			if (entry.v0 == kdata::kReferenceRemoved)
-				continue;
-			auto group = std::find_if(groups.begin(), groups.end(),
-				[&](const auto& g) { return g.first == entry.v0; });
-			if (group == groups.end())
-				group = groups.insert(groups.end(), { entry.v0, {} });
-			group->second.push_back({ entry.targetID, entry.hasV1V2 ? entry.v1 : 100 });
-		}
-	}
-	const bool interior = category == "interior";
-	std::vector<std::string> chosen;
-	for (const auto& [group, members] : groups)
-	{
-		if (group == 0)
-		{
-			for (const PartChoice& member : members)
-			{
-				// An `interior` entry whose chance is 0 is not a part that never exists: the mask is one (below), and Outpost s-IV's
-				// interior ramp (Newwworld.mod 42261, the only way up to its floor 2; the shipped navtile has it) is another, so a
-				// 0 there means "always". A chance on an exterior part is a real percentage.
-				if ((interior && member.weight == 0) || roll({ instanceID, building.stringID, member.id }, 0) * 100 < member.weight)
-					chosen.push_back(member.id);
-			}
-			continue;
-		}
-		long total = 0;
-		for (const PartChoice& member : members)
-			total += std::max(member.weight, 0);
-		if (total <= 0)
-			continue;
-		double pick = roll({ instanceID, building.stringID }, group) * static_cast<double>(total);
-		for (const PartChoice& member : members)
-		{
-			pick -= std::max(member.weight, 0);
-			if (pick < 0)
-			{
-				chosen.push_back(member.id);
-				break;
-			}
-		}
-	}
-	return chosen;
 }
 
 } // namespace
@@ -856,13 +790,11 @@ bool CollisionLibrary::addInteriorMask(const PlacedInstance& placed, std::vector
 	if (building == nullptr || building->type != itemTypeByName("BUILDING"))
 		return false;
 	bool added = false;
-	const auto* masks = building->findRefs("interior mask");
-	for (std::size_t i = 0; masks != nullptr && i < masks->entries.size(); ++i)
+	// A mask's chance is 0 in the data (the Storm House's): a trigger that always exists, no draw.
+	for (const std::string& partID : selectBuildingParts(gameData_, *building, static_cast<float>(placed.x),
+		static_cast<float>(placed.z), PartStage::InteriorMask))
 	{
-		// No chance roll: a mask's weight is 0 in the data (the Storm House's), it is a trigger, not a part that may be absent.
-		if (masks->entries[i].v0 == kdata::kReferenceRemoved)
-			continue;
-		const kdata::Record* part = gameData_.find(masks->entries[i].targetID);
+		const kdata::Record* part = gameData_.find(partID);
 		bool unreadable = false;
 		if (part == nullptr)
 			continue;
@@ -930,13 +862,13 @@ std::optional<BuildingNav> CollisionLibrary::addBuilding(const PlacedInstance& p
 	std::size_t withCollision = 0;
 	std::size_t renderOnly = 0;
 	std::vector<std::size_t> upper; // placedShapes of upper-floor and stair parts
-	std::vector<std::string> chosen = selectParts(*building, placed.instanceID);
+	std::vector<std::string> chosen = selectBuildingParts(gameData_, *building, static_cast<float>(placed.x), static_cast<float>(placed.z), PartStage::Exterior);
 	// The floors and staircases of a walkable building are `interior` parts (their collision is not in
 	// `parts`), with the same chance rule.
 	const std::size_t exteriorParts = chosen.size();
 	if (interiors && nav.pathMode == PathMode::Walkable)
 	{
-		std::vector<std::string> inside = selectParts(*building, placed.instanceID, "interior");
+		std::vector<std::string> inside = selectBuildingParts(gameData_, *building, static_cast<float>(placed.x), static_cast<float>(placed.z), PartStage::Interior);
 		chosen.insert(chosen.end(), inside.begin(), inside.end());
 	}
 	for (std::size_t chosenIndex = 0; chosenIndex < chosen.size(); ++chosenIndex)
@@ -1062,7 +994,7 @@ std::optional<BuildingNav> CollisionLibrary::addBuilding(const PlacedInstance& p
 				continue;
 			const DoorKey key = doorKey(doorId(placed, at));
 			const std::size_t first = placedShapes.size();
-			for (const std::string& partID : selectParts(*door, placed.instanceID))
+			for (const std::string& partID : selectBuildingParts(gameData_, *door, static_cast<float>(placed.x), static_cast<float>(placed.z), PartStage::Door))
 			{
 				const kdata::Record* part = gameData_.find(partID);
 				bool unreadable = false;
@@ -1178,6 +1110,45 @@ bool CollisionLibrary::addFoliage(const FoliageInstance& instance, std::vector<W
 	++coverage.foliageCutters;
 	placeModel(cutter, pos, { 1.0, 0.0, 0.0, 0.0 }, 1.0, NavUse::Projected, true, out);
 	return true;
+}
+
+bool CollisionLibrary::addFeature(const FeaturePlacement& placement, std::vector<WorldShape>& out)
+{
+	if (!placement.rotationFinite())
+		return false;
+	const kdata::Record* record = gameData_.find(placement.recordID);
+	if (record == nullptr)
+		return false;
+	bool unreadable = false;
+	const CollisionModel* shapes = model(record->fileOr("collision"), unreadable);
+	if (shapes == nullptr)
+		return false;
+	placeModel(*shapes, { placement.x, placement.y, placement.z }, { placement.qw, placement.qx, placement.qy, placement.qz },
+		{ placement.scaleX, placement.scaleY, placement.scaleZ }, NavUse::Walkable, false, out);
+	return true;
+}
+
+double CollisionLibrary::featureReach(const FeaturePlacement& placement)
+{
+	const kdata::Record* record = gameData_.find(placement.recordID);
+	if (record == nullptr)
+		return 0.0;
+	const std::string file = record->fileOr("collision");
+	const auto known = reach_.find(file);
+	double reach;
+	if (known != reach_.end())
+	{
+		reach = known->second;
+	} else {
+		reach = 0.0;
+		bool unreadable = false;
+		if (const CollisionModel* shapes = model(file, unreadable))
+			for (const CollisionShape& s : shapes->shapes)
+				for (std::size_t i = 0; i + 2 < s.vertices.size(); i += 3)
+					reach = std::max(reach, (double)std::sqrt(s.vertices[i] * s.vertices[i] + s.vertices[i + 1] * s.vertices[i + 1] + s.vertices[i + 2] * s.vertices[i + 2]));
+		reach_[file] = reach;
+	}
+	return reach * std::max({ std::fabs(placement.scaleX), std::fabs(placement.scaleY), std::fabs(placement.scaleZ) });
 }
 
 std::vector<std::array<float, 4>> interiorMaskHull(const std::vector<WorldShape>& mask)

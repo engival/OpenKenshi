@@ -99,7 +99,7 @@ flecs::entity Simulation::importTemplateSquad(const std::string& squadTemplateSi
 	if (residentData_ == nullptr)
 		residentData_ = std::make_shared<ResidentData>(*gameData_);
 	RngStream rng(streamSeed(seed_, static_cast<std::size_t>(seed)));
-	SquadBuilder builder(ecsMutable(), *gameData_, rng);
+	SquadBuilder builder(ecsMutable(), *gameData_, rng, gameHoursIn(clockTick()));
 	const flecs::entity squad = builder.build(*record, faction.id, homeTown.id, source, true, x, z);
 	if (members != nullptr)
 		*members = static_cast<std::size_t>(squad.world().query_builder<const state::Id>().with<state::MemberOf>(squad).build().count());

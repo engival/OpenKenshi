@@ -649,8 +649,11 @@ public:
 	void setPushExempt(std::unordered_set<std::uint64_t> ids) { pushExempt_ = std::move(ids); }
 	// The set kept between ticks: the pre-pass edits it for the due members only (kenshi-k16.6.639).
 	std::unordered_set<std::uint64_t>& pushExemptMutable() { return pushExempt_; }
-	// The character the player's camera follows (client state, kenshi-k16.6.597): no overlap push or settle ever moves it, the others yield. 0 = none.
-	void setCameraFollow(std::uint64_t id) { cameraFollow_ = id; }
+	// The characters the players' cameras follow (client state, kenshi-k16.6.597): no overlap push or settle ever moves one, the others yield. The union
+	// over the sessions (order 52); an id that is not in the arena protects nothing until it is.
+	// Two followed characters pushing each other get the plain NPC rule between them.
+	void setCameraFollow(std::unordered_set<std::uint64_t> ids) { cameraFollow_ = std::move(ids); }
+	bool followed(std::uint64_t id) const { return cameraFollow_.count(id) != 0; }
 	// Faction pairs hostile by relation (at or below -30 in either view): the BQ14 goal 16 takes them on sight. Same refresh as the bond set.
 	bool hostileFactions(std::uint64_t a, std::uint64_t b) const { return a != 0 && b != 0 && a != b && hostile_.count(bondKey(a, b)) != 0; }
 	// The FACTION `coexistence` relation flag (kinspect bq10_goal21.md K2, RelationData byte 3): goal 21 skips such a target faction.
@@ -786,7 +789,7 @@ private:
 	mutable std::map<std::array<std::uint64_t, 3>, std::vector<std::pair<double, double>>> formationCache_; // formationOffset's random layouts
 	std::shared_ptr<RelationMemo> relationMemo_ = std::make_shared<RelationMemo>();
 	std::unordered_set<std::uint64_t> pushExempt_;
-	std::uint64_t cameraFollow_ = 0;
+	std::unordered_set<std::uint64_t> cameraFollow_;
 	std::shared_ptr<const MeshNavigator> navigation_;
 	std::map<std::pair<std::uint64_t, std::uint64_t>, PathSample> pathCache_;
 	// A walk's failed re-request (member -> the goal asked and when it may be asked again): the original blocks a goal its path request

@@ -24,6 +24,7 @@
 #include "test_util.hpp"
 #include "sim_access.hpp"
 #include "ksim/dev/build_paths.hpp"
+#include <unistd.h>
 
 #include <algorithm>
 #include <cmath>
@@ -377,7 +378,7 @@ void promoteDemote(Simulation& sim, const kworld::LoadOrder& order, const std::s
 
 void saveLoad(const kworld::LoadOrder& order, const std::shared_ptr<const CombatData>& combat)
 {
-	const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_town_fighters_test.ksav";
+	const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_town_fighters_test_" + std::to_string(getpid()) + ".ksav";
 	Simulation straight = newGame(order);
 	enable(straight, combat);
 	const routines::PackageTable packages(*straight.gameData());
@@ -532,7 +533,7 @@ void promotionSpread(Simulation& sim, const kworld::LoadOrder&, const std::share
 // same squads on the same ticks as the straight run and the hashes stay equal.
 void promotionSave(const kworld::LoadOrder& order, const std::shared_ptr<const CombatData>& combat)
 {
-	const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_promotion_save.ksav";
+	const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_promotion_save_" + std::to_string(getpid()) + ".ksav";
 	Simulation straight = newGame(order);
 	enable(straight, combat);
 	straight.setPromoteBudget(1, 1); // one squad a tick: this world has few squads in routine mode, so a pass leaves some queued
@@ -563,6 +564,7 @@ void promotionSave(const kworld::LoadOrder& order, const std::shared_ptr<const C
 	test::require(promoted(straight) > atSave, "squads were still queued at the save (" + std::to_string(promoted(straight) - atSave) + " built after it)");
 	Simulation loaded = Simulation::loadGame(KENSHI_DATA, order, path, false, nullptr, RegionConfig{});
 	test::require(loaded.stateHash() == split, "load gives the saved hash");
+	std::remove(path.c_str());
 	enable(loaded, combat);
 	loaded.setPromoteBudget(1, 1);
 	loaded.run(routines::kResidentIntervalTicks / 2 + 50);

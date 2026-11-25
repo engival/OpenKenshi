@@ -36,6 +36,8 @@ bool floor_step(int dir);	// R / F / the diamond: ignored in drive (D2); ends a 
 void update_follow(double dt);
 void update_rts(double dt);
 
+Pick force_pick_thing(Pick p);	// script `mouse force ID`: p becomes that thing; p unchanged when none is forced (always in a dev-off build)
+
 #ifdef KCLIENT_DEV_TOOLS
 extern Pick g_forcePickGround;	// script `groundclick`: sim_click picks this ground point (orders.cpp)
 extern uint64_t g_forcePickChar;	// script `charclick`: sim_click picks this character (orders.cpp)

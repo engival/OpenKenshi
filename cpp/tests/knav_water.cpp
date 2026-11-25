@@ -8,6 +8,7 @@
 
 #include "knav/coarse.hpp"
 #include "knav/navmesh.hpp"
+#include "knav/zone_gen.hpp"
 #include "kworld/heightmap.hpp"
 #include "test_util.hpp"
 
@@ -26,8 +27,13 @@ const Point kReach{ 40.0f, 60.0f, 40.0f };
 
 knav::NavMesh bake(const kworld::Heightmap& terrain, kworld::ZoneCell min, kworld::ZoneCell max)
 {
-	const knav::NavConfig config = knav::configForZones(min, max);
-	return knav::NavMesh::fromTiles(config, knav::bakeTiles(config, terrain, std::vector<kworld::WorldShape>{}, 4));
+	// terrain only: an empty area per zone through the cutover bake (knav::bakeZone), joined on the world grid
+	std::vector<knav::BakedTile> tiles;
+	for (int z = min.z; z <= max.z; ++z)
+		for (int x = min.x; x <= max.x; ++x)
+			for (knav::BakedTile& tile : knav::bakeZone(knav::configForWorldZones({ x, z }, { x, z }), terrain, kworld::AreaGeometry{}, {}, 4))
+				tiles.push_back(std::move(tile));
+	return knav::NavMesh::fromTiles(knav::configForWorldZones(min, max), std::move(tiles));
 }
 
 std::array<std::size_t, knav::kAreaCount> countAreas(const knav::NavMesh& mesh)

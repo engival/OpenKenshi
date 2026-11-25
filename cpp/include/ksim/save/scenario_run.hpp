@@ -41,6 +41,11 @@ struct ScenarioRun
 	std::uint64_t crewTick = 0; // first tick a bystander fought a character that ever targeted a player (the bar's crew)
 	std::uint64_t firstEngageTick = 0;
 	std::uint64_t lastEngageTick = 0;
+	// The earliest engage trigger seen (CHAR_STATS row 34's tick; the lowest id breaks a tie): its basis and the AI_TASK goal. Tick 0 = none.
+	std::uint64_t firstTriggerTick = 0;
+	std::uint8_t firstTriggerBasis = 0;
+	std::uint16_t firstTriggerGoal = 0;
+	std::uint64_t firstTriggerId = 0;
 	std::uint64_t firstDownTick = 0; // first tick a player character was down
 	bool playerCarried = false; // a player character was carried or shackled at some tick
 

@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdio>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,6 +30,7 @@ namespace {
 
 using namespace ksim;
 
+constexpr double kPi = 3.14159265358979323846;
 constexpr int kBodies = 12;
 constexpr double kSpacing = 24.0; // along the route; the lateral offset cycles 0..+-6 u, every body inside R = 8 of the runner's line
 
@@ -89,12 +91,29 @@ Result pass(const std::shared_ptr<const CombatData>& data, const kdata::GameData
 	for (int i = 0; crowd && i < kBodies; ++i)
 	{
 		const double off = -6.5 + i * 13.0 / (kBodies - 1); // -6.5 .. 6.5: a spread of passes between a dead-on and a graze
-		double dx = 0.0;
-		double dz = 1.0;
-		const state::GroundPoint c = at(30.0 + i * kSpacing, dx, dz);
-		const auto ground = nav->walker().snap({c.x - dz * off, spot->y, c.z + dx * off}, 40.0);
-		test::require(ground.has_value(), "no ground for a body");
 		state::Fighter f = data->makeFighter(gd, sid, "", rng);
+		// A body with a wall within its own clearance on any side cannot be pushed that way (the sim's depenetration is a mesh step with the
+		// body's path radius, so a blocked step moves nothing: kenshi-tpvx, body 8 at 3 u beside a Hub wall). The scenario is bodies with room to
+		// give way, so a spot without it slides along the route (2 u a try) to the nearest one that has it.
+		const double room = data->pathRadius(f.raceSid);
+		std::optional<knav::Position> ground;
+		for (int slide = 0; slide < 30 && !ground; ++slide)
+		{
+			double dx = 0.0;
+			double dz = 1.0;
+			const double along = 30.0 + i * kSpacing + ((slide & 1) ? -1 : 1) * 2.0 * ((slide + 1) / 2);
+			const state::GroundPoint c = at(along, dx, dz);
+			const auto cand = nav->walker().snap({c.x - dz * off, spot->y, c.z + dx * off}, 40.0);
+			bool free = cand.has_value();
+			for (int k = 0; free && k < 16; ++k)
+			{
+				const double a = k * (kPi / 8.0);
+				free = nav->walker().step({cand->x, cand->y, cand->z}, std::cos(a) * room, std::sin(a) * room, room).moved > room - 0.05;
+			}
+			if (free)
+				ground = cand;
+		}
+		test::require(ground.has_value(), "no ground with room for a body");
 		f.team = 0;
 		f.x = ground->x;
 		f.y = ground->y;

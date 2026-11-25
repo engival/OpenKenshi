@@ -10,7 +10,6 @@
 #include "knav/native_tiles.hpp"
 #include "knav/seeds.hpp"
 #include "knav/navmesh.hpp"
-#include "knav/world.hpp"
 #include "kworld/collision_area.hpp"
 #include "kworld/coords.hpp"
 #include "kworld/error.hpp"
@@ -741,13 +740,20 @@ std::shared_ptr<MeshNavigator> MeshNavigator::bake(const std::string& dataDir, k
 	kworld::ZoneCell max, int threads)
 {
 	const auto terrain = kworld::Heightmap::open(dataDir + "/newland/land/fullmap.tif");
-	const knav::AreaGeometry area = knav::gatherArea(dataDir, terrain, min, max);
-	knav::NavWorld world(knav::configForZones(min, max), terrain, area.foliage);
-	for (const knav::AreaBuilding& building : area.buildings)
-		world.setBuilding(building.id, building.shapes, building.nav);
-	world.bakeAll(threads);
-	auto navigator = std::make_shared<MeshNavigator>(knav::NavMesh::fromTiles(world.mesh().config(), world.mesh().tiles()));
-	return navigator;
+	kworld::AreaGatherer gatherer(dataDir, terrain);
+	const std::vector<knav::Point> seedsDef = knav::readSeedsDef(knav::native::navtilesDir(dataDir));
+	const knav::NavConfig config = knav::configForWorldZones(min, max);
+	std::vector<knav::BakedTile> tiles;
+	for (int z = min.z; z <= max.z; ++z)
+		for (int x = min.x; x <= max.x; ++x)
+		{
+			const kworld::ZoneCell zone{x, z};
+			const kworld::AreaGeometry area = gatherer.gather(zone, zone);
+			const knav::NavConfig zoneConfig = knav::configForWorldZones(zone, zone);
+			for (knav::BakedTile& tile : knav::bakeZone(zoneConfig, terrain, area, knav::zoneBakeSeeds(terrain, area, seedsDef, zone, zoneConfig.waterLevel), threads))
+				tiles.push_back(std::move(tile));
+		}
+	return std::make_shared<MeshNavigator>(knav::NavMesh::fromTiles(config, tiles));
 }
 
 std::shared_ptr<MeshNavigator> MeshNavigator::load(const std::string& path, const std::string& /*dataDir*/)
@@ -794,38 +800,11 @@ double msSince(std::chrono::steady_clock::time_point start)
 	return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
 
-// The tiles an interior mesh reaches: its vertices' tile squares, clipped to its zone and the region window.
-std::vector<knav::TileCoord> meshTileCoords(const knav::NavConfig& config, kworld::ZoneCell zone, const knav::native::Mesh& mesh)
-{
-	if (mesh.vertices.empty())
-		return {};
-	double minX = mesh.vertices.front()[0], maxX = minX, minZ = mesh.vertices.front()[2], maxZ = minZ;
-	for (const std::array<double, 3>& vertex : mesh.vertices)
-	{
-		minX = std::min(minX, vertex[0]);
-		maxX = std::max(maxX, vertex[0]);
-		minZ = std::min(minZ, vertex[2]);
-		maxZ = std::max(maxZ, vertex[2]);
-	}
-	const auto tile = [&](double value, double origin)
-	{
-		return static_cast<int>(std::floor((value - origin) / config.tileSize));
-	};
-	const knav::TileRect own = zoneTiles(config, zone);
-	std::vector<knav::TileCoord> coords;
-	for (int z = std::max({ tile(minZ, config.originZ), config.window.z0, own.z0 });
-		z <= std::min({ tile(maxZ, config.originZ), config.window.z1, own.z1 }); ++z)
-		for (int x = std::max({ tile(minX, config.originX), config.window.x0, own.x0 });
-			x <= std::min({ tile(maxX, config.originX), config.window.x1, own.x1 }); ++x)
-			coords.push_back({ x, z });
-	return coords;
-}
-
 // ---- the disk cache (docs/formats/NAVMESH_CACHE.md "Patch cache") ----
 
 // The entry layout's recipe version: bump with any change to the conversion, the bake recipe or its tuning, or an entry's
 // layout. The .knav cache version and the Detour version are checked by NavMesh itself.
-constexpr std::uint32_t kNativeCacheRecipe = 50; // 50: k16.7.127 stair vertex heights on the polygon surface, with the widened search and corner heights, on top of 49 (kenshi-e9s9.18; 47 is k16.7.142, 48 may be k16.7.161, 49 is k16.7.129); 49: one clearance convention, no wall band, exact prop cut-outs, door area with the 8 u mat, steep-polygon report (kenshi-k16.7.129; 47 is k16.7.142, 48 may be k16.7.161); 47: the interior-mask volume is ONE convex hull of every mask point (box corners and convex-mesh vertices), applied to the upper floors' and stairs' shapes of masks with 3+ boxes or a convex-mesh shape, not the boxes' intersection; masks of 1-2 boxes keep the intersection (kenshi-k16.7.142) (k16.7.142, coded as 43, renumbered at the chain merge); 46: renumbered from 44 for the merge (k16.7.128); 44: a kept shipped tile must join its neighbours (bridge rule) and interior link edges are split at the world link's ends (k16.7.128; renumbered at merge); 43: a stale unit's tiles keep the shipped mesh where our rebake agrees with it (agreement sidecars, kenshi-k16.7.128; renumbered at merge); 42: 40 and the forest-only shipped zones together (a zone whose only stale cause is the forest word keeps its shipped tile, no patch entry, kenshi-k16.7.74; 41 is k16.7.87's); 40: the furniture ring keeps a 4-cell (8 u, the human body at r 4) lane in a doorway gap, not 2 cells (kenshi-k16.7.106); 35: the furniture ring never narrows a gap between two blockers below a 2-cell lane (kenshi-k16.7.102); 30: 24 and 25 together (k16.7.71's bake with k16.7.95's clearance; 25 alone was 7.95 without 24's rules, and its caches are not this bake; 27 has stale caches on dev from an earlier branch, 29 is left free); 25: the furniture body clearance 0.75 u, off the cell-centre tie of 1.0 (kenshi-k16.7.95); 26 and 28 are taken by k16.7.74 and k16.7.87 in flight; 24: (1) a closed walkable furniture hull (2 cells or more) keeps its top faces and loses its side sheets, so the centre-based fill is its one rule and a gap between two hulls keeps its width (obstacle hulls and building slabs keep their sheets); (2) a wall-band (Edge) piece whose contour simplifies away is relabelled Land and the regions and contours are built again, so the band does not drop out of the mesh (Heft Noble House, Farm Shop, kenshi-k16.7.71; 22 and 23 are taken by k16.7.74 and k16.7.94 in flight; 21: furniture body ring (footprint + clearance + margin nulled, stairs and use-node paths spared) and the slide height fallback (kenshi-k16.7.89); 20: a detail vertex more than the climb off a level polygon's corners takes the nearest corner height, so a slab edge band over a stair well has no skirt down to the stair (Hub bar stair, kenshi-k16.8.41); 12-19: unused (stale ring-branch caches on dev); 11: the zone key folds the gathered geometry digest and the heightmap file stamp (kenshi-k16.7.67); 10: k16.7.50 made bakes deterministic (Recast read unwritten heap bytes in rcBuildContours); caches baked before it are rebuilt, no mesh rule change; 9: the zone is pruned with its own seeds (zone probes or seeds.def, building origins, door outside points), keeping every set that touches the zone's outer border (kenshi-k16.6.270); 8: a foliage shell wider than 750 u cuts only its own triangle heights, not the whole shell height (kenshi-k16.7.59); 7: a ramp strip of an open walkable building sheet (faces 40-55 degrees joining flat walkable faces at both ends) is walkable, so a wall-walk's 47 degree ramp is (kenshi-k16.7.58); 6: unused (k16.7.59 before its merge); 5: the door mat gives back a stair slope more under the door, the stair joins the doorway (kenshi-k16.6.229); 4: walkable surfaces at their exact collision height, not the voxel top (kenshi-k16.7.36); 3: terrain inside an interior volume is carved, interior terrain 0 (kenshi-k16.7.18); 2: a rock shell cuts per triangle (kenshi-k16.19.4)
+constexpr std::uint32_t kNativeCacheRecipe = 59; // 59: the weld pass before nativeTiles (vertex weld, T-junction splits, thin faces dropped), zone-side seam edges linked to the interior streaming link, sorted tiles (kenshi-k16.7.189 steps b-e); 58: Detour with DT_POLYREF64, up to 8192 polygons a tile, no tile left out of the mesh (kenshi-k16.7.189 step a); 57: the navmesh cutover: every zone from knav::bakeZone (ground + surfgen + stitchRims + door paint), no shipped navtiles, Recast gone (kenshi-k16.7.189 partial); 56: building parts by the original's roll (MSVCR100 rand seeded from placement x/z; every building's collision may change; kenshi-k16.6.583); 55: the surfgen rewrite (exact integer regions on Clipper2, the building-frame bake from AreaBuilding::localShapes / localMask placed by Input::pose, the flood from the lowest walkable piece; kenshi-k16.7.182, helper kenshi-ffmi.4); 54: k16.7.145 as merged into ksim (F1-F5 rework: corner heights from tile->verts, zone-window filter, seam and door guards, coincident-polygon merge in nativeTiles); 53 was the branch's working number through several meshes, its caches are stale; 53: the assembly joins its seams (cut Recast faces and generated faces meet as a step), keeps the Recast detail triangles and links a tile's open borders (kenshi-k16.7.145 rework); 52: the surface generator runtime switch: walkable buildings with an interior mask come from knav::surfgen + the tile assembly, Recast bakes without them, tiles they touch are never kept from the shipped navtiles (kenshi-k16.7.145; 50 and 51 are e9s9.18 and k16.6.583 in flight); 50: k16.7.127 stair vertex heights on the polygon surface (kenshi-e9s9.18); 49: one clearance convention, no wall band, exact prop cut-outs, door area with the 8 u mat, steep-polygon report (kenshi-k16.7.129; 47 is k16.7.142, 48 may be k16.7.161); 47: the interior-mask volume is ONE convex hull of every mask point (box corners and convex-mesh vertices), applied to the upper floors' and stairs' shapes of masks with 3+ boxes or a convex-mesh shape, not the boxes' intersection; masks of 1-2 boxes keep the intersection (kenshi-k16.7.142) (k16.7.142, coded as 43, renumbered at the chain merge); 46: renumbered from 44 for the merge (k16.7.128); 44: a kept shipped tile must join its neighbours (bridge rule) and interior link edges are split at the world link's ends (k16.7.128; renumbered at merge); 43: a stale unit's tiles keep the shipped mesh where our rebake agrees with it (agreement sidecars, kenshi-k16.7.128; renumbered at merge); 42: 40 and the forest-only shipped zones together (a zone whose only stale cause is the forest word keeps its shipped tile, no patch entry, kenshi-k16.7.74; 41 is k16.7.87's); 40: the furniture ring keeps a 4-cell (8 u, the human body at r 4) lane in a doorway gap, not 2 cells (kenshi-k16.7.106); 35: the furniture ring never narrows a gap between two blockers below a 2-cell lane (kenshi-k16.7.102); 30: 24 and 25 together (k16.7.71's bake with k16.7.95's clearance; 25 alone was 7.95 without 24's rules, and its caches are not this bake; 27 has stale caches on dev from an earlier branch, 29 is left free); 25: the furniture body clearance 0.75 u, off the cell-centre tie of 1.0 (kenshi-k16.7.95); 26 and 28 are taken by k16.7.74 and k16.7.87 in flight; 24: (1) a closed walkable furniture hull (2 cells or more) keeps its top faces and loses its side sheets, so the centre-based fill is its one rule and a gap between two hulls keeps its width (obstacle hulls and building slabs keep their sheets); (2) a wall-band (Edge) piece whose contour simplifies away is relabelled Land and the regions and contours are built again, so the band does not drop out of the mesh (Heft Noble House, Farm Shop, kenshi-k16.7.71; 22 and 23 are taken by k16.7.74 and k16.7.94 in flight; 21: furniture body ring (footprint + clearance + margin nulled, stairs and use-node paths spared) and the slide height fallback (kenshi-k16.7.89); 20: a detail vertex more than the climb off a level polygon's corners takes the nearest corner height, so a slab edge band over a stair well has no skirt down to the stair (Hub bar stair, kenshi-k16.8.41); 12-19: unused (stale ring-branch caches on dev); 11: the zone key folds the gathered geometry digest and the heightmap file stamp (kenshi-k16.7.67); 10: k16.7.50 made bakes deterministic (Recast read unwritten heap bytes in rcBuildContours); caches baked before it are rebuilt, no mesh rule change; 9: the zone is pruned with its own seeds (zone probes or seeds.def, building origins, door outside points), keeping every set that touches the zone's outer border (kenshi-k16.6.270); 8: a foliage shell wider than 750 u cuts only its own triangle heights, not the whole shell height (kenshi-k16.7.59); 7: a ramp strip of an open walkable building sheet (faces 40-55 degrees joining flat walkable faces at both ends) is walkable, so a wall-walk's 47 degree ramp is (kenshi-k16.7.58); 6: unused (k16.7.59 before its merge); 5: the door mat gives back a stair slope more under the door, the stair joins the doorway (kenshi-k16.6.229); 4: walkable surfaces at their exact collision height, not the voxel top (kenshi-k16.7.36); 3: terrain inside an interior volume is carved, interior terrain 0 (kenshi-k16.7.18); 2: a rock shell cuts per triangle (kenshi-k16.19.4)
 
 std::uint64_t cacheMix(std::uint64_t hash, const void* data, std::size_t size)
 {
@@ -956,28 +935,56 @@ const MeshNavigator::NativeTileReport* MeshNavigator::nativeReport(kworld::ZoneC
 	return found == staleReports_.end() ? nullptr : &found->second;
 }
 
+// A zone's bake is a pure function of the data; the stale check, the cache fill and a rebake ask for it more than once, and the surface
+// generator makes it slow (tens of seconds on a Hub zone), so the last few are kept.
 std::vector<knav::BakedTile> MeshNavigator::bakeNativeZone(kworld::ZoneCell zone) const
+{
+	constexpr std::size_t kKeptBakes = 6;
+	{
+		const std::lock_guard<std::mutex> lock(bakeMemoMutex_);
+		for (const auto& [kept, tiles] : bakeMemo_)
+			if (kept.x == zone.x && kept.z == zone.z)
+				return tiles;
+	}
+	std::vector<knav::BakedTile> tiles = bakeNativeZoneFresh(zone);
+	const std::lock_guard<std::mutex> lock(bakeMemoMutex_);
+	if (bakeMemo_.size() >= kKeptBakes)
+		bakeMemo_.erase(bakeMemo_.begin());
+	bakeMemo_.emplace_back(zone, tiles);
+	return tiles;
+}
+
+std::vector<knav::BakedTile> MeshNavigator::bakeNativeZoneFresh(kworld::ZoneCell zone) const
 {
 #if KSIM_PROFILE
 	const knav::measure::LoadScope loadScope(knav::measure::kLoadBake);
 #endif
 	const auto start = std::chrono::steady_clock::now();
 	const kworld::AreaGeometry area = gatherer_->gather(zone, zone);
-	knav::NavConfig config = knav::configForWorldZones(zone, zone);
-	knav::NavWorld world(config, *terrain_, area.foliage);
-	for (const kworld::AreaBuilding& building : area.buildings)
-		world.setBuilding(building.id, building.shapes, building.nav);
-	// The bake's seeds for this one zone (knav_bake setSeeds): a pure function of the zone, so the cache entry carries the cut.
+	const knav::NavConfig config = knav::configForWorldZones(zone, zone);
+	// The bake's seeds for this one zone: a pure function of the zone (zone probes or seeds.def, building origins).
 	if (seedsDef_.empty())
 		seedsDef_ = knav::readSeedsDef(nativeDir_);
-	std::vector<knav::Point> seeds = knav::zoneSeeds(*terrain_, area, seedsDef_, zone, zone, config.waterLevel);
-	const std::vector<knav::Point> origins = knav::buildingSeeds(area);
-	seeds.insert(seeds.end(), origins.begin(), origins.end());
-	world.setSeeds(std::move(seeds), knav::doorSeedsOf(area));
-	world.setKeepWindowEdge(true);
-	world.bakeAll(kNativeBakeThreads);
+	const std::vector<std::array<double, 2>> seeds = knav::zoneBakeSeeds(*terrain_, area, seedsDef_, zone, config.waterLevel);
+	knav::ZoneGenReport report;
+	std::vector<knav::BakedTile> tiles = knav::bakeZone(config, *terrain_, area, seeds, kNativeBakeThreads, &report);
+	staleStats_.buildingsGenerated += report.buildings;
+	staleStats_.buildingsFailed += report.buildingsFailed;
+	staleStats_.tilesAssembled += report.tiles;
+	if (log_)
+	{
+		std::string failed;
+		for (const std::string& id : report.failedIds)
+			failed += " " + id;
+		log_("nav zone " + std::to_string(zone.x) + "," + std::to_string(zone.z) + ": " + std::to_string(report.buildings) + " buildings generated, "
+			+ std::to_string(report.buildingsFailed) + " failed" + failed + "; ground " + std::to_string(report.groundFaces) + " faces ("
+			+ std::to_string(report.topFaces) + " tops, " + std::to_string(report.stitched) + " rim vertices stitched), doors " + std::to_string(report.doorFacesPainted)
+			+ " painted of " + std::to_string(report.doorFaces) + ", " + std::to_string(report.tiles) + " tiles, max " + std::to_string(report.maxPolys) + " polygons, "
+			+ std::to_string(report.overfullTiles) + " over the cap (surfaces " + std::to_string(static_cast<long>(report.msSurf)) + " ms, ground "
+			+ std::to_string(static_cast<long>(report.msGround)) + " ms, tiles " + std::to_string(static_cast<long>(report.msTiles)) + " ms)");
+	}
 	staleStats_.bakeMs += msSince(start);
-	return world.mesh().tiles();
+	return tiles;
 }
 
 bool MeshNavigator::standBuilding(const kworld::PlacedInstance& placed, std::size_t* tiles) const
@@ -993,6 +1000,11 @@ std::size_t MeshNavigator::standBuildings(const std::vector<kworld::PlacedInstan
 	for (const kworld::PlacedInstance& one : placed)
 	{
 		gatherer_->addPlacement(one);
+		{
+			// the placement changes its zone's bake and the eight around it (a gather sees the buildings one cell outside): memoized results are stale (k16.7.145)
+			const std::lock_guard<std::mutex> lock(bakeMemoMutex_);
+			std::erase_if(bakeMemo_, [&](const auto& kept) { return std::abs(kept.first.x - one.positionCell.x) <= 1 && std::abs(kept.first.z - one.positionCell.z) <= 1; });
+		}
 		byZone[kworld::zoneIndexOf(one.positionCell)].push_back(&one);
 	}
 	const knav::NavConfig& config = mesh_.config();
@@ -1089,45 +1101,11 @@ std::uint32_t MeshNavigator::nativeCacheRecipe() { return kNativeCacheRecipe; }
 // meshes as converted; the original's stale-tile check (applyStaleCheck) replaces the ones a zone decision rejects.
 std::vector<knav::BakedTile> MeshNavigator::convertNativeRegion(int rx, int rz) const
 {
-#if KSIM_PROFILE
-	const knav::measure::LoadScope loadScope(knav::measure::kLoadConvert);
-#endif
 	const kworld::ZoneCell min{rx * knav::kRegionZones, rz * knav::kRegionZones};
-	const kworld::ZoneCell max{min.x + knav::kRegionZones - 1, min.z + knav::kRegionZones - 1};
-	for (int z = min.z; z <= max.z; ++z)
-		for (int x = min.x; x <= max.x; ++x)
-			staleReports_.erase(kworld::zoneIndexOf({ x, z })); // re-converted: the decisions belong to the new tiles
-	const knav::NavConfig config = knav::configForWorldZones(min, max);
-	const std::string name = "region " + std::to_string(rx) + "," + std::to_string(rz);
-	// The disk cache (docs/formats/NAVMESH_CACHE.md "Patch cache"): the converted tiles of a region are a pure function of the
-	// shipped tile files it reads and the conversion, so a byte hash of those files is the key.
-	const std::string path = cacheTree_.empty() ? std::string{}
-		: cacheEntryPath("region", rx, rz, regionCacheKey(rx, rz));
-	if (!cacheTree_.empty())
-	{
-		if (const std::optional<std::vector<knav::BakedTile>> cached = readCacheEntry(path, config, config.window))
-		{
-			++cacheStats_.regionHits;
-			log_("native " + name + ": " + std::to_string(cached->size()) + " tiles from the cache");
-			return *cached;
-		}
-		++cacheStats_.regionMisses;
-	}
-	const CacheClock::time_point convertStart = CacheClock::now();
-	std::vector<knav::native::Mesh> meshes;
-	for (int j = std::max(min.z - 1, 0); j <= std::min(max.z + 1, kworld::kZoneCellsPerAxis - 1); ++j)
-		for (int i = std::max(min.x - 1, 0); i <= std::min(max.x + 1, kworld::kZoneCellsPerAxis - 1); ++i)
-			for (knav::native::Mesh& mesh : knav::native::loadTile(nativeDir_, i, j))
-				meshes.push_back(std::move(mesh));
-	std::vector<knav::TileCoord> coords;
-	for (int z = config.window.z0; z <= config.window.z1; ++z)
-		for (int x = config.window.x0; x <= config.window.x1; ++x)
-			coords.push_back({ x, z });
-	std::vector<knav::BakedTile> converted = knav::nativeTiles(config, meshes, coords);
-	if (!cacheTree_.empty())
-		writeCacheEntry(path, config, converted);
-	cacheStats_.convertSeconds += secondsSince(convertStart);
-	return converted;
+	for (int z = min.z; z < min.z + knav::kRegionZones; ++z)
+		for (int x = min.x; x < min.x + knav::kRegionZones; ++x)
+			staleReports_.erase(kworld::zoneIndexOf({ x, z })); // the region starts empty: its zones are generated (applyStaleCheck)
+	return {}; // the shipped navtiles are no longer loaded or converted (kenshi-k16.7.189)
 }
 
 // ---- the disk cache (docs/formats/NAVMESH_CACHE.md "Patch cache") ----
@@ -1151,7 +1129,7 @@ void MeshNavigator::openNativeCache(const NativeCacheOptions& cache)
 		return;
 	}
 	cacheTree_ = tree;
-	pruneCacheRoot(root, tree.substr(root.size() + 1), kNativeCacheKeep, log_);
+	pruneCacheRoot(root, tree.substr(root.size() + 1), cache.keepTrees != 0 ? cache.keepTrees : kNativeCacheKeep, log_);
 }
 
 std::vector<std::string> MeshNavigator::pruneCacheRoot(const std::string& root, const std::string& inUse, std::size_t keep,
@@ -1169,7 +1147,7 @@ std::vector<std::string> MeshNavigator::pruneCacheRoot(const std::string& root, 
 		if (name.size() < 4 || name[0] != 'w' || underscore == std::string::npos || underscore < 2 || underscore + 1 >= name.size())
 			continue;
 		const bool digits = name.find_first_not_of("0123456789", 1) == underscore;
-		const bool hex = name.find_first_not_of("0123456789abcdefABCDEF", underscore + 1) == std::string::npos;
+		const bool hex = name.find_first_not_of("0123456789abcdefABCDEF_", underscore + 1) == std::string::npos; // w<recipe>_<srcHash>_<world>: since k16.7.161 the tree has two hex parts
 		std::error_code kind;
 		if (!digits || !hex || !it->is_directory(kind) || it->is_symlink(kind))
 			continue;
@@ -1354,11 +1332,9 @@ bool MeshNavigator::writeCacheEntry(const std::string& path, const knav::NavConf
 	}
 }
 
-// The original's stale-tile check for one zone of a converted region: recompute the zone's hash (and, in a fresh zone, each
-// interior's) from our world data and compare with the hashes stored in the shipped tile. A stale or unverifiable unit's
-// tiles leave the region and our bake's take their place: the zone's whole tile square, or the tile square of a stale
-// interior (the shipped zone mesh around it stays). The decision is recorded (NativeTileReport, NativeStaleStats) and is
-// made once per converted region (a second call for the zone is a no-op). A zone with no shipped tile is baked whole.
+// A zone's tiles from our own generators (knav::bakeZone: knav::ground + knav::surfgen; kenshi-k16.7.189): from the disk cache
+// (docs/formats/NAVMESH_CACHE.md "Patch cache") or baked and written, replacing whatever the region holds for the zone. The shipped
+// navtiles are not read. The decision is recorded (NativeTileReport) once per zone (a second call is a no-op).
 bool MeshNavigator::applyStaleCheck(std::vector<knav::BakedTile>& tiles, kworld::ZoneCell zone) const
 {
 	const int key = kworld::zoneIndexOf(zone);
@@ -1370,274 +1346,43 @@ bool MeshNavigator::applyStaleCheck(std::vector<knav::BakedTile>& tiles, kworld:
 	const auto start = std::chrono::steady_clock::now();
 	const knav::NavConfig config = knav::configForWorldZones(zone, zone);
 	const knav::TileRect own = zoneTiles(config, zone);
-	const auto drop = [&](const std::set<knav::TileCoord>& coords)
-	{
-		tiles.erase(std::remove_if(tiles.begin(), tiles.end(),
-			[&](const knav::BakedTile& tile) { return coords.count({ tile.x, tile.z }) != 0; }), tiles.end());
-	};
-	// The zone's bake, needed at most once (a stale zone takes its whole square, a fresh zone its stale interiors' tiles): from
-	// the disk cache (docs/formats/NAVMESH_CACHE.md "Patch cache") or baked and written. A zone with no shipped tile lists no
-	// interiors for the key, so it is not cached.
-	knav::native::StoredHashes stored;
-	const std::vector<knav::native::Mesh> meshes = knav::native::loadTile(nativeDir_, zone.x, zone.z, &stored);
-	std::vector<std::uint64_t> interiorUids;
-	for (const knav::native::Mesh& mesh : meshes)
-	{
-		if (!mesh.interior())
-			continue;
-		try
-		{
-			interiorUids.push_back(std::stoull(mesh.info, nullptr, 16));
-		} catch (const std::exception&) {
-			interiorUids.push_back(0);
-		}
-	}
-	const std::string patchPath = cacheTree_.empty() || meshes.empty() ? std::string{}
-		: cacheEntryPath("zone", zone.x, zone.z, zoneCacheKey(zone, interiorUids));
-	bool bakeLoaded = false;
+	const std::string path = cacheTree_.empty() ? std::string{} : cacheEntryPath("zone", zone.x, zone.z, zoneCacheKey(zone, {}));
 	std::vector<knav::BakedTile> bake;
-	const auto zoneBake = [&]() -> const std::vector<knav::BakedTile>&
+	bool loaded = false;
+	if (!path.empty())
 	{
-		if (bakeLoaded)
-			return bake;
-		bakeLoaded = true;
-		if (!patchPath.empty())
+		if (std::optional<std::vector<knav::BakedTile>> cached = readCacheEntry(path, config, own))
 		{
-			if (std::optional<std::vector<knav::BakedTile>> cached = readCacheEntry(patchPath, config, own))
-			{
-				++cacheStats_.zoneHits;
-				bake = std::move(*cached);
-				return bake;
-			}
+			++cacheStats_.zoneHits;
+			bake = std::move(*cached);
+			loaded = true;
+		} else
 			++cacheStats_.zoneMisses;
-		}
+	}
+	if (!loaded)
+	{
 		const CacheClock::time_point bakeStart = CacheClock::now();
 		bake = bakeNativeZone(zone);
-		if (!patchPath.empty())
-			writeCacheEntry(patchPath, config, bake);
+		if (!path.empty())
+			writeCacheEntry(path, config, bake);
 		cacheStats_.convertSeconds += secondsSince(bakeStart);
-		return bake;
-	};
-	const auto take = [&](const std::set<knav::TileCoord>& coords)
-	{
-		for (const knav::BakedTile& tile : zoneBake())
-			if (coords.count({ tile.x, tile.z }) != 0)
-				tiles.push_back(tile);
-	};
-	// The tiles of `coords` where the shipped mesh agrees with our rebake (knav/navgeom.hpp): the shipped tile stays and our bake is
-	// dropped. The whole zone's square is compared once and kept beside the cache entry (`.agree`), so a warm start does not compare.
-	// A tile agrees only if it joins its neighbours: an interior is a few tiles of rooms, and beside a tile that bridges rooms the
-	// shipped mesh keeps apart (knav::TileAgreement::bridges) the shipped mesh is not trusted to continue across the tile border into
-	// our bake, so an interior also rebakes the tiles around a bridging one (`joined`). A zone is too big for that (the Hub 137/187).
-	struct Decision
-	{
-		std::set<knav::TileCoord> agreed, joined;
-	};
-	std::optional<Decision> square;
-	const auto agreed = [&](const std::set<knav::TileCoord>& coords, bool interior)
-	{
-		if (!square)
-		{
-			square.emplace();
-			const std::string sidecar = patchPath.empty() ? std::string{} : patchPath + ".agree";
-			bool read = false;
-			if (!sidecar.empty())
-			{
-				std::ifstream in(sidecar);
-				std::string head;
-				if (in >> head && head == "agree5")
-				{
-					std::set<knav::TileCoord>* into = &square->agreed;
-					std::string word;
-					while (in >> word)
-					{
-						if (word == "joined")
-						{
-							into = &square->joined;
-							continue;
-						}
-						int z;
-						if (word.size() > 9 || word.find_first_not_of("-0123456789") != std::string::npos || !(in >> z))
-						{
-							into = nullptr; // garbage: not read, recomputed below
-							break;
-						}
-						into->insert({ std::stoi(word), z });
-					}
-					read = into == &square->joined && in.eof();
-				}
-			}
-			if (!read)
-			{
-				*square = Decision{};
-				std::set<knav::TileCoord> all;
-				for (int z = own.z0; z <= own.z1; ++z)
-					for (int x = own.x0; x <= own.x1; ++x)
-						all.insert({ x, z });
-				const std::vector<knav::TileAgreement> rows = knav::tileAgreements(meshes, zoneBake(), config, all);
-				std::set<knav::TileCoord> bridged;
-				for (const knav::TileAgreement& row : rows)
-					if (row.bridges != 0)
-						bridged.insert(row.tile);
-				for (const knav::TileAgreement& row : rows)
-				{
-					if (!row.agrees())
-						continue;
-					square->agreed.insert(row.tile);
-					bool near = false;
-					for (int dz = -1; dz <= 1; ++dz)
-						for (int dx = -1; dx <= 1; ++dx)
-							near = near || bridged.count({ row.tile.x + dx, row.tile.z + dz }) != 0;
-					if (!near)
-						square->joined.insert(row.tile);
-				}
-				if (!sidecar.empty())
-				{
-					const std::string temp = sidecar + ".tmp." + std::to_string(static_cast<long long>(::getpid()));
-					{
-						std::ofstream out(temp);
-						out << "agree5\n";
-						for (const knav::TileCoord& tile : square->agreed)
-							out << tile.x << ' ' << tile.z << '\n';
-						out << "joined\n";
-						for (const knav::TileCoord& tile : square->joined)
-							out << tile.x << ' ' << tile.z << '\n';
-					}
-					std::error_code error;
-					std::filesystem::rename(temp, sidecar, error);
-				}
-			}
-		}
-		const std::set<knav::TileCoord>& from = interior ? square->joined : square->agreed;
-		std::set<knav::TileCoord> out;
-		for (const knav::TileCoord& tile : coords)
-			if (from.count(tile) != 0)
-				out.insert(tile);
-		return out;
-	};
-	// Splits `coords` into the tiles that keep the shipped mesh and the rest, which take our bake; the report records both.
-	const auto settle = [&](NativeTileReport& unit, const std::set<knav::TileCoord>& coords, bool interior)
-	{
-		std::set<knav::TileCoord> keep;
-		if (!meshes.empty())
-			keep = agreed(coords, interior);
-		std::set<knav::TileCoord> baked;
-		for (const knav::TileCoord& tile : coords)
-			(keep.count(tile) != 0 ? unit.agreed : unit.rebaked).push_back(tile);
-		for (const knav::TileCoord& tile : unit.rebaked)
-			baked.insert(tile);
-		staleStats_.tilesAgreed += keep.size();
-		staleStats_.tilesRebaked += baked.size();
-		drop(baked);
-		take(baked);
-		// The shipped faces carry no door id: a kept tile that holds a door of our bake is converted again with the zone's door
-		// keys (knav::nativeDoorKeys), so the door has its polygon and the sim spawns it (a fresh zone's doors are not keyed).
-		std::set<knav::TileCoord> doored;
-		for (const knav::BakedTile& tile : zoneBake())
-			if (!tile.doors.empty() && keep.count({ tile.x, tile.z }) != 0)
-				doored.insert({ tile.x, tile.z });
-		if (!doored.empty())
-		{
-			std::vector<knav::native::Mesh> around;
-			for (int j = std::max(zone.z - 1, 0); j <= std::min(zone.z + 1, kworld::kZoneCellsPerAxis - 1); ++j)
-				for (int i = std::max(zone.x - 1, 0); i <= std::min(zone.x + 1, kworld::kZoneCellsPerAxis - 1); ++i)
-					for (knav::native::Mesh& mesh : knav::native::loadTile(nativeDir_, i, j))
-						around.push_back(std::move(mesh));
-			const kworld::AreaGeometry area = gatherer_->gather(zone, zone);
-			const std::vector<knav::TileCoord> list(doored.begin(), doored.end());
-			std::vector<knav::BakedTile> keyed = knav::nativeTiles(config, around, list, knav::nativeDoorKeys(area.buildings));
-			drop(doored);
-			for (knav::BakedTile& tile : keyed)
-				tiles.push_back(std::move(tile));
-		}
-	};
+	}
+	std::erase_if(tiles, [&](const knav::BakedTile& tile) { return own.contains(tile.x, tile.z); });
 	NativeTileReport report;
 	report.zone = zone;
-	const kworld::NavHashSource::ZoneHashes hashes = hashSource_->zone(zone);
-	report.decision.stored = stored.hasZone ? std::optional<std::uint32_t>(stored.zone) : std::nullopt;
-	report.decision.ours = hashes.hash;
+	report.decision.choice = NativeChoice::Rebaked;
+	report.decision.reason = "generated";
+	for (knav::BakedTile& tile : bake)
+	{
+		report.rebaked.push_back({ tile.x, tile.z });
+		tiles.push_back(std::move(tile));
+	}
 	++staleStats_.zonesScanned;
-	kworld::StaleVerdict verdict = kworld::staleVerdict(report.decision.stored, hashes.hash);
-	if (meshes.empty())
-		verdict = kworld::StaleVerdict::Unverifiable; // no shipped tile: nothing to check, and nothing to use
-	const bool forestOnly = !meshes.empty() && kworld::forestOnlyStale(report.decision.stored, hashes);
-	if (forestOnly)
-		++staleStats_.zonesForestOnly; // only the forest word differs: the shipped tile stays (kenshi-k16.7.74)
-	if (verdict != kworld::StaleVerdict::Fresh && !forestOnly)
-	{
-		report.decision.choice = verdict == kworld::StaleVerdict::Stale
-			? NativeChoice::Rebaked : NativeChoice::NotComputable;
-		report.decision.reason = meshes.empty() ? "no shipped tile"
-			: !stored.hasZone ? "no stored zone hash"
-			: verdict == kworld::StaleVerdict::Stale ? "stale hash" : hashes.reason;
-		++(verdict == kworld::StaleVerdict::Stale ? staleStats_.zonesRebaked : staleStats_.zonesNotComputable);
-		std::set<knav::TileCoord> coords;
-		for (int z = own.z0; z <= own.z1; ++z)
-			for (int x = own.x0; x <= own.x1; ++x)
-				coords.insert({ x, z });
-		settle(report, coords, false);
-		staleStats_.checkMs += msSince(start);
-		staleReports_[key] = std::move(report);
-		return true;
-	}
-	// A fresh zone keeps its shipped world mesh; each interior is checked on its own.
-	report.decision.choice = NativeChoice::Shipped;
-	if (forestOnly)
-		report.decision.reason = "forest only: no folded building, shipped tile kept";
-	++staleStats_.zonesShipped;
-	std::set<knav::TileCoord> rebaked;
-	std::size_t interiorIndex = 0;
-	for (const knav::native::Mesh& mesh : meshes)
-	{
-		if (!mesh.interior())
-			continue;
-		const std::optional<std::uint32_t>& storedHash = stored.interiors[interiorIndex++];
-		std::uint64_t uid = 0;
-		try
-		{
-			uid = std::stoull(mesh.info, nullptr, 16);
-		}
-		catch (const std::exception&)
-		{
-		}
-		const kworld::NavHashSource::InteriorHashes interior = hashSource_->interior(zone, uid);
-		const kworld::StaleVerdict interiorVerdict = kworld::staleVerdict(storedHash, interior.hash, interior.basis);
-		NativeInteriorReport interiorReport;
-		interiorReport.uid = uid;
-		interiorReport.decision.stored = storedHash;
-		interiorReport.decision.ours = interior.hash;
-		if (interiorVerdict == kworld::StaleVerdict::Fresh)
-		{
-			interiorReport.decision.choice = NativeChoice::Shipped;
-			++staleStats_.interiorsShipped;
-		} else {
-			interiorReport.decision.choice = interiorVerdict == kworld::StaleVerdict::Stale
-				? NativeChoice::Rebaked : NativeChoice::NotComputable;
-			interiorReport.decision.reason = !storedHash ? "no stored interior hash"
-				: interiorVerdict == kworld::StaleVerdict::Stale ? "stale hash" : kworld::staleReason(interior.basis);
-			if (interiorVerdict == kworld::StaleVerdict::Stale)
-				++staleStats_.interiorsRebaked;
-			else
-			{
-				++staleStats_.interiorsNotComputable;
-				if (interior.basis == kworld::NavHashSource::Basis::ChildOrder)
-					++staleStats_.interiorChildOrder;
-				else if (interior.basis == kworld::NavHashSource::Basis::Unpaired)
-					++staleStats_.interiorUnpaired;
-				else if (interior.basis == kworld::NavHashSource::Basis::Unjoined)
-					++staleStats_.interiorUnjoined;
-			}
-			for (const knav::TileCoord& tile : meshTileCoords(config, zone, mesh))
-				rebaked.insert(tile);
-		}
-		report.interiors.push_back(std::move(interiorReport));
-	}
-	if (!rebaked.empty())
-		settle(report, rebaked, true);
+	++staleStats_.zonesRebaked;
+	staleStats_.tilesRebaked += report.rebaked.size();
 	staleStats_.checkMs += msSince(start);
-	const bool replaced = !report.rebaked.empty();
 	staleReports_[key] = std::move(report);
-	return replaced;
+	return true;
 }
 
 bool MeshNavigator::canCover(kworld::ZoneCell zone) const
@@ -1746,9 +1491,8 @@ MeshNavigator::CoverageChange MeshNavigator::setCoverage(const std::vector<kworl
 				cached = nativeRegions_.emplace(key, convertNativeRegion(region.first, region.second)).first;
 			// The original's stale-tile check, on the zones actually wanted: a zone nobody loads is not checked (its
 			// shipped tiles stay in the region's cache until it is), a zone that comes back finds its decision here.
-			if (!cacheOptions_.shippedOnly)
-				for (const kworld::ZoneCell zone : regionZones)
-					applyStaleCheck(cached->second, zone);
+			for (const kworld::ZoneCell zone : regionZones)
+				applyStaleCheck(cached->second, zone);
 			keepZoneTiles(cached->second, regionZones);
 			nativeRecent_.erase(std::remove(nativeRecent_.begin(), nativeRecent_.end(), key), nativeRecent_.end());
 			nativeRecent_.insert(nativeRecent_.begin(), key); // in use order, most recent first
@@ -1953,7 +1697,7 @@ std::vector<std::uint64_t> MeshNavigator::openDoorsOn(const std::vector<state::R
 	std::vector<std::uint64_t> out;
 	for (const state::RoutePortal& p : portals)
 	{
-		const knav::DoorKey door = mesh_.doorOfRef(static_cast<std::uint32_t>(p.ref));
+		const knav::DoorKey door = mesh_.doorOfRef(p.ref);
 		if (door != 0 && mesh_.appliedDoors().get(door).state != knav::DoorState::Locked && std::find(out.begin(), out.end(), door) == out.end())
 			out.push_back(door);
 	}

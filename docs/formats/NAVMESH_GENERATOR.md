@@ -176,6 +176,28 @@ zone-side producer is k16.7.143's (not on this base), the seam edges between a c
 door keys of generated faces (143), `ksim_door_sweep` and the section 10 E rows (they need the wiring: stage 4). Recast faces keep corner heights only.
 Questions: TQ3 carve = union of mask boxes (k16.7.142 UNSURE) used here.
 
+## 0d. Stage 4 status (kenshi-k16.7.145, current as of 2026-11-24)
+
+Code: `knav/zone_gen.hpp` / `src/knav/zone_gen.cpp`, `knav/assemble.cpp`, wired in `MeshNavigator::bakeNativeZone`. Switch: `NativeCacheOptions::surfaceBuilder` (Shapes by default; env `KSIM_NAV_SURFACE=recast` forces Recast), a byte of the zone cache key; `kNativeCacheRecipe` 53 on this branch (the lead assigns the merge number; the assembly changes since 53 need a bump).
+
+**What runs.** A walkable building with `interior terrain` 0 and an interior mask (`AreaBuilding::mask`) is generated (`surfgen::generate`, interior side and zone side) only when its box plus 16 u meets the zone's tile window (a neighbour zone's building touches none of the window's tiles; its own zone generates it). A building the generator throws on, or one that has doors but whose generated surfaces hold no door face (a town gate: ksim_raid_goals' locked gate had no door polygon), stays in the Recast pass. Recast bakes without the generated buildings; every tile of the window that a generated building's box (+16 u) touches is built by `assembly::assembleTile`; those tiles are never kept from the shipped navtiles (stale check, fresh zones too). A tile the assembly returns empty for (over the 512-polygon cap or the vertex limit, or an exception) is baked again from every shape (fallback by tile square). The log line `nav surface generator zone X,Z: ...` names each fallen-back tile with its reason (`over the polygon cap (n polygons from r Recast faces, z zone-side, world w, i interiors of f faces)`).
+
+**The assembly** (`assembleWorld` + `nativeTiles`):
+- `recastFaces` converts the Recast tile: polygon corner heights come from `tile->verts` (`detailVerts` holds only the extra vertices; reading it for the corners gave 30 of 146 corners another vertex's height at the Hub bar tile and was the cause of the earlier plane-off and island symptoms); a polygon whose detail vertices all lie within 0.25 u of its corner plane stays ONE face (outline keeps the detail vertices on its edges), else its detail triangles are the faces.
+- Cutters (the mask hull, one per mask shape) cut the Recast faces over the mask box's own heights, as the Recast carve does; ground far under a raised floor (the Hub bar's, 1561 under 1576) stays. Generated faces cut the Recast faces within 18 u above them.
+- Seam pairing (`meshOf`): boundary edges on one line (1 u, up to `Settings::seamStep` 5 u apart in height) become opposite pairs, so `nativeTiles` joins the polygons cut from them as a step. Only Recast + zone-side pairs and zone-side + zone-side of ONE building pair; Recast + Recast (its corners weld when the heights are read right), zone-side of two buildings and interiors never pair, so a wall stays a wall (`knav_assemble` pins each case; the Recast-only case fails without the guard). The 1 u line tolerance is the zone-side face ending where it rises 0.25 u over the terrain, 0.3-0.8 u off the footprint the ground is cut at (the Hub bar ramp foot).
+- Every edge still open is `linked`: a streaming link joins only an edge of the same corners the other way round; the tile border becomes a Detour portal.
+- `generateBuildings` runs on 4 threads, results in the area's order; `bakeNativeZone` keeps its last 6 results (dropped for a zone and its eight neighbours when `standBuildings` adds a placement; `addPlacement` is the gatherer's only mutator).
+- surfgen guards: the T-junction repair takes at most 256 inserted corners per piece (the cold-bake runaway of 16-18 GiB: two corners 2 lattice steps apart at x 70141 inserted in turns for ever); edge matching uses a 4 u grid (same output). Hub zone generation 25 s -> 1-6 s. `KSIM_NAV_GEN_LOG=1` logs each building as it starts.
+
+**Measured** (Hub zones 20,31..21,32 + 20,33): 23-25 buildings generated, 0 failed, 65 tiles assembled; 2 fell back (373,594 692 polygons, 373,595 703: generated interiors of 385 / 377 faces plus the world faces). Far zones: 12,35 13 of 45 tiles fell back, 46,16 and 47,16 about 8 each: all the polygon cap (a dense generated interior alone is 300-600 faces).
+
+**Open.**
+- Bar counter neck: the 1.4 u strip between two obstacle boxes is narrower than a body of radius 4; `ksim_town_bar_realHub` passes with the current assembly (oracle question: does the Recast furniture-ring lane rule match Havok here? unverified).
+- Polygon cap: a generated interior of 300-600 faces fills a tile; coplanar-face merging in surfgen (or a higher cap) is what takes the fallback list down. `nativeTiles` also merges coincident polygons (same corners: a door piece held by interior and zone side), because Detour raycast loops forever between them (`stats.duplicates`).
+- Not done: the door sweep, the E rows and the determinism run (navmesh tests are off, user 2026-11-23); `standBuildings` still bakes a whole zone with generation on the sim thread (k16.7.175).
+Deviations: D1 pruning of the Recast mesh runs before assembly, so ground under a generated building is pruned/kept as the Recast seeds decide. Recast is NOT bit for bit inside assembled tiles (its faces come from the detail); tiles without a generated building are unchanged. Questions: TQ5 zone-side faces of a building whose zone tile is another zone's window are built by that zone's own bake only.
+
 **Build order** (items under kenshi-k16.7):
 
 | Stage | Work | Gate |
@@ -444,3 +466,196 @@ Tests added with the implementation need `cpp/tests/validity/` rows (class, sour
 - **UQ10** (terrain simplification algorithm; only for the terrain stage) the `hkaiSimplification` behaviour behind the 100 / 15 / 10 numbers (section 7).
 
 - **Shipped gate after the stage-0 hull, rebased on ksim 27b76536 (kenshi-k16.7.142, 2026-11-23).** Against ksim's baseline (under 298, over 681): under 315, over 723, covered 96.589%, surplus 4.416%. 44 of 221 zones move, all by a few pairs (e.g. 19,29 under 5->15; 55,34 under 3->11; 18,51 over 39->47; 12,35 over 17->22; 25,50 over 11->16); no per-building report exists. The earlier run with the hull forced off reproduced the base exactly, so the rise is the hull's kept upper floors (intended, k16.7.131 replaces the Recast link). Baseline regenerated with `--write-baseline`. The hull code is unchanged since b5a45900.
+
+## 12. Objects on our ground (kenshi-k16.7.193, 2026-11-25; implementation kenshi-k16.7.194)
+
+User 2026-11-25: "Placing every object on that new navmesh (needs a bit of design, but it should be a simple merge, not a recast); That's rocks,
+iron mines, machines, bedrolls, features, outhouses, windmills, whatever..." Input: the object census (kenshi-k16.7.187,
+`docs/reviews/2026-11-25-object-census/README.md`, figures below are from it). An **object** is any placed thing with collision that is not a
+masked building: zone placements without an interior mask, collided foliage (rocks, ore rocks, fallen trees), cutter discs and map features.
+Masked buildings stay sections 0-6 (interior + zone side), joined to the ground by kenshi-k16.7.188; an object uses the same machinery as a
+building with no mask ("with no mask: keep everything", section 0), so there is one rule set, not a second generator.
+
+**The rule, per shape, from the use the data already gives it** (`kworld::NavUse`, `collision.cpp:983-987`, `:1130-1180`):
+
+| use | from | the ground | its own faces |
+|---|---|---|---|
+| none (IGNORE) | path mode 0, `is node`, seat furniture, ore zone placements (no parts) | untouched | none |
+| Projected | path mode 1, cutter discs (`navmesh cutter` radius) | cut at every height under its xz cover | none |
+| Obstacle | path mode 2, `is unwalkable roof` parts, collided foliage | cut by the span rule: (ground + 0.1, ground + 18] | none |
+| Walkable | path mode 3, `walkable` foliage, **map features that are bridges** (O2: other features are Obstacle) | cut by the span rule | up-facing faces, as below |
+
+So: bedrolls, campfires, tents, turrets, torches, farms, ore markers: nothing (census 1: ~2,000 IGNORE placements, as today). Barrels,
+generators: a hole. Mines, windmills, rocks, market stalls, wells: a hole, no top. Wall-walks, gates' ramps, outhouses, walkboards, platforms,
+walkable rocks and fallen trees, bridges: a hole plus their walkable tops. Every other collided map feature (cliff blocks, wrecks, rock arches): a hole, no top (O2). No class gets its own branch; a census
+class that needs one is a finding against this table, raised on kenshi-k16.7.194 before it is coded.
+
+**Walkable tops** (Walkable shapes only):
+1. Faces: section 3's walkable rule on the object's shapes (weld 0.1 u within a shape, slope <= 60 deg, UQ6), the cut rule F4 between its own
+   shapes and against other objects' solids above them, planar merge (section 5). Narrow faces stay (rwh.288).
+2. Terrain cut: each face is split where it crosses the terrain surface (`knav::ground`'s grid triangles, not the simplified mesh), and pieces
+   more than 0.25 u under it are dropped: the underground tail of a ramp, a bridge's buried ends, a sunk footing (walls sit 40-80 u under ground,
+   census 1). A face within 0.25 u of the terrain over its area is coplanar ground: the ground owns it, the face is dropped (no double floor).
+3. Link: object faces to ground faces and to each other through the edge matcher of section 6 / kenshi-k16.7.188 (step 5 u, the code's `matchStep`; section 0's 10 u linked Heft's roof to its
+   ramparts, kenshi-ffmi.3; separation 2 u, overlap 0.2 u, rwh.289), the edges split at the overlap ends (F11). The ground's cut line under a top lies on the cutter's xz outline, so
+   a ramp foot meets the ground edge where the ground resumes.
+4. Prune: a component that reaches the ground (directly or through other kept components, buildings' zone sides included) stays; the rest is
+   dropped, the dropped area reported per record (F5). The census' floating cases (High Walkway +40, Lagoon Platform +332, Wall Spotlight
+   +85) are kept only if a ramp or a building reaches them.
+5. Output keyed by record + scale + destroyed state in the object's own frame (section 0 "keyed by layout"); the terrain cut, link and prune
+   run per placement in the window.
+
+**Map features** get collision first: kworld places each MAP_FEATURES placement whose record names a `collision` file (1,629 placements in
+176 records) with its pose and non-uniform scale, use Walkable, unfilled (BRIDGE_FEATURE.md, kenshi-k16.7.183 folded into 194). Their
+cliff blocks and rock arches are single meshes 1,300-2,400 u deep: the terrain cut (2) removes everything under the ground, the slope rule
+removes the walls.
+
+**Which feature is a bridge: the deck rule** (ksim 2026-11-25, after O2; no record names, no list, kenshi-k16.7.197). Map features carry
+no use flag, so the table's "bridges" means geometry: an up-facing feature face is a **deck face** when the clear space straight under it,
+down to the terrain or the next solid of any shape, exceeds characterHeight (18 u, the cut rule's own number) over at least half of its
+area. Deck faces are Walkable tops (steps 1-5); every other face of a feature is Obstacle (it cuts, no top). Cliff blocks and wreck pieces,
+solid down into the ground, only cut; bridges keep their decks; a rock arch keeps its top only as a deck, and step 4's prune drops a deck
+that nothing reaching the ground links to. The rule does not depend on whether the original drops cliff tops as non-walkable or as
+unreachable (196's unsure 1). The shipped mesh is not the target for bridges: it has a broken strip on the Metal Arch Bridge that the user
+could not cross (BRIDGE_FEATURE.md), and 1 of 914 cells on the 345 u deck at (12399, -29427). Zone placements and foliage keep the table
+as is: their use is in the data.
+
+**Windows and run time.** The ground is built per window (GROUND_NAVGEN.md); an object belongs to every window its xz bound touches, the
+window's clip keeps the part inside, the rim rule keeps the seam vertices equal. An object placed or removed at run time (construction,
+destruction, a scenario) rebuilds the windows its bound touches with the same steps; nothing is patched in place.
+
+**Data oddities, by rule not by name:** an object whose every shape is more than 0.25 u under the terrain cuts nothing and keeps no face (the 6
+Pontoon Bridge placements at y -41,000 .. -92,000, census `outliers.tsv`); reported, not special-cased.
+
+**UNSURE, measured in 194 before its tests are written** (against the shipped navtiles, `knav_compare --at`, no oracle round needed):
+- O1: path-mode-2 tops (mine hulls, windmill towers, market stall roofs, rocks) are not walkable in the original. Default: no faces. **Confirmed.**
+- O2: map features' tops other than bridges (cliff blocks, wrecks, rock arches) are walkable in the original. Default: yes (Walkable). **Refuted, row changed.**
+- O3: an object top coplanar with the terrain (within 0.25 u) is ground, not a second face. Default: the ground owns it. **Confirmed.**
+- O4: the cut base 0.1 u / 18 u holds for objects as for buildings (UQ4). Default: the same rule. **Confirmed.**
+A measured "no" changes the table above in one row, recorded here with the figures.
+
+**Measured (kenshi-k16.7.196, 2026-11-25).** Method: `cpp/tools/knav_object_probe` (`knav_object_probe docs/reviews/2026-11-25-object-census/records.tsv [--tol T]`)
+places the census' sample sites (3 per record: first, middle, last placement; 1,746 sites, 585 zone placements of every class of census section 1, 439 map
+features of section 2, 722 foliage samples with a collision file or a cutter radius of section 3) exactly as the census did, and lays a vertical-ray grid
+(step 1-12 u) over each object's xz bound. Per cell it has the object's hits, the span-rule verdict of `ground.cpp` (cut or kept) and the terrain
+(`knav::ground`'s 36 u grid). The shipped world meshes of the zone and its 8 neighbours (interiors left out; `knav::native::loadTile`, the tool behind
+`knav_compare --at`, which was also run by hand on the first sites: Wind Generator (-83250, -37395) has no native face over its tower, the ground beside
+it is at the terrain) are sampled at each cell centre. "Face within T of y" = a native face whose height at the cell is within T u of y. Per-site rows:
+`docs/reviews/2026-11-25-object-census/probe_sites.tsv` (T = 3). T = 1 gives the same answers with lower rates, said below. The shipped faces are coarse in
+height: only 28 % of ring points beside the objects have a native face within 1 u of our terrain grid (T = 3: about half; a site only counts as "ground
+beside it" when >= 90 % of the cells touching the object have one, 267 of 1,746 sites; both are shown where they differ).
+
+- **O1 (confirmed; the default stands).** An up-facing top of an Obstacle-use object (highest hit of the cell, > 0.25 u over the terrain) has a native face
+  within 1 u of it in 1,062 of 488,153 cells (0.2 %; T = 3: 0.3 % for rocks, 0-1 % elsewhere). Tops over 6 u (below that a top is within the
+  tolerance of the ground face itself), T = 1: mine / quarry machines 0 of 27,628 cells (Quarry Mine B 57914, -119668: 1 of 561; Hybrid Stone Mine II -61061, -110901: 0
+  of 592; Stone Mine VI 87845, -88664: 0 of 568); windmills 0 of 1,226 (T = 3 per site: Wind Generator 56574, -119376: 0 of 139; -83250, -37395: 0 of 78; Wind Generator II
+  -24853, -103428: 0 of 70); path-mode-2 props (market stalls, scaffolds, wrecks) 456 of 82,576 (0.6 %; Market Stall A -82815, -37762: 0 of 751; B -82483, -37578: 0 of 474;
+  C -82433, -37740: 0 of 565); collided foliage (rocks, ore rocks) 39 of 290,406 (ResourceRock-IRON01 -12833, -144021: 0 of 197; Blister_Rock01 -27800, -90069:
+  0 of 1,673; Canyonland_FatTop01 -78597, -75807: 0 of 758); generators, lamps, farm / well objects, pm1 barrels and crates, cages and training props, no-mask buildings' pm2 parts: 11 of 51,256. The few hits are tops within 1-2 u of the ground (a crate, a stone), which the ground face covers. So: no faces for Obstacle tops.
+- **O2 (refuted for every feature but the bridges; the table's Walkable row changed).** Map-feature tops (Walkable use in the probe): native face
+  within 1 u of the top in 5 % of 1.04 M top cells (T = 3: 8.7 %), 19-27 % of the cells at <= 60 u over the terrain, 5 % over 60 u; of 160 records with >= 100 top cells, 4
+  have >= 50 % (T = 1): Metal_Arch_Bridge (2,328 cells, 51 %; per site 598 of 604 at -54433, -95121 and 785 of 810 at 9394, 114220, but 1 of 914 at 12399, -29427: that
+  placement's deck, 345 u up, has no native face), Trestle_Bridge001 (1,154, 88 %: 499 of 556 at -45980, -55948; 577 of 598 at -49481, -55123), and two
+  Outpost01_RUIN junk pieces (Concrete_Junk05, Metal_Junk01). The rest, by site: Canyonland_Zone_Cliffblock_01 1668 of 4345 (-85611, -130729; T = 3), Cliffblock_04 0 % (-69917,
+  -100642); ROCK-Arch_Type_01 184 of 7,879 (-30922, -18912), 79 of 4,069 (-39785, -13909), 1 of 2,818 (-29849, -17110); Barge WreckPiece02 0 of 449 (93381, 50112), 18 of 439 (63681, 7206);
+  Ashland / First Civ wrecks 0-24 % per record; Fossil LegBone01 726 of 2,003 (1605, 50650) and Generic Rock Cog 394 of 564 (43005, -65076) are the partial exceptions. The census'
+  per-class Walkable use for features is wrong for all but bridges: **table row changed** to "Obstacle unless a bridge". How the generator tells a bridge without a name is
+  a question for the lead (candidates: a deck whose underside clears the terrain by more than 18 u over most of its span, as the Metal Arch Bridge does, 84 % of
+  its sample lines in the census; the BRIDGE_FEATURE.md record list). Open: whether the native bake simply drops a top it cannot reach (the cliff plateaus
+  have no ramp) rather than refuses the mesh; this cannot be separated with the shipped tiles alone (**UQ**: oracle, one cliff block with a ramp).
+- **O3 (confirmed).** Where the highest up face of a cell lies within 0.25 u of the terrain (4,368 cells at 1,746 sites, all classes), the native mesh has one
+  face within 0.5 u of the terrain in 945 cells, none in 3,423 (no ground there: the object stands in a hole or on a slope the native rejects), and **two
+  faces in none**. By class: map features 225 one / 865 none; collided foliage 481 / 1,884; walkable foliage 20 / 268; wall gates 41 / 8; wall ramps 11 / 2; pm3 walkboards 57 / 18;
+  outhouses 9 / 10; walkable no-mask buildings 15 / 11. Sites: Defensive Gate III, Defensive Wall Ramp IV and Swamp Walkboard
+  (-62079, 33594; 109289, -1918) are one face each. So the ground owns a coplanar top, one face, no second floor.
+- **O4 (confirmed: 0.1 u at the foot, 18 u under the span).** Obstacle-use classes (foliage, mines, windmills, generators, lamps, farms, pm1 / pm2 props, cages),
+  cells by the object's top over the terrain, share with no native face within 3 u of the terrain (the "hole"), sites with ground round them / all sites:
+  top <= 0.1 u: 8-11 % at sites with ground round them (the baseline; 61-72 % over all sites, where the native has no ground beside the object either);
+  0.1-0.25 u: 79-86 % / 80-82 %; 0.25-0.5: 83-90 %; 0.5-1: 86-91 %; 1-2: 94-96 %; 2-4: 96-98 %; 4-8: 98-99 %; 8-18: 100 %; > 18: 99-100 %. The lowest object
+  that leaves a hole is therefore **0.1-0.25 u** high (1,188 cells; T = 1: 82 %), which is the rule's 0.1 u. Walkable-use classes (walls, gates,
+  ramps, boards) read 0-20 % because their own top is the face within 3 u; they are not evidence either way. The 18 u upper end, by the clearance under the
+  object (lowest hit over the terrain, cells whose lowest hit is an underside): 0.1-4 u 97 %, 4-8 97 %, 8-12 97 %, 12-16 96-98 %, 16-18 92 %, **18-20 53 % / 50 %**,
+  20-24 9-12 %, 24-32 5-11 %, 32-64 5-8 %, > 64 2-18 % (sites with ground round them; the baseline is 5-12 %). The native mesh keeps its ground under an object
+  with 20 u or more of clearance and loses it under less than 18: the rule's 18 u is where the measurement turns. The same rule, no change.
+
+Limits: the shipped mesh's height is coarse against our grid (the T = 1 / T = 3 pair above brackets it); the tops are the highest up face of each cell, not every
+layer (a stall's inner floor, a bridge's lower deck are not counted); site counts are 3 per record, rates are cell-weighted so the huge features dominate O2.
+
+**Status (kenshi-k16.7.194 / kenshi-k16.7.197, 2026-11-25), steps 1-5 in.** Done in 194: kworld places every MAP_FEATURES placement whose record names a
+readable `collision` file (`CollisionLibrary::addFeature`; Walkable, unfilled; `AreaGeometry::features`, outside `flatShapes()` / `areaDigest()`, so the Recast bake
+and the nav cache key do not move); `gatherCutters` adds them as cutters. Done in 197, all in `knav::ground` (`Gen::tops`, `Gen::linkTops`, `ground.cpp`):
+- A `Cutter` carries `top` (None / Zone / Deck) and a `label`. Zone: the Walkable-use shapes of a building with no interior mask and of walkable foliage;
+  Deck: the Walkable-use shapes of map features. A masked building's tops stay surfgen's. A convex solid's triangles are wound outward at the gather.
+- Step 1 faces: up-facing triangles at most 60 deg (`topSlopeDeg`), one polygon each; the feature deck test (below); the window's xz box clips them.
+  Step 2 terrain cut: each face is clipped to the grid's terrain triangles (the diagonal rule of `build`), and over each the part more than 0.25 u above the
+  terrain stays (the line where the two planes differ by 0.25 u); a face wholly above every terrain sample under its box skips the split. F4: the span rule of
+  the ground cut (`cutByCutter`, now shared with the ground cut) against every cutter above the face, its own shape's other faces included (hits within 0.05 u of
+  the face's own plane do not count). Pieces under 0.04 u2 or thinner than 0.02 u are dropped. Step 3 link: `linkTops`, after the planar merge (the tops go through
+  the same Hertel-Mehlhorn pass as the ground, no merge across the two since they share no vertices): boundary edges of different faces, at least one a top, run against
+  each other (cos < -0.9), within 2 u in xz over 0.2 u or more, at most 5 u step at both ends of the overlap; stretches are claimed longest first, edges are split
+  at the overlap ends (each edge at its own end, ends within 0.01 u snap), and the sub-edges are paired as opposite edges (`Edge::oppositeEdge`; the two sides may
+  differ in height). Step 4 prune: union-find over shared edges and links; a component stays when it holds a ground seed point or a rim edge (a top's seed test is
+  skipped: a bridge over a seed point proves nothing); the dropped top area is reported per `Cutter::label` (`Stats::topDropped`; a placement id, "foliage" or
+  "feature @ x, z"; shapes carry no record name). Step 5: this is per window; keying by record + scale is not done (the ground is built per window, nothing is cached).
+  `Params::keepLooseTops` keeps the pruned tops (debug). Stats: `topShapes / topTris / deckTris / deckRejected / topPieces / topFaces / topLinks / topDropped* /
+  msTops / msLink / underTerrain / topFaceIndex`. No Recast call anywhere on the path.
+- The deck rule is in `Gen::clearUnder`: from the face down, the first surface decides: an underside (down-facing hit: the cooker's winding) means the face tops a solid,
+  and the clear space is from that underside to the next top surface or the terrain (none when the underside is not above the terrain: a solid standing in the ground);
+  a top surface or nothing means a sheet, clear down to it or the terrain. A face is a seed when more than 18 u is clear under half of its samples
+  (1-16 per triangle). **Deviation D1:** a face of the same shape that touches a seed (shares a vertex) and has any clear space under it (> 0.1 u) is a deck face too,
+  flooded from the seeds: the deck's end spans meet the rim with less than 18 u under them, and with the per-face rule alone the Metal Arch Bridge broke 100 u short of
+  the ground at both ends (its 226 triangles are 30-60 u long). A face standing solid on the ground never qualifies, and a shape whose seed faces cover under `deckShapeShare` (0.2) of its up-facing area is no deck at all (F1), so cliff tops stay out.
+- The feature gather uses the shape's reach against the window (`CollisionLibrary::featureReach`, the largest model vertex distance times the largest scale axis), not
+  only `positionCell` +-1 (ksim's comment on the bead).
+
+**Measured (kenshi-k16.7.197).** Tests: `knav_ground`, `knav_ground_features`, `knav_ground_objects` (new), `knav_surfgen`.
+- Metal Arch Bridge, windows +-1200 u: 53 / -32184: one component of 688 faces over 1,291 u, 13 ground links within 150 u of each end; -54433 / -95121: 649 faces over
+  1,161 u, 17 / 17; 12399 / -29427 (the 345 u deck): 867 faces over 1,224 u, 19 / 9. The canyon floor under the arch stays covered (76 of 122, 112 of 118, 86 of 134 deck
+  vertices 60+ u up). The parts of the shape that reach nothing are dropped (-54433: 527 faces, 42,186 u2).
+- Fixture sites (`knav_ground_objects`, the census README's first sample site per class, a sampling box of the object's reach; hole = ground area lost against the same
+  window built without obstacles; tops = a top face in the box whose component reaches a ground face over a link): building with no mask, wall ramp, outhouse, pm3
+  walkboard, walkable foliage (TreeFall01), Trestle and Metal Arch bridges: hole + tops linked. Mines, windmill, generator, pm1 barrel, pm2 stall, Obstacle foliage,
+  cage, gate (masked): hole, no top. Ore node, turret, camp bed, torch, farm, pm0, grass: no hole. An isolated wall segment: hole, its wall-walk top is dropped (no ramp
+  reaches it; the ramp site links its wall-walk to the ground over 313 faces in 200 u). Rock arch (-30922, -18912): hole, 199 top faces in reach, not linked (kept by the
+  window rim: the arch is bigger than the sampling window). Wreck piece: hole, no top (1,132 faces dropped).
+- The 6 Pontoon Bridge placements: every one reports 5-10 shapes wholly under the window's lowest terrain (`Stats::underTerrain`), which cut and keep nothing.
+- Time per window (this VM, one thread, `generateBox`): a +-300 u window 0.35-1.2 s, of which gather ~0.3-0.5 s, tops 0.001-0.15 s and link up to 0.18 s (Heft patch
+  800 u: tops 4 ms + link 1 ms of 467 ms; Trestle site: 153 + 178 ms of 1.2 s). Zone 46.16 (Heft, 4,608 u): total 3.3 s: tops 0.68 s + link 0.81 s, 20,522
+  top faces of 22,329 faces (8,574 more dropped), 53,011 links.
+
+**Findings (class that needs its own rule: reported, not coded).**
+- F1, cliff blocks (FIXED, kenshi-k16.7.200): the face test alone passed the faces of a block whose underside overhangs the terrain by more than 18 u (Canyonland_Zone_Cliffblock_01
+  at -85611, -130729: 97 of 260 up faces; 2,404 faces linked to the ground). **Second condition, picked by measurement: a shape-level seed share** (`Params::deckShapeShare` = 0.2): a
+  feature shape's tops count only when its seed faces cover at least 20 % of its up-facing area (area-weighted); below it the shape is
+  no deck and every face is Obstacle. Measured with `knav_ground_objects` `OBJ_SITE` (+-300 u reach, +-700 u window; "kept" = linked top faces; `DECK_SHAPE` / `DECK_SLOPE` env
+  override the params), 77 of 439 feature sites of 196's `probe_sites.tsv` (all 38 with >= 50 % native share and a sample of the rest) plus the fixture sites; native share =
+  196's per-site share of top cells with a shipped face within 3 u:
+
+  | Candidate | Cliffblock_01 / _04 | Metal Arch (-54433, 12399, 53; the 9394, 114220 site has no top even without the rule: unsure, not checked) | Trestle (2 sites) | rock arch, wreck (5 sites) | native >= 50 % sites kept (of 38; 30 kept by the face test alone, 8 have no top at all) |
+  |---|---|---|---|---|---|
+  | none (face test + D1) | kept 2,404 / none | kept | kept | none (no seeds) | 30 |
+  | (b) slope cap 40 deg | kept 2,405 | kept | **-45980 broken (2 of 1,089 faces)** | none | 25 |
+  | (b) slope cap 30 deg | kept 2,340 | kept (a few faces less) | **both broken** (0 / 0) | none | not counted |
+  | (a) shape share 0.5 | dropped | kept | **-45980 broken** (2) | none | 12 |
+  | (a) shape share 0.25 | dropped | kept | kept (-49481: 22 of 25, -45980: 1,087 of 1,089) | none | 21 |
+  | **(a) shape share 0.2 (picked)** | dropped (share < 0.1: S = 0.05 keeps it, 0.1 drops it) | kept (333 / 365 / 307 top faces, unchanged) | kept (1,089 of 1,089; unchanged to S = 0.3) | none | 21 (as 0.25) |
+
+  Why not the slope cap: a cliff block's overhang slopes are shallow, so a cap of 30-40 deg keeps 97 % of its linked faces while it cuts the Trestle Bridge's own ramps. Why
+  0.2: the cliff block's share lies between 0.05 and 0.1 and the Trestle Bridge's is above 0.3 (it breaks at 0.4) and the Metal Arch Bridge keeps all its faces at every S tried; 0.2 sits in the gap (S = 0.1 and 0.3 give the same three sites). The records the share drops although their shipped share is >= 50 % are rock formations, not bridges (RockStack01-04, Rock Cog,
+  Cave-Spirng, Barge WreckPiece01, Fossil LegBone01, ROCK-Arch_Type_03: 9 of the 38); ksim's call is that the shipped mesh is not the target for decks, so they stay Obstacle. The
+  records it keeps although their shipped share is under 50 %: Outpost01_RUIN junk (0.22-0.27), Gravel-Pile02 and AshChimneyFunnel (the same overhang geometry; a
+  share rule cannot tell them from a deck). Raw sweep rows were not kept (the working files are under the dev worker's scratch dir for kenshi-k16.7.200). D1 stays: the flood still
+  runs inside a shape that passed.
+- F2, cutter discs (FIXED, kenshi-k16.7.199): the Projected disc of `navmesh cutter` foliage is a 12-sided prism with side walls and no caps, so the hit test never
+  cut the ground. `Gen::cut` now also takes the xz outline of a Projected cutter's vertical walls (deduplicated segments): the ground is split along them and a piece
+  is dropped when its centre is inside (even-odd), at every height, open or closed. FOLIAGE_Boulder01 at -71596, 616 now shows its hole (asserted).
+- F3, mounted turrets stand on wall-walks: their site shows the wall's top (IGNORE adds nothing).
+- F4, tops touching the window rim are kept even when no ground links them (the rim rule); the neighbour window decides. A bridge cut by the window rim keeps its half.
+- F5, drop report per placement id or feature position, not record name (WorldShape has none).
+- F6, Heft: tops are 92 % of the faces of zone 46.16's mesh (walls, floors and stairs of no-mask buildings: 1,893 shapes); the mesh grows 12-fold. A consumer that wants a
+  smaller ground can drop the tops on a distance rule or merge at 0.99 planarity more aggressively; not tuned.
+
+**Done when (kenshi-k16.7.194):** (O1-O4 measured, kenshi-k16.7.196, above); every class of census 1-3 has a
+fixture site that shows its row of the table (hole, no hole, top linked to the ground); the Metal Arch Bridge is walkable deck to deck
+end to end, joined at both rims, the canyon floor under the arch walkable; the Pontoon outliers report and are otherwise inert; no Recast
+call on the path that builds a window with objects; generation time per window reported.

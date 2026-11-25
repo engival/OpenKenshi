@@ -18,6 +18,7 @@
 #include "ksim/core/state.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -185,5 +186,11 @@ struct DialogueEvent
 	std::uint64_t subject = 0; // the target (the criminal)
 	int event = 0;
 };
+
+// The bounty a freshly created character's CHARACTER record rolls (rwh.193 section 2, Character::vf111), for every new character (a new-game
+// member and a world spawn alike; a loaded one never calls it): chance c fires at randInt(0,100) < c (c/101); the amount is `bounty amount` +
+// int(randInt(0, int(fuzz*2)) * 0.5) per faction of `bounty factions`, United Cities when the list is empty. `rngState` is the roll's stream
+// (left advanced); nullopt when the record has no chance or the roll missed.
+std::optional<state::CrimeRecord> rollSpawnBounty(const kdata::GameData& gameData, std::string_view character, std::uint64_t& rngState, double nowHours);
 
 } // namespace ksim::crime

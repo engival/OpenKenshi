@@ -30,9 +30,6 @@ inline constexpr double kDropRadius = 2400.0;
 inline constexpr std::uint64_t kIntervalTicks = 20;
 // The use point is the walkable point nearest the placement within this (3D).
 inline constexpr double kUseSnap = 60.0;
-// A zone placement has no collision bounds read (UNSURE): a quarry is a rock cluster cut out of the navmesh, its nearest walkable point
-// 60-80 u off its origin (South Stone Camp, kenshi-gzto), so it snaps this far (per axis) instead.
-inline constexpr double kPlacementSnap = 150.0;
 
 inline constexpr const char* kDefaultClip = "stonemine";
 

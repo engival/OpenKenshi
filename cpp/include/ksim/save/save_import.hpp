@@ -101,6 +101,8 @@ struct Report
 	std::vector<PlatoonResult> platoons; // one per PLATOON record
 	std::map<std::string, std::size_t> byOutcome;
 	std::vector<std::string> staleFiles; // platoon files no record names
+	std::size_t playerBuildings = 0; // of those, the player faction's own: a PlayerBuilding entity each (owner, state)
+	std::size_t playerTowns = 0; // PlayerTown entities made from the player buildings' town hand (townC / townCS)
 	std::size_t savedBuildings = 0; // the save's own buildings (a player town) the loaded zones lack, stood in the world (World::addPlacedBuilding)
 	std::size_t savedBuildingsNav = 0; // ... of them with collision and a patch bake (needs a native mesh)
 	std::size_t savedBuildingTiles = 0; // ... the nav tiles the patch replaced

@@ -1,6 +1,7 @@
 #include "ksim/law/crime.hpp"
 
 #include "ksim/core/clock.hpp"
+#include "ksim/core/rng.hpp"
 #include "ksim/world/factions.hpp"
 #include "ksim/ai/perception.hpp"
 #include "ksim/combat/stealth_ko.hpp"
@@ -8,6 +9,7 @@
 #include "ksim/core/simulation.hpp"
 
 #include "kdata/gamedata.hpp"
+#include "kworld/gamedata.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -266,6 +268,40 @@ void addFlat(state::CrimeRecord& record, std::string_view holder, std::int32_t a
 	bounty.amount += amount;
 	bounty.stamp = nowHours;
 	record.committed = true;
+}
+
+std::optional<state::CrimeRecord> rollSpawnBounty(const kdata::GameData& gameData, std::string_view character, std::uint64_t& rngState, double nowHours)
+{
+	const kdata::Record* record = gameData.find(character);
+	if (record == nullptr || record->intOr("bounty chance", 0) <= 0)
+		return std::nullopt;
+	RngStream rng(rngState == 0 ? 1 : rngState);
+	const bool fires = rng.between(0, 100) < record->intOr("bounty chance", 0);
+	std::optional<state::CrimeRecord> out;
+	if (fires)
+	{
+		const std::int32_t fuzz = record->intOr("bounty amount fuzz", 0);
+		const std::int32_t amount = record->intOr("bounty amount", 0) + static_cast<std::int32_t>(static_cast<double>(rng.between(0, fuzz * 2)) * 0.5);
+		out.emplace();
+		if (const kdata::RefCategory* factions = record->findRefs("bounty factions"))
+		{
+			for (const kdata::RefEntry& entry : factions->entries)
+			{
+				if (!entry.opaqueEntry)
+					addFlat(*out, entry.targetID, amount, nowHours);
+			}
+		}
+		if (out->bounties.empty())
+		{
+			for (const kdata::Record* faction : gameData.byType(kworld::itemTypeByName("FACTION")))
+			{
+				if (faction->name == "United Cities")
+					addFlat(*out, faction->stringID, amount, nowHours);
+			}
+		}
+	}
+	rngState = rng.state();
+	return out;
 }
 
 bool erase(state::CrimeRecord& record, std::string_view holder)
@@ -1085,7 +1121,8 @@ void Simulation::stepCrime(std::uint64_t now)
 				crimeObserver_(caught);
 			}
 			perception::notice(*combat_->find(observerId), held.id); // 140854d10 force-notices the criminal (the arrow's record)
-			// HOOK: when the observer is the victim (record.victimChar == observerId) it retaliates (1405cb0a0).
+			if (record.victimChar == observerId)
+				combat_->markHostile(observerId, held.id); // the victim retaliates (1405cb0a0): the criminal is a temp enemy, tag 4
 			const int event = crime::witnessEvent(record.crime, record.victimChar == observerId);
 			// EV_KIDNAPPING_MY_ALLY needs a friend of the victim (CRIME_STATIC 1 / 15, witnessEvent's note).
 			const bool allyEvent = event == 0x3a && !victimIsOwn && factions.relation(observerSide, record.victimFaction) < crime::kFriendlyRelation;

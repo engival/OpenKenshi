@@ -801,6 +801,17 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 						(unsigned)cs->second.source, stepName ? stepName : "none", (unsigned)cs->second.stepEnum, (unsigned)cs->second.stepIndex, (unsigned)cs->second.stepCount,
 						(unsigned long long)cs->second.targetId, cs->second.targetX, cs->second.targetZ);
 				}
+				{	// the engage trigger (row 34): why and when the current target was picked; unknown values print as numbers, the cause as the character's name when known
+					const simlink::CharStats& e = cs->second;
+					const char* bn = simlink::CharStats::engageBasisName(e.engageBasis), *sn = simlink::CharStats::engageSenseName(e.engageSense);
+					char basis[32], sense[32], cause[96];
+					if (bn) { snprintf(basis, sizeof basis, "%s", bn); } else { snprintf(basis, sizeof basis, "%u", (unsigned)e.engageBasis); }
+					if (sn) { snprintf(sense, sizeof sense, "%s", sn); } else { snprintf(sense, sizeof sense, "%u", (unsigned)e.engageSense); }
+					const auto cc = sim.decoder().chars.find(e.engageCause);
+					if (e.engageCause && cc != sim.decoder().chars.end() && !sim.decoder().str(cc->second.look.name).empty()) { snprintf(cause, sizeof cause, "\"%s\" (%llu)", sim.decoder().str(cc->second.look.name).c_str(), (unsigned long long)e.engageCause); }
+					else { snprintf(cause, sizeof cause, "%llu", (unsigned long long)e.engageCause); }
+					printf("  engage: %s / %s, cause %s, tick %llu\n", basis, sense, cause, (unsigned long long)e.engageTick);
+				}
 				if (cs->second.hasProgress || cs->second.hasCarry || cs->second.hasResist)	// the stats window tail (rows 21-23): carry kg, resist, each skill's bar
 				{
 					printf("  window carry %.1f/%.1f kg resist %.0f%% progress:", cs->second.carryKg, cs->second.carryMaxKg, cs->second.damageResist * 100);

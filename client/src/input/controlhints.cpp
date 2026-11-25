@@ -677,7 +677,8 @@ HINT_KIND("menu_pick_up", "Pick up / Put down");
 HINT_KIND("menu_put_down", "Pick up / Put down");
 HINT_KIND("menu_open", "Open / Close, Unlock");
 HINT_KIND("menu_close", "Open / Close, Unlock");
-HINT_KIND("menu_unlock", "Unlock, Pick Lock, Bash");
+HINT_KIND("menu_lock", "Lock, on an owned door the server allows it on (MENU_ENTRIES bit 19)");
+HINT_KIND("menu_unlock", "Unlock (MENU_ENTRIES bit 20), Pick Lock, Bash");
 HINT_KIND("menu_bash", "Unlock, Pick Lock, Bash");
 HINT_KIND("menu_lockpick", "Unlock, Pick Lock, Bash");
 HINT_KIND("menu_take_all", "Open, Take all, Pick");
@@ -786,11 +787,11 @@ void thing_menu(Hover& h, uint64_t id, const Context& ctx)
 		if (t->state == simlink::Interactable::kClosed) { menu_row(h, "menu_open", "Open", "open", id, order(1)); }
 		if (t->state == simlink::Interactable::kOpen) { menu_row(h, "menu_close", "Close", "close", id, order(2)); }
 		// unlock: the server allows the door's owner faction only; bash: any shut door, until it breaks (state 3)
-		if (t->state == simlink::Interactable::kLocked)
-		{
-			menu_row(h, "menu_unlock", "Unlock", "unlock", id, order(11));
-			menu_row(h, "menu_lockpick", "Pick Lock", "lockpick", id, order(3));
-		}
+		// Lock / Unlock (MENU_ENTRIES bits 19 / 20, order 60 action 21 / 11): offered only when the server's answer to order 99 sets the bit; no guess
+		// from the door's state or owner, so an unanswered query (-1) offers neither (kenshi-3k8m)
+		if (ctx.entries >= 0 && (ctx.entries & (1u << simlink::SimLinkDecoder::kMenuLockBit))) { menu_row(h, "menu_lock", "Lock", "lock", id, order(simlink::SimLinkDecoder::kActionLockDoor)); }
+		if (ctx.entries >= 0 && (ctx.entries & (1u << simlink::SimLinkDecoder::kMenuUnlockBit))) { menu_row(h, "menu_unlock", "Unlock", "unlock", id, order(simlink::SimLinkDecoder::kActionUnlockDoor)); }
+		if (t->state == simlink::Interactable::kLocked) { menu_row(h, "menu_lockpick", "Pick Lock", "lockpick", id, order(3)); }
 		if (shut) { menu_row(h, "menu_bash", "Bash", "bash", id, order(12)); }
 	}
 }

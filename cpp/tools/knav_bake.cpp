@@ -11,7 +11,7 @@
 #include "knav/native.hpp"
 #include "knav/navmesh.hpp"
 #include "knav/seeds.hpp"
-#include "knav/world.hpp"
+#include "knav/zone_gen.hpp"
 #include "kworld/heightmap.hpp"
 
 #include <DetourNavMesh.h>
@@ -40,96 +40,28 @@ double secondsSince(Clock::time_point from)
 	return std::chrono::duration<double>(Clock::now() - from).count();
 }
 
-void setSeeds(knav::NavWorld& world, const std::vector<knav::Point>& seedsDef, const kworld::Heightmap& terrain,
-	const knav::AreaGeometry& area, kworld::ZoneCell min, kworld::ZoneCell max)
+// The tiles of zone cells min..max, one zone at a time through the cutover bake (knav::bakeZone: knav::ground + surfgen).
+std::vector<knav::BakedTile> bakeRange(knav::AreaGatherer& gatherer, const kworld::Heightmap& terrain, const std::vector<knav::Point>& seedsDef,
+	kworld::ZoneCell min, kworld::ZoneCell max, int threads, double& gatherSeconds)
 {
-	std::vector<knav::Point> seeds = knav::zoneSeeds(terrain, area, seedsDef, min, max, world.mesh().config().waterLevel);
-	const std::vector<knav::Point> origins = knav::buildingSeeds(area);
-	seeds.insert(seeds.end(), origins.begin(), origins.end());
-	world.setSeeds(std::move(seeds), knav::doorSeedsOf(area));
-}
-
-// --trace: the seeds that keep the surface nearest `at` (a seed keeps the connected set of its nearest polygon).
-void traceSeeds(const knav::NavMesh& mesh, const knav::Point& at, const std::vector<knav::Point>& seedsDef,
-	const kworld::Heightmap& terrain, const knav::AreaGeometry& area, kworld::ZoneCell min, kworld::ZoneCell max)
-{
-	const knav::PolyComponents components(mesh, 0xffff);
-	const knav::NavQuery query(mesh, 65535);
-	knav::PolyLoc where;
-	if (!query.locate(at, { 4.0f, 50.0f, 4.0f }, where))
-	{
-		std::cout << "trace: no surface near the point\n";
-		return;
-	}
-	const std::uint32_t label = components.at(where.tileX, where.tileZ, where.poly);
-	std::cout << "trace: surface at " << where.point[1] << ", connected set " << label << "\n";
-	const std::pair<const char*, std::vector<knav::Point>> sources[] = {
-		{ "zone", knav::zoneSeeds(terrain, area, seedsDef, min, max, mesh.config().waterLevel) },
-		{ "building origin", knav::buildingSeeds(area) },
-		{ "door", knav::doorSeeds(mesh, knav::doorSeedsOf(area), mesh.config().waterLevel) },
-	};
-	std::optional<knav::Point> nearest;
-	const auto flat = [&](const knav::Point& p) { return std::hypot(p[0] - at[0], p[2] - at[2]); };
-	for (const auto& [name, seeds] : sources)
-	{
-		for (const knav::Point& seed : seeds)
+	std::vector<knav::BakedTile> tiles;
+	for (int z = min.z; z <= max.z; ++z)
+		for (int x = min.x; x <= max.x; ++x)
 		{
-			if (!query.locate(seed, knav::kSeedReach, where) || components.at(where.tileX, where.tileZ, where.poly) != label)
-				continue;
-			std::cout << "  " << name << " " << seed[0] << " " << seed[1] << " " << seed[2] << "\n";
-			if (!nearest || flat(seed) < flat(*nearest))
-				nearest = where.point;
+			const kworld::ZoneCell zone{ x, z };
+			const auto step = Clock::now();
+			const knav::AreaGeometry area = gatherer.gather(zone, zone);
+			gatherSeconds += secondsSince(step);
+			const knav::NavConfig zoneConfig = knav::configForWorldZones(zone, zone);
+			knav::ZoneGenReport report;
+			for (knav::BakedTile& tile : knav::bakeZone(zoneConfig, terrain, area, knav::zoneBakeSeeds(terrain, area, seedsDef, zone, zoneConfig.waterLevel), threads, &report))
+				tiles.push_back(std::move(tile));
+			for (const std::string& id : report.failedIds)
+				std::cerr << "knav_bake: zone " << x << "," << z << ": building not generated: " << id << "\n";
+			if (report.overfullTiles != 0)
+				std::cerr << "knav_bake: zone " << x << "," << z << ": " << report.overfullTiles << " tiles over " << knav::kMaxPolysPerTile << " polygons left out\n";
 		}
-	}
-	if (!nearest)
-		return;
-	// The way up from the nearest seed: where the surface climbs is where it joins what the original keeps apart.
-	const knav::PathResult path = query.findPath(*nearest, at, { 4.0f, 50.0f, 4.0f });
-	std::cout << "path from the nearest seed (" << (path.complete ? "complete" : "partial") << "):\n";
-	for (const knav::Point& p : path.points)
-	{
-		std::cout << "  " << p[0] << " " << p[1] << " " << p[2] << "\n";
-		// The building shapes under the point: the part that carries it.
-		for (const knav::AreaBuilding& building : area.buildings)
-		{
-			for (std::size_t i = 0; building.shapes && i < building.shapes->size(); ++i)
-			{
-				const kworld::WorldShape& shape = (*building.shapes)[i];
-				if (p[0] < shape.min[0] - 1 || p[0] > shape.max[0] + 1 || p[2] < shape.min[2] - 1 || p[2] > shape.max[2] + 1
-					|| p[1] < shape.min[1] - 2 || p[1] > shape.max[1] + 2)
-					continue;
-				std::cout << "    " << building.id << " " << building.placed.buildingID << " shape " << i << " use "
-					<< static_cast<int>(shape.use) << (shape.solid ? " solid" : "") << (shape.closed ? " closed" : "")
-					<< " y " << shape.min[1] << ".." << shape.max[1] << ", " << shape.indices.size() / 3 << " tris\n";
-				if (shape.half != std::array<float, 3>{})
-					std::cout << "      box at " << shape.actor[0] << " " << shape.actor[1] << " " << shape.actor[2] << " half " << shape.half[0]
-						<< " " << shape.half[1] << " " << shape.half[2] << " axes " << shape.axes[0] << " " << shape.axes[1] << " " << shape.axes[2]
-						<< " / " << shape.axes[3] << " " << shape.axes[4] << " " << shape.axes[5] << " / " << shape.axes[6] << " " << shape.axes[7]
-						<< " " << shape.axes[8] << "\n";
-				if (std::getenv("KNAV_TRACE_VERTS"))
-				{
-					for (std::size_t v = 0; v + 2 < shape.vertices.size(); v += 3)
-						std::cout << "      v " << shape.vertices[v] << " " << shape.vertices[v + 1] << " " << shape.vertices[v + 2] << "\n";
-				}
-			}
-		}
-	}
-	// The mask hulls over the target: how far outside each plane it is (positive = clipped).
-	for (const knav::AreaBuilding& building : area.buildings)
-	{
-		for (std::size_t i = 0; building.shapes && i < building.shapes->size(); ++i)
-		{
-			const kworld::WorldShape& shape = (*building.shapes)[i];
-			if (!shape.keepInside || at[0] < shape.min[0] || at[0] > shape.max[0] || at[2] < shape.min[2] || at[2] > shape.max[2])
-				continue;
-			std::cout << "mask of " << building.id << " at " << building.placed.x << " " << building.placed.y << " " << building.placed.z
-				<< " scale " << building.placed.scale << ", shape " << i << " y " << shape.min[1] << ".." << shape.max[1] << ":";
-			for (const auto& plane : *shape.keepInside)
-				std::cout << " " << plane[0] * at[0] + plane[1] * at[1] + plane[2] * at[2] - plane[3];
-			std::cout << "\n";
-			break;
-		}
-	}
+	return tiles;
 }
 
 // Walkable area by polygon area id (the last bucket: every door's own id), pruned polygons left out.
@@ -166,109 +98,60 @@ std::string areaTotals(const knav::NavMesh& mesh)
 }
 
 // One file per region, gathered from game data loaded once.
-int bakeWorld(const std::string& dataDir, const std::string& dir, const int (&regions)[4], int threads, float radius, bool prune,
-	const std::optional<knav::Point>& trace)
+int bakeWorld(const std::string& dataDir, const std::string& dir, const int (&regions)[4], int threads)
 {
 	std::filesystem::create_directories(dir);
 	const auto terrain = kworld::Heightmap::open(dataDir + "/newland/land/fullmap.tif");
 	const auto start = Clock::now();
 	knav::AreaGatherer gatherer(dataDir, terrain);
-	const std::vector<knav::Point> seedsDef = prune ? knav::readSeedsDef(knav::native::navtilesDir(dataDir)) : std::vector<knav::Point>{};
+	const std::vector<knav::Point> seedsDef = knav::readSeedsDef(knav::native::navtilesDir(dataDir));
 	std::cout << "load: " << secondsSince(start) << " s\n";
-
-	std::size_t tiles = 0;
-	std::size_t polys = 0;
+	std::size_t tiles = 0, polys = 0;
 	std::uintmax_t bytes = 0;
-	double gatherSeconds = 0.0;
-	double bakeSeconds = 0.0;
+	double gatherSeconds = 0.0, bakeSeconds = 0.0;
 	for (int rz = regions[1]; rz <= regions[3]; ++rz)
 	{
 		for (int rx = regions[0]; rx <= regions[2]; ++rx)
 		{
 			const kworld::ZoneCell min{ rx * knav::kRegionZones, rz * knav::kRegionZones };
 			const kworld::ZoneCell max{ min.x + knav::kRegionZones - 1, min.z + knav::kRegionZones - 1 };
-			auto step = Clock::now();
-			const knav::AreaGeometry area = gatherer.gather(min, max);
-			const double gathered = secondsSince(step);
-
-			step = Clock::now();
-			knav::NavConfig config = knav::configForWorldZones(min, max);
-			config.agentRadius = radius;
-			knav::NavWorld world(config, terrain, area.foliage);
-			for (const knav::AreaBuilding& building : area.buildings)
-				world.setBuilding(building.id, building.shapes, building.nav);
-			if (prune)
-				setSeeds(world, seedsDef, terrain, area, min, max);
-			world.bakeAll(threads);
-			const double baked = secondsSince(step);
-			if (trace)
-				traceSeeds(world.mesh(), *trace, seedsDef, terrain, area, min, max);
-
+			const auto step = Clock::now();
+			double gathered = 0.0;
+			std::vector<knav::BakedTile> baked = bakeRange(gatherer, terrain, seedsDef, min, max, threads, gathered);
+			const double seconds = secondsSince(step);
+			const knav::NavMesh mesh = knav::NavMesh::fromTiles(knav::configForWorldZones(min, max), std::move(baked));
 			const std::string path = dir + "/" + knav::regionFileName(rx, rz);
 			std::filesystem::remove(path); // may be a read-only hard link into the bake cache: never write through it
-			world.mesh().save(path);
-			tiles += world.mesh().tiles().size();
-			polys += world.mesh().polyCount();
+			mesh.save(path);
+			tiles += mesh.tiles().size();
+			polys += mesh.polyCount();
 			bytes += std::filesystem::file_size(path);
 			gatherSeconds += gathered;
-			bakeSeconds += baked;
-			std::cout << path << ": " << world.mesh().tiles().size() << " tiles, " << world.mesh().polyCount()
-				<< " polys, gather " << std::fixed << std::setprecision(1) << gathered << " s, bake " << baked
-				<< " s\n  " << areaTotals(world.mesh()) << "\n" << std::flush;
+			bakeSeconds += seconds - gathered;
+			std::cout << path << ": " << mesh.tiles().size() << " tiles, " << mesh.polyCount() << " polys, gather " << std::fixed << std::setprecision(1)
+				<< gathered << " s, bake " << seconds - gathered << " s\n  " << areaTotals(mesh) << "\n" << std::flush;
 		}
 	}
-	std::cout << "total: " << tiles << " tiles, " << polys << " polys, " << bytes << " bytes, gather "
-		<< gatherSeconds << " s, bake " << bakeSeconds << " s on " << threads << " thread(s)\n";
-	knav::printBakeProfile(std::cout);
+	std::cout << "total: " << tiles << " tiles, " << polys << " polys, " << bytes << " bytes, gather " << gatherSeconds << " s, bake " << bakeSeconds
+		<< " s on " << threads << " thread(s)\n";
 	return 0;
 }
 
 // The Hub-sized single-file bake.
-int bakeSingle(const std::string& dataDir, const std::string& out, kworld::ZoneCell min, kworld::ZoneCell max, int threads, float radius,
-	bool prune)
+int bakeSingle(const std::string& dataDir, const std::string& out, kworld::ZoneCell min, kworld::ZoneCell max, int threads)
 {
-	const auto seconds = secondsSince;
-auto start = Clock::now();
 	const auto terrain = kworld::Heightmap::open(dataDir + "/newland/land/fullmap.tif");
-	const knav::AreaGeometry area = knav::gatherArea(dataDir, terrain, min, max);
-	std::cout << "gather: " << seconds(start) << " s, " << area.buildings.size() << " buildings, "
-		<< area.foliage->size() << " foliage shapes\n";
-
-	knav::NavConfig config = knav::configForZones(min, max);
-	config.agentRadius = radius;
-	start = Clock::now();
-	knav::NavWorld world(config, terrain, area.foliage);
-	for (const knav::AreaBuilding& building : area.buildings)
-		world.setBuilding(building.id, building.shapes, building.nav);
-	if (prune)
-		setSeeds(world, knav::readSeedsDef(knav::native::navtilesDir(dataDir)), terrain, area, min, max);
-	world.bakeAll(threads);
-	const double bakeSeconds = seconds(start);
-	const knav::NavMesh& mesh = world.mesh();
+	knav::AreaGatherer gatherer(dataDir, terrain);
+	const std::vector<knav::Point> seedsDef = knav::readSeedsDef(knav::native::navtilesDir(dataDir));
+	const auto start = Clock::now();
+	double gathered = 0.0;
+	std::vector<knav::BakedTile> tiles = bakeRange(gatherer, terrain, seedsDef, min, max, threads, gathered);
+	const knav::NavMesh mesh = knav::NavMesh::fromTiles(knav::configForWorldZones(min, max), std::move(tiles));
 	std::filesystem::remove(out); // may be a read-only hard link into the bake cache: never write through it
 	mesh.save(out);
-
-	const auto& c = area.coverage;
-	std::cout << "bake: " << bakeSeconds << " s on " << threads << " thread(s)\n"
-		<< "tiles: " << mesh.tiles().size() << " of " << config.tilesX * config.tilesZ
-		<< ", polys: " << mesh.polyCount() << ", cache: " << std::filesystem::file_size(out)
-		<< " bytes (" << out << ")\n"
-		<< "building placements: " << c.placements << ": " << c.placementsWithCollision
-		<< " with collision, " << c.placementsRenderOnly << " render mesh only, "
-		<< c.placementsNoGeometry << " no geometry, " << c.placementsMissingTarget << " missing target\n"
-		<< "parts: " << c.parts << ": " << c.partsWithCollision << " collision, "
-		<< c.partsRenderOnly << " render only (skipped), " << c.partsNoGeometry << " none, "
-		<< c.partsFlagged << " passable/no-collision, " << c.partsFileUnreadable << " unreadable file, "
-		<< c.partsRuinRemoved << " ruin upper floors\n"
-		<< "path modes: ignore " << c.pathModes[0] << ", projected " << c.pathModes[1]
-		<< ", obstacle " << c.pathModes[2] << ", walkable " << c.pathModes[3]
-		<< "; gateways " << c.gatewayPlacements << "\n"
-		<< "doors: " << c.doors << " placed, " << c.doorsWithoutCollision << " without collision; "
-		<< mesh.doorKeys().size() << " have polygons in the mesh\n"
-		<< "foliage instances: " << c.foliageInstances << ", with collision: " << c.foliageWithCollision << " (walkable " << c.foliageWalkable
-		<< "), navmesh cutters " << c.foliageCutters << "\n"
-		<< "interior furniture: " << c.furniture << " pieces, " << c.furnitureWithCollision << " with collision\n";
-	knav::printBakeProfile(std::cout);
+	std::cout << "bake: " << secondsSince(start) << " s (gather " << gathered << " s) on " << threads << " thread(s)\n"
+		<< "tiles: " << mesh.tiles().size() << ", polys: " << mesh.polyCount() << ", cache: " << std::filesystem::file_size(out) << " bytes (" << out << ")\n"
+		<< "doors: " << mesh.doorKeys().size() << " have polygons in the mesh\n";
 	return 0;
 }
 
@@ -280,11 +163,7 @@ int main(int argc, char** argv)
 	std::string worldDir;
 	int regions[4] = { 0, 0, kworld::kZoneCellsPerAxis / knav::kRegionZones - 1, kworld::kZoneCellsPerAxis / knav::kRegionZones - 1 };
 	int threads = 4;
-	float radius = knav::NavConfig{}.agentRadius;
-	bool prune = true;
 	std::string cacheRoot = std::getenv("KNAV_BAKE_CACHE") ? std::getenv("KNAV_BAKE_CACHE") : KNAV_BAKE_CACHE_DEFAULT;
-	std::optional<knav::Point> trace;
-	knav::BakeTuning tuning;
 	kworld::ZoneCell min{ 19, 31 };
 	kworld::ZoneCell max{ 21, 33 };
 	for (int i = 1; i < argc; ++i)
@@ -294,44 +173,10 @@ int main(int argc, char** argv)
 			out = argv[++i];
 		else if (arg == "--threads" && i + 1 < argc)
 			threads = std::atoi(argv[++i]);
-		else if (arg == "--radius" && i + 1 < argc)
-			radius = static_cast<float>(std::atof(argv[++i]));
-		else if (arg == "--trace" && i + 3 < argc)
-		{
-			trace = knav::Point{ static_cast<float>(std::atof(argv[i + 1])), static_cast<float>(std::atof(argv[i + 2])),
-				static_cast<float>(std::atof(argv[i + 3])) };
-			i += 3;
-		}
 		else if (arg == "--cache" && i + 1 < argc)
 			cacheRoot = argv[++i];
 		else if (arg == "--no-cache")
 			cacheRoot.clear();
-		else if (arg == "--no-prune")
-			prune = false;
-		else if (arg == "--no-flat")
-			tuning.flatTiles = false;
-		else if (arg == "--ledge" && i + 1 < argc)
-		{
-			const std::string name = argv[++i];
-			tuning.ledge = name == "off" ? knav::BakeLedge::Off : name == "drops" ? knav::BakeLedge::Drops : knav::BakeLedge::Recast;
-		}
-		else if (arg == "--partition" && i + 1 < argc)
-		{
-			const std::string name = argv[++i];
-			if (name == "watershed")
-				tuning.partition = knav::BakePartition::Watershed;
-			else if (name == "monotone")
-				tuning.partition = knav::BakePartition::Monotone;
-			else if (name == "layers")
-				tuning.partition = knav::BakePartition::Layers;
-			else
-			{
-				std::cerr << "knav_bake: unknown partition " << name << "\n";
-				return 2;
-			}
-		}
-		else if (arg == "--detail-cells" && i + 1 < argc)
-			tuning.detailSampleCells = static_cast<float>(std::atof(argv[++i]));
 		else if (arg == "--world" && i + 1 < argc)
 			worldDir = argv[++i];
 		else if (arg == "--regions" && i + 4 < argc)
@@ -347,32 +192,25 @@ int main(int argc, char** argv)
 		} else {
 			std::cerr << "usage: knav_bake [--out FILE] [--threads N] [--zones X0 Z0 X1 Z1]\n"
 				"       knav_bake --world DIR [--regions RX0 RZ0 RX1 RZ1] [--threads N]\n"
-				"       --radius R  erosion radius (default 4; the original bakes at 0 and keeps clearance at query time)\n"
-				"       --no-prune  keep the regions no seed reaches (roofs, sealed rooms; knav/seeds.hpp)\n"
-				"       --trace X Y Z  (world bake) list the seeds that keep the surface nearest that point\n"
-				"  speed switches (default: the reference bake, flat tiles on):\n"
-				"       --no-flat  --partition watershed|monotone|layers  --detail-cells N (0 = off)  --ledge recast|drops|off\n"
-				"  KNAV_PROFILE=1 prints per-stage CPU time\n";
+				"  a zone is knav::bakeZone: knav::ground + surfgen (kenshi-k16.7.189)\n";
 			return 2;
 		}
 	}
 
 	try
 	{
-		knav::setBakeTuning(tuning);
 		const std::string dataDir = KENSHI_DATA;
 
 #ifdef _WIN32
 		if (!cacheRoot.empty())
 			std::cerr << "knav_bake: the result cache is POSIX-only; baking uncached\n";
 #else
-		if (!cacheRoot.empty() && !trace)
+		if (!cacheRoot.empty())
 		{
 			// Thread count and the output path do not change the bytes (knav_bake_threads).
 			std::ostringstream key;
 			key << "recipe " << kBakeRecipeVersion << "\nsrc " << KNAV_BAKE_SRC_HASH << "\ndata " << dataDir << " "
-				<< knavcache::dataStamp(dataDir) << "\nradius " << radius << " prune " << prune << "\ntuning " << tuning.flatTiles << " "
-				<< static_cast<int>(tuning.ledge) << " " << static_cast<int>(tuning.partition) << " " << tuning.detailSampleCells << "\n";
+				<< knavcache::dataStamp(dataDir) << "\n";
 			if (!worldDir.empty())
 				key << "world " << regions[0] << " " << regions[1] << " " << regions[2] << " " << regions[3] << "\n";
 			else
@@ -396,8 +234,8 @@ int main(int argc, char** argv)
 						return 3;
 					}
 #endif
-					return worldDir.empty() ? bakeSingle(dataDir, (data / "bake.knav").string(), min, max, threads, radius, prune)
-						: bakeWorld(dataDir, data.string(), regions, threads, radius, prune, trace);
+					return worldDir.empty() ? bakeSingle(dataDir, (data / "bake.knav").string(), min, max, threads)
+						: bakeWorld(dataDir, data.string(), regions, threads);
 				},
 				[&](const std::filesystem::path& data) {
 					if (!worldDir.empty())
@@ -407,8 +245,8 @@ int main(int argc, char** argv)
 				});
 		}
 #endif
-		return worldDir.empty() ? bakeSingle(dataDir, out, min, max, threads, radius, prune)
-			: bakeWorld(dataDir, worldDir, regions, threads, radius, prune, trace);
+		return worldDir.empty() ? bakeSingle(dataDir, out, min, max, threads)
+			: bakeWorld(dataDir, worldDir, regions, threads);
 	} catch (const std::exception& e) {
 		std::cerr << "knav_bake: " << e.what() << "\n";
 		return 1;

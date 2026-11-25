@@ -1,5 +1,6 @@
 #include "kworld/collision_area.hpp"
 
+#include "kworld/coords.hpp"
 #include "kworld/features.hpp"
 #include "kworld/foliage.hpp"
 #include "kworld/gamedata.hpp"
@@ -89,8 +90,31 @@ AreaGeometry AreaGatherer::gather(ZoneCell min, ZoneCell max)
 			if (const InteriorLayout* layout = nav ? s.layouts.of(placed) : nullptr)
 				s.library.addFurniture(placed, *layout, shapes, area.coverage);
 			if (nav)
+			{
+				std::shared_ptr<const std::vector<WorldShape>> maskShapes, localShapes, localMask;
+				if (nav->pathMode == PathMode::Walkable && !nav->interiorTerrain && !shapes.empty())
+				{
+					std::vector<WorldShape> mask;
+					if (s.library.addInteriorMask(placed, mask) && !mask.empty())
+					{
+						maskShapes = std::make_shared<const std::vector<WorldShape>>(std::move(mask));
+						PlacedInstance local = placed;
+						local.x = local.y = local.z = 0.0;
+						local.qw = 1.0;
+						local.qx = local.qy = local.qz = 0.0;
+						CollisionCoverage unused;
+						std::vector<WorldShape> ls, lm;
+						s.library.addBuilding(local, ls, unused);
+						if (const InteriorLayout* layout = s.layouts.of(placed))
+							s.library.addFurniture(local, *layout, ls, unused);
+						s.library.addInteriorMask(local, lm);
+						localShapes = std::make_shared<const std::vector<WorldShape>>(std::move(ls));
+						localMask = std::make_shared<const std::vector<WorldShape>>(std::move(lm));
+					}
+				}
 				area.buildings.push_back({ placementId(placed), placed, *nav,
-					std::make_shared<const std::vector<WorldShape>>(std::move(shapes)) });
+					std::make_shared<const std::vector<WorldShape>>(std::move(shapes)), std::move(maskShapes), std::move(localShapes), std::move(localMask) });
+			}
 		}
 	}
 
@@ -100,6 +124,22 @@ AreaGeometry AreaGatherer::gather(ZoneCell min, ZoneCell max)
 			for (const FoliageInstance& tree :
 				generateFoliage({ x, z }, s.terrain, s.biomes, s.gameData, s.features, s.towns))
 				s.library.addFoliage(tree, foliage, area.coverage);
+	std::vector<WorldShape> featureShapes;
+	for (const FeaturePlacement& feature : s.features.placements())
+	{
+		const ZoneCell cell = feature.positionCell;
+		bool near = cell.x >= min.x - 1 && cell.x <= max.x + 1 && cell.z >= min.z - 1 && cell.z <= max.z + 1;
+		if (!near)
+		{
+			// a long feature (a cliff block, a bridge) placed in a farther cell can still reach the window: its bound against the window box
+			const double reach = s.library.featureReach(feature);
+			near = reach > 0 && feature.x + reach >= zoneMinX(min.x) && feature.x - reach <= zoneMinX(max.x + 1) && feature.z + reach >= zoneMinZ(min.z)
+				&& feature.z - reach <= zoneMinZ(max.z + 1);
+		}
+		if (near)
+			s.library.addFeature(feature, featureShapes);
+	}
+	area.features = std::make_shared<const std::vector<WorldShape>>(std::move(featureShapes));
 	area.foliage = std::make_shared<const std::vector<WorldShape>>(std::move(foliage));
 	return area;
 }

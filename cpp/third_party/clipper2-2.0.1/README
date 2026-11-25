@@ -1,0 +1,4 @@
+Clipper2 2.0.1, pristine upstream: tag Clipper2_2.0.1, commit 21ebba05db8894f0c7217ad35ea518080f324946,
+https://github.com/AngusJohnson/Clipper2 (Boost Software License 1.0, LICENSE).
+Holds only CPP/Clipper2Lib/include and CPP/Clipper2Lib/src. No local edits.
+Used by knav::surfgen for exact integer polygon booleans and offsets (kenshi-ffmi.4).

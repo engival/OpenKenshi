@@ -164,6 +164,7 @@
 #include "world/worldbuildings.hpp"
 #include "world/worldmap.hpp"
 #include "host/app.hpp"
+#include "host/orders.hpp"	// force_pick_thing
 #include "host/pick.hpp"
 #include "host/script.hpp"	// hints_context
 #include "dev/framelog.hpp"
@@ -744,7 +745,7 @@ void open_pick_menu(const PendingMenu& pm)
 			run_menu_action(acts[i]);
 		}, !cageRows.empty());
 	}	// at the cursor (ctx18_static.md)
-	printf("sim menu: open at %.0f %.0f%s%s\n", pm.x, pm.y, pm.entries >= 0 ? (pm.entries & 1 ? " with Talk" : " without Talk") : "", cageRows.empty() ? "" : " with the cage's menu");
+	printf("sim menu: open at %.0f %.0f%s%s\n", pm.x, pm.y, pm.entries >= 0 ? (pm.p.kind == Pick::Door ? (pm.entries & (1u << simlink::SimLinkDecoder::kMenuLockBit) ? " with Lock" : pm.entries & (1u << simlink::SimLinkDecoder::kMenuUnlockBit) ? " with Unlock" : " without Lock / Unlock") : pm.entries & 1 ? " with Talk" : " without Talk") : "", cageRows.empty() ? "" : " with the cage's menu");
 }
 
 // The pending menu opens once everything it asked has answered
@@ -808,7 +809,8 @@ void rmb_hold_menu()
 	if (app.clickDrag >= 6) { app.rmbAt = -1; return; }	// a look drag
 	if (ui::now() - app.rmbAt < kHoldMenu) { return; }
 	app.rmbAt = -1;
-	const Pick p = pick_screen(app.clickX, app.clickY);
+	Pick p = pick_screen(app.clickX, app.clickY);
+	p = force_pick_thing(p);
 	if (p.kind != Pick::Character && p.kind != Pick::Item && p.kind != Pick::Door && p.kind != Pick::Container && p.kind != Pick::Producer) { return; }
 	PendingMenu pm;
 	pm.p = p;
@@ -824,6 +826,11 @@ void rmb_hold_menu()
 			pm.seq = app.sim.menuQuery(p.id);
 			if (!pm.seq) { printf("menu_entries: none (not sent), Talk offered\n"); }
 		}
+	}
+	if (p.kind == Pick::Door && !app.sim.selected().empty())	// an owned door's Lock / Unlock (MENU_ENTRIES bits 19 / 20, kenshi-3k8m): the server's answer decides
+	{
+		pm.seq = app.sim.menuQuery(p.id);
+		if (!pm.seq) { printf("menu_entries: none (not sent), no Lock / Unlock offered\n"); }
 	}
 	if (const simlink::SimLinkDecoder::Cage* cg = p.kind == Pick::Character ? locked_cage(app.sim, p.id) : nullptr)	// a prisoner: its cage's menu beside its own (kenshi-k16.2.105.1)
 	{

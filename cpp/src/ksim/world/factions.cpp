@@ -302,7 +302,7 @@ std::shared_ptr<const FactionBook> FactionBook::build(
 	// A scratch builder only for its world-state test.
 	flecs::world scratch;
 	RngStream unused(1);
-	const SquadBuilder judge(scratch, data, unused);
+	const SquadBuilder judge(scratch, data, unused, 0.0);
 
 	for (const kdata::Record* record : data.byType(campaignType))
 	{
@@ -1055,7 +1055,7 @@ bool UtilityFactionLayer::commission(FactionContext& context, state::FactionAI& 
 	const std::int32_t wanted = static_cast<std::int32_t>(campaign.numForces * tuning_.raidSizeMult);
 	RngStream rng(splitMix64(seed_ ^ splitMix64(context.id)
 		^ splitMix64(context.tick ^ hashOf(campaign.sid))));
-	SquadBuilder builder(context.ecs, book_->data(), rng);
+	SquadBuilder builder(context.ecs, book_->data(), rng, gameHoursIn(context.tick));
 	std::int64_t total = 0;
 	for (const auto& [sid, weight] : campaign.squads)
 		total += weight;

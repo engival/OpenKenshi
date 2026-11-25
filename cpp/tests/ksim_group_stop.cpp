@@ -156,7 +156,7 @@ std::string run(const std::shared_ptr<const CombatData>& data, const kdata::Game
 }
 
 // Two idle players 3 u apart: the one the camera follows is never pushed, the other yields at no more than a walk step per tick.
-std::string followed(const std::shared_ptr<const CombatData>& data, const kdata::GameData& gd, const std::shared_ptr<MeshNavigator>& nav, const std::string& human)
+std::string followed(const std::shared_ptr<const CombatData>& data, const kdata::GameData& gd, const std::shared_ptr<MeshNavigator>& nav, const std::string& human, bool bothFollowed = false)
 {
 	Simulation sim = Simulation::load(KENSHI_DATA, 77);
 	CombatSettings settings;
@@ -178,7 +178,9 @@ std::string followed(const std::shared_ptr<const CombatData>& data, const kdata:
 		f.z = spot->z;
 		ids[i] = sim.spawnFighter(std::move(f)).get<state::Id>()->value;
 	}
-	const_cast<CombatArena*>(sim.combat())->setCameraFollow(ids[0]);
+	sim.enqueue(Command::setCameraFollow(1, ids[0])); // order 52 as session 1 sends it
+	if (bothFollowed)
+		sim.enqueue(Command::setCameraFollow(2, ids[1])); // a second session follows the neighbour
 	const state::Fighter& a = *sim.combat()->find(ids[0]);
 	const state::Fighter& b = *sim.combat()->find(ids[1]);
 	const double ax = a.x;
@@ -192,6 +194,15 @@ std::string followed(const std::shared_ptr<const CombatData>& data, const kdata:
 		maxStep = std::max(maxStep, std::hypot(b.x - px, b.z - pz));
 		px = b.x;
 		pz = b.z;
+	}
+	if (bothFollowed)
+	{
+		// Two followed characters: neither is protected against the other, the NPC rule (0.75 of the overlap per step, each pushing the other) separates them.
+		if (std::hypot(a.x - ax, a.z - az) < 1.0e-6)
+			return "two followed characters: the first was never pushed by the other\n";
+		if (std::hypot(b.x - a.x, b.z - a.z) < 5.0)
+			return "two followed characters did not separate\n";
+		return "";
 	}
 	if (std::hypot(a.x - ax, a.z - az) > 1.0e-6)
 		return "the camera's character was pushed\n";
@@ -267,7 +278,7 @@ int main(int argc, char** argv)
 		const std::string human = idOf(gd, "Escaped Servant");
 		const std::string dog = idOf(gd, "Bonedog");
 		test::require(!human.empty() && !dog.empty(), "no human / Bonedog record");
-		std::string failed = followed(data, gd, nav, human) + patrolled(data, gd, nav, human);
+		std::string failed = followed(data, gd, nav, human) + followed(data, gd, nav, human, true) + patrolled(data, gd, nav, human);
 		const std::vector<std::vector<std::string>> squads = {{human, dog}, {dog, human}, {human, human, human}};
 		for (const auto& squad : squads)
 		{

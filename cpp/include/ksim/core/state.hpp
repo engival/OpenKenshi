@@ -1506,8 +1506,8 @@ struct InventoryEntry
 // nearest it). A stack: `count` of the one item record.
 // A severed limb's tint (rwh42 section 2, task limb-tint, save v104): what `severPart` -> 1400ced10 fits to the item from the victim, kept for the
 // item's life. Colours are 0..1 as the exe stores them (SeveredLimbItem +0x1f4 skin = 1 - the victim's Skin Tone, +0x204 blood = the race's blood
-// colour); the scale is the exe's +0x1e8 vec3 (the Forearm / Calf bone size). OURS/UNSURE: our skin tone is one 0..1 number (FighterLook::skin), so
-// the skin colour is grey, and we have no bone sizes, so the scale is 1 on every axis. `set` is false for every other item.
+// colour); the scale is the exe's +0x1e8 vec3 (the Forearm / Calf bone size, (y, x, z)). Skin is the race's editor Skin Tone palette at
+// FighterLook::skin, the scale comes from the look sliders, the bulk stat and hunger (inventory_orders.cpp, BODY_SHAPE.md). `set` is false for every other item.
 struct LimbTint
 {
 	bool set = false;
@@ -3076,6 +3076,14 @@ struct PlayerBuilding
 	std::uint8_t status = 0; // buildings.hpp BuildStatus
 	std::uint32_t version = 1;
 	std::uint64_t placedTick = 0;
+	// Save v134 (kenshi-k16.7.156): the id of the placement this building stands as in the world (collision, nav, doors: Simulation::standBuildings);
+	// "" = not stood (a scenario's building). A load stands it again at the recorded pose (Simulation::restandBuildings).
+	std::string placement;
+	// Same gate: what an imported placement carries beyond its pose, so the re-stand rebuilds the interior (furniture, nav) as the first stand did.
+	std::string interiorLayout;
+	std::string label;
+	std::uint64_t townHand = 0;
+	double relativeY = 0.0; // the instance's own y (kworld::PlacedInstance::relativeY)
 
 	template <typename Archive, typename Self>
 	static void fields(Archive& ar, Self& self)
@@ -3112,6 +3120,14 @@ struct PlayerBuilding
 		ar(self.status);
 		ar(self.version);
 		ar(self.placedTick);
+		if (ar.version >= 134)
+		{
+			ar(self.placement);
+			ar(self.interiorLayout);
+			ar(self.label);
+			ar(self.townHand);
+			ar(self.relativeY);
+		}
 	}
 };
 

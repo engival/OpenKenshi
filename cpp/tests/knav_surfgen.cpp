@@ -1,7 +1,7 @@
 // The geometric navmesh generator (knav/surfgen.hpp, docs/formats/NAVMESH_GENERATOR.md stage 1, kenshi-k16.7.131) on two buildings of the game data:
-// the Hub bar (Storm House 3384, zone 20,32) and the Desert Paradise Longhouse (record 4028, placed at the original's pose), graded against the
-// numbers of the original's live captures (kenshi-rwh.265 / rwh.270: bar 81 faces / 24,971 u2, Longhouse 76 faces / 61,400 u2). The captures
-// themselves are game-derived and not in the repo; ksim_surfgen_grade compares against them where they are at hand.
+// the Hub bar (Storm House 3384, zone 20,32) and the Desert Paradise Longhouse (record 4028, placed at the original's pose), each baked in its own
+// frame (Input::pose). Checked against our invariants and our own bakes, never against the original's mesh (user 2026-11-24: "surfgen_grade should
+// be considered a dangerous target. The point of switching to our own navmesh everywhere is to unify things.").
 
 #include "kdata/gamedata.hpp"
 #include "knav/area.hpp"
@@ -38,6 +38,8 @@ double area3d(const knav::native::Mesh& mesh, const knav::native::Face& face)
 // Faces reachable from face 0 over matched edges.
 std::size_t reachable(const knav::native::Mesh& mesh)
 {
+	if (mesh.faces.empty())
+		return 0;
 	std::vector<char> seen(mesh.faces.size(), 0);
 	std::vector<std::size_t> stack{ 0 };
 	seen[0] = 1;
@@ -67,9 +69,10 @@ struct Result
 	double area = 0;
 };
 
-Result run(const std::vector<kworld::WorldShape>& shapes, const std::vector<kworld::WorldShape>& mask)
+Result run(const std::vector<kworld::WorldShape>& shapes, const std::vector<kworld::WorldShape>& mask, const kworld::PlacedInstance& placed)
 {
 	knav::surfgen::Input input;
+	input.pose = knav::surfgen::Input::poseOf(placed);
 	for (const kworld::WorldShape& s : shapes)
 		input.shapes.push_back(&s);
 	for (const kworld::WorldShape& m : mask)
@@ -92,7 +95,8 @@ Result run(const std::vector<kworld::WorldShape>& shapes, const std::vector<kwor
 void common(const char* name, const Result& r)
 {
 	std::cout << name << ": " << r.mesh.faces.size() << " faces, 3D area " << r.area << ", matched " << r.report.matchedEdges << ", dropped "
-		<< r.report.droppedFaces << " faces / " << r.report.droppedArea << " u2, overlap " << r.report.overlapArea << "\n";
+		<< r.report.droppedFaces << " faces / " << r.report.droppedArea << " u2, overlap " << r.report.overlapArea << ", components " << r.report.components << ", reached "
+		<< r.report.reachedShare << (r.report.seedSuspect ? " (seed suspect)" : "") << std::endl;
 	test::require(reachable(r.mesh) == r.mesh.faces.size(), "one component: every face reaches every other over matched edges");
 	test::require(r.report.overlapArea < 0.05, "no two faces overlap in xz at the same height (u2)");
 	test::require(r.report.steepFaces == 0, "no face steeper than 48 degrees");
@@ -120,18 +124,20 @@ int main()
 				if (!b.shapes->empty() && b.placed.instanceID.find("4933-Newwworld") != std::string::npos)
 					bar = &b;
 			test::require(bar != nullptr, "the Hub bar is placed in zone 20,32");
-			std::vector<kworld::WorldShape> mask;
-			test::require(library.addInteriorMask(bar->placed, mask), "the bar has an interior mask");
-			const Result r = run(*bar->shapes, mask);
+			test::require(bar->localShapes && bar->localMask && !bar->localMask->empty(), "the bar has an interior mask (and its building-frame copies)");
+			const std::vector<kworld::WorldShape>& mask = *bar->localMask;
+			const Result r = run(*bar->localShapes, mask, bar->placed);
 			common("hub bar", r);
-			// the original's live mesh: 81 faces, 24,971 u2 (acceptance: within 1.5 x the faces)
-			test::require(r.mesh.faces.size() >= 60 && r.mesh.faces.size() <= 121, "bar face count within 1.5 x the original's 81");
-			test::require(std::fabs(r.area - 24971.0) < 0.05 * 24971.0, "bar surface area within 5% of the original's 24,971 u2");
+			// our own bake (the lab's ./run.sh bar: 24,067 u2 in xz, both floors), not the original's mesh (user 2026-11-24: grading against the
+			// original is "a dangerous target")
+			test::require(r.report.area > 20000.0, "the bar's two floors are there (our bake: 24,067 u2 in xz)");
+			test::require(r.report.reachedShare > 0.9 && !r.report.seedSuspect, "the entry reaches the building (our bake: 98 %)");
 			test::require(r.report.droppedArea < 100.0, "pruning removes only specks");
 
 			// stage 2 (kenshi-k16.7.143): the building's zone-side faces, the seam on the mask planes, the door painter on both meshes
 			knav::surfgen::Input zoneInput;
-			for (const kworld::WorldShape& s : *bar->shapes)
+			zoneInput.pose = knav::surfgen::Input::poseOf(bar->placed);
+			for (const kworld::WorldShape& s : *bar->localShapes)
 				zoneInput.shapes.push_back(&s);
 			for (const kworld::WorldShape& m : mask)
 				zoneInput.mask.push_back(&m);
@@ -152,8 +158,7 @@ int main()
 			test::require(gap.xz < 0.1, "the seam is the same line on both sides (plan, 0.1 u)");
 			test::require(gap.y < 0.1, "the two surfaces meet at the seam within 0.1 u in height");
 			test::require(std::fabs(z.report.seamLength - r.report.seamLength) < 0.5, "the seam has the same length on both sides");
-			// the door painter: the door's key on both meshes; the interior's door area is the original's live 14 u2 (13 faces of data 4 on the zone mesh also
-			// cover the terrain, which is stage 3)
+			// the door painter: the door's key on both meshes
 			const kworld::WorldShape* door = nullptr;
 			for (const kworld::WorldShape& s : *bar->shapes)
 				if (s.use == kworld::NavUse::Door)
@@ -169,7 +174,7 @@ int main()
 				}
 				test::require(keyed >= 1, "the door's key is on the face");
 			}
-			test::require(std::fabs(r.report.doorArea - 14.0) < 0.15 * 14.0, "the interior's door area is within 15% of the original's live 14 u2");
+			test::require(r.report.doorArea > 10.0 && r.report.doorArea < 20.0, "the interior's door area: the doorway's width by its depth (our bake: 13.8 u2)");
 			// the entrance steps: planar to 0.1 u; the top (42.3 deg) is a handful of faces of one plane, the biggest holding most of its area
 			double stepsArea = 0, biggest = 0;
 			std::size_t stepFaces = 0;
@@ -205,16 +210,21 @@ int main()
 			placed.scale = 1.0f;
 			placed.hasScale = true;
 			placed.cell = placed.positionCell = kworld::zoneCellOf(placed.x, placed.z);
+			// placed in its own frame (kworld::AreaBuilding::localShapes), the pose carries the mesh into the world
+			kworld::PlacedInstance local = placed;
+			local.x = local.y = local.z = 0.0;
+			local.qw = 1.0;
+			local.qx = local.qy = local.qz = 0.0;
 			std::vector<kworld::WorldShape> shapes, mask;
 			kworld::CollisionCoverage coverage;
-			test::require(library.addBuilding(placed, shapes, coverage).has_value(), "the Longhouse record has collision");
-			test::require(library.addInteriorMask(placed, mask) && mask.size() == 3, "the Longhouse mask is three boxes");
-			const Result r = run(shapes, mask);
+			test::require(library.addBuilding(local, shapes, coverage).has_value(), "the Longhouse record has collision");
+			test::require(library.addInteriorMask(local, mask) && mask.size() == 3, "the Longhouse mask is three boxes");
+			const Result r = run(shapes, mask, placed);
 			common("longhouse", r);
-			// the original: 76 faces, 61,400 u2 (3D); ours also holds some roof surface the capture lacks (grade tool)
-			test::require(r.mesh.faces.size() >= 50 && r.mesh.faces.size() <= 95, "Longhouse face count within 1.25 x the original's 76");
-			test::require(r.area > 0.9 * 61400.0 && r.area < 1.2 * 61400.0, "Longhouse surface area within -10% / +20% of the original's 61,400 u2");
-			// the upper floor (the original's y 1080..1100 band) is connected to the ground floor by the stair
+			// our own bake: 62,286 u2 (3D), 76 % of the floor reached (the rest is roof and ledges the entry does not reach)
+			test::require(r.area > 55000.0, "the Longhouse's floors are there (our bake: 62,286 u2)");
+			test::require(r.report.reachedShare > 0.7 && !r.report.seedSuspect, "the entry reaches the building (our bake: 76 %)");
+			// the upper floor (y 1080..1100 in the world) is connected to the ground floor by the stair
 			double upper = 0;
 			for (const knav::native::Face& f : r.mesh.faces)
 				if (r.mesh.vertices[r.mesh.edges[f.startEdge].a][1] > 1075.0 && r.mesh.vertices[r.mesh.edges[f.startEdge].a][1] < 1100.0)

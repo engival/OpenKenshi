@@ -3,7 +3,9 @@
 
 #include "ksim/world/buildings.hpp"
 #include "ksim/ai/gatebind.hpp"
+#include "ksim/core/clock.hpp"
 #include "ksim/core/rng.hpp"
+#include "ksim/law/crime.hpp"
 #include "ksim/world/world.hpp"
 
 #include "kdata/gamedata.hpp"
@@ -64,10 +66,11 @@ std::string firstRef(const kdata::Record& record, std::string_view category)
 
 } // namespace
 
-SquadBuilder::SquadBuilder(flecs::world& ecs, const kdata::GameData& gameData, RngStream& rng)
+SquadBuilder::SquadBuilder(flecs::world& ecs, const kdata::GameData& gameData, RngStream& rng, double nowHours)
 	: ecs_(ecs)
 	, data_(gameData)
 	, rng_(rng)
+	, nowHours_(nowHours)
 	, squadType_(typeId("SQUAD_TEMPLATE"))
 	, stateType_(typeId("WORLD_EVENT_STATE"))
 {
@@ -154,6 +157,11 @@ void SquadBuilder::addMember(const std::string& sid, flecs::entity squad, std::u
 	character.set<state::MemberRole>(state::MemberRole{list});
 	character.set<state::MemberSlot>(state::MemberSlot{slots_[squad.id()]++});
 	character.add<state::MemberOf>(squad);
+	// The CHARACTER record's spawn bounty (rwh.193 section 2): every new character rolls it. Its own stream off the build stream's state and
+	// the member's Id, so the squad draws after it are unchanged.
+	std::uint64_t bountyRng = splitMix64(rng_.state() ^ (character.get<state::Id>()->value * 0x9E3779B97F4A7C15ULL));
+	if (std::optional<state::CrimeRecord> bounty = crime::rollSpawnBounty(data_, spawned, bountyRng, nowHours_))
+		character.set<state::CrimeRecord>(std::move(*bounty));
 	++characters_;
 }
 
@@ -237,14 +245,14 @@ class Spawner
 {
 public:
 	Spawner(flecs::world& ecs, const kdata::GameData& gameData,
-		const kworld::Towns& towns, std::uint64_t seed, const std::vector<GateSite>* gates, const std::vector<BuildingSite>* buildings)
+		const kworld::Towns& towns, std::uint64_t seed, double nowHours, const std::vector<GateSite>* gates, const std::vector<BuildingSite>* buildings)
 		: ecs_(ecs)
 		, data_(gameData)
 		, towns_(towns)
 		, gates_(gates)
 		, buildings_(buildings)
 		, rng_(streamSeed(seed, kSpawnStream))
-		, builder_(ecs, gameData, rng_)
+		, builder_(ecs, gameData, rng_, nowHours)
 		, townType_(typeId("TOWN"))
 		, squadType_(typeId("SQUAD_TEMPLATE"))
 	{
@@ -882,7 +890,7 @@ SpawnReport spawnDefaultWorld(flecs::world& ecs, const kdata::GameData& gameData
 {
 	state::registerComponents(ecs);
 	ecs.set<state::Clock>(state::Clock{options.startTick});
-	return Spawner(ecs, gameData, towns, options.seed, gates, buildings).run();
+	return Spawner(ecs, gameData, towns, options.seed, gameHoursIn(options.startTick), gates, buildings).run();
 }
 
 } // namespace ksim

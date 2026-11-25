@@ -1,17 +1,25 @@
 #include "knav/surfgen.hpp"
 
+#include "clipper2/clipper.h"
+#include "clipper2/clipper.triangulation.h"
+
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <map>
-#include <numeric>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 namespace knav::surfgen
 {
 
 namespace
 {
+
+namespace c2 = Clipper2Lib;
 
 using P2 = std::array<double, 2>; // x, z
 using P3 = std::array<double, 3>;
@@ -77,22 +85,6 @@ Poly intersect(Poly p, const Poly& c)
 	return p;
 }
 
-// p minus the convex c: the pieces of p outside c, each convex.
-std::vector<Poly> subtract(const Poly& p, const Poly& c, double minArea)
-{
-	std::vector<Poly> pieces;
-	Poly rest = p;
-	for (std::size_t i = 0; i < c.size() && !rest.empty(); ++i)
-	{
-		const Line l = edgeLine(c[i], c[(i + 1) % c.size()]);
-		Poly outside = clipLine(rest, -l.A, -l.B, -l.C);
-		if (outside.size() >= 3 && area(outside) > minArea)
-			pieces.push_back(std::move(outside));
-		rest = clipLine(rest, l.A, l.B, l.C);
-	}
-	return pieces;
-}
-
 Poly hull(std::vector<P2> points)
 {
 	std::sort(points.begin(), points.end());
@@ -146,13 +138,13 @@ struct Plane
 	double at(double x, double z) const { return a * x + b * z + c; }
 };
 
+// A walkable piece of one shape: a coplanar group of a convex solid's up-facing triangles, or one triangle of an open mesh.
 struct Piece
 {
 	Poly poly;
 	Plane plane;
 	std::size_t shape = 0;
-	std::int32_t data = 1;
-	kworld::DoorKey door = 0;
+	std::size_t triangle = SIZE_MAX; // open mesh: the source triangle
 };
 
 struct Solid
@@ -199,9 +191,9 @@ Solid makeSolid(const kworld::WorldShape& s)
 }
 
 // The xz regions of `solid` that obstruct a face on `plane` within [base, top] above it, as convex polygons. `bounds` (xz) rejects early.
-// `skipTriangle`: a triangle of an open shape that IS the face (never cuts itself).
+// `skip` (sorted): triangles of an open shape that ARE the surface (never cut it).
 void footprints(const Solid& solid, const Plane& plane, double base, double top, const P2& bmin, const P2& bmax, double halfWidth,
-	std::vector<Poly>& out, std::size_t skipTriangle = SIZE_MAX)
+	std::vector<Poly>& out, const std::vector<std::size_t>* skip = nullptr)
 {
 	if (solid.max[0] < bmin[0] || solid.min[0] > bmax[0] || solid.max[2] < bmin[1] || solid.min[2] > bmax[1])
 		return;
@@ -262,7 +254,7 @@ void footprints(const Solid& solid, const Plane& plane, double base, double top,
 	}
 	for (std::size_t t = 0; t + 2 < solid.shape->indices.size(); t += 3)
 	{
-		if (t / 3 == skipTriangle)
+		if (skip != nullptr && std::binary_search(skip->begin(), skip->end(), t / 3))
 			continue;
 		struct V
 		{
@@ -308,20 +300,8 @@ void footprints(const Solid& solid, const Plane& plane, double base, double top,
 	}
 }
 
-// Dedup key of a lattice corner.
-struct Key
-{
-	std::int64_t x, z;
-	bool operator<(const Key& o) const { return x != o.x ? x < o.x : z < o.z; }
-	bool operator==(const Key& o) const { return x == o.x && z == o.z; }
-};
-
-Key keyOf(const P2& p, double lattice) { return { std::llround(p[0] / lattice), std::llround(p[1] / lattice) }; }
-
-P2 snap(const P2& p, double lattice) { return { std::round(p[0] / lattice) * lattice, std::round(p[1] / lattice) * lattice }; }
-
 // Walkable faces of one shape: a convex solid gives one polygon per coplanar group of up-facing triangles, an open mesh one per triangle.
-void shapePieces(const Solid& solid, std::size_t shapeIndex, const Settings& cfg, std::vector<Piece>& out, std::vector<std::size_t>* sourceTriangle)
+void shapePieces(const Solid& solid, std::size_t shapeIndex, const Settings& cfg, std::vector<Piece>& out)
 {
 	const kworld::WorldShape& s = *solid.shape;
 	const double minNy = std::cos(cfg.slopeDegrees * kPi / 180.0) - 1e-9;
@@ -366,9 +346,8 @@ void shapePieces(const Solid& solid, std::size_t shapeIndex, const Settings& cfg
 				std::reverse(piece.poly.begin(), piece.poly.end());
 			piece.plane = { -n[0] / n[1], -n[2] / n[1], d / n[1] };
 			piece.shape = shapeIndex;
+			piece.triangle = t / 3;
 			out.push_back(std::move(piece));
-			if (sourceTriangle != nullptr)
-				sourceTriangle->push_back(t / 3);
 			continue;
 		}
 		Cluster* found = nullptr;
@@ -394,28 +373,342 @@ void shapePieces(const Solid& solid, std::size_t shapeIndex, const Settings& cfg
 		piece.plane = { -cl.n[0] / cl.n[1], -cl.n[2] / cl.n[1], cl.d / cl.n[1] };
 		piece.shape = shapeIndex;
 		out.push_back(std::move(piece));
-		if (sourceTriangle != nullptr)
-			sourceTriangle->push_back(SIZE_MAX);
 	}
 }
 
-bool contains(const Poly& p, const P2& q)
+// ---- exact integer regions (Clipper2): corners on the lattice, x -> X, z -> Y
+
+struct Grid
 {
-	for (std::size_t i = 0; i < p.size(); ++i)
-		if (cross2(p[i], p[(i + 1) % p.size()], q) < 0.0)
-			return false;
-	return true;
+	double s; // grid steps per unit
+	c2::Point64 to(const P2& p) const { return c2::Point64(std::llround(p[0] * s), std::llround(p[1] * s)); }
+	P2 from(const c2::Point64& q) const { return { static_cast<double>(q.x) / s, static_cast<double>(q.y) / s }; }
+	c2::Path64 path(const Poly& p) const
+	{
+		c2::Path64 out;
+		for (const P2& v : p)
+			out.push_back(to(v));
+		return out;
+	}
+};
+
+using Key = std::pair<std::int64_t, std::int64_t>;
+Key keyOf(const c2::Point64& p) { return { p.x, p.y }; }
+
+std::int64_t cross64(const c2::Point64& a, const c2::Point64& b, const c2::Point64& c)
+{
+	return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 }
 
-double maxHeightDifference(const Poly& region, const Plane& p, const Plane& q)
+// A convex polygon moved in by w on every side.
+Poly inset(Poly p, double w)
 {
-	double worst = 0.0;
-	for (const P2& v : region)
-		worst = std::max(worst, std::fabs(p.at(v[0], v[1]) - q.at(v[0], v[1])));
-	return worst;
+	const Poly ring = p;
+	for (std::size_t i = 0; i < ring.size() && p.size() >= 3; ++i)
+	{
+		const Line l = edgeLine(ring[i], ring[(i + 1) % ring.size()]);
+		p = clipLine(p, l.A, l.B, l.C - w);
+	}
+	return p;
 }
 
-// ---- faces after the merge, with the matching state
+Poly box(const P2& lo, const P2& hi) { return { lo, { hi[0], lo[1] }, hi, { lo[0], hi[1] } }; }
+
+// The part of `area` where lo <= A x + B z + C <= hi.
+Poly strip(Poly area, double A, double B, double C, double lo, double hi)
+{
+	area = clipLine(area, A, B, C - lo);
+	if (area.size() >= 3)
+		area = clipLine(area, -A, -B, hi - C);
+	return area;
+}
+
+// A convex volume's section (n . p <= d planes, inside) in a plane, clipped to `area`.
+Poly section(Poly area, const Plane& plane, const std::vector<std::array<float, 4>>& planes)
+{
+	for (const auto& h : planes)
+	{
+		area = clipLine(area, -(h[0] + h[1] * plane.a), -(h[2] + h[1] * plane.b), h[3] - h[1] * plane.c);
+		if (area.size() < 3)
+			return {};
+	}
+	return area;
+}
+
+c2::Paths64 inflate(const c2::Paths64& p, double delta, c2::JoinType join, double mitre = 2.0, double arc = 0.0)
+{
+	if (p.empty())
+		return {};
+	return c2::InflatePaths(p, delta, join, c2::EndType::Polygon, mitre, arc);
+}
+
+// The weld: a closing (cracks narrower than 2 w filled) then an opening (slivers narrower than 2 w removed), mitred so corners stay.
+c2::Paths64 weld(const c2::Paths64& r, double w, bool close)
+{
+	if (w <= 0.0)
+		return r;
+	c2::Paths64 out = close ? inflate(inflate(r, w, c2::JoinType::Miter), -w, c2::JoinType::Miter) : r;
+	return inflate(inflate(out, -w, c2::JoinType::Miter), w, c2::JoinType::Miter);
+}
+
+// Corners a grid step or so off the line through their neighbours go: the staircase a boolean's rounding leaves at a shallow bend (one-step
+// edges). Then a union, in case the simplification crossed an edge.
+c2::Paths64 tidy(const c2::Paths64& r)
+{
+	c2::Paths64 out;
+	for (c2::Path64& p : c2::SimplifyPaths(r, 1.5))
+		if (p.size() >= 3)
+			out.push_back(std::move(p));
+	return c2::Union(out, c2::FillRule::NonZero);
+}
+
+// One plane's walkable region.
+struct Surface
+{
+	Plane plane;
+	std::size_t shape = SIZE_MAX; // the lowest shape index among its pieces
+	std::vector<std::size_t> pieces;
+	P2 bmin{ 1e30, 1e30 }, bmax{ -1e30, -1e30 };
+	c2::Paths64 region;
+};
+
+// ---- links between edges
+
+using Interval = std::array<double, 2>;
+using Intervals = std::vector<Interval>;
+
+void subtractInterval(Intervals& set, double a, double b)
+{
+	Intervals out;
+	for (const Interval& v : set)
+	{
+		if (v[1] <= a || v[0] >= b)
+		{
+			out.push_back(v);
+			continue;
+		}
+		if (v[0] < a)
+			out.push_back({ v[0], a });
+		if (v[1] > b)
+			out.push_back({ b, v[1] });
+	}
+	set = std::move(out);
+}
+
+Intervals intersectIntervals(const Intervals& x, const Intervals& y)
+{
+	Intervals out;
+	for (const Interval& a : x)
+		for (const Interval& b : y)
+			if (std::min(a[1], b[1]) > std::max(a[0], b[0]))
+				out.push_back({ std::max(a[0], b[0]), std::min(a[1], b[1]) });
+	std::sort(out.begin(), out.end());
+	return out;
+}
+
+// Keeps the part of [t0, t1] where v0 + (v1 - v0) (t - t0) / (t1 - t0) lies in [lo, hi] (v linear in t).
+bool clipLinear(double& t0, double& t1, double v0, double v1, double lo, double hi)
+{
+	const double dv = v1 - v0, dt = t1 - t0;
+	if (std::fabs(dv) < 1e-12)
+		return v0 >= lo && v0 <= hi;
+	double a = t0 + (lo - v0) / dv * dt, b = t0 + (hi - v0) / dv * dt;
+	if (a > b)
+		std::swap(a, b);
+	const double n0 = std::max(t0, a), n1 = std::min(t1, b);
+	t0 = n0;
+	t1 = n1;
+	return t1 > t0;
+}
+
+// A directed boundary edge, its floor on the left.
+struct Seg
+{
+	P2 a, b;
+	const Plane* plane;
+	std::size_t surface;
+};
+
+// Two edges linked over [t0, t1] of i (length from i.a) and [u0, u1] of j; i's t0 end meets j's u1 end.
+struct Link
+{
+	std::size_t i, j;
+	double t0, t1, u0, u1;
+};
+
+// Links between edges that face each other (antiparallel, B outside A by -0.05 .. matchSeparationMax), over the part where the height step is at
+// most matchStep and nothing solid stands on the path between them (footprints rising more than cutBase above the plane through both edges:
+// a bevelled riser lies on that path, a wall does not). Nearest first, then the smaller step; each part of an edge links once, both ways.
+// `allowed`: when set, the parts of edge i that may link to edge j.
+std::vector<Link> matchEdges(const std::vector<Seg>& segs, const std::vector<Solid>& solids, const Settings& cfg,
+	const std::function<Intervals(std::size_t, std::size_t)>& allowed)
+{
+	constexpr double kSlack = 0.05; // B may overlap A this much (snap noise)
+	constexpr double kAntiparallel = -0.985;
+	constexpr double kCell = 4.0;
+	const auto cellOf = [&](double v) { return static_cast<std::int64_t>(std::floor(v / kCell)); };
+	std::map<Key, std::vector<std::size_t>> grid;
+	for (std::size_t i = 0; i < segs.size(); ++i)
+		for (std::int64_t cx = cellOf(std::min(segs[i].a[0], segs[i].b[0])); cx <= cellOf(std::max(segs[i].a[0], segs[i].b[0])); ++cx)
+			for (std::int64_t cz = cellOf(std::min(segs[i].a[1], segs[i].b[1])); cz <= cellOf(std::max(segs[i].a[1], segs[i].b[1])); ++cz)
+				grid[{ cx, cz }].push_back(i);
+	struct Candidate
+	{
+		double gap, step;
+		std::size_t i, j;
+		double t0, t1;
+	};
+	std::vector<Candidate> candidates;
+	std::vector<std::size_t> near;
+	for (std::size_t i = 0; i < segs.size(); ++i)
+	{
+		const Seg& A = segs[i];
+		const double li = std::hypot(A.b[0] - A.a[0], A.b[1] - A.a[1]);
+		if (li < cfg.matchOverlap)
+			continue;
+		const double ux = (A.b[0] - A.a[0]) / li, uz = (A.b[1] - A.a[1]) / li;
+		near.clear();
+		const double reach = cfg.matchSeparationMax;
+		for (std::int64_t cx = cellOf(std::min(A.a[0], A.b[0]) - reach); cx <= cellOf(std::max(A.a[0], A.b[0]) + reach); ++cx)
+			for (std::int64_t cz = cellOf(std::min(A.a[1], A.b[1]) - reach); cz <= cellOf(std::max(A.a[1], A.b[1]) + reach); ++cz)
+			{
+				const auto cell = grid.find({ cx, cz });
+				if (cell != grid.end())
+					for (const std::size_t j : cell->second)
+						if (j > i)
+							near.push_back(j);
+			}
+		std::sort(near.begin(), near.end());
+		near.erase(std::unique(near.begin(), near.end()), near.end());
+		for (const std::size_t j : near)
+		{
+			const Seg& B = segs[j];
+			const double lj = std::hypot(B.b[0] - B.a[0], B.b[1] - B.a[1]);
+			if (lj < cfg.matchOverlap || ((B.b[0] - B.a[0]) * ux + (B.b[1] - B.a[1]) * uz) / lj > kAntiparallel)
+				continue;
+			// B's ends along A and their distance to A's right (outside)
+			const double tb0 = (B.a[0] - A.a[0]) * ux + (B.a[1] - A.a[1]) * uz, tb1 = (B.b[0] - A.a[0]) * ux + (B.b[1] - A.a[1]) * uz;
+			const double db0 = (B.a[0] - A.a[0]) * uz - (B.a[1] - A.a[1]) * ux, db1 = (B.b[0] - A.a[0]) * uz - (B.b[1] - A.a[1]) * ux;
+			const auto gapAt = [&](double t) { return db0 + (db1 - db0) * (t - tb0) / (tb1 - tb0); };
+			const auto onA = [&](double t) { return P2{ A.a[0] + ux * t, A.a[1] + uz * t }; };
+			const auto onB = [&](double t) { const double d = gapAt(t); return P2{ A.a[0] + ux * t + uz * d, A.a[1] + uz * t - ux * d }; };
+			const auto stepAt = [&](double t) { const P2 p = onA(t), q = onB(t); return B.plane->at(q[0], q[1]) - A.plane->at(p[0], p[1]); };
+			double s0 = std::max(0.0, std::min(tb0, tb1)), s1 = std::min(li, std::max(tb0, tb1));
+			if (s1 - s0 < cfg.matchOverlap)
+				continue;
+			if (!clipLinear(s0, s1, gapAt(s0), gapAt(s1), -kSlack, cfg.matchSeparationMax) || s1 - s0 < cfg.matchOverlap)
+				continue;
+			if (!clipLinear(s0, s1, stepAt(s0), stepAt(s1), -cfg.matchStep, cfg.matchStep) || s1 - s0 < cfg.matchOverlap)
+				continue;
+			Intervals parts{ { s0, s1 } };
+			if (allowed)
+				parts = intersectIntervals(parts, allowed(i, j));
+			// blocked by a solid on the path between the edges?
+			if (!parts.empty() && std::max(gapAt(s0), gapAt(s1)) > kSlack)
+			{
+				const P2 p0 = onA(s0), p1 = onA(s1), q = onB(0.5 * (s0 + s1));
+				const P3 a3{ p0[0], A.plane->at(p0[0], p0[1]), p0[1] }, b3{ p1[0], A.plane->at(p1[0], p1[1]), p1[1] }, c3{ q[0], B.plane->at(q[0], q[1]), q[1] };
+				// y = a x + b z + c through the three points
+				const double det = (b3[0] - a3[0]) * (c3[2] - a3[2]) - (c3[0] - a3[0]) * (b3[2] - a3[2]);
+				Plane path = *A.plane;
+				if (std::fabs(det) > 1e-9)
+				{
+					path.a = ((b3[1] - a3[1]) * (c3[2] - a3[2]) - (c3[1] - a3[1]) * (b3[2] - a3[2])) / det;
+					path.b = ((b3[0] - a3[0]) * (c3[1] - a3[1]) - (c3[0] - a3[0]) * (b3[1] - a3[1])) / det;
+					path.c = a3[1] - path.a * a3[0] - path.b * a3[2];
+				}
+				const Poly quad = hull({ p0, p1, onB(s0), onB(s1) });
+				if (quad.size() >= 3)
+				{
+					P2 lo{ 1e30, 1e30 }, hi{ -1e30, -1e30 };
+					for (const P2& v : quad)
+						for (std::size_t k = 0; k < 2; ++k)
+						{
+							lo[k] = std::min(lo[k], v[k]);
+							hi[k] = std::max(hi[k], v[k]);
+						}
+					std::vector<Poly> cut;
+					for (const Solid& s : solids)
+						footprints(s, path, cfg.cutBase, cfg.characterHeight, lo, hi, cfg.barrierHalfWidth, cut);
+					for (const Poly& c : cut)
+					{
+						const Poly over = intersect(quad, c);
+						if (over.size() < 3 || area(over) < 1e-6)
+							continue;
+						double b0 = 1e30, b1 = -1e30;
+						for (const P2& v : over)
+						{
+							const double t = (v[0] - A.a[0]) * ux + (v[1] - A.a[1]) * uz;
+							b0 = std::min(b0, t);
+							b1 = std::max(b1, t);
+						}
+						subtractInterval(parts, b0, b1);
+					}
+				}
+			}
+			for (const Interval& part : parts)
+				if (part[1] - part[0] >= cfg.matchOverlap)
+				{
+					const double mid = 0.5 * (part[0] + part[1]);
+					candidates.push_back({ std::max(0.0, gapAt(mid)), std::fabs(stepAt(mid)), i, j, part[0], part[1] });
+				}
+		}
+	}
+	std::sort(candidates.begin(), candidates.end(), [](const Candidate& x, const Candidate& y)
+	{
+		if (x.gap != y.gap)
+			return x.gap < y.gap;
+		if (x.step != y.step)
+			return x.step < y.step;
+		if (x.i != y.i)
+			return x.i < y.i;
+		if (x.j != y.j)
+			return x.j < y.j;
+		return x.t0 < y.t0;
+	});
+	std::vector<Intervals> taken(segs.size());
+	const auto freeOf = [&](std::size_t s, double a, double b)
+	{
+		Intervals out{ { a, b } };
+		for (const Interval& t : taken[s])
+			subtractInterval(out, t[0], t[1]);
+		return out;
+	};
+	std::vector<Link> links;
+	for (const Candidate& c : candidates)
+	{
+		const Seg &A = segs[c.i], &B = segs[c.j];
+		const double li = std::hypot(A.b[0] - A.a[0], A.b[1] - A.a[1]), lj = std::hypot(B.b[0] - B.a[0], B.b[1] - B.a[1]);
+		const double ux = (A.b[0] - A.a[0]) / li, uz = (A.b[1] - A.a[1]) / li, vx = (B.b[0] - B.a[0]) / lj, vz = (B.b[1] - B.a[1]) / lj;
+		// i's t -> j's u: the foot of A's point on B's line (B antiparallel: u falls as t rises); linear, so two points fix it
+		const auto uOf = [&](double t) { const P2 p{ A.a[0] + ux * t, A.a[1] + uz * t }; return (p[0] - B.a[0]) * vx + (p[1] - B.a[1]) * vz; };
+		const double uAt0 = uOf(0.0), uSlope = uOf(1.0) - uAt0;
+		if (std::fabs(uSlope) < 1e-12)
+			continue;
+		for (const Interval& f : freeOf(c.i, c.t0, c.t1))
+		{
+			const double ua = std::clamp(uAt0 + uSlope * f[1], 0.0, lj), ub = std::clamp(uAt0 + uSlope * f[0], 0.0, lj);
+			for (const Interval& g : freeOf(c.j, std::min(ua, ub), std::max(ua, ub)))
+			{
+				if (g[1] - g[0] < cfg.matchOverlap)
+					continue;
+				double t0 = (g[1] - uAt0) / uSlope, t1 = (g[0] - uAt0) / uSlope;
+				if (t0 > t1)
+					std::swap(t0, t1);
+				t0 = std::max(t0, f[0]);
+				t1 = std::min(t1, f[1]);
+				if (t1 - t0 < cfg.matchOverlap)
+					continue;
+				links.push_back({ c.i, c.j, t0, t1, g[0], g[1] });
+				taken[c.i].push_back({ t0, t1 });
+				taken[c.j].push_back({ g[0], g[1] });
+			}
+		}
+	}
+	return links;
+}
+
+// ---- faces
 
 struct FaceEdge
 {
@@ -430,17 +723,11 @@ struct Face
 	std::int32_t data = 1;
 	kworld::DoorKey door = 0;
 	std::size_t shape = 0;
+	std::size_t surface = 0;
+	Side side = Side::Interior;
 };
 
 P2 edgeEnd(const Face& f, std::size_t i) { return f.ring[(i + 1) % f.ring.size()].a; }
-
-double faceArea(const Face& f)
-{
-	Poly p;
-	for (const FaceEdge& e : f.ring)
-		p.push_back(e.a);
-	return area(p);
-}
 
 Poly faceXz(const Face& f)
 {
@@ -450,100 +737,485 @@ Poly faceXz(const Face& f)
 	return p;
 }
 
+double faceArea(const Face& f) { return area(faceXz(f)); }
+
+// A piece of one surface on one side, painted or not, before it is cut into faces.
+struct Part
+{
+	std::size_t surface;
+	Side side;
+	std::int32_t data = 1;
+	kworld::DoorKey door = 0;
+	c2::Paths64 paths;
+};
+
+// One integer face during the decomposition.
+struct IFace
+{
+	c2::Path64 ring;
+	std::size_t part;
+};
+
+// Convex faces of a region: constrained Delaunay triangles merged across their longest shared edges first while the union stays convex
+// (Hertel-Mehlhorn; exact integer tests).
+bool decompose(const c2::Paths64& paths, std::size_t part, std::vector<IFace>& out)
+{
+	c2::Paths64 tris;
+	if (c2::Triangulate(paths, tris, true) != c2::TriangulateResult::success)
+		return false;
+	std::vector<c2::Path64> faces;
+	for (c2::Path64& t : tris)
+	{
+		if (t.size() != 3)
+			continue;
+		const std::int64_t c = cross64(t[0], t[1], t[2]);
+		if (c == 0)
+			continue;
+		if (c < 0)
+			std::reverse(t.begin(), t.end());
+		faces.push_back(std::move(t));
+	}
+	// the interior edges, longest first
+	std::map<std::pair<Key, Key>, std::size_t> owner; // directed edge -> face
+	for (std::size_t f = 0; f < faces.size(); ++f)
+		for (std::size_t k = 0; k < faces[f].size(); ++k)
+			owner[{ keyOf(faces[f][k]), keyOf(faces[f][(k + 1) % faces[f].size()]) }] = f;
+	struct Diagonal
+	{
+		double length;
+		Key a, b;
+	};
+	std::vector<Diagonal> diagonals;
+	for (const auto& [edge, f] : owner)
+		if (edge.first < edge.second && owner.count({ edge.second, edge.first }) != 0)
+			diagonals.push_back({ std::hypot(static_cast<double>(edge.second.first - edge.first.first), static_cast<double>(edge.second.second - edge.first.second)), edge.first, edge.second });
+	std::sort(diagonals.begin(), diagonals.end(), [](const Diagonal& x, const Diagonal& y) { return x.length != y.length ? x.length > y.length : std::tie(x.a, x.b) < std::tie(y.a, y.b); });
+	std::vector<char> alive(faces.size(), 1);
+	for (const Diagonal& d : diagonals)
+	{
+		const auto ia = owner.find({ d.a, d.b }), ib = owner.find({ d.b, d.a });
+		if (ia == owner.end() || ib == owner.end() || ia->second == ib->second)
+			continue;
+		const std::size_t A = ia->second, B = ib->second;
+		const c2::Path64 &ra = faces[A], &rb = faces[B];
+		// the shared chain: A's edges that B has reversed, consecutive; merged = A from the chain's end round to its start, then B's rest
+		std::vector<char> sharedA(ra.size(), 0);
+		std::size_t count = 0;
+		for (std::size_t k = 0; k < ra.size(); ++k)
+		{
+			const auto it = owner.find({ keyOf(ra[(k + 1) % ra.size()]), keyOf(ra[k]) });
+			sharedA[k] = it != owner.end() && it->second == B ? 1 : 0;
+			count += sharedA[k];
+		}
+		std::size_t start = 0; // first shared edge of the run
+		while (!(sharedA[start] && !sharedA[(start + ra.size() - 1) % ra.size()]))
+			++start;
+		bool run = true;
+		for (std::size_t k = 0; k < count; ++k)
+			run = run && sharedA[(start + k) % ra.size()];
+		if (!run)
+			continue;
+		const c2::Point64 chainStart = ra[start], chainEnd = ra[(start + count) % ra.size()];
+		c2::Path64 merged;
+		for (std::size_t k = 0; k <= ra.size() - count; ++k)
+			merged.push_back(ra[(start + count + k) % ra.size()]); // chainEnd ... chainStart
+		std::size_t bStart = 0;
+		while (!(rb[bStart] == chainStart))
+			++bStart;
+		for (std::size_t k = 1; k < rb.size(); ++k)
+		{
+			const c2::Point64& v = rb[(bStart + k) % rb.size()];
+			if (v == chainEnd)
+				break;
+			merged.push_back(v);
+		}
+		bool convex = merged.size() >= 3;
+		for (std::size_t k = 0; k < merged.size() && convex; ++k)
+			convex = cross64(merged[(k + merged.size() - 1) % merged.size()], merged[k], merged[(k + 1) % merged.size()]) >= 0;
+		std::vector<Key> seen;
+		for (const c2::Point64& v : merged)
+			seen.push_back(keyOf(v));
+		std::sort(seen.begin(), seen.end());
+		if (!convex || std::adjacent_find(seen.begin(), seen.end()) != seen.end())
+			continue;
+		for (std::size_t f : { A, B })
+			for (std::size_t k = 0; k < faces[f].size(); ++k)
+				owner.erase({ keyOf(faces[f][k]), keyOf(faces[f][(k + 1) % faces[f].size()]) });
+		faces[A] = std::move(merged);
+		alive[B] = 0;
+		for (std::size_t k = 0; k < faces[A].size(); ++k)
+			owner[{ keyOf(faces[A][k]), keyOf(faces[A][(k + 1) % faces[A].size()]) }] = A;
+	}
+	for (std::size_t f = 0; f < faces.size(); ++f)
+		if (alive[f])
+			out.push_back({ std::move(faces[f]), part });
+	return true;
+}
+
+using Clock = std::chrono::steady_clock;
+
+// q * v * conj(q), q = (w, x, y, z) normalised; conj = true rotates by the inverse.
+P3 rotate(const std::array<double, 4>& q, const P3& v, bool conj)
+{
+	const double n = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+	const double w = q[0] / n, s = conj ? -1.0 : 1.0;
+	const double x = s * q[1] / n, y = s * q[2] / n, z = s * q[3] / n;
+	// v + 2 w (u x v) + 2 u x (u x v), u = (x, y, z)
+	const double cx = y * v[2] - z * v[1], cy = z * v[0] - x * v[2], cz = x * v[1] - y * v[0];
+	return { v[0] + 2.0 * (w * cx + y * cz - z * cy), v[1] + 2.0 * (w * cy + z * cx - x * cz), v[2] + 2.0 * (w * cz + x * cy - y * cx) };
+}
+
 } // namespace
 
 native::Mesh generate(const Input& input, const Settings& cfg, Report* report)
 {
+	if (input.pose)
+	{
+		// shapes in the building's frame: generate there, the mesh (and the narrow cut's triangles) out into the world; the seed comes in
+		const Input::Pose& pose = *input.pose;
+		const auto toWorld = [&](const P3& p)
+		{
+			const P3 r = rotate(pose.rotation, p, false);
+			return P3{ r[0] + pose.origin[0], r[1] + pose.origin[1], r[2] + pose.origin[2] };
+		};
+		Input in = input;
+		in.pose.reset();
+		if (input.seed)
+			in.seed = rotate(pose.rotation, { (*input.seed)[0] - pose.origin[0], (*input.seed)[1] - pose.origin[1], (*input.seed)[2] - pose.origin[2] }, true);
+		native::Mesh mesh = generate(in, cfg, report);
+		for (P3& v : mesh.vertices)
+			v = toWorld(v);
+		if (report != nullptr)
+			for (auto& tri : report->narrowQuads)
+				for (P3& v : tri)
+					v = toWorld(v);
+		return mesh;
+	}
 	Report local;
 	Report& rep = report != nullptr ? *report : local;
 	rep = Report{};
+	const Grid grid{ 1.0 / cfg.lattice };
+	auto stageStart = Clock::now();
+	const auto stage = [&](const char* name)
+	{
+		const auto now = Clock::now();
+		rep.stages.push_back({ name, std::chrono::duration<double, std::milli>(now - stageStart).count() });
+		stageStart = now;
+	};
 
 	std::vector<Solid> solids;
 	for (const kworld::WorldShape* s : input.shapes)
 		if (s != nullptr && s->use != kworld::NavUse::Door && s->indices.size() >= 3)
 			solids.push_back(makeSolid(*s));
 
-	// 1. walkable pieces, cut
+	// 1. walkable pieces, grouped into surfaces (one plane each, against the first piece's plane)
 	std::vector<Piece> pieces;
-	std::vector<std::vector<Poly>> cutScratch;
 	for (std::size_t si = 0; si < solids.size(); ++si)
-	{
-		if (solids[si].shape->use != kworld::NavUse::Walkable)
-			continue;
-		++rep.walkableShapes;
-		std::vector<Piece> own;
-		std::vector<std::size_t> source;
-		shapePieces(solids[si], si, cfg, own, &source);
-		for (std::size_t pi = 0; pi < own.size(); ++pi)
+		if (solids[si].shape->use == kworld::NavUse::Walkable)
 		{
-			Piece& base = own[pi];
-			P2 bmin{ 1e30, 1e30 }, bmax{ -1e30, -1e30 };
-			for (const P2& v : base.poly)
-				for (int k = 0; k < 2; ++k)
-				{
-					bmin[static_cast<std::size_t>(k)] = std::min(bmin[static_cast<std::size_t>(k)], v[static_cast<std::size_t>(k)]);
-					bmax[static_cast<std::size_t>(k)] = std::max(bmax[static_cast<std::size_t>(k)], v[static_cast<std::size_t>(k)]);
-				}
-			std::vector<Poly> cutters;
-			for (std::size_t sj = 0; sj < solids.size(); ++sj)
+			++rep.walkableShapes;
+			shapePieces(solids[si], si, cfg, pieces);
+		}
+	rep.pieces = pieces.size();
+	std::vector<Surface> surfaces;
+	for (std::size_t pi = 0; pi < pieces.size(); ++pi)
+	{
+		const Piece& piece = pieces[pi];
+		Surface* home = nullptr;
+		for (Surface& s : surfaces)
+		{
+			bool near = true;
+			for (const P2& v : piece.poly)
+				near = near && std::fabs(s.plane.at(v[0], v[1]) - piece.plane.at(v[0], v[1])) <= cfg.ownerTolerance;
+			if (near)
 			{
-				if (solids[sj].shape->use == kworld::NavUse::Door)
-					continue;
-				if (sj == si && solids[si].convex)
-					continue;
-				footprints(solids[sj], base.plane, cfg.cutBase, cfg.characterHeight, bmin, bmax, cfg.barrierHalfWidth, cutters, sj == si ? source[pi] : SIZE_MAX);
+				home = &s;
+				break;
 			}
-			std::vector<Poly> remaining{ base.poly };
-			// largest cutter first: fewer, bigger leftovers
-			std::stable_sort(cutters.begin(), cutters.end(), [](const Poly& x, const Poly& y) { return area(x) > area(y); });
-			for (const Poly& cutter : cutters)
+		}
+		if (home == nullptr)
+		{
+			home = &surfaces.emplace_back();
+			home->plane = piece.plane;
+		}
+		home->pieces.push_back(pi);
+		home->shape = std::min(home->shape, piece.shape);
+		for (const P2& v : piece.poly)
+			for (std::size_t k = 0; k < 2; ++k)
 			{
-				std::vector<Poly> next;
-				for (const Poly& r : remaining)
+				home->bmin[k] = std::min(home->bmin[k], v[k]);
+				home->bmax[k] = std::max(home->bmax[k], v[k]);
+			}
+	}
+	stage("pieces");
+
+	// 2. regions: the surface's pieces minus every solid's footprint on its plane (a convex solid never cuts its own top, a triangle of an open
+	// shape never cuts the surface it is part of)
+	for (Surface& s : surfaces)
+	{
+		c2::Paths64 own;
+		std::vector<std::size_t> ownSolids;
+		std::map<std::size_t, std::vector<std::size_t>> ownTriangles;
+		for (const std::size_t pi : s.pieces)
+		{
+			own.push_back(grid.path(pieces[pi].poly));
+			if (pieces[pi].triangle == SIZE_MAX)
+				ownSolids.push_back(pieces[pi].shape);
+			else
+				ownTriangles[pieces[pi].shape].push_back(pieces[pi].triangle);
+		}
+		for (auto& [shape, tris] : ownTriangles)
+			std::sort(tris.begin(), tris.end());
+		std::vector<Poly> cutters;
+		for (std::size_t sj = 0; sj < solids.size(); ++sj)
+		{
+			if (std::find(ownSolids.begin(), ownSolids.end(), sj) != ownSolids.end())
+				continue;
+			const auto skip = ownTriangles.find(sj);
+			footprints(solids[sj], s.plane, cfg.cutBase, cfg.characterHeight, s.bmin, s.bmax, cfg.barrierHalfWidth, cutters,
+				skip != ownTriangles.end() ? &skip->second : nullptr);
+		}
+		c2::Paths64 cut;
+		for (const Poly& c : cutters)
+			cut.push_back(grid.path(c));
+		s.region = c2::Difference(c2::Union(own, c2::FillRule::NonZero), c2::Union(cut, c2::FillRule::NonZero), c2::FillRule::NonZero);
+	}
+	stage("cut");
+
+	// 3. ownership where two surfaces cross (within ownerTolerance of each other): the lower index keeps the strip; then the weld
+	for (std::size_t q = 0; q < surfaces.size(); ++q)
+	{
+		for (std::size_t p = 0; p < q && !surfaces[q].region.empty(); ++p)
+		{
+			const Surface &P = surfaces[p], &Q = surfaces[q];
+			const P2 lo{ std::max(P.bmin[0], Q.bmin[0]), std::max(P.bmin[1], Q.bmin[1]) }, hi{ std::min(P.bmax[0], Q.bmax[0]), std::min(P.bmax[1], Q.bmax[1]) };
+			if (P.region.empty() || lo[0] >= hi[0] || lo[1] >= hi[1])
+				continue;
+			const Poly band = strip(box(lo, hi), P.plane.a - Q.plane.a, P.plane.b - Q.plane.b, P.plane.c - Q.plane.c, -cfg.ownerTolerance, cfg.ownerTolerance);
+			if (band.size() < 3)
+				continue;
+			const c2::Paths64 owned = c2::Intersect(P.region, { grid.path(band) }, c2::FillRule::NonZero);
+			if (!owned.empty())
+				surfaces[q].region = c2::Difference(surfaces[q].region, owned, c2::FillRule::NonZero);
+		}
+	}
+	for (Surface& s : surfaces)
+		s.region = tidy(weld(s.region, cfg.weld * grid.s, true));
+	stage("own+weld");
+
+	// 4. links between the regions (whole building, before the hull): what is not linked is a wall
+	std::vector<Seg> regionSegs;
+	for (std::size_t si = 0; si < surfaces.size(); ++si)
+		for (const c2::Path64& path : surfaces[si].region)
+			for (std::size_t k = 0; k < path.size(); ++k)
+				regionSegs.push_back({ grid.from(path[k]), grid.from(path[(k + 1) % path.size()]), &surfaces[si].plane, si });
+	std::vector<Link> regionLinks = matchEdges(regionSegs, solids, cfg, nullptr);
+	if (cfg.minPassage > 0.0)
+	{
+		// A passage between two surfaces is as wide as its run of links: links of one surface pair whose ends touch chain into a run, and a run
+		// shorter than minPassage is a wall (user 2026-11-24, a panel beside a ramp linked over 1.2 u at its corner: "It's only a hop up from the
+		// extreme corner. It should be rejected because the far end is too much of a hop"). The same rule as the narrow cut: no passage narrower
+		// than a character.
+		struct End
+		{
+			std::pair<std::size_t, std::size_t> pair; // (lower surface, higher surface)
+			P2 a, b; // the link's ends on the lower surface's boundary
+		};
+		const auto at = [](const Seg& s, double t)
+		{
+			const double len = std::hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]);
+			return P2{ s.a[0] + (s.b[0] - s.a[0]) * t / len, s.a[1] + (s.b[1] - s.a[1]) * t / len };
+		};
+		std::vector<End> ends;
+		for (const Link& l : regionLinks)
+		{
+			const Seg &A = regionSegs[l.i], &B = regionSegs[l.j];
+			if (A.surface <= B.surface)
+				ends.push_back({ { A.surface, B.surface }, at(A, l.t0), at(A, l.t1) });
+			else
+				ends.push_back({ { B.surface, A.surface }, at(B, l.u0), at(B, l.u1) });
+		}
+		std::vector<std::size_t> run(ends.size());
+		for (std::size_t k = 0; k < run.size(); ++k)
+			run[k] = k;
+		const std::function<std::size_t(std::size_t)> root = [&](std::size_t k) { return run[k] == k ? k : run[k] = root(run[k]); };
+		const double touch = 2.0 * cfg.weld;
+		const auto near = [&](const P2& p, const P2& q) { return std::hypot(p[0] - q[0], p[1] - q[1]) <= touch; };
+		for (std::size_t k = 0; k < ends.size(); ++k)
+			for (std::size_t m = k + 1; m < ends.size(); ++m)
+				if (ends[k].pair == ends[m].pair
+					&& (near(ends[k].a, ends[m].a) || near(ends[k].a, ends[m].b) || near(ends[k].b, ends[m].a) || near(ends[k].b, ends[m].b)))
+					run[root(k)] = root(m);
+		std::vector<double> length(ends.size(), 0.0);
+		for (std::size_t k = 0; k < ends.size(); ++k)
+			length[root(k)] += std::hypot(ends[k].b[0] - ends[k].a[0], ends[k].b[1] - ends[k].a[1]);
+		std::vector<Link> kept;
+		for (std::size_t k = 0; k < ends.size(); ++k)
+			if (length[root(k)] >= cfg.minPassage)
+				kept.push_back(regionLinks[k]);
+			else
+				++rep.shortLinks;
+		regionLinks = std::move(kept);
+	}
+	// per surface pair, the linked stretches of the first's boundary (start -> end along it), for the face links
+	struct Stretch
+	{
+		P2 a, b;
+	};
+	std::map<std::pair<std::size_t, std::size_t>, std::vector<Stretch>> linkedStretches;
+	std::vector<Intervals> linkedOn(regionSegs.size());
+	for (const Link& l : regionLinks)
+	{
+		const Seg &A = regionSegs[l.i], &B = regionSegs[l.j];
+		const auto at = [](const Seg& s, double t)
+		{
+			const double len = std::hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]);
+			return P2{ s.a[0] + (s.b[0] - s.a[0]) * t / len, s.a[1] + (s.b[1] - s.a[1]) * t / len };
+		};
+		linkedStretches[{ A.surface, B.surface }].push_back({ at(A, l.t0), at(A, l.t1) });
+		linkedStretches[{ B.surface, A.surface }].push_back({ at(B, l.u0), at(B, l.u1) });
+		linkedOn[l.i].push_back({ l.t0, l.t1 });
+		linkedOn[l.j].push_back({ l.u0, l.u1 });
+	}
+	stage("region links");
+
+	// 5. the narrow cut: an opening of the floor by a disc of minPassage. Centres: each region minus its walls grown round by r (the walls of every
+	// surface within characterHeight in height there: a disc on a stair tread meets the next tread's side wall). The kept floor: the centres of
+	// every surface within characterHeight, grown back by r with mitred corners (a room corner comes back whole, a tip sharper than cornerMitre is
+	// squared off), cut to the region. A link is not a wall: a tread is narrow only across the stair.
+	if (cfg.minPassage > 0.0)
+	{
+		const double r = 0.5 * cfg.minPassage;
+		struct Wall
+		{
+			c2::Path64 path;
+			std::size_t surface;
+			P2 mid;
+		};
+		std::vector<Wall> walls;
+		for (std::size_t i = 0; i < regionSegs.size(); ++i)
+		{
+			const Seg& s = regionSegs[i];
+			const double len = std::hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]);
+			Intervals open{ { 0.0, len } };
+			for (const Interval& l : linkedOn[i])
+				subtractInterval(open, l[0], l[1]);
+			for (const Interval& w : open)
+			{
+				if (w[1] - w[0] < 2.0 / grid.s)
+					continue;
+				const P2 a{ s.a[0] + (s.b[0] - s.a[0]) * w[0] / len, s.a[1] + (s.b[1] - s.a[1]) * w[0] / len };
+				const P2 b{ s.a[0] + (s.b[0] - s.a[0]) * w[1] / len, s.a[1] + (s.b[1] - s.a[1]) * w[1] / len };
+				walls.push_back({ { grid.to(a), grid.to(b) }, s.surface, { 0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1]) } });
+			}
+		}
+		const auto nearBox = [](const Surface& s, const P2& p, double margin)
+		{
+			return p[0] >= s.bmin[0] - margin && p[0] <= s.bmax[0] + margin && p[1] >= s.bmin[1] - margin && p[1] <= s.bmax[1] + margin;
+		};
+		std::vector<c2::Paths64> grown(surfaces.size());
+		for (std::size_t q = 0; q < surfaces.size(); ++q)
+		{
+			const Surface& Q = surfaces[q];
+			if (Q.region.empty())
+				continue;
+			c2::Paths64 mine;
+			for (const Wall& w : walls)
+			{
+				const double halfLength = 0.5 * std::hypot(static_cast<double>(w.path[1].x - w.path[0].x), static_cast<double>(w.path[1].y - w.path[0].y)) / grid.s;
+				if (!nearBox(Q, w.mid, r + halfLength))
+					continue;
+				if (std::fabs(surfaces[w.surface].plane.at(w.mid[0], w.mid[1]) - Q.plane.at(w.mid[0], w.mid[1])) >= cfg.characterHeight)
+					continue;
+				mine.push_back(w.path);
+			}
+			const c2::Paths64 reach = mine.empty() ? c2::Paths64{} : c2::InflatePaths(mine, r * grid.s, c2::JoinType::Round, c2::EndType::Round, 2.0, cfg.weld * grid.s);
+			const c2::Paths64 centres = c2::Difference(Q.region, reach, c2::FillRule::NonZero);
+			grown[q] = inflate(centres, r * grid.s, c2::JoinType::Miter, cfg.cornerMitre);
+		}
+		for (std::size_t p = 0; p < surfaces.size(); ++p)
+		{
+			Surface& P = surfaces[p];
+			if (P.region.empty())
+				continue;
+			c2::Paths64 cover = grown[p];
+			for (std::size_t s = 0; s < surfaces.size(); ++s)
+			{
+				const Surface& S = surfaces[s];
+				if (s == p || grown[s].empty() || S.bmax[0] + r < P.bmin[0] || S.bmin[0] - r > P.bmax[0] || S.bmax[1] + r < P.bmin[1] || S.bmin[1] - r > P.bmax[1])
+					continue;
+				const Poly band = strip(box(P.bmin, P.bmax), S.plane.a - P.plane.a, S.plane.b - P.plane.b, S.plane.c - P.plane.c, -cfg.characterHeight, cfg.characterHeight);
+				if (band.size() < 3)
+					continue;
+				// a neighbour's floor reaches into this one only across a link between them, at most r past it (a tread is narrow only across
+				// the stair); elsewhere an overlap in xz is two levels stacked, and the one above must not keep a sliver below it (user
+				// 2026-11-24, Heft roof face at -91.8, 72.3, 17.8 kept by a level 10.6 u above)
+				const auto stretches = linkedStretches.find({ p, s });
+				if (stretches == linkedStretches.end())
+					continue;
+				c2::Paths64 lines;
+				for (const Stretch& st : stretches->second)
+					lines.push_back(grid.path({ st.a, st.b }));
+				const c2::Paths64 nearLink = c2::InflatePaths(lines, r * grid.s, c2::JoinType::Round, c2::EndType::Round, 2.0, cfg.weld * grid.s);
+				const c2::Paths64 part = c2::Intersect(c2::Intersect(grown[s], { grid.path(band) }, c2::FillRule::NonZero), nearLink, c2::FillRule::NonZero);
+				if (!part.empty())
+					cover = c2::Union(cover, part, c2::FillRule::NonZero);
+			}
+			const c2::Paths64 kept = tidy(weld(c2::Intersect(P.region, cover, c2::FillRule::NonZero), cfg.weld * grid.s, false));
+			const c2::Paths64 removed = c2::Difference(P.region, kept, c2::FillRule::NonZero);
+			for (const c2::Path64& path : removed)
+			{
+				const double a = c2::Area(path) / (grid.s * grid.s);
+				rep.narrowArea += a; // a hole counts negative
+				if (a > 0.0)
+					++rep.narrowCuts;
+			}
+			// the removed floor as triangles: outlines can be non-convex and hold holes, which a viewer cannot fill as drawn. Viewer output only:
+			// when the whole set fails, one polygon (with its holes) at a time; one that still fails goes out as its outline
+			c2::Paths64 tris;
+			if (!removed.empty() && c2::Triangulate(removed, tris, false) != c2::TriangulateResult::success)
+			{
+				tris.clear();
+				c2::PolyTree64 tree;
+				c2::Clipper64 clipper;
+				clipper.AddSubject(removed);
+				clipper.Execute(c2::ClipType::Union, c2::FillRule::NonZero, tree);
+				std::function<void(const c2::PolyPath64&)> walk = [&](const c2::PolyPath64& node)
 				{
-					const Poly overlap = intersect(r, cutter);
-					if (overlap.size() < 3 || area(overlap) < 1e-6)
+					for (const auto& child : node)
 					{
-						next.push_back(r);
-						continue;
+						c2::Paths64 one{ child->Polygon() }, part;
+						for (const auto& hole : *child)
+							one.push_back(hole->Polygon());
+						if (c2::Triangulate(one, part, false) == c2::TriangulateResult::success)
+							tris.insert(tris.end(), part.begin(), part.end());
+						else
+						{
+							++rep.narrowOutlines;
+							tris.push_back(child->Polygon());
+						}
+						for (const auto& hole : *child)
+							walk(*hole);
 					}
-					for (Poly& part : subtract(r, cutter, cfg.minPieceArea))
-						next.push_back(std::move(part));
-				}
-				remaining = std::move(next);
+				};
+				walk(tree);
 			}
-			for (Poly& r : remaining)
-				pieces.push_back({ std::move(r), base.plane, si, 1 });
-		}
-	}
-
-	// 2. coplanar ownership: a piece loses what a lower shape index already holds within ownerTolerance in height
-	{
-		std::vector<Piece> kept;
-		for (const Piece& q : pieces)
-		{
-			std::vector<Poly> remaining{ q.poly };
-			for (const Piece& p : kept)
+			for (const c2::Path64& path : tris)
 			{
-				std::vector<Poly> next;
-				for (const Poly& r : remaining)
+				std::vector<std::array<double, 3>> ring;
+				for (const c2::Point64& v : path)
 				{
-					const Poly overlap = intersect(r, p.poly);
-					if (overlap.size() >= 3 && area(overlap) > 1e-6 && maxHeightDifference(overlap, q.plane, p.plane) <= cfg.ownerTolerance + 1e-3)
-						for (Poly& part : subtract(r, p.poly, cfg.minPieceArea))
-							next.push_back(std::move(part));
-					else
-						next.push_back(r);
+					const P2 q = grid.from(v);
+					ring.push_back({ q[0], P.plane.at(q[0], q[1]), q[1] });
 				}
-				remaining = std::move(next);
+				rep.narrowQuads.push_back(std::move(ring));
 			}
-			for (Poly& r : remaining)
-				kept.push_back({ std::move(r), q.plane, q.shape, q.data, q.door });
+			P.region = kept;
 		}
-		pieces = std::move(kept);
 	}
+	stage("narrow");
 
-	// 3. keep inside the mask hull
+	// 6. sides and doors: the hull's section splits each region exactly (zone = region minus interior); a door's volume paints its part
 	std::vector<std::array<float, 4>> hullPlanes;
 	{
 		std::vector<kworld::WorldShape> mask;
@@ -553,673 +1225,566 @@ native::Mesh generate(const Input& input, const Settings& cfg, Report* report)
 		if (!mask.empty())
 			hullPlanes = kworld::interiorMaskHull(mask);
 	}
-	// the hull's planes in a piece's frame: n . (x, a x + b z + c, z) <= d  ->  A x + B z + C >= 0
-	const auto inHull = [&](Poly p, const Plane& plane, const std::vector<std::array<float, 4>>& planes)
-	{
-		for (const auto& h : planes)
-		{
-			p = clipLine(p, -(h[0] + h[1] * plane.a), -(h[2] + h[1] * plane.b), h[3] - h[1] * plane.c);
-			if (p.size() < 3)
-				break;
-		}
-		return p;
-	};
-	if (input.side == Side::Zone && hullPlanes.empty())
-		pieces.clear();
-	if (!hullPlanes.empty())
-	{
-		std::vector<Piece> kept;
-		for (Piece& piece : pieces)
-		{
-			Poly inside = inHull(piece.poly, piece.plane, hullPlanes);
-			if (inside.size() < 3 || area(inside) <= 1e-6)
-				inside.clear();
-			if (input.side == Side::Interior)
+	std::vector<std::pair<const kworld::WorldShape*, std::vector<std::array<float, 4>>>> doors;
+	if (input.paintDoors)
+		for (const kworld::WorldShape* d : input.shapes)
+			if (d != nullptr && d->use == kworld::NavUse::Door && d->indices.size() >= 3)
 			{
-				if (inside.size() >= 3 && area(inside) > cfg.minPieceArea)
-				{
-					piece.poly = std::move(inside);
-					kept.push_back(std::move(piece));
-				}
-			} else if (inside.empty()) {
-				kept.push_back(std::move(piece));
-			} else {
-				for (Poly& part : subtract(piece.poly, inside, cfg.minPieceArea))
-				{
-					Piece outside = piece;
-					outside.poly = std::move(part);
-					kept.push_back(std::move(outside));
-				}
+				std::vector<std::array<float, 4>> volume = kworld::interiorMaskHull({ *d });
+				if (!volume.empty())
+					doors.push_back({ d, std::move(volume) });
 			}
-		}
-		pieces = std::move(kept);
-	}
-
-	// 3b. the door painter: what lies in a door's volume is cut out of its piece and carries the door's key (no geometry is added)
-	for (const kworld::WorldShape* d : input.shapes)
+	std::vector<Part> parts;
+	for (std::size_t si = 0; si < surfaces.size(); ++si)
 	{
-		if (!input.paintDoors || d == nullptr || d->use != kworld::NavUse::Door || d->indices.size() < 3)
+		const Surface& S = surfaces[si];
+		if (S.region.empty())
 			continue;
-		const std::vector<std::array<float, 4>> volume = kworld::interiorMaskHull({ *d });
-		if (volume.empty())
-			continue;
-		std::vector<Piece> painted;
-		for (Piece& piece : pieces)
+		const Poly area0 = box({ S.bmin[0] - 10.0, S.bmin[1] - 10.0 }, { S.bmax[0] + 10.0, S.bmax[1] + 10.0 });
+		c2::Paths64 inside = S.region, outside;
+		if (!hullPlanes.empty())
 		{
-			Poly inside = inHull(piece.poly, piece.plane, volume);
-			if (inside.size() < 3 || area(inside) <= cfg.minPieceArea)
-			{
-				painted.push_back(std::move(piece));
-				continue;
-			}
-			for (Poly& part : subtract(piece.poly, inside, cfg.minPieceArea))
-			{
-				Piece rest = piece;
-				rest.poly = std::move(part);
-				painted.push_back(std::move(rest));
-			}
-			piece.poly = std::move(inside);
-			piece.data = 4; // the baked state is open (the capture's faces); the runtime door book repaints by the key
-			piece.door = d->door;
-			painted.push_back(std::move(piece));
+			const Poly h = section(area0, S.plane, hullPlanes);
+			inside = h.size() >= 3 ? tidy(c2::Intersect(S.region, { grid.path(h) }, c2::FillRule::NonZero)) : c2::Paths64{};
+			outside = c2::Difference(S.region, inside, c2::FillRule::NonZero);
 		}
-		pieces = std::move(painted);
-	}
-
-	// snap to the lattice, drop what collapsed
-	for (Piece& piece : pieces)
-	{
-		for (P2& v : piece.poly)
-			v = snap(v, cfg.lattice);
-		Poly clean;
-		for (const P2& v : piece.poly)
-			if (clean.empty() || keyOf(clean.back(), cfg.lattice) != keyOf(v, cfg.lattice) )
-				clean.push_back(v);
-		while (clean.size() > 1 && keyOf(clean.front(), cfg.lattice) == keyOf(clean.back(), cfg.lattice))
-			clean.pop_back();
-		piece.poly = std::move(clean);
-	}
-	pieces.erase(std::remove_if(pieces.begin(), pieces.end(), [&](const Piece& p) { return p.poly.size() < 3 || area(p.poly) < cfg.minPieceArea; }), pieces.end());
-	rep.pieces = pieces.size();
-
-	// 4. T-junction repair: a corner of one piece lying on another's edge becomes a corner there too
-	for (Piece& target : pieces)
-	{
-		for (std::size_t i = 0; i < target.poly.size();)
+		for (auto& [paths, side] : { std::pair{ inside, Side::Interior }, std::pair{ outside, Side::Zone } })
 		{
-			const P2 a = target.poly[i], b = target.poly[(i + 1) % target.poly.size()];
-			const double length = std::hypot(b[0] - a[0], b[1] - a[1]);
-			bool split = false;
-			if (length > 4 * cfg.lattice)
-				for (const Piece& other : pieces)
+			c2::Paths64 rest = paths;
+			for (const auto& [shape, volume] : doors)
+			{
+				if (rest.empty())
+					break;
+				const Poly v = section(area0, S.plane, volume);
+				if (v.size() < 3)
+					continue;
+				const c2::Paths64 painted = tidy(c2::Intersect(rest, { grid.path(v) }, c2::FillRule::NonZero));
+				if (c2::Area(painted) / (grid.s * grid.s) <= cfg.minPieceArea)
+					continue;
+				rest = c2::Difference(rest, painted, c2::FillRule::NonZero);
+				parts.push_back({ si, side, 4, shape->door, painted }); // the baked state is open (the capture's faces); the runtime door book repaints by the key
+			}
+			if (!rest.empty())
+				parts.push_back({ si, side, 1, 0, rest });
+		}
+	}
+	stage("sides");
+
+	// 7. convex faces per part; straight corners no other face of the surface uses are dropped; a corner of one face lying exactly on another's
+	// edge (same surface) becomes a corner there too
+	std::vector<IFace> iFaces;
+	for (std::size_t p = 0; p < parts.size(); ++p)
+		if (!decompose(parts[p].paths, p, iFaces))
+		{
+			// one polygon (with its holes) at a time
+			c2::PolyTree64 tree;
+			c2::Clipper64 clipper;
+			clipper.AddSubject(parts[p].paths);
+			clipper.Execute(c2::ClipType::Union, c2::FillRule::NonZero, tree);
+			std::function<void(const c2::PolyPath64&)> walk = [&](const c2::PolyPath64& node)
+			{
+				for (const auto& child : node)
 				{
-					if (&other == &target)
-						continue;
-					for (const P2& v : other.poly)
-					{
-						const double t = ((v[0] - a[0]) * (b[0] - a[0]) + (v[1] - a[1]) * (b[1] - a[1])) / (length * length);
-						if (t <= 0.0 || t >= 1.0)
-							continue;
-						const double dist = std::fabs(cross2(a, b, v)) / length;
-						if (dist > 2 * cfg.lattice || std::hypot(v[0] - a[0], v[1] - a[1]) < 2 * cfg.lattice || std::hypot(v[0] - b[0], v[1] - b[1]) < 2 * cfg.lattice)
-							continue;
-						if (std::fabs(other.plane.at(v[0], v[1]) - target.plane.at(v[0], v[1])) > cfg.planarTolerance)
-							continue;
-						target.poly.insert(target.poly.begin() + static_cast<std::ptrdiff_t>(i) + 1, v);
-						split = true;
-						break;
-					}
-					if (split)
-						break;
+					c2::Paths64 one{ child->Polygon() };
+					for (const auto& hole : *child)
+						one.push_back(hole->Polygon());
+					if (!decompose(one, p, iFaces))
+						++rep.triangulationFailures;
+					for (const auto& hole : *child)
+						walk(*hole);
 				}
-			if (!split)
-				++i;
-			// when split, re-test the shorter edge from the same i
-		}
-	}
-
-	const auto polyKeys = [&](const Poly& p)
-	{
-		std::vector<Key> keys;
-		for (const P2& v : p)
-			keys.push_back(keyOf(v, cfg.lattice));
-		return keys;
-	};
-
-	// 4b. Delaunay retriangulation of each coplanar group: the cut pieces are an exact but arbitrary partition (strips peeled along every
-	// cutter); only the group's outer boundary and its holes matter. Triangulate the pieces, flip interior edges to Delaunay (the boundary
-	// is never flipped), and let the merge below rebuild convex faces from fat triangles.
-	{
-		const auto planarPair = [&](const Piece& p, const Piece& q)
-		{
-			if (p.data != q.data || p.door != q.door)
-				return false;
-			for (const Piece* src : { &p, &q })
-				for (const P2& v : src->poly)
-					if (std::fabs(p.plane.at(v[0], v[1]) - q.plane.at(v[0], v[1])) > cfg.planarTolerance)
-						return false;
-			return true;
-		};
-		std::vector<std::vector<Key>> keys;
-		for (const Piece& p : pieces)
-			keys.push_back(polyKeys(p.poly));
-		std::map<std::pair<Key, Key>, std::size_t> directed;
-		for (std::size_t i = 0; i < pieces.size(); ++i)
-			for (std::size_t e = 0; e < keys[i].size(); ++e)
-				directed[{ keys[i][e], keys[i][(e + 1) % keys[i].size()] }] = i;
-		std::vector<std::size_t> parent(pieces.size());
-		std::iota(parent.begin(), parent.end(), std::size_t{ 0 });
-		const auto root = [&](std::size_t x)
-		{
-			while (parent[x] != x)
-				x = parent[x] = parent[parent[x]];
-			return x;
-		};
-		for (std::size_t i = 0; i < pieces.size(); ++i)
-			for (std::size_t e = 0; e < keys[i].size(); ++e)
-			{
-				const auto it = directed.find({ keys[i][(e + 1) % keys[i].size()], keys[i][e] });
-				if (it != directed.end() && it->second != i && planarPair(pieces[i], pieces[it->second]))
-					parent[root(i)] = root(it->second);
-			}
-		std::map<std::size_t, std::vector<std::size_t>> groups;
-		for (std::size_t i = 0; i < pieces.size(); ++i)
-			groups[root(i)].push_back(i);
-		std::vector<Piece> rebuilt;
-		for (const auto& [rootIndex, members] : groups)
-		{
-			if (members.size() == 1)
-			{
-				rebuilt.push_back(pieces[members[0]]);
-				continue;
-			}
-			std::size_t biggest = members[0];
-			for (const std::size_t m : members)
-				if (area(pieces[m].poly) > area(pieces[biggest].poly))
-					biggest = m;
-			std::vector<P2> position;
-			std::map<Key, int> idOf;
-			const auto vertexId = [&](const P2& v)
-			{
-				const auto [it, fresh] = idOf.emplace(keyOf(v, cfg.lattice), static_cast<int>(position.size()));
-				if (fresh)
-					position.push_back(v);
-				return it->second;
 			};
-			std::vector<std::array<int, 3>> tris;
-			for (const std::size_t m : members)
-			{
-				const Poly& poly = pieces[m].poly;
-				std::vector<int> ids;
-				for (const P2& v : poly)
-					ids.push_back(vertexId(v));
-				const std::size_t n = ids.size();
-				for (std::size_t apex = 0; apex < n; ++apex)
-				{
-					std::vector<std::array<int, 3>> fan;
-					bool ok = true;
-					for (std::size_t k = 1; k + 1 < n && ok; ++k)
-					{
-						const std::array<int, 3> t = { ids[apex], ids[(apex + k) % n], ids[(apex + k + 1) % n] };
-						ok = cross2(position[static_cast<std::size_t>(t[0])], position[static_cast<std::size_t>(t[1])], position[static_cast<std::size_t>(t[2])]) > 1e-9;
-						fan.push_back(t);
-					}
-					if (ok)
-					{
-						tris.insert(tris.end(), fan.begin(), fan.end());
-						break;
-					}
-				}
-			}
-			const auto at = [&](int id) -> const P2& { return position[static_cast<std::size_t>(id)]; };
-			for (std::size_t pass = 0; pass < 4000; ++pass)
-			{
-				std::map<std::pair<int, int>, std::size_t> dm;
-				for (std::size_t t = 0; t < tris.size(); ++t)
-					for (std::size_t k = 0; k < 3; ++k)
-						dm[{ tris[t][k], tris[t][(k + 1) % 3] }] = t;
-				bool flipped = false;
-				for (std::size_t t = 0; t < tris.size() && !flipped; ++t)
-					for (std::size_t k = 0; k < 3 && !flipped; ++k)
-					{
-						const int a = tris[t][k], b = tris[t][(k + 1) % 3], c = tris[t][(k + 2) % 3];
-						const auto nb = dm.find({ b, a });
-						if (nb == dm.end())
-							continue;
-						const std::size_t u = nb->second;
-						int d = -1;
-						for (const int v : tris[u])
-							if (v != a && v != b)
-								d = v;
-						const P2 &pa = at(a), &pb = at(b), &pc = at(c), &pd = at(d);
-						if (cross2(pa, pd, pc) <= 1e-9 || cross2(pd, pb, pc) <= 1e-9)
-							continue; // the quad is not strictly convex: the diagonal stays
-						const double ax = pa[0] - pd[0], az = pa[1] - pd[1], bx = pb[0] - pd[0], bz = pb[1] - pd[1], cx = pc[0] - pd[0], cz = pc[1] - pd[1];
-						const double det = (ax * ax + az * az) * (bx * cz - cx * bz) - (bx * bx + bz * bz) * (ax * cz - cx * az) + (cx * cx + cz * cz) * (ax * bz - bx * az);
-						if (det <= 1e-9)
-							continue; // d is outside the circle of a, b, c: Delaunay already
-						tris[t] = { a, d, c };
-						tris[u] = { d, b, c };
-						flipped = true;
-					}
-				if (!flipped)
-					break;
-			}
-			for (const auto& t : tris)
-			{
-				Piece piece = pieces[biggest];
-				piece.poly = { at(t[0]), at(t[1]), at(t[2]) };
-				rebuilt.push_back(std::move(piece));
-			}
+			walk(tree);
 		}
-		pieces = std::move(rebuilt);
-	}
-
-	// 5. convex merge across shared edges
-	for (;;)
 	{
-		struct Candidate
-		{
-			double length = -1.0;
-			std::size_t i = 0, j = 0, ei = 0, ej = 0;
-		} best;
-		std::map<std::pair<Key, Key>, std::pair<std::size_t, std::size_t>> edgeMap;
-		std::vector<std::vector<Key>> keys;
-		for (const Piece& p : pieces)
-			keys.push_back(polyKeys(p.poly));
-		for (std::size_t i = 0; i < pieces.size(); ++i)
-			for (std::size_t e = 0; e < keys[i].size(); ++e)
-				edgeMap[{ keys[i][e], keys[i][(e + 1) % keys[i].size()] }] = { i, e };
-		for (std::size_t i = 0; i < pieces.size(); ++i)
-			for (std::size_t e = 0; e < keys[i].size(); ++e)
+		std::map<std::pair<std::size_t, Key>, std::size_t> uses;
+		for (const IFace& f : iFaces)
+			for (const c2::Point64& v : f.ring)
+				++uses[{ parts[f.part].surface, keyOf(v) }];
+		for (IFace& f : iFaces)
+			for (std::size_t k = 0; k < f.ring.size() && f.ring.size() > 3;)
 			{
-				const auto it = edgeMap.find({ keys[i][(e + 1) % keys[i].size()], keys[i][e] });
-				if (it == edgeMap.end() || it->second.first <= i)
-					continue;
-				const std::size_t j = it->second.first;
-				if (pieces[i].data != pieces[j].data || pieces[i].door != pieces[j].door)
-					continue;
-				const P2 &a = pieces[i].poly[e], &b = pieces[i].poly[(e + 1) % pieces[i].poly.size()];
-				const double length = std::hypot(b[0] - a[0], b[1] - a[1]);
-				if (length <= best.length)
-					continue;
-				bool planar = true;
-				for (const P2& v : pieces[j].poly)
-					planar = planar && std::fabs(pieces[i].plane.at(v[0], v[1]) - pieces[j].plane.at(v[0], v[1])) <= cfg.planarTolerance;
-				for (const P2& v : pieces[i].poly)
-					planar = planar && std::fabs(pieces[i].plane.at(v[0], v[1]) - pieces[j].plane.at(v[0], v[1])) <= cfg.planarTolerance;
-				if (!planar)
-					continue;
-				// merged ring: i's corners from the shared edge's end round to its start, then j's corners after its shared edge
-				const std::size_t ni = pieces[i].poly.size(), nj = pieces[j].poly.size();
-				Poly merged;
-				for (std::size_t k = 0; k < ni; ++k)
-					merged.push_back(pieces[i].poly[(e + 1 + k) % ni]);
-				// i: starts at b (e+1) ... ends at a (e); j's shared edge runs b->a at index f: its corners f+2 .. f+nj-1 are the rest
-				const std::size_t f = it->second.second;
-				for (std::size_t k = 2; k < nj; ++k)
-					merged.push_back(pieces[j].poly[(f + k) % nj]);
-				bool convex = true;
-				for (std::size_t k = 0; k < merged.size() && convex; ++k)
-				{
-					const P2 &p0 = merged[k], &p2 = merged[(k + 2) % merged.size()];
-					// a corner that bends the wrong way by no more than the snap noise counts as straight
-					convex = cross2(p0, merged[(k + 1) % merged.size()], p2) >= -cfg.collinearTolerance * std::hypot(p2[0] - p0[0], p2[1] - p0[1]);
-				}
-				if (!convex)
-					continue;
-				best = { length, i, j, e, f };
+				const std::size_t n = f.ring.size();
+				if (cross64(f.ring[(k + n - 1) % n], f.ring[k], f.ring[(k + 1) % n]) == 0 && uses[{ parts[f.part].surface, keyOf(f.ring[k]) }] == 1)
+					f.ring.erase(f.ring.begin() + static_cast<std::ptrdiff_t>(k));
+				else
+					++k;
 			}
-		if (best.length < 0.0)
-			break;
-		Piece& A = pieces[best.i];
-		const Piece& B = pieces[best.j];
-		const std::size_t ni = A.poly.size(), nj = B.poly.size();
-		Poly merged;
-		for (std::size_t k = 0; k < ni; ++k)
-			merged.push_back(A.poly[(best.ei + 1 + k) % ni]);
-		for (std::size_t k = 2; k < nj; ++k)
-			merged.push_back(B.poly[(best.ej + k) % nj]);
-		// the plane of the larger piece
-		if (area(B.poly) > area(A.poly))
-			A.plane = B.plane;
-		// drop the two shared end corners when collinear and no other piece uses them
-		const P2 shared[2] = { A.poly[best.ei], A.poly[(best.ei + 1) % ni] };
-		A.poly = std::move(merged);
-		pieces.erase(pieces.begin() + static_cast<std::ptrdiff_t>(best.j));
-		for (const P2& s : shared)
+		std::map<std::size_t, std::vector<c2::Point64>> corners;
+		for (const IFace& f : iFaces)
+			for (const c2::Point64& v : f.ring)
+				corners[parts[f.part].surface].push_back(v);
+		for (auto& [s, list] : corners)
 		{
-			const Key sk = keyOf(s, cfg.lattice);
-			std::size_t uses = 0;
-			for (const Piece& p : pieces)
-				for (const P2& v : p.poly)
-					uses += keyOf(v, cfg.lattice) == sk ? 1 : 0;
-			if (uses != 1)
-				continue;
-			for (std::size_t k = 0; k < A.poly.size(); ++k)
-				if (keyOf(A.poly[k], cfg.lattice) == sk)
+			std::sort(list.begin(), list.end(), [](const c2::Point64& x, const c2::Point64& y) { return keyOf(x) < keyOf(y); });
+			list.erase(std::unique(list.begin(), list.end()), list.end());
+		}
+		for (IFace& f : iFaces)
+		{
+			const std::vector<c2::Point64>& list = corners[parts[f.part].surface];
+			c2::Path64 ring;
+			for (std::size_t k = 0; k < f.ring.size(); ++k)
+			{
+				const c2::Point64 a = f.ring[k], b = f.ring[(k + 1) % f.ring.size()];
+				ring.push_back(a);
+				std::vector<std::pair<std::int64_t, c2::Point64>> on;
+				const std::int64_t len2 = (b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y);
+				const auto first = std::lower_bound(list.begin(), list.end(), c2::Point64(std::min(a.x, b.x), std::numeric_limits<std::int64_t>::min()),
+					[](const c2::Point64& x, const c2::Point64& y) { return keyOf(x) < keyOf(y); });
+				for (auto it = first; it != list.end() && it->x <= std::max(a.x, b.x); ++it)
 				{
-					const P2 &prev = A.poly[(k + A.poly.size() - 1) % A.poly.size()], &next = A.poly[(k + 1) % A.poly.size()];
-					const double chord = std::hypot(next[0] - prev[0], next[1] - prev[1]);
-					if (chord > 0.0 && std::fabs(cross2(prev, A.poly[k], next)) / chord < cfg.collinearTolerance && A.poly.size() > 3)
-						A.poly.erase(A.poly.begin() + static_cast<std::ptrdiff_t>(k));
-					break;
+					const c2::Point64& v = *it;
+					if (v == a || v == b || v.y < std::min(a.y, b.y) || v.y > std::max(a.y, b.y) || cross64(a, b, v) != 0)
+						continue;
+					const std::int64_t t = (v.x - a.x) * (b.x - a.x) + (v.y - a.y) * (b.y - a.y);
+					if (t > 0 && t < len2)
+						on.push_back({ t, v });
 				}
+				std::sort(on.begin(), on.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+				for (const auto& [t, v] : on)
+					ring.push_back(v);
+			}
+			f.ring = std::move(ring);
 		}
 	}
+	stage("faces");
 
-	// 6. faces, then edge matching
+	// 8. face links: within a surface the exact shared edges; across surfaces (and across a crack in one) the matcher, only on stretches the regions
+	// linked, so nothing links across floor the narrow cut removed
 	std::vector<Face> faces;
-	int nextUid = 1;
-	for (const Piece& p : pieces)
+	for (const IFace& f : iFaces)
 	{
-		Face f;
-		f.plane = p.plane;
-		f.data = p.data;
-		f.door = p.door;
-		f.shape = p.shape;
-		for (const P2& v : p.poly)
-			f.ring.push_back({ v, nextUid++ });
-		faces.push_back(std::move(f));
+		const Part& part = parts[f.part];
+		Face face;
+		face.plane = surfaces[part.surface].plane;
+		face.data = part.data;
+		face.door = part.door;
+		face.shape = surfaces[part.surface].shape;
+		face.surface = part.surface;
+		face.side = part.side;
+		for (const c2::Point64& v : f.ring)
+			face.ring.push_back({ grid.from(v), 0 });
+		faces.push_back(std::move(face));
 	}
-	std::map<int, int> partner; // edge uid -> matched uid
-	const auto splitEdge = [&](Face& f, std::size_t edge, const P2& at)
+	struct Attach
 	{
-		f.ring.insert(f.ring.begin() + static_cast<std::ptrdiff_t>(edge) + 1, FaceEdge{ at, nextUid++ });
+		double t0, t1;
+		std::size_t link; // index into the pairs below
+		int end; // 0 or 1
 	};
-	for (int pass = 0; pass < 2; ++pass)
+	std::vector<std::vector<std::vector<Attach>>> attach(faces.size());
+	for (std::size_t f = 0; f < faces.size(); ++f)
+		attach[f].resize(faces[f].ring.size());
+	std::vector<std::array<int, 2>> pairUids; // per link: the uid of each end's sub-edge
 	{
-		const double limit = pass == 0 ? cfg.matchSeparation : cfg.matchSeparationMax;
-		for (std::size_t guard = 0; guard < 20000; ++guard)
-		{
-			struct Pair
+		std::map<std::pair<std::size_t, std::pair<Key, Key>>, std::pair<std::size_t, std::size_t>> exact;
+		for (std::size_t f = 0; f < iFaces.size(); ++f)
+			for (std::size_t k = 0; k < iFaces[f].ring.size(); ++k)
+				exact[{ faces[f].surface, { keyOf(iFaces[f].ring[k]), keyOf(iFaces[f].ring[(k + 1) % iFaces[f].ring.size()]) } }] = { f, k };
+		std::vector<std::vector<char>> paired(faces.size());
+		for (std::size_t f = 0; f < faces.size(); ++f)
+			paired[f].assign(faces[f].ring.size(), 0);
+		for (std::size_t f = 0; f < iFaces.size(); ++f)
+			for (std::size_t k = 0; k < iFaces[f].ring.size(); ++k)
 			{
-				double gap = 1e30;
-				std::size_t fa = 0, ea = 0, fb = 0, eb = 0;
-				double s0 = 0, s1 = 0; // overlap along A's edge
-			} best;
-			for (std::size_t fa = 0; fa < faces.size(); ++fa)
-				for (std::size_t ea = 0; ea < faces[fa].ring.size(); ++ea)
-				{
-					if (partner.count(faces[fa].ring[ea].uid) != 0)
-						continue;
-					const P2 a0 = faces[fa].ring[ea].a, a1 = edgeEnd(faces[fa], ea);
-					const double lenA = std::hypot(a1[0] - a0[0], a1[1] - a0[1]);
-					if (lenA < cfg.matchOverlap)
-						continue;
-					const double ux = (a1[0] - a0[0]) / lenA, uz = (a1[1] - a0[1]) / lenA;
-					for (std::size_t fb = fa + 1; fb < faces.size(); ++fb)
-						for (std::size_t eb = 0; eb < faces[fb].ring.size(); ++eb)
-						{
-							if (partner.count(faces[fb].ring[eb].uid) != 0)
-								continue;
-							const P2 b0 = faces[fb].ring[eb].a, b1 = edgeEnd(faces[fb], eb);
-							const double lenB = std::hypot(b1[0] - b0[0], b1[1] - b0[1]);
-							if (lenB < cfg.matchOverlap)
-								continue;
-							if (((b1[0] - b0[0]) * ux + (b1[1] - b0[1]) * uz) / lenB > -0.985)
-								continue; // not antiparallel
-							// B's corners along A's line, and their signed distance (positive: outside A, the right of the edge)
-							const double t0 = (b0[0] - a0[0]) * ux + (b0[1] - a0[1]) * uz, t1 = (b1[0] - a0[0]) * ux + (b1[1] - a0[1]) * uz;
-							const double d0 = (b0[0] - a0[0]) * uz - (b0[1] - a0[1]) * ux, d1 = (b1[0] - a0[0]) * uz - (b1[1] - a0[1]) * ux;
-							const double s0 = std::max(0.0, std::min(t0, t1)), s1 = std::min(lenA, std::max(t0, t1));
-							if (s1 - s0 < cfg.matchOverlap)
-								continue;
-							const double gap = 0.5 * (d0 + d1);
-							if (std::fabs(d0) > cfg.matchSeparationMax || std::fabs(d1) > cfg.matchSeparationMax || gap < -0.05 || gap > limit)
-								continue;
-							const double mid = 0.5 * (s0 + s1);
-							const double ya = faces[fa].plane.at(a0[0] + ux * mid, a0[1] + uz * mid);
-							const double mx = a0[0] + ux * mid + uz * gap, mz = a0[1] + uz * mid - ux * gap;
-							const double yb = faces[fb].plane.at(mx, mz);
-							if (std::fabs(ya - yb) > cfg.matchStep)
-								continue;
-							if (gap < best.gap)
-								best = { gap, fa, ea, fb, eb, s0, s1 };
-						}
-				}
-			if (best.gap >= 1e29)
-				break;
-			// blocked by a solid standing between (a wall that is not a door)?
-			{
-				Face& A = faces[best.fa];
-				const P2 a0 = A.ring[best.ea].a, a1 = edgeEnd(A, best.ea);
-				const double lenA = std::hypot(a1[0] - a0[0], a1[1] - a0[1]);
-				const double ux = (a1[0] - a0[0]) / lenA, uz = (a1[1] - a0[1]) / lenA;
-				const double mid = 0.5 * (best.s0 + best.s1);
-				bool blocked = false;
-				if (best.gap > 0.05)
-				{
-					const P2 centre{ a0[0] + ux * mid + uz * best.gap * 0.5, a0[1] + uz * mid - ux * best.gap * 0.5 };
-					std::vector<Poly> cut;
-					const Plane lower = A.plane.at(centre[0], centre[1]) < faces[best.fb].plane.at(centre[0], centre[1]) ? A.plane : faces[best.fb].plane;
-					for (const Solid& s : solids)
-						if (s.shape->use != kworld::NavUse::Door)
-							footprints(s, lower, cfg.cutBase, cfg.characterHeight, centre, centre, cfg.barrierHalfWidth, cut);
-					for (const Poly& c : cut)
-						if (contains(c, centre))
-							blocked = true;
-				}
-				if (blocked)
-				{
-					// refuse this pair by splitting nothing and marking both edges unmatchable: partner = -uid
-					partner[faces[best.fa].ring[best.ea].uid] = -1;
-					partner[faces[best.fb].ring[best.eb].uid] = -1;
+				if (paired[f][k])
 					continue;
-				}
-				// split A at the overlap ends, B at the projections of the same points
-				const P2 pa0{ a0[0] + ux * best.s0, a0[1] + uz * best.s0 }, pa1{ a0[0] + ux * best.s1, a0[1] + uz * best.s1 };
-				std::size_t ea = best.ea;
-				if (best.s1 < lenA - 1e-6)
-				{
-					splitEdge(A, ea, pa1);
-				}
-				if (best.s0 > 1e-6)
-				{
-					splitEdge(A, ea, pa0);
-					++ea;
-				}
-				Face& B = faces[best.fb];
-				const P2 b0 = B.ring[best.eb].a, b1 = edgeEnd(B, best.eb);
-				const double lenB = std::hypot(b1[0] - b0[0], b1[1] - b0[1]);
-				const double vx = (b1[0] - b0[0]) / lenB, vz = (b1[1] - b0[1]) / lenB;
-				// along B (antiparallel): A's end pa1 comes first, then pa0
-				const double u0 = std::clamp((pa1[0] - b0[0]) * vx + (pa1[1] - b0[1]) * vz, 0.0, lenB);
-				const double u1 = std::clamp((pa0[0] - b0[0]) * vx + (pa0[1] - b0[1]) * vz, 0.0, lenB);
-				std::size_t eb = best.eb;
-				if (u1 < lenB - 1e-6)
-					splitEdge(B, eb, { b0[0] + vx * u1, b0[1] + vz * u1 });
-				if (u0 > 1e-6)
-				{
-					splitEdge(B, eb, { b0[0] + vx * u0, b0[1] + vz * u0 });
-					++eb;
-				}
-				partner[A.ring[ea].uid] = B.ring[eb].uid;
-				partner[B.ring[eb].uid] = A.ring[ea].uid;
-				++rep.matchedEdges;
+				const auto it = exact.find({ faces[f].surface, { keyOf(iFaces[f].ring[(k + 1) % iFaces[f].ring.size()]), keyOf(iFaces[f].ring[k]) } });
+				if (it == exact.end() || it->second.first == f)
+					continue;
+				const auto [g, h] = it->second;
+				const double len = std::hypot(edgeEnd(faces[f], k)[0] - faces[f].ring[k].a[0], edgeEnd(faces[f], k)[1] - faces[f].ring[k].a[1]);
+				attach[f][k].push_back({ 0.0, len, pairUids.size(), 0 });
+				attach[g][h].push_back({ 0.0, len, pairUids.size(), 1 });
+				pairUids.push_back({ 0, 0 });
+				paired[f][k] = paired[g][h] = 1;
 			}
+		std::vector<Seg> segs;
+		std::vector<std::pair<std::size_t, std::size_t>> segEdge;
+		for (std::size_t f = 0; f < faces.size(); ++f)
+			for (std::size_t k = 0; k < faces[f].ring.size(); ++k)
+				if (!paired[f][k])
+				{
+					segs.push_back({ faces[f].ring[k].a, edgeEnd(faces[f], k), &faces[f].plane, faces[f].surface });
+					segEdge.push_back({ f, k });
+				}
+		const double onLine = 2.0 / grid.s;
+		const auto allowed = [&](std::size_t i, std::size_t j)
+		{
+			Intervals out;
+			const auto it = linkedStretches.find({ segs[i].surface, segs[j].surface });
+			if (it == linkedStretches.end())
+				return out;
+			const Seg& s = segs[i];
+			const double len = std::hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]);
+			const double ux = (s.b[0] - s.a[0]) / len, uz = (s.b[1] - s.a[1]) / len;
+			for (const Stretch& st : it->second)
+			{
+				const double da = (st.a[0] - s.a[0]) * uz - (st.a[1] - s.a[1]) * ux, db = (st.b[0] - s.a[0]) * uz - (st.b[1] - s.a[1]) * ux;
+				const double ta = (st.a[0] - s.a[0]) * ux + (st.a[1] - s.a[1]) * uz, tb = (st.b[0] - s.a[0]) * ux + (st.b[1] - s.a[1]) * uz;
+				if (std::fabs(da) > onLine || std::fabs(db) > onLine || tb <= ta)
+					continue;
+				const double lo = std::max(0.0, ta), hi = std::min(len, tb);
+				if (hi > lo)
+					out.push_back({ lo, hi });
+			}
+			std::sort(out.begin(), out.end());
+			return out;
+		};
+		for (const Link& l : matchEdges(segs, solids, cfg, allowed))
+		{
+			const auto [f, k] = segEdge[l.i];
+			const auto [g, h] = segEdge[l.j];
+			attach[f][k].push_back({ l.t0, l.t1, pairUids.size(), 0 });
+			attach[g][h].push_back({ l.u0, l.u1, pairUids.size(), 1 });
+			pairUids.push_back({ 0, 0 });
 		}
 	}
-
-	// the seam: a face edge with both ends on one side plane of the mask hull (the floor and ceiling planes are not seams)
-	const auto onSeam = [&](const Face& f, std::size_t k)
+	// split each edge at its links' ends (ends closer than two grid steps are one), each piece a new uid
+	int nextUid = 1;
+	for (std::size_t f = 0; f < faces.size(); ++f)
 	{
-		const P2 a = f.ring[k].a, b = edgeEnd(f, k);
-		if (std::hypot(b[0] - a[0], b[1] - a[1]) < 0.05)
-			return false; // snap noise round a corner, not a seam
-		const double ya = f.plane.at(a[0], a[1]), yb = f.plane.at(b[0], b[1]);
-		for (const auto& h : hullPlanes)
-			if (std::fabs(h[1]) < 0.5f && std::fabs(h[0] * a[0] + h[1] * ya + h[2] * a[1] - h[3]) <= cfg.seamTolerance
-				&& std::fabs(h[0] * b[0] + h[1] * yb + h[2] * b[1] - h[3]) <= cfg.seamTolerance)
-				return true;
-		return false;
-	};
-
-	// 7. components over matched edges, pruning to the seed
+		std::vector<FaceEdge> ring;
+		for (std::size_t k = 0; k < faces[f].ring.size(); ++k)
+		{
+			const P2 a = faces[f].ring[k].a, b = edgeEnd(faces[f], k);
+			const double len = std::hypot(b[0] - a[0], b[1] - a[1]);
+			std::vector<double> cuts{ 0.0, len };
+			for (const Attach& at : attach[f][k])
+				for (const double t : { at.t0, at.t1 })
+					cuts.push_back(std::clamp(t, 0.0, len));
+			std::sort(cuts.begin(), cuts.end());
+			std::vector<double> merged{ 0.0 };
+			for (const double t : cuts)
+				if (t - merged.back() >= 2.0 / grid.s)
+					merged.push_back(t);
+			if (len - merged.back() < 2.0 / grid.s && merged.size() > 1)
+				merged.back() = len;
+			else if (merged.back() != len)
+				merged.push_back(len);
+			for (std::size_t c = 0; c + 1 < merged.size(); ++c)
+			{
+				const int uid = nextUid++;
+				ring.push_back({ { a[0] + (b[0] - a[0]) * merged[c] / len, a[1] + (b[1] - a[1]) * merged[c] / len }, uid });
+				const double mid = 0.5 * (merged[c] + merged[c + 1]);
+				for (const Attach& at : attach[f][k])
+					if (mid > at.t0 && mid < at.t1)
+						pairUids[at.link][static_cast<std::size_t>(at.end)] = uid;
+			}
+		}
+		faces[f].ring = std::move(ring);
+	}
 	std::map<int, std::size_t> faceByUid;
 	for (std::size_t f = 0; f < faces.size(); ++f)
 		for (const FaceEdge& e : faces[f].ring)
 			faceByUid[e.uid] = f;
+	std::map<int, int> partner, seam; // same side / interior-zone
+	for (const auto& [u, v] : pairUids)
+	{
+		if (u == 0 || v == 0 || u == v)
+			continue;
+		auto& to = faces[faceByUid[u]].side == faces[faceByUid[v]].side ? partner : seam;
+		to[u] = v;
+		to[v] = u;
+	}
+	stage("face links");
+
+	// 9a. islands before jumping (user 2026-11-24: "identify the islands before jumping. The final merge counts the jump, but the total island size
+	// can be used to discard an island"): faces joined by edges that coincide (xz within 2 weld, height within cutBase: a shared edge, the seam, a
+	// ramp meeting a floor flush), not by a step or a gap. An island under minIslandArea (both sides) goes before the flood, and no jump crosses it.
+	std::vector<char> tinyIsland(faces.size(), 0);
+	{
+		const auto ends = [&](int uid)
+		{
+			const Face& face = faces[faceByUid[uid]];
+			std::size_t k = 0;
+			while (face.ring[k].uid != uid)
+				++k;
+			const P2 a = face.ring[k].a, b = face.ring[(k + 1) % face.ring.size()].a;
+			return std::array<std::array<double, 3>, 2>{ { { a[0], face.plane.at(a[0], a[1]), a[1] }, { b[0], face.plane.at(b[0], b[1]), b[1] } } };
+		};
+		const auto same = [&](const std::array<double, 3>& p, const std::array<double, 3>& q)
+		{
+			return std::hypot(p[0] - q[0], p[2] - q[2]) <= 2.0 * cfg.weld && std::fabs(p[1] - q[1]) <= cfg.cutBase;
+		};
+		const auto joined = [&](int u, int v)
+		{
+			const auto e = ends(u), o = ends(v);
+			return same(e[0], o[1]) && same(e[1], o[0]);
+		};
+		std::vector<std::size_t> island(faces.size(), SIZE_MAX);
+		std::vector<double> islandArea;
+		for (std::size_t f = 0; f < faces.size(); ++f)
+		{
+			if (island[f] != SIZE_MAX)
+				continue;
+			const std::size_t c = islandArea.size();
+			islandArea.push_back(0.0);
+			std::vector<std::size_t> stack{ f };
+			island[f] = c;
+			while (!stack.empty())
+			{
+				const std::size_t cur = stack.back();
+				stack.pop_back();
+				islandArea[c] += faceArea(faces[cur]);
+				for (const FaceEdge& e : faces[cur].ring)
+					for (const std::map<int, int>* links : { &partner, &seam })
+					{
+						const auto it = links->find(e.uid);
+						if (it == links->end() || !joined(e.uid, it->second))
+							continue;
+						const std::size_t other = faceByUid[it->second];
+						if (island[other] == SIZE_MAX)
+						{
+							island[other] = c;
+							stack.push_back(other);
+						}
+					}
+			}
+		}
+		for (std::size_t f = 0; f < faces.size(); ++f)
+			if (islandArea[island[f]] < cfg.minIslandArea)
+			{
+				tinyIsland[f] = 1;
+				rep.tinyIslandArea += faceArea(faces[f]);
+			}
+		for (std::size_t c = 0; c < islandArea.size(); ++c)
+			if (islandArea[c] < cfg.minIslandArea)
+				++rep.tinyIslands;
+	}
+
+	// 9. one graph over both sides (same-side links and the seam): the component holding the lowest walkable piece (or the seed) stays; every other component
+	// goes, interior and zone side alike (user 2026-11-24: "Any navmesh tile that can be reached from this point is the walkable area"). The
+	// building's only way in is through its own faces (the entrance stair meets the ground), so nothing outside the seed's component is reachable.
 	std::vector<std::size_t> component(faces.size(), SIZE_MAX);
-	std::size_t componentCount = 0;
-	std::vector<double> componentArea;
+	std::vector<std::array<double, 2>> componentArea; // per side: interior, zone
 	for (std::size_t f = 0; f < faces.size(); ++f)
 	{
-		if (component[f] != SIZE_MAX)
+		if (component[f] != SIZE_MAX || tinyIsland[f])
 			continue;
+		const std::size_t c = componentArea.size();
+		componentArea.push_back({ 0.0, 0.0 });
 		std::vector<std::size_t> stack{ f };
-		component[f] = componentCount;
-		componentArea.push_back(0.0);
+		component[f] = c;
 		while (!stack.empty())
 		{
 			const std::size_t cur = stack.back();
 			stack.pop_back();
-			componentArea[componentCount] += faceArea(faces[cur]);
+			componentArea[c][faces[cur].side == Side::Interior ? 0 : 1] += faceArea(faces[cur]);
 			for (const FaceEdge& e : faces[cur].ring)
-			{
-				const auto it = partner.find(e.uid);
-				if (it == partner.end() || it->second < 0)
-					continue;
-				const std::size_t other = faceByUid[it->second];
-				if (component[other] == SIZE_MAX)
+				for (const std::map<int, int>* links : { &partner, &seam })
 				{
-					component[other] = componentCount;
-					stack.push_back(other);
+					const auto it = links->find(e.uid);
+					if (it == links->end())
+						continue;
+					const std::size_t other = faceByUid[it->second];
+					if (component[other] == SIZE_MAX && !tinyIsland[other])
+					{
+						component[other] = c;
+						stack.push_back(other);
+					}
 				}
-			}
 		}
-		++componentCount;
 	}
-	rep.components = componentCount;
-	rep.componentAreas = componentArea;
-	std::size_t seedComponent = SIZE_MAX;
-	if (componentCount > 0)
+	// The flood starts at the lowest walkable piece (user 2026-11-24: "All buildings are designed to have a low point of entry, and are designed
+	// to sink into the ground. So it's literally the lowest walkable piece that counts"; a centre or origin point has no floor under it in the
+	// Deadlands warehouse). An explicit seed overrides (tests).
+	std::vector<std::size_t> seedFaces;
+	if (input.seed)
 	{
-		std::optional<P3> seed = input.seed;
-		if (seed)
+		// the lowest face (either side) containing the seed in xz; none contains it (a table stands there): the nearest
+		double bestDistance = 1e30, bestY = 1e30;
+		std::size_t best = SIZE_MAX;
+		const P2 q{ (*input.seed)[0], (*input.seed)[2] };
+		for (std::size_t f = 0; f < faces.size(); ++f)
 		{
-			// the lowest face containing the seed in xz; none contains it (a table stands there): the face nearest to it
-			double bestDistance = 1e30, bestY = 1e30;
-			for (std::size_t f = 0; f < faces.size(); ++f)
+			const Poly xz = faceXz(faces[f]);
+			bool inside = true;
+			double distance = 1e30;
+			for (std::size_t k = 0; k < xz.size(); ++k)
 			{
-				const Poly xz = faceXz(faces[f]);
-				const P2 q{ (*seed)[0], (*seed)[2] };
-				bool inside = true;
-				double distance = 1e30;
-				for (std::size_t k = 0; k < xz.size(); ++k)
-				{
-					const P2 &a = xz[k], &b = xz[(k + 1) % xz.size()];
-					inside = inside && cross2(a, b, q) >= 0.0;
-					const double length2 = (b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]);
-					const double t = length2 > 0.0 ? std::clamp(((q[0] - a[0]) * (b[0] - a[0]) + (q[1] - a[1]) * (b[1] - a[1])) / length2, 0.0, 1.0) : 0.0;
-					distance = std::min(distance, std::hypot(q[0] - a[0] - t * (b[0] - a[0]), q[1] - a[1] - t * (b[1] - a[1])));
-				}
-				const double y = faces[f].plane.at(q[0], q[1]);
-				if (inside)
-					distance = 0.0;
-				if (distance < bestDistance - 1e-9 || (distance < bestDistance + 1e-9 && y < bestY))
-				{
-					bestDistance = distance;
-					bestY = y;
-					seedComponent = component[f];
-				}
+				const P2 &a = xz[k], &b = xz[(k + 1) % xz.size()];
+				inside = inside && cross2(a, b, q) >= 0.0;
+				const double length2 = (b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]);
+				const double t = length2 > 0.0 ? std::clamp(((q[0] - a[0]) * (b[0] - a[0]) + (q[1] - a[1]) * (b[1] - a[1])) / length2, 0.0, 1.0) : 0.0;
+				distance = std::min(distance, std::hypot(q[0] - a[0] - t * (b[0] - a[0]), q[1] - a[1] - t * (b[1] - a[1])));
+			}
+			if (tinyIsland[f])
+				continue;
+			const double y = faces[f].plane.at(q[0], q[1]);
+			if (inside)
+				distance = 0.0;
+			if (distance < bestDistance - 1e-9 || (distance < bestDistance + 1e-9 && y < bestY))
+			{
+				bestDistance = distance;
+				bestY = y;
+				best = f;
 			}
 		}
-		if (seedComponent == SIZE_MAX)
-			seedComponent = static_cast<std::size_t>(std::max_element(componentArea.begin(), componentArea.end()) - componentArea.begin());
-	}
-	// zone side: a component stays when it reaches the seam (it joins the interior there); the rest is an island
-	std::vector<char> reachesSeam(componentCount, 0);
-	if (input.side == Side::Zone)
+		if (best != SIZE_MAX)
+			seedFaces.push_back(best);
+	} else {
+		// the face with the lowest corner, either side
+		double lowest = 1e30;
+		std::size_t best = SIZE_MAX;
 		for (std::size_t f = 0; f < faces.size(); ++f)
-			for (std::size_t k = 0; k < faces[f].ring.size(); ++k)
-				if (partner.count(faces[f].ring[k].uid) == 0 || partner[faces[f].ring[k].uid] < 0)
-					reachesSeam[component[f]] |= onSeam(faces[f], k) ? 1 : 0;
-	std::vector<Face> kept;
+			for (const FaceEdge& e : faces[f].ring)
+				if (!tinyIsland[f] && faces[f].plane.at(e.a[0], e.a[1]) < lowest)
+				{
+					lowest = faces[f].plane.at(e.a[0], e.a[1]);
+					best = f;
+				}
+		if (best != SIZE_MAX)
+			seedFaces.push_back(best);
+	}
+	std::vector<char> seeded(componentArea.size(), 0);
+	for (const std::size_t f : seedFaces)
+		seeded[component[f]] = 1;
+	// Sanity check (user 2026-11-24: "After flood check, warn if it's less than 60% of all the face-up mesh tiles you're working with. Just by
+	// pure numbers, the biggest should win"; then: "I pulled 60% out of my ass"): no share threshold (the Deadlands warehouse is right at 62 %, its
+	// deck sealed off); the warning is a seeded component that is not the largest. The share is reported. A warning only; the seed still decides.
+	{
+		double total = 0.0, reached = 0.0, largest = 0.0, largestSeeded = 0.0;
+		for (std::size_t c = 0; c < componentArea.size(); ++c)
+		{
+			const double a = componentArea[c][0] + componentArea[c][1];
+			total += a;
+			largest = std::max(largest, a);
+			if (seeded[c])
+			{
+				reached += a;
+				largestSeeded = std::max(largestSeeded, a);
+			}
+		}
+		rep.reachedShare = total > 0.0 ? reached / total : 1.0;
+		rep.seedSuspect = largestSeeded < largest;
+	}
+	std::vector<char> keep(faces.size(), 0);
+	for (std::size_t f = 0; f < faces.size(); ++f)
+		keep[f] = !tinyIsland[f] && (seeded[component[f]] || cfg.keepIslands) ? 1 : 0;
+	if (input.side == Side::Zone && hullPlanes.empty())
+		std::fill(keep.begin(), keep.end(), 0);
+	const int sideIndex = input.side == Side::Interior ? 0 : 1;
+	for (const std::array<double, 2>& area : componentArea)
+		if (area[sideIndex] > 0.0)
+		{
+			++rep.components;
+			rep.componentAreas.push_back(area[sideIndex]);
+		}
+	stage("prune");
+
+	// 10. the native mesh of the asked side
+	std::vector<std::size_t> out;
 	for (std::size_t f = 0; f < faces.size(); ++f)
 	{
-		if (input.side == Side::Zone ? (reachesSeam[component[f]] != 0 || !cfg.pruneZoneIslands) : component[f] == seedComponent)
-			kept.push_back(std::move(faces[f]));
+		if (faces[f].side != input.side)
+			continue;
+		if (keep[f])
+		{
+			if (std::find(seedFaces.begin(), seedFaces.end(), f) != seedFaces.end())
+				rep.seedFaces.push_back(out.size());
+			out.push_back(f);
+		}
 		else
 		{
 			++rep.droppedFaces;
 			rep.droppedArea += faceArea(faces[f]);
 		}
 	}
-	faces = std::move(kept);
-
-	// 8. the native mesh
 	native::Mesh mesh;
 	mesh.info = "surfgen";
 	std::map<std::array<std::int64_t, 3>, std::uint32_t> vertexIds;
-	std::map<int, std::pair<std::size_t, std::size_t>> edgeOfUid; // uid -> (face, edge index in mesh.edges)
-	for (std::size_t f = 0; f < faces.size(); ++f)
+	std::map<int, std::pair<std::size_t, std::size_t>> edgeOfUid; // uid -> (mesh face, mesh edge)
+	for (const std::size_t f : out)
 	{
 		native::Face face;
 		face.startEdge = static_cast<std::uint32_t>(mesh.edges.size());
 		face.numEdges = static_cast<std::uint16_t>(faces[f].ring.size());
 		face.data = faces[f].data;
 		face.door = faces[f].door;
+		const auto vertexOf = [&](const P2& p)
+		{
+			const double y = faces[f].plane.at(p[0], p[1]);
+			const std::array<std::int64_t, 3> key{ std::llround(p[0] * grid.s), std::llround(y / 0.01), std::llround(p[1] * grid.s) };
+			const auto it = vertexIds.find(key);
+			if (it != vertexIds.end())
+				return it->second;
+			mesh.vertices.push_back({ p[0], y, p[1] });
+			return vertexIds[key] = static_cast<std::uint32_t>(mesh.vertices.size() - 1);
+		};
 		for (std::size_t k = 0; k < faces[f].ring.size(); ++k)
 		{
-			const auto vertexOf = [&](const P2& p)
-			{
-				const double y = faces[f].plane.at(p[0], p[1]);
-				const std::array<std::int64_t, 3> key{ std::llround(p[0] / cfg.lattice), std::llround(y / 0.01), std::llround(p[1] / cfg.lattice) };
-				const auto it = vertexIds.find(key);
-				if (it != vertexIds.end())
-					return it->second;
-				mesh.vertices.push_back({ p[0], y, p[1] });
-				return vertexIds[key] = static_cast<std::uint32_t>(mesh.vertices.size() - 1);
-			};
 			native::Edge edge;
-			edge.linked = onSeam(faces[f], k) && (partner.count(faces[f].ring[k].uid) == 0 || partner[faces[f].ring[k].uid] < 0);
+			const auto s = seam.find(faces[f].ring[k].uid);
+			edge.linked = s != seam.end() && keep[faceByUid[s->second]];
+			const P2 a = faces[f].ring[k].a, b = edgeEnd(faces[f], k);
 			if (edge.linked)
 			{
 				++rep.seamEdges;
-				rep.seamLength += std::hypot(std::hypot(edgeEnd(faces[f], k)[0] - faces[f].ring[k].a[0], edgeEnd(faces[f], k)[1] - faces[f].ring[k].a[1]),
-					faces[f].plane.at(edgeEnd(faces[f], k)[0], edgeEnd(faces[f], k)[1]) - faces[f].plane.at(faces[f].ring[k].a[0], faces[f].ring[k].a[1]));
+				rep.seamLength += std::hypot(std::hypot(b[0] - a[0], b[1] - a[1]), faces[f].plane.at(b[0], b[1]) - faces[f].plane.at(a[0], a[1]));
 			}
-			edge.a = vertexOf(faces[f].ring[k].a);
-			edge.b = vertexOf(edgeEnd(faces[f], k));
-			edgeOfUid[faces[f].ring[k].uid] = { f, mesh.edges.size() };
+			edge.a = vertexOf(a);
+			edge.b = vertexOf(b);
+			edgeOfUid[faces[f].ring[k].uid] = { mesh.faces.size(), mesh.edges.size() };
 			mesh.edges.push_back(edge);
 		}
 		mesh.faces.push_back(face);
 	}
 	for (const auto& [uid, other] : partner)
 	{
-		if (other < 0)
-			continue;
-		const auto a = edgeOfUid.find(uid);
-		const auto b = edgeOfUid.find(other);
+		const auto a = edgeOfUid.find(uid), b = edgeOfUid.find(other);
 		if (a == edgeOfUid.end() || b == edgeOfUid.end())
 			continue;
 		mesh.edges[a->second.second].oppositeEdge = static_cast<std::int32_t>(b->second.second);
 		mesh.edges[a->second.second].oppositeFace = static_cast<std::int32_t>(b->second.first);
+		rep.matchedEdges += uid < other ? 1 : 0;
 	}
 	for (const native::Edge& e : mesh.edges)
 		rep.boundaryEdges += e.oppositeFace < 0 ? 1 : 0;
-	rep.faces = faces.size();
-	for (const Face& f : faces)
-		rep.faceShape.push_back(f.shape);
-	for (std::size_t f = 0; f < faces.size(); ++f)
+
+	// the invariants: convex, no corner twice, no edge under a grid step; no xz overlap within characterHeight in height beyond the weld (two
+	// linked surfaces may share their boundary within a few grid steps: each region's outline was simplified on its own)
+	rep.faces = out.size();
+	std::vector<Poly> insets;
+	for (const std::size_t f : out)
+		insets.push_back(inset(faceXz(faces[f]), cfg.weld));
+	for (std::size_t i = 0; i < out.size(); ++i)
 	{
-		rep.area += faceArea(faces[f]);
-		if (faces[f].door != 0)
+		const Face& F = faces[out[i]];
+		rep.faceShape.push_back(F.shape);
+		rep.area += faceArea(F);
+		if (F.door != 0)
 		{
 			++rep.doorFaces;
-			rep.doorArea += faceArea(faces[f]);
+			rep.doorArea += faceArea(F);
 		}
-		const double slope = std::atan(std::hypot(faces[f].plane.a, faces[f].plane.b)) * 180.0 / kPi;
-		rep.steepFaces += slope > 48.0 ? 1.0 : 0.0;
-		for (std::size_t g = f + 1; g < faces.size(); ++g)
+		rep.steepFaces += std::atan(std::hypot(F.plane.a, F.plane.b)) * 180.0 / kPi > 48.0 ? 1.0 : 0.0;
+		const Poly xz = faceXz(F);
+		bool valid = xz.size() >= 3;
+		std::vector<P2> sorted = xz;
+		std::sort(sorted.begin(), sorted.end());
+		valid = valid && std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end();
+		for (std::size_t k = 0; k < xz.size() && valid; ++k)
 		{
-			const Poly overlap = intersect(faceXz(faces[f]), faceXz(faces[g]));
-			if (overlap.size() >= 3 && maxHeightDifference(overlap, faces[f].plane, faces[g].plane) <= cfg.ownerTolerance + 1e-3)
-				rep.overlapArea += std::max(0.0, area(overlap));
+			const P2 &p0 = xz[(k + xz.size() - 1) % xz.size()], &p1 = xz[k], &p2 = xz[(k + 1) % xz.size()];
+			valid = std::hypot(p2[0] - p1[0], p2[1] - p1[1]) >= 1.0 / grid.s - 1e-9 && cross2(p0, p1, p2) >= -1e-9 * std::hypot(p2[0] - p0[0], p2[1] - p0[1]);
+		}
+		rep.invalidFaces += valid ? 0 : 1;
+		for (std::size_t j = i + 1; j < out.size(); ++j)
+		{
+			if (insets[i].size() < 3 || insets[j].size() < 3)
+				continue;
+			const Poly over = intersect(insets[i], insets[j]);
+			if (over.size() < 3)
+				continue;
+			bool close = false;
+			for (const P2& v : over)
+				close = close || std::fabs(F.plane.at(v[0], v[1]) - faces[out[j]].plane.at(v[0], v[1])) < cfg.characterHeight;
+			if (close)
+				rep.overlapArea += std::max(0.0, area(over));
 		}
 	}
+	stage("mesh");
 	return mesh;
 }
 

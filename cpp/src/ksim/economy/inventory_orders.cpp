@@ -8,6 +8,7 @@
 #include "kworld/gamedata.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <sstream>
@@ -165,6 +166,38 @@ void Simulation::dropPieces(std::uint64_t who, std::vector<state::Inventory::Ent
 	}
 }
 
+namespace {
+
+// The victim's Forearm (slots 0, 1) or Calf (2, 3) bone size, BODY_SHAPE.md (FUN_14052e6c0): the editor sliders /100 (an unset one is the default
+// 100), R = 1 (humanoid), tW = lerp(skinny, 1, 0.7) from hunger, M1 = lerp(m, 1, 1.27) from the stat-driven muscle m (as CHAR_APPEARANCE sends it).
+// Arm: Ab = Arm bulk * tW * M1, size (Ab * Fs, Hs, Ab * Fs). Leg: Lb = Legs bulk * tW * M1, g = (2 - Legs shape) * Lb * Fs, size (g, Y, g), Y = Hs + Leg length - 1.
+// UNSURE: the calf's +0x190 asymmetry = no change (no writer exists).
+std::array<double, 3> limbBoneSize(const Simulation& sim, const state::Fighter& f, std::uint64_t id, int slot)
+{
+	const auto slider = [&](const char* name)
+	{
+		for (const state::LookSlider& s : f.look.sliders)
+		{
+			if (s.name == name)
+				return s.value * 0.01;
+		}
+		return 1.0;
+	};
+	const double tW = 1.0 - 0.3 * Simulation::bodySkinny(f.hunger);
+	const double m1 = 1.0 + (f.look.female != 0 ? 0.24 : 0.27) * sim.bodyMuscle(id); // lerp(m, 1, 1.27), female 1.24
+	const double height = slider("Height");
+	const double frame = slider("Frame");
+	if (slot < 2)
+	{
+		const double width = slider("Arm bulk") * tW * m1 * frame;
+		return {width, height, width};
+	}
+	const double width = (2.0 - slider("Legs shape")) * slider("Legs bulk") * tW * m1 * frame;
+	return {width, height - (1.0 - slider("Leg length")), width};
+}
+
+} // namespace
+
 // A limb was severed (rwh42): the race's `severed limbs` item for the slot lies at the body, owned by nobody, not stolen, one of it, unless the sever was the
 // eat-alive path's (`item` false). The first entry of the slot with an item wins; a race without the list drops nothing. OURS: the exe puts it at the
 // part's bone (`bone name 2`), we have no bones and use the character's position, which is the exe's own fallback. The item's 24 h `timeout` field,
@@ -188,18 +221,25 @@ void Simulation::onLimbSevered(std::uint64_t who, const std::string& part, bool 
 					continue;
 				state::GroundItem ground;
 				ground.itemSid = entry.targetID;
-				// The tint the exe fits to a type-0x11 limb (1400ced10): skin = 1 - the victim's Skin Tone, blood = the race's colour.
-				// UNSURE: our skin tone is one number, so the skin is grey; no bone sizes, so the scale is 1.
+				// The tint the exe fits to a type-0x11 limb (1400ced10; rwh47): skin = 1 - the victim's Skin Tone colour (the race's editor palette at
+				// the skin slider), blood = the race's colour, scale = the slot's Forearm / Calf bone size as (y, x, z).
 				const kdata::Record* limbRecord = gameData_->find(entry.targetID);
 				if (limbRecord != nullptr && limbRecord->intOr("item function", 0) == 0x11)
 				{
 					const RaceCombat* raceData = combat_->data().race(f.raceSid);
 					const std::int32_t blood = raceData != nullptr ? raceData->bloodColour : 0x800000;
 					ground.tint.set = true;
-					ground.tint.skinR = ground.tint.skinG = ground.tint.skinB = 1.0 - f.look.skin;
+					const std::array<float, 3> skin = sampleSkin(skinPalette(world_.dataDir(), race->fileOr("editor limits"), f.look.female != 0), f.look.skin);
+					ground.tint.skinR = 1.0 - static_cast<double>(skin[0]);
+					ground.tint.skinG = 1.0 - static_cast<double>(skin[1]);
+					ground.tint.skinB = 1.0 - static_cast<double>(skin[2]);
 					ground.tint.bloodR = static_cast<double>((blood >> 16) & 0xff) / 255.0;
 					ground.tint.bloodG = static_cast<double>((blood >> 8) & 0xff) / 255.0;
 					ground.tint.bloodB = static_cast<double>(blood & 0xff) / 255.0;
+					const std::array<double, 3> size = limbBoneSize(*this, f, who, slot);
+					ground.tint.scaleX = size[1];
+					ground.tint.scaleY = size[0];
+					ground.tint.scaleZ = size[2];
 				}
 				ground.x = ground.useX = f.x;
 				ground.y = ground.useY = f.y;

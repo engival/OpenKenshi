@@ -405,6 +405,21 @@ void theft(const Data& w)
 		const state::SightRecord* told = perception::find(*rig.sim->combat()->find(citizen), thief);
 		check(told != nullptr && told->state == 1 && told->sinceNoticed < 10.0, "the witness force-noticed the thief");
 	}
+	// The victim of a witnessed crime notices the criminal and holds it as a temp enemy (1405cb0a0; CRIME_STATIC "Witness reaction" step 3).
+	{
+		Rig rig(w);
+		const std::uint64_t citizen = rig.add(w.holy, 4, 1, 0.0, 0.0, 0.0, false);
+		const std::uint64_t bystander = rig.add(w.holy, 4, 1, 3.0, 0.0, 0.0, false);
+		const std::uint64_t thief = rig.add(w.nameless, 9, 0, 0.0, 60.0, 3.14159265, true);
+		rig.tick(20 * 3);
+		rig.sim->reportCrime(thief, cr::kAssault, w.holy, citizen, cr::kTimerTheftReport);
+		rig.tick(20 * 3);
+		const std::vector<std::uint64_t>& tags = rig.f(citizen).hostileSquads;
+		check(std::find(tags.begin(), tags.end(), rig.f(thief).squad) != tags.end(), "the victim lists the criminal's squad as a temp enemy");
+		check(perception::find(rig.f(citizen), thief) != nullptr, "and has noticed it");
+		const std::vector<std::uint64_t>& other = rig.f(bystander).hostileSquads;
+		check(std::find(other.begin(), other.end(), rig.f(thief).squad) == other.end(), "a bystander witness is no temp-enemy tagger");
+	}
 	// Military outside its own town does not assign either (no town in this rig); a friend of the thief does not witness.
 	{
 		Rig rig(w);

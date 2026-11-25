@@ -1,7 +1,7 @@
 // ksim_surfgen_grade: runs the geometric navmesh generator (knav/surfgen.hpp, kenshi-k16.7.131) on one building and grades the result
 // (dev only, KSIM_DEV). Cases are those of ksim_navcoll_export:
 //
-//   ksim_surfgen_grade hubbar|longhouse [--side interior|zone] [--islands seam] [--capture DIR --instance N] [--out DIR] [--cell SIZE]
+//   ksim_surfgen_grade hubbar|longhouse [--side interior|zone] [--capture DIR --instance N] [--out DIR] [--cell SIZE]
 //
 // --side zone: grades the building's zone-side faces (stage 2, kenshi-k16.7.143) instead of the interior; against a capture only the faces of face_data 1 / 4.
 //
@@ -132,7 +132,7 @@ int main(int argc, char** argv)
 	{
 		if (argc < 2)
 		{
-			std::cerr << "usage: ksim_surfgen_grade hubbar|longhouse [--side interior|zone] [--islands seam] [--capture DIR --instance N] [--out DIR] [--cell SIZE]\n";
+			std::cerr << "usage: ksim_surfgen_grade hubbar|longhouse [--side interior|zone] [--capture DIR --instance N] [--out DIR] [--cell SIZE]\n";
 			return 2;
 		}
 		const Case* spec = nullptr;
@@ -156,7 +156,6 @@ int main(int argc, char** argv)
 			else if (a == "--instance") instance = std::atol(argv[i + 1]);
 			else if (a == "--out") out = argv[i + 1];
 			else if (a == "--cell") cell = std::atof(argv[i + 1]);
-			else if (a == "--islands") settings.pruneZoneIslands = std::string(argv[i + 1]) == "seam";
 			else if (a == "--side") zoneSide = std::string(argv[i + 1]) == "zone";
 		}
 		const std::string dataDir = KENSHI_DATA;

@@ -34,6 +34,8 @@ int main()
 			std::ofstream(tree / "zones" / "z.bin") << "x";
 			fs::last_write_time(tree, now - std::chrono::hours(100 - i));
 		}
+		fs::create_directories(root / "w4_0123456789ab_00ab12cd"); // the srcHash form (kenshi-k16.6.814): pruned too
+		fs::last_write_time(root / "w4_0123456789ab_00ab12cd", now - std::chrono::hours(200));
 		fs::create_directories(root / "keepme");
 		fs::create_directories(root / "w3_notahexZZ");
 		std::ofstream(root / "w2_00ab12cd") << "a file, not a tree";
@@ -43,9 +45,9 @@ int main()
 			[&lines](const std::string& line) { lines.push_back(line); });
 
 		std::sort(removed.begin(), removed.end());
-		test::require(removed.size() == 2 && removed[0] == "w6_00ab12cd" && removed[1] == "w7_00ab12cd",
-			"the two oldest not in use (w6, w7) are removed");
-		test::require(lines.size() == 2, "one log line per deleted tree");
+		test::require(removed.size() == 3 && removed[0] == "w4_0123456789ab_00ab12cd" && removed[1] == "w6_00ab12cd" && removed[2] == "w7_00ab12cd",
+			"the oldest not in use (w4, w6, w7) are removed");
+		test::require(lines.size() == 3, "one log line per deleted tree");
 		test::require(fs::exists(root / "w5_00ab12cd" / "zones" / "z.bin"), "the tree in use is kept whole");
 		test::require(fs::exists(root / "w8_00ab12cd") && fs::exists(root / "w9_00ab12cd"), "the newest two are kept");
 		test::require(!fs::exists(root / "w6_00ab12cd") && !fs::exists(root / "w7_00ab12cd"), "w6 and w7 are gone");

@@ -307,6 +307,9 @@ public:
 	// The camera's ground point, every frame (live): set_interest (send filter, render.interest_radius round it) after kInterestMove units of travel, set_view
 	// (a logged sim command; the server quantizes it to 4608-unit zones with hysteresis) after kViewMove, so both stay rare (SIMLINK 5, 7).
 	void view(double x, double z);
+	// The protected character (the follow / drive camera's, else the RTS auto-centre's, else 0): set_camera_follow only when it changes, and once after every
+	// (re)connect / reset snapshot. A refusal (bad_target: it died or left the world) is dropped quietly; nothing is resent until the id changes.
+	void cameraFollow(uint64_t id);
 	static constexpr double kInterestRadius = 2000, kInterestMove = 250, kViewMove = 1000;	// 2000: render.interest_radius's default (kenshi-k16.2.258.10.1)
 	// a hit splash for the terrain blood (BLOOD_DECALS.md: 140793b20): world x, z, size (0.05..0.5), dirRad (x-z angle, the image's u axis), colour
 	// kind: a hit splash (decal type 1), a bleed drop (2), a growing pool (2, resized by id: BloodDecals::pool) or a smear (3)
@@ -479,4 +482,7 @@ private:
 	std::vector<Splash> splashes_;
 	double viewSent_[2] = {}, interestSent_[2] = {}, interestRadiusSent_ = 0;
 	bool viewOnce_ = false;
+	uint64_t followSent_ = 0;
+	uint32_t followSeq_ = 0;
+	bool followOnce_ = false;
 };

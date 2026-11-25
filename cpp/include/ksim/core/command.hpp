@@ -132,6 +132,10 @@ enum class CommandType : std::uint8_t
 	FighterPassive = 32,
 	// value: 0 / 1 the HOLD POSITION toggle (order 10 which 7). Never replaces the current order.
 	FighterHoldPosition = 33,
+	// Order 52 set_camera_follow (SIMLINK.md section 7): subject: the session key, object: the character its camera follows (0 = none).
+	SetCameraFollow = 34,
+	// Order 121 set_game_option (SIMLINK.md GAME_OPTIONS): subject: the option (0 feed_animals, 1 share_food), value: 0 / 1. One command per entry.
+	SetGameOption = 35,
 };
 
 // A building placement (SIMLINK orders 90 build_check and 91 build_place). Rotation is W first.
@@ -265,6 +269,8 @@ struct Command
 	static Command endConversation(state::Id character, state::Id speaker, std::uint8_t reason);
 	static Command changeSquad(state::Id character, std::uint64_t squad);
 	static Command setView(double x, double z);
+	static Command setCameraFollow(std::uint64_t session, std::uint64_t id);
+	static Command setGameOption(std::uint8_t option, bool on);
 	// `specs`: the creator's Specs encoded by encodeSpecs (creator.hpp), "" for n = 0. `options`: the new-game advanced
 	// options as "cod=1.5;gdm=1;ht=4" (ADVANCED_OPTIONS_STATIC.md; SIMLINK NEW_GAME's optional trailing block), "" for none.
 	static Command newGame(const std::string& startoff, const std::string& name, std::uint64_t ticket,

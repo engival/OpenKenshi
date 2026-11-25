@@ -10,11 +10,58 @@
 #include "kworld/coords.hpp"
 #include "kworld/heightmap.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
 #include <memory>
 #include <string>
 #include <utility>
+
+namespace prop_clip
+{
+
+// The furniture solids the checks look at (formerly propClearanceShape of the Recast bake's prop ring; the ring is gone with Recast, kenshi-k16.7.189).
+inline bool propClearanceShape(const kworld::WorldShape& shape)
+{
+	return shape.furniture && (shape.use == kworld::NavUse::Obstacle || shape.use == kworld::NavUse::Projected) && shape.closed
+		&& shape.max[0] - shape.min[0] <= 750.0f && shape.max[2] - shape.min[2] <= 750.0f;
+}
+
+// The shape's xz convex hull, counter-clockwise, as x, 0, z triples (radius 0 only).
+inline void propClearanceHull(const kworld::WorldShape& shape, float, std::vector<float>& out)
+{
+	std::vector<std::array<float, 2>> pts;
+	for (std::size_t v = 0; v + 2 < shape.vertices.size(); v += 3)
+		pts.push_back({ shape.vertices[v], shape.vertices[v + 2] });
+	std::sort(pts.begin(), pts.end());
+	pts.erase(std::unique(pts.begin(), pts.end()), pts.end());
+	out.clear();
+	if (pts.size() < 3)
+		return;
+	std::vector<std::array<float, 2>> hull(2 * pts.size());
+	std::size_t k = 0;
+	const auto turn = [](const auto& o, const auto& a, const auto& b) { return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]); };
+	for (std::size_t i = 0; i < pts.size(); ++i)
+	{
+		while (k >= 2 && turn(hull[k - 2], hull[k - 1], pts[i]) <= 0.0f) --k;
+		hull[k++] = pts[i];
+	}
+	for (std::size_t i = pts.size() - 1, lower = k + 1; i-- > 0;)
+	{
+		while (k >= lower && turn(hull[k - 2], hull[k - 1], pts[i]) <= 0.0f) --k;
+		hull[k++] = pts[i];
+	}
+	hull.resize(k > 1 ? k - 1 : k);
+	for (const auto& p : hull)
+	{
+		out.push_back(p[0]);
+		out.push_back(0.0f);
+		out.push_back(p[1]);
+	}
+}
+
+} // namespace prop_clip
 
 namespace prop_clip_detail { inline constexpr double kPi = 3.14159265358979323846; } // M_PI is not in MinGW's strict -std=c++20 <cmath>
 
@@ -44,7 +91,7 @@ public:
 				continue;
 			for (const kworld::WorldShape& shape : *building.shapes)
 			{
-				if (!knav::propClearanceShape(shape))
+				if (!propClearanceShape(shape))
 					continue;
 				if (x < shape.min[0] || x > shape.max[0] || y < shape.min[1] || y > shape.max[1] || z < shape.min[2] || z > shape.max[2])
 					continue;
@@ -74,7 +121,7 @@ public:
 				continue;
 			for (const kworld::WorldShape& shape : *building.shapes)
 			{
-				if (!knav::propClearanceShape(shape))
+				if (!propClearanceShape(shape))
 					continue;
 				if (x < shape.min[0] - reach || x > shape.max[0] + reach || z < shape.min[2] - reach || z > shape.max[2] + reach)
 					continue;
@@ -110,10 +157,10 @@ public:
 						continue;
 					for (const kworld::WorldShape& shape : *building.shapes)
 					{
-						if (!knav::propClearanceShape(shape))
+						if (!propClearanceShape(shape))
 							continue;
 						std::vector<float> hull;
-						knav::propClearanceHull(shape, 0.0f, hull);
+						propClearanceHull(shape, 0.0f, hull);
 						const std::size_t n = hull.size() / 3;
 						if (n < 3)
 							continue;

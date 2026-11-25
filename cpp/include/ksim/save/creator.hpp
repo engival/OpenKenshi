@@ -6,6 +6,7 @@
 
 #include "kdata/gamedata.hpp"
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -39,6 +40,14 @@ struct EditorSlider
 	float max = 0.0f;
 	float mid = 0.0f; // the default: round(min + (max - min) / 2) unless the XML gives one
 };
+
+// The race's editor "Skin Tone" ColourRange for one sex (each <Colour> r g b / 255), from its `editor limits` record field (a game-relative
+// path). Empty when the race has no editor file or no such range. Read once per file and sex (rwh47 section 1.2).
+using SkinPalette = std::vector<std::array<float, 3>>;
+SkinPalette skinPalette(std::string_view dataDir, const std::string& editorLimits, bool female);
+// The palette's colour at slider `skin` 0..1 (the editor's 0..10*(count-1) in tenths): the component-wise lerp of the two neighbouring
+// stops, the last stop alone at the end. An empty palette is white (the default appearance's Skin Tone).
+std::array<float, 3> sampleSkin(const SkinPalette& palette, double skin);
 
 // What the creator offers for one race (index 0 = male, 1 = female).
 struct CreatorRace

@@ -8,6 +8,7 @@
 
 #include "knav/area.hpp"
 #include "knav/navmesh.hpp"
+#include "knav/zone_gen.hpp"
 #include "kworld/heightmap.hpp"
 #include "test_util.hpp"
 
@@ -25,22 +26,10 @@ int main()
 		const auto terrain = kworld::Heightmap::open(dataDir + "/newland/land/fullmap.tif");
 		const kworld::ZoneCell cell = kworld::zoneCellOf(68500.0, -70750.0);
 		const knav::AreaGeometry area = knav::gatherArea(dataDir, terrain, cell, cell);
-		const std::vector<kworld::WorldShape> all = area.flatShapes();
 		const knav::NavConfig config = knav::configForWorldZones(cell, cell);
-		std::vector<const kworld::WorldShape*> pointers;
-		std::set<std::pair<int, int>> tiles;
-		for (const kworld::WorldShape& shape : all)
-		{
-			pointers.push_back(&shape);
-			if (shape.max[0] < 68440.0f || shape.min[0] > 68570.0f || shape.max[2] < -70830.0f || shape.min[2] > -70690.0f)
-				continue;
-			for (const knav::TileCoord& t : knav::tilesTouching(config, shape))
-				tiles.insert({ t.x, t.z });
-		}
-		std::vector<knav::TileCoord> coords;
-		for (const auto& [x, z] : tiles)
-			coords.push_back({ x, z });
-		const knav::NavMesh mesh = knav::NavMesh::fromTiles(config, knav::bakeTileSet(config, terrain, pointers, coords, 8));
+		// the cutover bake of the zone (knav::bakeZone: ground + surfgen), no cache
+		const knav::NavMesh mesh = knav::NavMesh::fromTiles(config, knav::bakeZone(config, terrain, area,
+			knav::zoneBakeSeeds(terrain, area, knav::readSeedsDef(dataDir + "/navtiles"), cell, config.waterLevel), 4));
 		const knav::NavQuery query(mesh);
 
 		// the floor inside the doorway (the playtest's rejected clicks), from the stairs where the Wanderer stood and from the street at their foot

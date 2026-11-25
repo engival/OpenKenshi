@@ -321,6 +321,17 @@ double Simulation::bodyBulkStat(std::uint64_t id) const
 	return stat;
 }
 
+double Simulation::bodyMuscle(std::uint64_t id) const
+{
+	return (std::floor(bodyBulkStat(id)) * 0.01 - 0.2) / 0.79;
+}
+
+// rwh.249 section 2.1: skinny = clamp01(1.5 * (1 - clamp01(hunger - 1))), in 1/20 steps (0.45 = step 9).
+double Simulation::bodySkinny(double hunger)
+{
+	return std::lround(std::clamp(1.5 * (1.0 - std::clamp(hunger - 1.0, 0.0, 1.0)), 0.0, 1.0) * 20.0) / 20.0;
+}
+
 Simulation::CharStats Simulation::charStats(std::uint64_t id) const
 {
 	CharStats stats;
@@ -561,6 +572,10 @@ Simulation::CharStats Simulation::charStats(std::uint64_t id) const
 	if (const state::TownState* town = townStateAt(f.x, f.z); town != nullptr && town->owner.id != 0)
 		if (const state::FactionState* owner = flecs::entity(world_.ecs().c_ptr(), town->owner.id).get<state::FactionState>())
 			stats.localFaction = owner->templateSid;
+	stats.engageBasis = f.engageBasis;
+	stats.engageSense = f.engageSense;
+	stats.engageCause = f.engageCause;
+	stats.engageTick = f.engageTick;
 	return stats;
 }
 

@@ -17,7 +17,7 @@ namespace simlink
 	constexpr uint32_t kMagic = 0x4D49534B;	// 'KSIM'
 	constexpr uint16_t kProtocol = 8;
 	enum FrameType : uint16_t { kHello = 1, kStrtab = 2, kError = 3, kPing = 4, kSnapBegin = 10, kSnapEnd = 11, kAppearance = 20, kDynamic = 21, kMedical = 22, kRoute = 23, kInteractable = 24, kInventory = 25, kDetect = 26, kItemQuality = 27, kItemGrid = 28, kItemStats = 29, kSquads = 30, kPlayerSquads = 31, kSaves = 32, kStarts = 33, kJobs = 34, kProspect = 35, kUnlocks = 36, kDiscovered = 37, kFactionRelations = 38, kTaskProgress = 39, kBuilding = 47, kBuildingGrid = 48, kCharStats = 49,
-		kClock = 40, kWeather = 41, kBounds = 42, kNavParams = 43, kNavTile = 44, kNavPolyFlags = 45, kEvent = 50, kTrade = 53, kScenarioList = 54, kScenarioStarted = 55, kScenarioMetrics = 56, kItemLock = 57, kBeams = 58, kSeenBy = 59, kDetectedBy = 60, kMenuEntries = 61, kNewGameResult = 62, kResearchState = 63, kCages = 64, kCameraStart = 65, kProfile = 70, kOrder = 100, kScenarioListReq = 102, kScenarioLoad = 103, kScenarioEnd = 104, kNewGame = 111 };
+		kClock = 40, kWeather = 41, kBounds = 42, kNavParams = 43, kNavTile = 44, kNavPolyFlags = 45, kEvent = 50, kTrade = 53, kScenarioList = 54, kScenarioStarted = 55, kScenarioMetrics = 56, kItemLock = 57, kBeams = 58, kSeenBy = 59, kDetectedBy = 60, kMenuEntries = 61, kNewGameResult = 62, kResearchState = 63, kCages = 64, kCameraStart = 65, kTownState = 66, kProfile = 70, kOrder = 100, kScenarioListReq = 102, kScenarioLoad = 103, kScenarioEnd = 104, kNewGame = 111 };
 	enum Flag : uint32_t { kCombat = 1, kStealth = 2, kDrawn = 4, kKO = 8, kDead = 16, kProne = 32, kPlayer = 64, kCarryL = 128, kCarryR = 256, kYValid = 512,
 		kLowDetail = 1024, kBlockMode = 2048, kRun = 4096, kHold = 8192,
 		kHostile = 16384,	// hostile: the sim's fight test says it would fight this session's characters (never on our own)
@@ -232,6 +232,14 @@ namespace simlink
 		float escapeHoursLeft = -1;	// the escaped prisoner's expiry; -1 = none
 		uint32_t localFaction = 0;	// the owner of the town the character stands in; 0 = none / outdoors
 		std::vector<BountyTag> bountyTags;	// one per bounties entry, same order
+		// The engage trigger (row 34, k16.5.37; 18 bytes after row 32, read by the frame length: a record without them leaves all four 0 = none). Why and when
+		// the current target was first set: engageBasis (CHAR_STATS row 34's table, 0 none .. 9 counter-flip), engageSense (0 n/a .. 4 shot from unsensed),
+		// engageCause (a character id, 0 = none), engageTick (the sim tick of the set, 0 = no fight). The name functions return nullptr for a value this
+		// client does not know (print the number then).
+		uint8_t engageBasis = 0, engageSense = 0;
+		uint64_t engageCause = 0, engageTick = 0;
+		static const char* engageBasisName(uint8_t basis);
+		static const char* engageSenseName(uint8_t sense);
 	};
 	// CHAR_DETECT (SIMLINK 6): the detection meter of a player-controlled character; state 0 none, 2 being noticed, 1 noticed (meter 1); by = the observer (any non-allied observer, sensor::ally, not only a hostile team: kenshi-rquo)
 	struct Detect
@@ -405,6 +413,20 @@ namespace simlink
 		struct Relation { uint32_t faction = 0; std::string name; float value = 0; };
 		std::vector<Relation> relations;
 		uint32_t relationsSerial = 0;
+		// TOWN_STATE (66, SIMLINK.md): the last entry per visited town (kept: the sim sends on connect and on change), in the frame's order.
+		// A live bit clear = the field is a placeholder the tooltip shows as ???.
+		struct TownState
+		{
+			enum Flag : uint8_t { kKnown = 1, kDead = 2, kTownClass = 4 };
+			enum Live : uint16_t { kResidentsMax = 1, kResidentsActual = 2, kRoamingMax = 4, kRoamingPop = 8, kRoamingSquads = 16, kResidentFactions = 32, kHostile = 64 };
+			uint32_t town = 0, owner = 0;
+			uint8_t flags = 0;
+			uint16_t live = 0;
+			int32_t residentsMaxCur = 0, residentsMaxDes = 0, residentsActual = 0, roamingMaxCur = 0, roamingMaxDes = 0, roamingPop = 0, roamingSquads = 0;
+			std::vector<uint32_t> residentFactions, hostile;
+		};
+		std::vector<TownState> townStates;
+		uint32_t townStateSerial = 0;
 		// BUILDING (47, BUILDINGS_SLICE.md section 12): the player faction's buildings by id, a record replaced on change, dropped by event 11.
 		// status: section 7's enum; progress at `tick`, advanced by rate per sim-second (as TASK_PROGRESS).
 		struct Building
@@ -459,6 +481,9 @@ namespace simlink
 		// MENU_ENTRIES (61): the answer to order 99 menu_query, to the asking session only; entries is a bitset of the right-click entries that
 		// apply (bit 0 Talk To, the rest reserved). Consumed by the caller (deque, like events), so a stale reply is still seen and can be dropped.
 		// A cage key as target (kenshi-k16.2.105.1): bit 16 pick lock, 17 use tools, 18 use strength; pickChance (-1: none) trails the bit-16 frame.
+		// A door as target (kenshi-3k8m): bit 19 Lock (order 60 action 21), bit 20 Unlock (order 60 action 11), set only for the player's own door.
+		static constexpr uint32_t kMenuLockBit = 19, kMenuUnlockBit = 20;
+		static constexpr uint8_t kActionLockDoor = 21, kActionUnlockDoor = 11;
 		struct MenuEntries { uint32_t clientSeq = 0; uint64_t id = 0, target = 0; uint32_t entries = 0; float pickChance = -1; };
 		std::deque<MenuEntries> menuEntries;
 		// ITEM_STATS (29): order 69's answers by (id, version, index), never pushed; the sim's numbers for the weapon / armour tooltip rows.
@@ -578,6 +603,7 @@ namespace simlink
 		uint32_t setProgressLevel(std::vector<uint8_t>& out, uint8_t level);	// order 98: which TASK_PROGRESS rows this session gets (0 none, 1 the original's set, 2 every player row, 3 plus NPCs), session control
 		uint32_t menuQuery(std::vector<uint8_t>& out, uint64_t id, uint64_t target);	// order 99: which right-click entries apply for id on target (MENU_ENTRIES 61; a read, no tick)
 		uint32_t setView(std::vector<uint8_t>& out, float x, float z);
+		uint32_t setCameraFollow(std::vector<uint8_t>& out, uint64_t id);	// order 52: the character the camera follows / focuses (0 none); the sim never pushes it (kenshi-0sbv)
 		uint32_t drive(std::vector<uint8_t>& out, uint64_t id, uint8_t drive, float heading, int8_t strafe = 0);
 		// Player squads (SIMLINK 70-75); each applied one is followed by a fresh PLAYER_SQUADS
 		uint32_t squadAdd(std::vector<uint8_t>& out);	// 70

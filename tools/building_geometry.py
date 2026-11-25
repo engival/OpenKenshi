@@ -109,7 +109,9 @@ def select_parts(rec, iid, category='parts'):
 	"""Part sids chosen for one placed instance (fcs.def, docs/reference/BUILDING_MATERIALS.md).
 	parts ref v0 = group, v1 = chance. Group 0: each part rolled alone, v1 an absolute %.
 	Group N > 0: exactly one part, weighted by v1 normalised within the group.
-	The game rolls at random; a stable hash of the instance id stands in for it.
+	RETIRED (kenshi-k16.6.583): this is not the original's rule any more. The original seeds MSVCR100 rand()
+	from the placement x/z (kworld::selectBuildingParts, cpp/include/kworld/buildingparts.hpp, rwh.206);
+	this stable hash of the instance id stands in only for the legacy Python tools.
 	An `interior` entry with chance 0 is always placed, as the mask is (k16.6.260: s-IV's
 	ramp 42261, the way up to floor 2); same rule as kworld selectParts, collision.cpp."""
 	interior = category == 'interior'

@@ -250,6 +250,7 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 
 	// The towns by pool index (a platoon's hometown handle points at one): the record's name is "Town state <town name>".
 	std::map<std::int32_t, std::string> townName;
+	std::map<std::uint64_t, std::pair<std::string, std::string>> townByHand; // GAMESTATE_TOWN hand (handC / handCS) -> {owner faction sid, `name`}: a placed building's `townC` / `townCS` names it
 	struct TownRow
 	{
 		std::string instance;
@@ -265,6 +266,8 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 			continue;
 		townRows.push_back({town.str("instance"), town.str("faction"), town.str("replacementTown"), town.str("name"), {}});
 		TownRow& row = townRows.back();
+		if (!row.owner.empty()) // a second record of the same hand with no faction / name is a stub (towntest_2 has one for the player's town)
+			townByHand[kworld::townHand(static_cast<std::int32_t>(town.num("handC")), static_cast<std::int32_t>(town.num("handCS")))] = {row.owner, row.name};
 		need(row.owner, "town " + town.record->name + " owner");
 		need(row.replacement, "town " + town.record->name + " replacementTown");
 		state::TownInfo& info = row.info;
@@ -697,6 +700,8 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 	sim.setClockTick(tickAt(report.world.day, report.world.hour, report.world.minute));
 
 	// The save's own zone files hold the placements the original spawned at run time: a Peeler Machine of a village is one (kenshi-cym.28, rwh.97 7). A
+	std::vector<kworld::PlacedInstance> stoodPlaced; // the save's own buildings stood below, with their state, for the PlayerBuilding entities (after the player faction exists)
+	std::map<std::string, Simulation::ImportBuildingState> stoodState;
 	// placement of a cage building the loaded zones do not carry (same instance id) is added as a cage site; the rest of them stay derivable (SAVE_IMPORT.md).
 	if (fs::is_directory(root / "zone"))
 	{
@@ -705,6 +710,7 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 			have.insert(placed.instanceID);
 		std::vector<kworld::PlacedInstance> standing; // the save's own buildings (a player town): collision and nav, one path (kenshi-k16.7.125)
 		std::vector<fs::path> zoneFiles;
+		std::map<std::string, Simulation::ImportBuildingState> standingState; // by instance id: the GAMESTATE_BUILDING state of each
 		for (const fs::directory_entry& entry : fs::directory_iterator(root / "zone"))
 			zoneFiles.push_back(entry.path());
 		std::sort(zoneFiles.begin(), zoneFiles.end());
@@ -726,7 +732,9 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 				placed.x = instance.x;
 				placed.z = instance.z;
 				placed.relativeY = instance.y;
-				placed.y = instance.y + std::max(kworld::kSeaPlane, sim.groundHeight(instance.x, instance.z).value_or(kworld::kSeaPlane));
+				// Building::createPhysical (zoneBuildingY): a door building keeps the terrain's own height, any other is not below the sea plane.
+				const double ground = sim.groundHeight(instance.x, instance.z).value_or(kworld::kSeaPlane);
+				placed.y = instance.y + (building->boolOr("is door", false) ? ground : std::max(kworld::kSeaPlane, ground));
 				placed.qw = instance.qw;
 				placed.qx = instance.qx;
 				placed.qy = instance.qy;
@@ -739,9 +747,14 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 				if (sim.placeFurnitureCage(placed))
 					++report.furnitureCages;
 				else
+				{
 					standing.push_back(placed);
+					standingState[placed.instanceID] = {instance.complete, instance.destroyed, instance.broken, instance.paused, instance.powerOn, instance.progress};
+				}
 			}
 		}
+		stoodPlaced = standing;
+		stoodState = std::move(standingState);
 		const Simulation::Stood stood = sim.standBuildings(std::move(standing));
 		report.savedBuildings = stood.placed;
 		report.savedBuildingsNav = stood.nav;
@@ -751,7 +764,27 @@ Report importSave(Simulation& sim, const kdata::GameData& gd, const CombatData& 
 	if (std::any_of(platoons.begin(), platoons.end(), [](const Platoon& p) { return p.player; }))
 	{
 		const std::string playerSid = std::find_if(platoons.begin(), platoons.end(), [](const Platoon& p) { return p.player; })->factionSid;
-		sim.createPlayerFaction(playerSid);
+		const std::uint64_t playerFaction = sim.createPlayerFaction(playerSid);
+		// The save's own player-owned buildings get their entity (owner, built / under construction, condition); the placement is stood already.
+		std::set<std::string> stoodIds;
+		for (const kworld::PlacedInstance& placed : sim.world().placements())
+			stoodIds.insert(placed.instanceID);
+		std::map<std::uint64_t, std::vector<std::uint64_t>> townBuildings; // by the save's town hand: one PlayerTown per GAMESTATE_TOWN the player's faction owns
+		for (const kworld::PlacedInstance& placed : stoodPlaced)
+		{
+			if (placed.ownerFaction != playerSid || stoodIds.count(placed.instanceID) == 0)
+				continue;
+			const std::uint64_t id = sim.importPlayerBuilding(placed, playerFaction, stoodState[placed.instanceID]);
+			if (id == 0)
+				continue;
+			++report.playerBuildings;
+			const auto town = townByHand.find(placed.townHand);
+			if (town != townByHand.end() && town->second.first == playerSid)
+				townBuildings[placed.townHand].push_back(id);
+		}
+		for (const auto& [hand, ids] : townBuildings)
+			if (sim.importPlayerTown(playerFaction, townByHand[hand].second, ids) != 0)
+				++report.playerTowns;
 	}
 	for (Platoon& p : platoons)
 	{

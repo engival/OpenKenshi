@@ -212,7 +212,7 @@ struct WorldRuntime
 	};
 	mutable std::unordered_map<flecs::entity_t, SituationMemo> situations_;
 	// The town occupancy map (town+0x118, rwh.53 section 3): per TownState entity, the Fighter::faction of every squad whose Package_OccupyTown holds
-	// it. Derived from the boards each pass, never saved; goal 273's "the town is ours" reads it beside the owner (the owner never changes).
+	// it. Derived from the boards each pass, never saved; goal 273's "the town is ours" reads it beside the owner (the owner moves only by SetTownOwner: conquest, scenarios).
 	std::unordered_map<flecs::entity_t, std::vector<std::uint64_t>> occupiers_;
 	bool occupiersBuilt_ = false; // false after a load or at a start: stepWorldTasks builds occupiers_ whole at once, else at each second's tick (k16.6.320)
 	std::unordered_map<std::string, std::uint64_t> raidLeaders_;
@@ -230,7 +230,6 @@ struct WorldRuntime
 	std::set<std::string> raidWon_;
 	std::map<std::pair<std::uint64_t, std::uint64_t>, std::uint64_t> fightPairs_; // squad Ids (low, high) -> the tick of their last fight (not saved)
 	std::map<std::uint64_t, double> memberScores_; // member Id -> its template's score, for a member with no record (token_fights.cpp; derived, not saved)
-	std::set<std::uint64_t> producerOffMesh_; // producer sites with no walkable use point (not saved; found again after a load)
 	// Task BO: the (member, body) pairs a world task gave up on and the tick they may be tried again (derived, not saved).
 	std::map<std::pair<std::uint64_t, std::uint64_t>, std::uint64_t> worldTaskBlocks_;
 	// A slave's captor hand and its timers (slave_state.cpp; the captor is saved as the 187 row's target, the rest is derived).
@@ -840,6 +839,24 @@ public:
 		bool operator==(const DiscoveredPlace&) const = default;
 	};
 	std::vector<DiscoveredPlace> discoveredPlaces() const;
+	// The first player faction's visited towns for the map tooltip (SIMLINK TOWN_STATE 66), in TOWN record order (town_state.cpp). `flags`:
+	// bit 0 known, 1 dead, 2 isTownClass; `live` bit n = value n is live (SIMLINK.md); the counts of a clear bit are 0.
+	struct TownStateRow
+	{
+		std::string town;
+		std::string owner; // the live owner's FACTION sid, empty = none
+		std::uint8_t flags = 0;
+		std::uint16_t live = 0;
+		std::int32_t residentsActual = 0;
+		std::int32_t roamingPop = 0;
+		std::int32_t roamingSquads = 0;
+		std::vector<std::string> residentFactions;
+		std::vector<std::string> hostile;
+		bool operator==(const TownStateRow&) const = default;
+	};
+	std::vector<TownStateRow> townStates() const;
+	static constexpr std::uint64_t kTownStateIntervalTicks = 20; // checked once per sim-second
+	static constexpr std::uint64_t kTownStateMinGapTicks = 100; // at most one frame per 5 sim-seconds per session
 	// The timed tasks of characters (SIMLINK TASK_PROGRESS 39), by character id. progress 0..1 now, rate per sim-second, value = the
 	// lockpick chance, the cut's remaining hardness (else 0), `target` the id of what is worked on (0 = none). Every player character's
 	// tasks, kinds 1-16; `everyone` adds the NPCs' (the session's level 3). A row's `flags` say whether the original shows its bar.
@@ -988,13 +1005,27 @@ public:
 		float escapeHoursLeft = -1.0f; // not modelled
 		std::string localFaction; // the town owner at the character's position, "" = none
 		std::vector<BountyTag> bountyTags; // one per row-14 entry, same order
+		// The engage trigger (row 34, k16.5.37): additive after row 32, no protocol bump. See Fighter::engageBasis.
+		std::uint8_t engageBasis = 0; // 0 none; 1 player order; 2 attacked by the target; 3 ally / squad attacked; 4 faction / team enemy; 5 personal hostile entry; 6 troublemaker; 7 other package goal; 8 selector commit; 9 counter-flip
+		std::uint8_t engageSense = 0; // 0 n/a; 1 sight; 2 hearing; 3 remembered record; 4 shot from unsensed
+		std::uint64_t engageCause = 0; // the character whose attack / fight pulled this one in (2: the attacker, 3: the attacked ally, 9: the asker), else 0
+		std::uint64_t engageTick = 0; // the tick the current target was set, 0 = no fight
 		bool operator==(const CharStats&) const = default;
 	};
 	CharStats charStats(std::uint64_t id) const;
 	// The stat the body's bulk reads (CHAR_APPEARANCE "muscle", rwh.240 section 3): max(strength, weapon smith, armour smith); 1 if unknown.
 	double bodyBulkStat(std::uint64_t id) const;
+	// The body's size-muscle m (BODY_SHAPE.md; CHAR_APPEARANCE "muscle", unclamped) and skinny (CHAR_APPEARANCE "skinny", 1/20 steps) from hunger.
+	double bodyMuscle(std::uint64_t id) const;
+	static double bodySkinny(double hunger);
 	// Called from inside tick() for every pick-up and finished or failed interaction. Observation only.
 	void setInteractObserver(std::function<void(const InteractEvent&)> observer) { interactObserver_ = std::move(observer); }
+	// The tick until which a world task / Use order keeps (member, target) blocked (addBlockedTarget, 20 s); 0 = no block. For tests.
+	std::uint64_t worldTaskBlockUntil(std::uint64_t member, std::uint64_t target) const
+	{
+		const auto found = worldTaskBlocks_.find({member, target});
+		return found == worldTaskBlocks_.end() ? 0 : found->second;
+	}
 	// A crime the player should hear of (SIMLINK events 51 and 52). Called from inside tick(). Observation only.
 	struct CrimeEvent
 	{
@@ -1129,6 +1160,8 @@ public:
 	// its squad is built now, as the pass would (residents or world squad), so the order can reach it. True when the id has a Fighter afterwards;
 	// false for an unknown id, a corpse-less dead one, or a squad whose ground is not on the loaded mesh (the streaming brings it first).
 	bool promoteForOrder(std::uint64_t id);
+	// A character that exists in the world and is not dead (order 52 target check): in the arena by its Fighter, else by its CharacterInstance. Promotes nothing.
+	bool liveCharacter(std::uint64_t id);
 	void importDone();
 	// Stage 3a, the world-wide state (save_import.hpp), between ticks; each lands where our own save keeps it and queues no event (a load is not a conquest).
 	// importTownIndex: the TownState of every 0-townlist placement of the level, by placement instance id; a placement with no TownState of ours (a town
@@ -1173,6 +1206,17 @@ public:
 	Stood standBuilding(kworld::PlacedInstance placed) { return standBuildings({std::move(placed)}); }
 	// Several at once (one zone bake per zone, not per building).
 	Stood standBuildings(std::vector<kworld::PlacedInstance> placed);
+	// Stands every PlayerBuilding with a `placement` the world lacks (a load: the placements are derived, the buildings are saved; kenshi-k16.7.156). Returns the count stood. `navOnly`: a new navigator over a world that already holds the placements (enableNavigation).
+	std::size_t restandBuildings(bool navOnly = false);
+	// A save's own player building (import): the PlayerBuilding entity for a placement `standBuildings` stood, from its GAMESTATE_BUILDING state. Returns its Id (0 = unknown record).
+	struct ImportBuildingState
+	{
+		bool complete = true, destroyed = false, broken = false, paused = false, powerOn = true;
+		double progress = 1.0;
+	};
+	std::uint64_t importPlayerBuilding(const kworld::PlacedInstance& placed, std::uint64_t ownerFaction, const ImportBuildingState& state);
+	// The PlayerTown of a save's town instance: `buildings` (importPlayerBuilding Ids, one town hand) become its members and get `town` set; centre and radius from them. Returns the town Id (0 = no buildings).
+	std::uint64_t importPlayerTown(std::uint64_t ownerFaction, const std::string& name, const std::vector<std::uint64_t>& buildings);
 	bool importTownInfo(state::EntityRef town, const state::TownInfo& info, const std::string& replacement);
 	state::EntityRef importExtraTown(const state::ExtraTown& town);
 	void importFactionStanding(state::EntityRef faction, std::int32_t rank, double globalTrust, std::vector<state::FactionState::Trust> trust);
@@ -1435,6 +1479,8 @@ public:
 	// Order 99 on a cage key: the MENU_ENTRIES bits for the cage (16 pick lock, 17 use tools, 18 use strength), 0 when `cage` is not a cage key; `chance` is
 	// the actor's pick chance per roll (pickChance(level, lockpicking) less the caged-picker penalty). A read.
 	std::uint32_t cageMenuEntries(std::uint64_t actor, std::uint64_t cage, float& chance) const;
+	// Order 99 on a door id: bit 19 Lock when order 60 action 21 would pass its gates, bit 20 Unlock for action 11; 0 for a non-door or an actor that cannot act.
+	std::uint32_t doorMenuEntries(std::uint64_t actor, std::uint64_t door) const;
 	// The character a cage order walks to: the actor itself when it is caged there, else the lowest id caged in `cage`; 0 = none.
 	std::uint64_t cageOccupant(std::uint64_t actor, std::uint64_t cage) const;
 	// What the wearer's shackles look like on the wire (SIMLINK ITEM_LOCK): worn and locked, the lock's level and the wearer's own pick chance,
@@ -1482,6 +1528,11 @@ public:
 	std::uint64_t bountyTarget204(std::uint64_t id) const;
 	// 212's take: every stolen item of the occupant goes into the looter's own inventory; returns the units moved.
 	std::uint32_t confiscate212(std::uint64_t looter, std::uint64_t occupant);
+	// The crime goals 209 / 210 / 211 / 212 / 204 as task handlers (crime_goals.cpp): the registry finder for the goal's task type (an alarm id
+	// or a character id, 0 = none) and the point the scorer walks to. isCrimeGoal is the table's membership test.
+	static bool isCrimeGoal(std::uint16_t task);
+	std::uint64_t crimeFinder(std::uint16_t task, std::uint64_t id) const;
+	bool crimeWalkPoint(std::uint16_t task, std::uint64_t id, std::uint64_t target, double& x, double& z) const;
 	// 272 SMASH_BUILDING: the actor walks to the player building and bashes it down (Task_BashDoor's blow through removeHp). False for an
 	// unknown actor or a building that is not a live player building.
 	bool orderSmash(std::uint64_t id, std::uint64_t building);
@@ -2159,6 +2210,9 @@ public:
 		std::size_t free = 0; // how many sites of the kind were free to pick from
 	};
 	bool cageTaken(const routines::Site& site) const;
+	// The owner permission of a faction-owned part or producer (k16.6.513 / 687 / 758): a slave, an unowned part, the member's own faction
+	// or an ally of it. The member's faction is its Allegiance sid (a resident has no Fighter::faction entity with a FactionState).
+	bool ownerPermits(std::uint64_t id, const std::string& ownerFaction) const;
 	std::optional<SiteChoice> pickSite(const state::Routine& r, std::uint64_t id, std::uint16_t goal, std::uint64_t key, routines::SiteKind kind,
 		double pickRoll, std::uint64_t now, double anchorX, double anchorZ, std::optional<std::array<double, 2>> nearestTo = std::nullopt,
 		bool realOnly = false) const;
@@ -2368,6 +2422,8 @@ private:
 
 	World world_;
 	std::uint64_t seed_ = 1;
+	// Order 52: session key -> the character that session's camera follows. Session state, so it outlives a reload (not in WorldRuntime); not saved.
+	std::unordered_map<std::uint64_t, std::uint64_t> cameraFollow_;
 	std::array<RngStream, kSubsystemCount> rng_;
 	std::vector<SystemState> systems_;
 	std::vector<Command> pending_;
@@ -2378,6 +2434,7 @@ private:
 	std::optional<flecs::query<const state::TownState>> wtTownQuery_;
 	std::optional<flecs::query<const state::Door>> doorQuery_; // the doors the sight rays read (a cached query: syncLineOfSight, k16.13.4)
 	std::unique_ptr<LineOfSight> los_; // the per-region collision hulls (task AZ); null until enabled
+	void rebuildLineOfSight(); // after a building stood: the sight index is built from the placements, so a running one is rebuilt (kenshi-k16.7.156)
 	void maybeEnableLineOfSight(); // enables it once the game data, the region grid and the world's placements are all there
 	void refreshLineOfSightHook(); // the arena's perception::Environment::lineOfSight, or null when LOS is off
 	bool navCoverageNow_ = false; // a SetPlayerAreas command ran this tick: the next syncNavCoverage loads everything (teleport); derived
@@ -2564,6 +2621,16 @@ private:
 	void endGoalRoutine(std::uint64_t id, std::uint16_t goal); // the goal's Routine goes (a resident's is handed back to the scorer)
 	void stepCrimeGoals(); // crime_goals.cpp: the alarm expiry (14092bfe0), the 209 / 210 dwell, 212 confiscation, 211 / 204 orders
 	void noticeAlliesNear(std::uint64_t id); // crime_goals.cpp: the 210 tick's ally notify (1405cb0a0)
+	struct CrimeTask; // crime_goals.cpp: one row of the crime goals' handler table
+	static const CrimeTask* crimeTask(std::uint16_t task);
+	std::uint64_t alarmFinder209(std::uint64_t id) const;
+	std::uint64_t alarmFinder210(std::uint64_t id) const;
+	bool investigateStep(std::uint64_t id, const state::Fighter& f, state::Routine& r, bool notifyAllies, double dt);
+	bool stepInvestigate209(std::uint64_t id, const state::Fighter& f, state::Routine& r, double dt);
+	bool stepInvestigate210(std::uint64_t id, const state::Fighter& f, state::Routine& r, double dt);
+	bool stepLoot212(std::uint64_t id, const state::Fighter& f, state::Routine& r, double dt);
+	bool stepRelease211(std::uint64_t id, const state::Fighter& f, state::Routine& r, double dt);
+	bool stepArrest204(std::uint64_t id, const state::Fighter& f, state::Routine& r, double dt);
 	// 125 JOB_BUILDER (dt24_101 section 3): the task (71 / 2 / 95) and player building an engineer should work on next; {0, 0} = none.
 	std::pair<std::uint16_t, std::uint64_t> planEngineer(std::uint64_t id) const;
 	mutable std::shared_ptr<struct BuildingGeometry> buildingGeometry_;

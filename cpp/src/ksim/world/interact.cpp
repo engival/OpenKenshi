@@ -1091,15 +1091,17 @@ Route routeToInteract(const MeshNavigator& nav, const state::Fighter& who, const
 	if (target.kind == InteractKind::Producer)
 	{
 		// The approach point (kinspect item59 MQ9): the navmesh point nearest the spot kProducerApproach from the origin toward the
-		// actor (search kProducerApproachSnap). ADDED (ours): when that point has no route (it snapped onto the deposit's own rock top,
-		// an island), the same distance round the origin, nearest first; the arrival rule then decides (within).
+		// actor (search 10 then 50 u: kProducerApproachSnap / Far; no wider reach and no dropped placement, kenshi-rwh.299). ADDED (ours): when that point has no route (it snapped onto the deposit's own rock top,
+		// an island), the same distance round the origin, nearest first; the arrival rule then decides (within). No face at all: the origin itself is tried, else no_route.
 		constexpr double kPi = 3.14159265358979323846;
 		const double toward = std::atan2(who.x - target.x, who.z - target.z);
 		for (int k = 0; k < 16; ++k)
 		{
 			const double angle = toward + (k % 2 == 0 ? 1.0 : -1.0) * ((k + 1) / 2) * (kPi / 8.0);
-			const auto spot = nav.walker().snap({target.x + std::sin(angle) * kProducerApproach, target.y,
-				target.z + std::cos(angle) * kProducerApproach}, kProducerApproachSnap);
+			const knav::Position hint{target.x + std::sin(angle) * kProducerApproach, target.y, target.z + std::cos(angle) * kProducerApproach};
+			auto spot = nav.walker().snap(hint, kProducerApproachSnap);
+			if (!spot)
+				spot = nav.walker().snap(hint, kProducerApproachSnapFar);
 			if (!spot)
 				continue;
 			Route route = nav.routeFrom(from, spot->x, spot->z, spot->y, planned, body);
@@ -1289,6 +1291,8 @@ void Simulation::stepOrderQueues()
 				// Gone or refused: the arrival check says so with the proper event 13. A target out of reach by no route: unreachable.
 				if (!route.found)
 				{
+					if (next.action == static_cast<std::uint8_t>(InteractAction::Use))
+						worldTaskBlocks_[{id, next.target}] = clockTick() + routines::kBlockTicks; // a no-route producer Use blocks the deposit (k16.5.33)
 					reportInteract(id, next.target, next.action, InteractEvent::kUnreachable, next.flags);
 					continue;
 				}
@@ -1734,6 +1738,21 @@ bool Simulation::orderLockDoor(std::uint64_t actor, std::uint64_t door, DoorSide
 	return orderShutDoor(actor, door, side, true);
 }
 
+std::uint32_t Simulation::doorMenuEntries(std::uint64_t actor, std::uint64_t door) const
+{
+	const state::Fighter* f = combat_ != nullptr ? combat_->find(actor) : nullptr;
+	if (f == nullptr || f->dead || f->unconscious)
+		return 0;
+	const InteractTarget target = findInteractTarget(world_.ecs(), combat_.get(), door, this);
+	if (target.kind != InteractKind::Door)
+		return 0;
+	const auto passes = [&](InteractAction action, std::uint8_t flags)
+	{
+		return checkInteract(world_.ecs(), *combat_, actor, target, static_cast<std::uint8_t>(action), flags, gameData_.get(), this).empty();
+	};
+	return (passes(InteractAction::Close, kInteractFlagLock) ? kMenuLockDoor : 0) | (passes(InteractAction::Unlock, 0) ? kMenuUnlockDoor : 0);
+}
+
 bool Simulation::orderShutDoor(std::uint64_t actor, std::uint64_t door, DoorSide side, bool lock)
 {
 	if (combat_ == nullptr)
@@ -1994,7 +2013,7 @@ void Simulation::stepDoorSteps()
 				const state::InteractTask* task = actor.get<state::InteractTask>();
 				if (step.route.empty() && task != nullptr && task->target == step.door)
 				{
-					reportInteract(id, task->target, task->action, result);
+					reportInteract(id, task->target, task->action, result, task->flags);
 					actor.remove<state::InteractTask>();
 				}
 				actor.remove<state::DoorStep>();
@@ -2397,6 +2416,12 @@ void Simulation::stepInteractions()
 					beginInteract(members[i].id, task.target, task.action, task.seq, std::move(points), again.approach, task.flags);
 					continue;
 				}
+				if (!again.found)
+				{
+					worldTaskBlocks_[{members[i].id, task.target}] = clockTick() + routines::kBlockTicks; // no route to the deposit: blocked 20 s
+					finish(InteractEvent::kUnreachable);
+					continue;
+				}
 			}
 		}
 		if (fighter.walking() || actor.has<state::DoorStep>())
@@ -2417,6 +2442,10 @@ void Simulation::stepInteractions()
 		}
 		if (!target.arrived(fighter))
 		{
+			// A producer Use whose walk ended out of reach: the move failed (Task_Move::onMoveFailedOrGiveUp, move_unreachable.md): the deposit is
+			// blocked for this member like a capture walk's body (k16.6.702; stepWorldTasks re-arms it while it stays unreachable).
+			if (task.action == static_cast<std::uint8_t>(InteractAction::Use) && target.kind == InteractKind::Producer)
+				worldTaskBlocks_[{members[i].id, task.target}] = clockTick() + routines::kBlockTicks;
 			finish(InteractEvent::kUnreachable);
 			continue;
 		}

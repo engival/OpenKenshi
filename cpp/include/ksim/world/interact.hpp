@@ -82,12 +82,18 @@ inline constexpr std::uint8_t kBreakCageAction = 20;
 inline constexpr std::uint32_t kMenuPickCage = 1u << 16;
 inline constexpr std::uint32_t kMenuCutCage = 1u << 17;
 inline constexpr std::uint32_t kMenuBreakCage = 1u << 18;
+// Order 60 action 21 (kenshi-k16.6.816, client-approved 2026-11-25 on kenshi-8vju): lock a shut door the actor's faction owns. Not an InteractAction: the
+// wire turns it into Close + kInteractFlagLock (Simulation::orderLockDoor's order), and event 13 names it 21 again. Queue 1 and any flag are bad_value.
+inline constexpr std::uint8_t kLockDoorAction = 21;
+// MENU_ENTRIES bits for a door target (order 99): 19 Lock (action 21), 20 Unlock (action 11); each is the order's own gate.
+inline constexpr std::uint32_t kMenuLockDoor = 1u << 19;
+inline constexpr std::uint32_t kMenuUnlockDoor = 1u << 20;
 // Order 60's trailing flags (SIMLINK.md section 13). Action 5 loot: bit 0 = open (the walk ends without taking anything; the
 // body's or container's INVENTORY + ITEM_GRID are then kept current for the looter's session). Other bits: bad_value.
 inline constexpr std::uint8_t kInteractFlagOpen = 1;
 inline constexpr std::uint8_t kInteractFlagsMask = kInteractFlagOpen;
 // Internal (never on the wire, outside kInteractFlagsMask): a Close order that locks the shut door instead (LOCK_DOOR 77 / 162 / 198;
-// Simulation::orderLockDoor). The protocol has no lock action.
+// Simulation::orderLockDoor). On the wire it is order 60 action 21 (kLockDoorAction).
 inline constexpr std::uint8_t kInteractFlagLock = 2;
 // Internal: a Carry that is the 240 arrest lift, whose precondition is isTargetDown (not unconscious).
 inline constexpr std::uint8_t kInteractFlagArrestLift = 4;
@@ -105,7 +111,8 @@ inline constexpr double kBodyReachY = 35.0;
 inline constexpr double kProducerReachY = 80.0;
 // The producer approach point (kinspect item59 MQ9): this far from the origin toward the actor, snapped to the navmesh within the second.
 inline constexpr double kProducerApproach = 65.0;
-inline constexpr double kProducerApproachSnap = 150.0;
+inline constexpr double kProducerApproachSnap = 10.0; // then kProducerApproachSnapFar (the original's 10 / 50 search; kenshi-rwh.299)
+inline constexpr double kProducerApproachSnapFar = 50.0;
 // A shut door's face on the actor's side (routeToInteract): this far out from the slab, snapped to the navmesh within the second. Ours.
 inline constexpr double kDoorFaceOut = 2.0;
 inline constexpr double kDoorFaceSnap = 6.0;

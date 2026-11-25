@@ -20,7 +20,7 @@
 #include <unordered_map>
 #include <vector>
 
-class dtNavMesh;
+#include <DetourNavMesh.h> // dtPolyRef (64-bit: DT_POLYREF64)
 class dtNavMeshQuery;
 class dtQueryFilter;
 
@@ -101,10 +101,11 @@ struct NavConfig
 // Tiles per zone side, and zones per side of a world bake region file.
 inline constexpr int kTilesPerZone = 18; // 4608 / 256
 inline constexpr int kRegionZones = 4;
-// Most tiles one dtNavMesh holds, and most polygons in one tile: 13 + 9 bits of
-// a 32-bit dtPolyRef leave Detour's 10 salt bits.
+// Most tiles one dtNavMesh holds, and most polygons in one tile. Detour is built with DT_POLYREF64 (cmake/recast.cmake): a
+// dtPolyRef is 16 salt + 28 tile + 20 poly bits, so these are limits of our own, not of the ref.
 inline constexpr int kMaxResidentTiles = 8192;
-inline constexpr int kMaxPolysPerTile = 512;
+inline constexpr int kMaxPolysPerTile = 8192;
+static_assert(kMaxResidentTiles <= (1 << DT_TILE_BITS) && kMaxPolysPerTile <= (1 << DT_POLY_BITS), "dtPolyRef split");
 
 // File name of the world bake region (rx, rz), counting regions of kRegionZones zones.
 std::string regionFileName(int rx, int rz);
@@ -145,62 +146,6 @@ struct TileCoord
 		return a.z != b.z ? a.z <=> b.z : a.x <=> b.x;
 	}
 };
-
-// Bakes `coords` only, from exactly the shapes given (a pure function of its
-// inputs: thread count and shape order do not change a tile's bytes). Result
-// is in `coords` order; tiles without walkable surface are absent.
-std::vector<BakedTile> bakeTileSet(const NavConfig& config, const kworld::Heightmap& terrain,
-	const std::vector<const kworld::WorldShape*>& shapes, const std::vector<TileCoord>& coords,
-	int threads);
-
-// Bake speed switches. The defaults give the reference bake. `flatTiles` is exact (the output is
-// byte-identical, ctest knav_bake_flat); the others trade polygon shape or detail height for speed
-// and change the cache bytes, so a runtime rebuild (NavWorld) must run with the tuning of the bake
-// it patches. Process-wide: set before baking, not while a bake runs.
-enum class BakePartition
-{
-	Watershed, // distance field + watershed: round regions, the slowest
-	Monotone, // no distance field: long thin regions, fast
-	Layers // sweep partition, no distance field
-};
-// Spans beside a drop: Recast's ledge filter also drops a span whose reachable neighbours spread more than a climb, which
-// cuts the Hub bar's back stair where it meets floor 1 (NAVMESH_CACHE "The original's recipe"). Experiment switch.
-enum class BakeLedge
-{
-	Recast, // rcFilterLedgeSpans: drops and the neighbour spread
-	Drops, // the drop test only
-	Off
-};
-struct BakeTuning
-{
-	bool flatTiles = true; // a tile of one flat, shape-free sheet is emitted directly (no Recast)
-	BakePartition partition = BakePartition::Watershed;
-	float detailSampleCells = 6.0f; // detail mesh height sample spacing in cells; 0 = poly corners only
-	BakeLedge ledge = BakeLedge::Recast;
-};
-void setBakeTuning(const BakeTuning& tuning);
-BakeTuning bakeTuning();
-// Tiles emitted by the flat shortcut so far in this process.
-std::uint64_t flatTilesBaked();
-
-// Per-stage bake timing, summed over all threads: on when the environment variable KNAV_PROFILE is
-// set (read once) or after setBakeProfile(true). Costs nothing when off.
-void setBakeProfile(bool on);
-// Prints one line per stage (CPU seconds, share of the total, tiles) to `out`; no-op when no tile
-// was timed.
-void printBakeProfile(std::ostream& out);
-
-// Width of the margin a tile reads around itself; a shape can change a tile
-// only if its box comes within this of the tile.
-double tileBorder(const NavConfig& config);
-
-// Every tile a shape can change (its box grown by tileBorder), clipped to the grid.
-std::vector<TileCoord> tilesTouching(const NavConfig& config, const kworld::WorldShape& shape);
-
-// Bakes every tile of `config`. Tiles without walkable surface are absent.
-// Result is sorted by (z, x) and does not depend on `threads`.
-std::vector<BakedTile> bakeTiles(const NavConfig& config, const kworld::Heightmap& terrain,
-	const std::vector<kworld::WorldShape>& shapes, int threads);
 
 struct PolyLoc;
 
@@ -296,7 +241,7 @@ public:
 	// A door's polygons (tile and index; the point is unset), in (tile z, x, poly) order.
 	std::vector<PolyLoc> doorPolys(DoorKey door) const;
 	// The door a Detour polygon ref belongs to (0: none).
-	DoorKey doorOfRef(std::uint32_t ref) const
+	DoorKey doorOfRef(dtPolyRef ref) const
 	{
 		const auto found = doorOfRef_.find(ref);
 		return found == doorOfRef_.end() ? 0 : found->second;
@@ -335,8 +280,8 @@ private:
 	NavConfig config_;
 	std::vector<BakedTile> tiles_;
 	DoorBook book_;
-	std::map<DoorKey, std::vector<std::uint32_t>> doorRefs_; // Detour polygon refs
-	std::unordered_map<std::uint32_t, DoorKey> doorOfRef_;
+	std::map<DoorKey, std::vector<dtPolyRef>> doorRefs_; // Detour polygon refs
+	std::unordered_map<dtPolyRef, DoorKey> doorOfRef_;
 	std::map<std::pair<int, int>, TileLog> tileLogs_;
 	std::size_t polyCount_ = 0;
 	std::uint64_t revision_ = nextRevision();
@@ -506,7 +451,7 @@ private:
 	// True when no clearance search from `start` to `end` at `radius` can arrive: the two lie in different clearance components (portals the
 	// body fits, the first hop out of the start when `exemptFirst` and the last into the goal exempt, as in the search). Labelled per radius
 	// over the whole mesh on first use, kept until tiles change. Doors and filters are ignored, so a refusal is never wrong.
-	bool refusedByComponents(std::uint32_t startRef, std::uint32_t endRef, const Point& end, float radius, bool exemptFirst) const;
+	bool refusedByComponents(dtPolyRef startRef, dtPolyRef endRef, const Point& end, float radius, bool exemptFirst) const;
 
 	ClearanceCache& clearanceFor() const; // the cache, emptied first if the mesh changed since it was filled
 
@@ -518,7 +463,7 @@ private:
 	// kMaxPathPolys-sized allocation per route (kenshi-k16.7.64).
 	struct Scratch
 	{
-		std::vector<std::uint32_t> polys, clear, cornerRefs, refs;
+		std::vector<dtPolyRef> polys, clear, cornerRefs, refs;
 		std::vector<float> corners, straight;
 	};
 	mutable Scratch scratch_;

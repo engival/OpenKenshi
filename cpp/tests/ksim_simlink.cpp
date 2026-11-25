@@ -851,6 +851,7 @@ struct Client
 	std::vector<simlink::Event> events; // every event so far
 	std::vector<std::uint16_t> types; // every frame type so far
 	std::vector<std::vector<std::uint8_t>> cameraStarts; // the body of every CAMERA_START (65) so far
+	std::vector<std::vector<std::uint8_t>> gameOptions; // the body of every GAME_OPTIONS (67) so far
 	std::uint64_t lastSnapshotEnd = 0;
 	std::uint64_t snapshots = 0;
 	std::vector<std::uint64_t> snapTicks; // the tick of every snapshot so far
@@ -908,6 +909,8 @@ struct Client
 		types.push_back(type);
 		if (type == ks::kCameraStart)
 			cameraStarts.emplace_back(p, p + n);
+		if (type == ks::kGameOptions)
+			gameOptions.emplace_back(p, p + n);
 		const auto tickOf = [&]() { std::uint64_t t = 0; test::require(n >= 8, "short frame"); std::memcpy(&t, p, 8); return t; };
 		switch (type)
 		{
@@ -1274,6 +1277,107 @@ int main()
 			test::require(readAt<float>(b.data(), 25) == 0.9f && readAt<float>(b.data(), 29) == 0.25f && readAt<float>(b.data(), 33) == -0.5f && readAt<float>(b.data(), 37) == 0.125f, "camera: rot (w x y z)");
 			test::require(readAt<float>(b.data(), 41) == -546.5f, "camera: zoom");
 			std::cout << "CAMERA_START: 46 bytes before the first snapshot, once; absent for a world that was not imported\n";
+		}
+		// ---- GAME_OPTIONS (67) and order 121 set_game_option (kenshi-k16.6.797): on connect to every session, on change, refusals, the fixture ----
+		{
+			World w = makeWorld(order, data, gd, nav);
+			std::promise<int> portPromise;
+			ks::ServerOptions optionsOptions;
+			optionsOptions.onListening = [&portPromise](int listening) { portPromise.set_value(listening); };
+			ks::SimLinkServer optionsServer(*w.sim, w.context, optionsOptions);
+			optionsServer.listen();
+			const int optionsPort = portPromise.get_future().get();
+			std::atomic<bool> optionsStop{false};
+			std::thread optionsThread([&]() { optionsServer.run(optionsStop); });
+			const struct OptionsJoiner
+			{
+				std::atomic<bool>& stop;
+				std::thread& thread;
+				~OptionsJoiner()
+				{
+					stop.store(true);
+					if (thread.joinable())
+						thread.join();
+				}
+			} optionsJoiner{optionsStop, optionsThread};
+			Client c(optionsPort);
+			c.send(helloFrame(w.context.dataHash));
+			test::require(c.pump([&]() { return c.snapshots >= 2 && !c.gameOptions.empty(); }, 5000), "game options: no GAME_OPTIONS on connect");
+			const auto flagsOf = [](const std::vector<std::uint8_t>& b) { return b[8]; };
+			test::require(c.gameOptions.size() == 1 && c.gameOptions[0].size() == 21, "game options: the connect frame is not one 21-byte body");
+			test::require(flagsOf(c.gameOptions[0]) == 0 && readAt<float>(c.gameOptions[0].data(), 9) == 1.0f && readAt<float>(c.gameOptions[0].data(), 13) == 1.0f
+				&& readAt<float>(c.gameOptions[0].data(), 17) == 4.0f, "game options: the connect defaults are not both off, 1 / 1 / 4");
+			const auto order121 = [&](std::uint32_t seq, const std::vector<std::pair<int, int>>& entries)
+			{
+				c.send(rawOrder(seq, 121, [&](auto& v)
+				{
+					put<std::uint8_t>(v, static_cast<std::uint8_t>(entries.size()));
+					for (const auto& [option, value] : entries)
+					{
+						put<std::uint8_t>(v, static_cast<std::uint8_t>(option));
+						put<std::uint8_t>(v, static_cast<std::uint8_t>(value));
+					}
+				}));
+				test::require(c.pump([&]() { return c.find(9, seq) != nullptr || c.find(10, seq) != nullptr; }, 5000), "game options: order 121 not answered");
+			};
+			// refusals: nothing applied, no new frame
+			const std::size_t before = c.gameOptions.size();
+			std::uint32_t seq = 7100;
+			for (const std::vector<std::pair<int, int>>& bad : std::vector<std::vector<std::pair<int, int>>>{{}, {{0, 2}}, {{2, 1}}, {{0, 1}, {0, 0}}, {{0, 1}, {1, 7}}})
+			{
+				order121(++seq, bad);
+				test::require(c.find(10, seq) != nullptr && reasonOf(c, *c.find(10, seq)) == "bad_value", "game options: a bad order 121 is not bad_value");
+			}
+			test::require(!w.sim->worldOptions() || (!w.sim->worldOptions()->feedAnimals && !w.sim->worldOptions()->shareFood), "game options: a refused order applied");
+			// applied: both switches in one order, the frame follows to every session
+			order121(++seq, {{0, 1}, {1, 1}});
+			test::require(c.find(9, seq) != nullptr, "game options: order 121 {0,1}{1,1} was refused");
+			test::require(c.pump([&]() { return c.gameOptions.size() > before; }, 5000),
+				"game options: no GAME_OPTIONS after the change");
+			test::require(c.gameOptions.size() == before + 1 && flagsOf(c.gameOptions.back()) == 3, "game options: flags not 3 after the change");
+			test::require(w.sim->worldOptions() != nullptr && w.sim->worldOptions()->feedAnimals && w.sim->worldOptions()->shareFood, "game options: the singleton did not change");
+			// the same value again: an ack, no frame
+			order121(++seq, {{1, 1}});
+			test::require(c.find(9, seq) != nullptr, "game options: the repeat was refused");
+			const std::size_t settled = c.snapshots + 3;
+			test::require(c.pump([&]() { return c.snapshots >= settled; }, 5000) && c.gameOptions.size() == before + 1, "game options: a no-change order sent a frame");
+			// the fixture: the connect frame and the changed frame, tick zeroed (the tick of a live frame is timing)
+			const auto whole = [](std::vector<std::uint8_t> body)
+			{
+				std::fill(body.begin(), body.begin() + 8, std::uint8_t{0});
+				std::string hex;
+				char digits[3];
+				std::vector<std::uint8_t> bytes;
+				put<std::uint32_t>(bytes, static_cast<std::uint32_t>(body.size() + 2));
+				put<std::uint16_t>(bytes, ks::kGameOptions);
+				bytes.insert(bytes.end(), body.begin(), body.end());
+				for (const std::uint8_t byte : bytes)
+				{
+					std::snprintf(digits, sizeof(digits), "%02x", byte);
+					hex += digits;
+				}
+				return hex;
+			};
+			if (std::getenv("KSIM_WRITE_FIXTURE") != nullptr)
+			{
+				std::ofstream fixture(KSIM_GAME_OPTIONS_FIXTURE);
+				fixture << "# GAME_OPTIONS (type 67) frames from ksim_simlink, tick zeroed (rewrite: KSIM_WRITE_FIXTURE=1 ksim_simlink).\n"
+					<< "# Whole frames: u32 length, u16 type, body: u64 tick, u8 flags, f32 cod, f32 gdm, f32 ht (SIMLINK.md section 6).\n"
+					<< "# connect = both bits 0 (the defaults); changed = after order 121 {0,1}{1,1}: flags 3.\n"
+					<< "connect " << whole(c.gameOptions[0]) << "\nchanged " << whole(c.gameOptions[1]) << "\n";
+			} else {
+				std::ifstream fixture(KSIM_GAME_OPTIONS_FIXTURE);
+				std::map<std::string, std::string> pinned;
+				for (std::string line; std::getline(fixture, line);)
+				{
+					const std::size_t space = line.find(' ');
+					if (!line.empty() && line[0] != '#' && space != std::string::npos)
+						pinned[line.substr(0, space)] = line.substr(space + 1);
+				}
+				test::require(pinned["connect"] == whole(c.gameOptions[0]) && pinned["changed"] == whole(c.gameOptions[1]),
+					"game options: the live frames differ from fixtures/game_options.hex (a wire change, or rewrite it with KSIM_WRITE_FIXTURE=1)");
+			}
+			std::cout << "GAME_OPTIONS: 21 bytes on connect, order 121 refusals, a change is sent, a repeat sends nothing\n";
 		}
 		// ---- one snapshot per catch-up batch at speed > 1 (SIM_SCHEDULING 5O): floor(speed) ticks per snapshot, events keep their own tick ----
 		if (std::getenv("KSIM_SNAPSHOT_PER_TICK") == nullptr)
@@ -2333,8 +2437,8 @@ int main()
 			};
 			refusal(7001, 99999999, 14, 0, "bad_target");
 			refusal(7002, sw.duel.player, 14, 0, "bad_target");
-			refusal(7003, sw.duel.enemy, 21, 0, "bad_value");
-			refusal(7004, sw.duel.enemy, 22, 0, "bad_value");
+			refusal(7003, sw.duel.enemy, 22, 0, "bad_value");
+			refusal(7004, sw.duel.enemy, 23, 0, "bad_value");
 			refusal(7005, sw.duel.enemy, 14, 1, "bad_value");
 			server.call([&]() { arena->find(sw.duel.enemy)->unconscious = true; });
 			refusal(7006, sw.duel.enemy, 14, 0, "not_allowed");
@@ -2359,6 +2463,124 @@ int main()
 				"stealth KO: event 50 is not one abort (result 2, chance 0) of the player on the enemy");
 			std::cout << "stealth KO order: bad_target x2, bad_value x3, not_allowed, accepted\n";
 		}
+
+		// ---- order 52 set_camera_follow (kenshi-k16.6.626) ----
+		// Any live character; 0 clears; an unknown id is bad_target, a short body bad_value; the server clears a dead target itself; the follow
+		// outlives a reload; one id per session, the arena reads the union; a replay of the logged orders gives the same follow.
+		{
+			World fw = makeWorld(order, data, gd, nav);
+			ksim::CombatArena* arena = const_cast<ksim::CombatArena*>(fw.sim->combat());
+			fw.context.paused = true;
+			std::promise<int> portPromise;
+			ks::ServerOptions options;
+			options.onListening = [&portPromise](int listening) { portPromise.set_value(listening); };
+			ks::SimLinkServer server(*fw.sim, fw.context, options);
+			server.listen();
+			const int port = portPromise.get_future().get();
+			std::atomic<bool> stop{false};
+			std::thread thread([&]() { server.run(stop); });
+			const struct FollowJoiner
+			{
+				std::atomic<bool>& stop;
+				std::thread& thread;
+				~FollowJoiner()
+				{
+					stop.store(true);
+					if (thread.joinable())
+						thread.join();
+				}
+			} joiner{stop, thread};
+			Client c(port);
+			c.send(helloFrame(fw.context.dataHash));
+			test::require(c.pump([&]() { return c.snapshots >= 1; }, 5000), "camera follow: no initial snapshot");
+			// The server takes one socket client: the second session is driven in-process, as ksim_venge_population does.
+			ks::Session second(*fw.sim, fw.context);
+			const auto feed = [&](std::uint16_t frameType, const std::vector<std::uint8_t>& payload)
+			{
+				std::vector<std::uint8_t> bytes;
+				ks::BinaryWriter w(bytes);
+				test::require(second.onFrame(frameType, payload.data(), payload.size(), w), "camera follow: the second session's frame was refused");
+				return bytes;
+			};
+			const auto le = [](std::vector<std::uint8_t>& v, std::uint64_t x, int n) { for (int i = 0; i < n; ++i) v.push_back(static_cast<std::uint8_t>(x >> (8 * i))); };
+			{
+				std::vector<std::uint8_t> hello;
+				le(hello, ks::kMagic, 4);
+				le(hello, ks::kProtocol, 2);
+				le(hello, 0, 1);
+				le(hello, fw.context.dataHash, 8);
+				le(hello, 4, 2);
+				for (const char ch : std::string("test"))
+					hello.push_back(static_cast<std::uint8_t>(ch));
+				feed(ks::kHello, hello);
+			}
+			const auto follow2 = [&](std::uint32_t seq, std::uint64_t id)
+			{
+				std::vector<std::uint8_t> order;
+				le(order, seq, 4);
+				le(order, 52, 2);
+				le(order, id, 8);
+				feed(ks::kOrder, order);
+			};
+			const auto follow = [&](Client& who, std::uint32_t seq, std::uint64_t id)
+			{
+				who.send(rawOrder(seq, 52, [&](auto& v) { put<std::uint64_t>(v, id); }));
+				test::require(who.pump([&]() { return who.find(9, seq) != nullptr || who.find(10, seq) != nullptr; }, 5000),
+					"camera follow: no answer to order " + std::to_string(seq));
+			};
+			const auto applied = [&](Client& who, std::uint32_t seq) { return who.find(9, seq) != nullptr; };
+			// bad_target: an id that is no character; bad_value: a short body (answered, the session stays).
+			follow(c, 5201, 999999999ull);
+			test::require(!applied(c, 5201) && reasonOf(c, *c.find(10, 5201)) == "bad_target", "camera follow: an unknown id is not bad_target");
+			c.send(rawOrder(5202, 52, [](auto& v) { put<std::uint32_t>(v, 7); }));
+			test::require(c.pump([&]() { return c.find(10, 5202) != nullptr; }, 5000), "camera follow: a short body is not answered");
+			test::require(reasonOf(c, *c.find(10, 5202)) == "bad_value", "camera follow: a short body is not bad_value");
+			// set: any character (the enemy is not the session's own); applies on the next tick.
+			follow(c, 5203, fw.duel.enemy);
+			test::require(applied(c, 5203), "camera follow: a live character was refused");
+			test::require(!arena->followed(fw.duel.enemy), "camera follow: set before its tick");
+			fw.sim->run(1);
+			test::require(arena->followed(fw.duel.enemy), "camera follow: not set after the tick");
+			// one id per session: the last one sent replaces; the second session adds its own (the union).
+			follow(c, 5204, fw.duel.player);
+			follow2(5301, fw.duel.enemy);
+			test::require(applied(c, 5204), "camera follow: a follow was refused");
+			fw.sim->run(1);
+			test::require(arena->followed(fw.duel.player) && arena->followed(fw.duel.enemy), "camera follow: the union of two sessions is not both ids");
+			// 0 clears the session's own, the other session's stays.
+			follow(c, 5205, 0);
+			test::require(applied(c, 5205), "camera follow: 0 was refused");
+			fw.sim->run(1);
+			test::require(!arena->followed(fw.duel.player) && arena->followed(fw.duel.enemy), "camera follow: 0 did not clear exactly the session's own");
+			// A reload keeps it (session state, like the set_view focus): the same world comes back, the follow stays.
+			{
+				std::stringstream saved;
+				fw.sim->save(saved);
+				fw.sim->reload(saved);
+				fw.sim->run(1);
+				fw.sim->run(1);
+				test::require(fw.sim->combat()->followed(fw.duel.enemy), "camera follow: lost across a reload"); // the arena is rebuilt by reload: read it afresh
+			}
+			// The replay: the logged orders give the same follow set on a fresh sim of the same world.
+			{
+				std::uint64_t logged = 0;
+				for (const ks::OrderLogEntry& entry : fw.context.orderLog)
+					logged += entry.kind == 52 && entry.sim;
+				test::require(logged == 4, "camera follow: the order log holds " + std::to_string(logged) + " of order 52, not 4");
+			}
+			// The target dies: the server clears it and sends nothing.
+			const std::size_t eventsBefore = c.events.size();
+			const_cast<ksim::state::Fighter*>(fw.sim->combat()->find(fw.duel.enemy))->dead = true;
+			fw.sim->run(1);
+			test::require(!fw.sim->combat()->followed(fw.duel.enemy), "camera follow: a dead target is still followed");
+			c.pump([&]() { return false; }, 300);
+			test::require(c.events.size() == eventsBefore, "camera follow: clearing a dead target sent an event");
+			// A dead id is bad_target (it is a corpse, not a live character).
+			follow(c, 5206, fw.duel.enemy);
+			test::require(!applied(c, 5206) && reasonOf(c, *c.find(10, 5206)) == "bad_target", "camera follow: a dead id is not bad_target");
+			std::cout << "camera follow: bad_target, bad_value, set, union of two sessions, 0, reload, log, death\n";
+		}
+
 
 		// ---- CHAR_APPEARANCE body key "muscle" (kenshi-k16.6.568, rwh.240 section 3) ----
 		// Every character carries it: m = (floor(max(strength, weapon smith, armour smith)) * 0.01 - 0.2) / 0.79, unclamped; the appearance version
@@ -3766,6 +3988,10 @@ int main()
 			std::cout << "WEATHER wind: " << wind.speed << " u/s toward yaw " << wind.yaw << " in " << group << "\n";
 		}
 
+		// Order 52 set_camera_follow rides the live run: it is a logged sim command, so the replay below enqueues it and must land on the same hash.
+		c.send(rawOrder(4952, 52, [&](auto& v) { put<std::uint64_t>(v, player); }));
+		test::require(c.pump([&]() { return c.find(9, 4952) != nullptr; }, 5000), "set_camera_follow was not applied");
+
 		// Pause: the clock says so and ticks stop; unpause resumes.
 		out = rawOrder(1006, 40, [](auto& v) { put<std::uint8_t>(v, 1); });
 		c.send(out);
@@ -3807,6 +4033,29 @@ int main()
 			replay.sim->tick();
 		}
 		test::require(replay.sim->clockTick() == endTick, "replay ran to the same tick");
+#if KSIM_DEV
+		if (replay.sim->stateHash() != liveHash)
+		{
+			// Name what differs (k16.15.77): instance Id and component, live vs replay.
+			std::map<std::pair<std::uint64_t, std::string>, std::uint64_t> was;
+			for (const ksim::StatePart& part : live.sim->stateParts())
+				was[{part.id, part.kind}] = part.hash;
+			int shown = 0;
+			for (const ksim::StatePart& part : replay.sim->stateParts())
+			{
+				const auto it = was.find({part.id, part.kind});
+				if (it == was.end())
+					std::cout << "only in replay: " << part.id << " " << part.kind << "\n", ++shown;
+				else if (it->second != part.hash && shown < 40)
+					std::cout << "differs: " << part.id << " " << part.kind << "\n", ++shown;
+				if (it != was.end())
+					was.erase(it);
+			}
+			for (const auto& [key, hash] : was)
+				std::cout << "only in live: " << key.first << " " << key.second << "\n";
+			std::cout << "end tick " << endTick << "\n";
+		}
+#endif
 		test::require(replay.sim->stateHash() == liveHash, "replayed session differs from the live one (state hash)");
 
 		// The client's report (2026-11-05): with --scenario newgame the world restarts at its start tick right after the connect

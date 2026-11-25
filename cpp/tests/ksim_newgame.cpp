@@ -1212,13 +1212,14 @@ int main(int argc, char** argv)
 					const std::size_t head = static_cast<std::size_t>(std::find(heads.begin(), heads.end(), s.head) - heads.begin());
 					test::require(c.dec.str(a.race) == s.race && a.sex == s.female && a.head == head && c.dec.str(a.hair) == s.hair && c.dec.str(a.beard) == s.beard
 						&& c.dec.str(a.hairColour) == s.hairColour && a.skin == s.skin && c.dec.str(a.name) == s.name, when + ": the wire look of member " + std::to_string(k));
-					// k16.6.568 layout (SIMLINK.md "Body keys"): the sliders, then "Idle stance", then "muscle" last; "strong" is not sent.
+					// k16.6.568 layout (SIMLINK.md "Body keys"): the sliders, then "Idle stance", "muscle", and "skinny" last for a human (k16.6.609); "strong" is not sent.
 					const std::size_t nb = s.sliders.size();
-					test::require(a.body.size() == nb + 2, when + ": the body list holds the sliders, the stance and muscle");
+					test::require(a.body.size() == nb + 3, when + ": the body list holds the sliders, the stance, muscle and skinny");
 					for (std::size_t i = 0; i < nb; ++i)
 						test::require(c.dec.str(a.body[i].first) == s.sliders[i].first && a.body[i].second == s.sliders[i].second, when + ": slider " + s.sliders[i].first);
 					test::require(c.dec.str(a.body[nb].first) == "Idle stance" && a.body[nb].second == static_cast<float>(s.stance), when + ": the idle stance rides in the body list");
-					test::require(c.dec.str(a.body[nb + 1].first) == "muscle" && a.body[nb + 1].second >= -0.2405075f, when + ": muscle rides last, at or above the stat-1 bulk");
+					test::require(c.dec.str(a.body[nb + 1].first) == "muscle" && a.body[nb + 1].second >= -0.2405075f, when + ": muscle follows the stance, at or above the stat-1 bulk");
+					test::require(c.dec.str(a.body[nb + 2].first) == "skinny", when + ": skinny rides last (a human's hunger physique)");
 				}
 			};
 			checkLook("new game");

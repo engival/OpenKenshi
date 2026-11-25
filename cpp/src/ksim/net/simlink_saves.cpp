@@ -274,6 +274,7 @@ void Session::resetKnown()
 	boundsSent_ = false;
 	squadsSent_ = PlayerSquadsView();
 	squadsKnown_ = false;
+	gameOptionsKnown_ = false;
 	unlocksSent_.clear();
 	unlocksKnown_ = false;
 	discoveredSent_.clear();
@@ -371,6 +372,7 @@ void Session::runSaveControl(std::uint16_t kind, std::uint32_t seq, const std::s
 			in.seekg(0, std::ios::beg);
 			sim_.reload(in);
 			restoreViewFocus(); // the save's ViewFocus may be another camera's, or none
+			restoreCameraFollow();
 		} catch (const std::exception& e) {
 			if (ctx_.log)
 				ctx_.log("load_game " + name + ": " + e.what());
@@ -394,6 +396,7 @@ void Session::runNewWorld(std::uint32_t seq, RecordWriter& out)
 	{
 		sim_.newWorld();
 		restoreViewFocus(); // the pristine mark's ViewFocus, not this client's camera
+		restoreCameraFollow();
 		// The Hub's furniture is the world's, not a scenario's: the mesh's doors and storage come back with the fresh world.
 		if (const MeshNavigator* nav = sim_.navigation())
 		{
@@ -432,6 +435,12 @@ void Session::restoreViewFocus()
 	if (!hasView_)
 		return;
 	sim_.enqueue(Command::setView(viewX_, viewZ_)); // applies on the next tick, like the original order
+}
+
+void Session::restoreCameraFollow()
+{
+	if (follow_ != 0)
+		sim_.enqueue(Command::setCameraFollow(key_, follow_));
 }
 
 } // namespace ksim::simlink

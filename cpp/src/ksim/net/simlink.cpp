@@ -88,6 +88,8 @@ const char* typeName(std::uint16_t type)
 	case kResearchState: return "RESEARCH_STATE";
 	case kDiscovered: return "DISCOVERED";
 	case kFactionRelations: return "FACTION_RELATIONS";
+	case kTownState: return "TOWN_STATE";
+	case kGameOptions: return "GAME_OPTIONS";
 	case kTaskProgress: return "TASK_PROGRESS";
 	case kTrade: return "TRADE";
 	case kBuilding: return "BUILDING";
@@ -306,6 +308,7 @@ void TextWriter::listEnd()
 Session::Session(Simulation& sim, ServerContext& context)
 	: sim_(sim)
 	, ctx_(context)
+	, key_(context.nextSessionKey++)
 {
 	ctx_.sessions.push_back(this);
 	sim_.setCombatObserver([this](const CombatEvent& e)
@@ -525,7 +528,7 @@ Session::Session(Simulation& sim, ServerContext& context)
 			if (actor == nullptr || !actor->playerControlled)
 				return;
 			o.kind = 13;
-			o.action = e.action;
+			o.action = e.action == static_cast<std::uint8_t>(InteractAction::Close) && (e.flags & kInteractFlagLock) != 0 ? kLockDoorAction : e.action; // the lock order is action 21 on the wire
 			o.result = e.result;
 			// Loot open that arrived: the looter now keeps the body's (or container's) contents current (frame feed).
 			if (e.result == InteractEvent::kDone && e.action == static_cast<std::uint8_t>(InteractAction::Loot)
@@ -574,6 +577,14 @@ Session::Session(Simulation& sim, ServerContext& context)
 Session::~Session()
 {
 	ctx_.sessions.erase(std::remove(ctx_.sessions.begin(), ctx_.sessions.end(), this), ctx_.sessions.end());
+	if (follow_ != 0)
+	{
+		// The follow dies with the session: a logged command, so a replay drops it at the same tick.
+		Command command = Command::setCameraFollow(key_, 0);
+		command.tick = sim_.clockTick() + 1;
+		sim_.enqueue(command);
+		ctx_.orderLog.push_back(OrderLogEntry{command.tick, 0, 52, true, command, "set_camera_follow id=0 (session dropped)"});
+	}
 	sim_.setCombatObserver({});
 	sim_.setInteractObserver({});
 	sim_.setSpeechObserver({});
@@ -919,6 +930,7 @@ std::vector<const state::Inventory::Entry*> flatEntries(const state::Inventory& 
 
 // The one list of orders that apply at once while the clock is paused (SIMLINK.md section 7): the trade moves, a transfer to or from an open
 // trader's stock. World actions stay tick-bound.
+// (Order 121 set_game_option sets whilePaused itself: the options page is open on a paused game.)
 static bool appliesWhilePaused(const InventoryOrder& order)
 {
 	return order.kind == 68 && order.trader != 0;
@@ -1293,7 +1305,7 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 		movesActor = queue == 0;
 		talkTo = action == static_cast<std::uint8_t>(InteractAction::Talk) ? target : 0;
 		// Flags: loot (5) bit 0 = open; every other bit, and any flag on another action, is bad_value.
-		if (action == 0 || action > kBreakCageAction || queue > 1 || (flags & ~kInteractFlagsMask) != 0
+		if (action == 0 || action > kLockDoorAction || queue > 1 || (flags & ~kInteractFlagsMask) != 0
 			|| (flags != 0 && action != static_cast<std::uint8_t>(InteractAction::Loot)))
 		{
 			reject = "bad_value";
@@ -1320,7 +1332,7 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 					commands.push_back(Command::stealthKo(state::Id{id}, state::Id{target}));
 			break;
 		}
-		if (action >= kPickShacklesAction)
+		if (action >= kPickShacklesAction && action != kLockDoorAction)
 		{
 			// Pick, cut or break the shackles a character wears (kenshi-h2v.15.1, actions 15..17: the target is the wearer) or a cage's lock (kenshi-k16.5.7, 18..20: the cage key): not an interact; queue 1 is bad_value.
 			if (queue != 0)
@@ -1345,6 +1357,14 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 			reject = "unsupported"; // no navmesh, no movement
 			break;
 		}
+		// Lock door (kenshi-k16.6.816): the Close order that locks the shut door; queue 1 is bad_value. Event 13 names it 21 again.
+		if (action == kLockDoorAction && queue != 0)
+		{
+			reject = "bad_value";
+			break;
+		}
+		const std::uint8_t act = action == kLockDoorAction ? static_cast<std::uint8_t>(InteractAction::Close) : action;
+		const std::uint8_t orderFlags = action == kLockDoorAction ? kInteractFlagLock : flags;
 		const InteractTarget thing = findInteractTarget(sim_.world().ecs(), arena, target, &sim_);
 		if (thing.kind == InteractKind::None)
 		{
@@ -1353,7 +1373,7 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 		}
 		for (const std::uint64_t id : ids)
 		{
-			reject = checkInteract(sim_.world().ecs(), *arena, id, thing, action, flags, ctx_.gameData.get(), &sim_);
+			reject = checkInteract(sim_.world().ecs(), *arena, id, thing, act, orderFlags, ctx_.gameData.get(), &sim_);
 			// A queued order starts later: the target's state now (a shut door to close after opening it) proves nothing.
 			if (queue != 0 && reject == "not_allowed")
 				reject.clear();
@@ -1373,7 +1393,7 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 			bool approach = false;
 			if (!thing.arrived(fighter))
 			{
-				const Route route = routeToInteract(*nav, fighter, thing, action, false, arena->data().body(fighter.raceSid));
+				const Route route = routeToInteract(*nav, fighter, thing, act, false, arena->data().body(fighter.raceSid));
 				if (!route.found)
 				{
 					reject = "no_route";
@@ -1386,7 +1406,7 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 					approach = route.approach;
 				}
 			}
-			commands.push_back(Command::fighterInteract(state::Id{id}, target, action, seq, std::move(points), std::move(heights), approach, queue != 0, flags));
+			commands.push_back(Command::fighterInteract(state::Id{id}, target, act, seq, std::move(points), std::move(heights), approach, queue != 0, orderFlags));
 		}
 		break;
 	}
@@ -1589,6 +1609,35 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 		if (reject.empty())
 			commands.push_back(Command::squadOrder(SquadOrder{70}));
 		break;
+	case 121: // set_game_option: u8 n, n x {u8 option, u8 value} (SIMLINK GAME_OPTIONS)
+	{
+		const std::uint8_t n = r.u8();
+		std::uint8_t seen = 0;
+		bool badValue = n == 0;
+		std::vector<Command> entries;
+		for (std::uint8_t i = 0; i < n && !r.bad; ++i)
+		{
+			const std::uint8_t option = r.u8();
+			const std::uint8_t value = r.u8();
+			if (r.bad)
+				break;
+			if (option > 1 || value > 1 || (seen & (1 << option)) != 0)
+				badValue = true;
+			seen |= static_cast<std::uint8_t>(1 << (option & 7));
+			entries.push_back(Command::setGameOption(option, value != 0));
+		}
+		if (r.bad)
+			break;
+		text = "set_game_option n=" + std::to_string(n);
+		whilePaused = true;
+		if (sim_.playerFactionSid().empty())
+			reject = "not_allowed";
+		else if (badValue)
+			reject = "bad_value";
+		else
+			commands = std::move(entries);
+		break;
+	}
 	case 85: // faction_rename: name
 	{
 		SquadOrder order;
@@ -1965,14 +2014,17 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 			for (const CombatArena::Member& m : arena->members())
 				if (m.fighter.cageBuilding == target && known_.count(m.id) != 0)
 					cageInView = true;
-		if (who == nullptr || !who->playerControlled || (!inView && !cageInView))
+		// A door (kenshi-k16.6.816): bits 19 / 20, the gates of order 60 actions 21 / 11.
+		const bool doorTarget = arena != nullptr && !inView && !cageInView && arena->find(target) == nullptr
+			&& findInteractTarget(sim_.world().ecs(), arena, target, &sim_).kind == InteractKind::Door;
+		if (who == nullptr || !who->playerControlled || (!inView && !cageInView && !doorTarget))
 			reject = "bad_target";
 		else if (id == target)
 			reject = "bad_value";
 		if (!reject.empty())
 			break;
 		float chance = -1.0f;
-		const std::uint32_t entries = cageInView ? sim_.cageMenuEntries(id, target, chance) : sim_.menuEntries(id, target);
+		const std::uint32_t entries = doorTarget ? sim_.doorMenuEntries(id, target) : cageInView ? sim_.cageMenuEntries(id, target, chance) : sim_.menuEntries(id, target);
 		control = [this, seq, id, target, entries, chance, &out]()
 		{
 			writeMenuEntries(out, sim_.clockTick(), seq, id, target, entries, chance);
@@ -2035,6 +2087,30 @@ bool Session::handleOrder(const std::uint8_t* payload, std::size_t size, RecordW
 		viewX_ = x;
 		viewZ_ = z;
 		commands.push_back(Command::setView(x, z));
+		break;
+	}
+	case 52: // set camera follow: id u64 (0 = none)
+	{
+		if (size - r.at < 8) // a short body is an answered rejection, not a kick
+		{
+			text = "set_camera_follow (short body)";
+			reject = "bad_value";
+			break;
+		}
+		const std::uint64_t id = r.u64();
+		if (r.bad)
+			break;
+		text = "set_camera_follow id=" + std::to_string(id);
+		if (id != 0)
+		{
+			if (!sim_.liveCharacter(id)) // passive: nothing is promoted; the arena protects it while it is in the arena
+			{
+				reject = "bad_target";
+				break;
+			}
+		}
+		follow_ = id;
+		commands.push_back(Command::setCameraFollow(key_, id));
 		break;
 	}
 	default:
@@ -2868,6 +2944,57 @@ void Session::writeProspect(RecordWriter& out, std::uint64_t tick, const prospec
 	out.end();
 }
 
+// GAME_OPTIONS (SIMLINK.md GAME_OPTIONS, kenshi-k16.6.797): 21 bytes, to every session.
+void Session::writeGameOptions(RecordWriter& out, std::uint64_t tick, const GameOptionsView& view)
+{
+	out.begin(kGameOptions);
+	out.u64("tick", tick);
+	out.u8("flags", view.flags);
+	out.f32("chanceOfDeath", view.chanceOfDeath);
+	out.f32("damageScale", view.damageScale);
+	out.f32("hungerTime", view.hungerTime);
+	out.end();
+}
+
+void Session::writeTownState(RecordWriter& out, std::uint64_t tick, const std::vector<Simulation::TownStateRow>& rows)
+{
+	out.begin(kTownState);
+	out.u64("tick", tick);
+	out.list("towns", rows.size(), 16);
+	for (const Simulation::TownStateRow& row : rows)
+	{
+		out.item();
+		const auto strid = [&](const std::string& sid) { return sid.empty() ? 0u : strings_.intern(1, sid); };
+		out.strid("town", strid(row.town));
+		out.strid("owner", strid(row.owner));
+		out.u8("flags", row.flags);
+		out.u16("live", row.live);
+		out.u32("residentsMaxCur", 0);
+		out.u32("residentsMaxDes", 0);
+		out.u32("residentsActual", static_cast<std::uint32_t>(row.residentsActual));
+		out.u32("roamingMaxCur", 0);
+		out.u32("roamingMaxDes", 0);
+		out.u32("roamingPop", static_cast<std::uint32_t>(row.roamingPop));
+		out.u32("roamingSquads", static_cast<std::uint32_t>(row.roamingSquads));
+		out.list("residentFactions", row.residentFactions.size(), 8);
+		for (const std::string& sid : row.residentFactions)
+		{
+			out.item();
+			out.strid("faction", strid(sid));
+		}
+		out.listEnd();
+		out.list("hostile", row.hostile.size(), 8);
+		for (const std::string& sid : row.hostile)
+		{
+			out.item();
+			out.strid("faction", strid(sid));
+		}
+		out.listEnd();
+	}
+	out.listEnd();
+	out.end();
+}
+
 void Session::writeFactionRelations(RecordWriter& out, std::uint64_t tick, const std::vector<Simulation::FactionRelationRow>& rows)
 {
 	out.begin(kFactionRelations);
@@ -3074,12 +3201,6 @@ std::string Session::lookSignature(const state::Fighter& fighter, const std::str
 	return signature;
 }
 
-// rwh.249 section 2.1: skinny = clamp01(1.5 * (1 - clamp01(hunger - 1))), in 1/20 steps (0.45 = step 9).
-static int skinnyStep(double hunger)
-{
-	return static_cast<int>(std::lround(std::clamp(1.5 * (1.0 - std::clamp(hunger - 1.0, 0.0, 1.0)), 0.0, 1.0) * 20.0));
-}
-
 std::uint32_t Session::lookVersion(const CombatArena::Member& m)
 {
 	Look& look = looks_[m.id];
@@ -3093,7 +3214,7 @@ std::uint32_t Session::lookVersion(const CombatArena::Member& m)
 	signature += "!" + std::to_string(static_cast<long>(std::floor(sim_.bodyBulkStat(m.id))));
 	// "skinny" (humans only): hunger quantised to 1/20 of the key, so a drain does not resend every tick.
 	if (!m.fighter.animal)
-		signature += "~" + std::to_string(skinnyStep(m.fighter.hunger));
+		signature += "~" + std::to_string(std::lround(Simulation::bodySkinny(m.fighter.hunger) * 20.0));
 	if (look.version == 0 || look.signature != signature)
 	{
 		look.signature = signature;
@@ -3192,12 +3313,12 @@ void Session::writeAppearance(RecordWriter& out, std::uint64_t tick, const Comba
 	// "muscle" for every character: the unclamped bulk m of rwh.240 section 3, from the whole stat level (the version bumps per level).
 	out.item();
 	out.strid("key", strings_.intern(4, "muscle"));
-	out.f32("value", static_cast<float>((std::floor(sim_.bodyBulkStat(m.id)) * 0.01 - 0.2) / 0.79));
+	out.f32("value", static_cast<float>(sim_.bodyMuscle(m.id)));
 	if (!fighter.animal) // an animal has no physique (AppearanceAnimal)
 	{
 		out.item();
 		out.strid("key", strings_.intern(4, "skinny"));
-		out.f32("value", static_cast<float>(skinnyStep(fighter.hunger) / 20.0));
+		out.f32("value", static_cast<float>(Simulation::bodySkinny(fighter.hunger)));
 	}
 	out.listEnd();
 	out.list("items", items.size(), 8);
@@ -3450,6 +3571,11 @@ void Session::writeCharStats(RecordWriter& out, std::uint64_t tick, std::uint64_
 		out.f32("hoursLeft", tag.hoursLeft);
 	}
 	out.listEnd();
+	// The engage trigger (row 34, k16.5.37): additive after row 32, no protocol bump.
+	out.u8("engageBasis", stats.engageBasis);
+	out.u8("engageSense", stats.engageSense);
+	out.u64("engageCause", stats.engageCause);
+	out.u64("engageTick", stats.engageTick);
 	out.end();
 }
 
@@ -3937,6 +4063,21 @@ void Session::sendTick(RecordWriter& out, bool initial)
 		squadsSent_ = squadsNow;
 		squadsKnown_ = true;
 	}
+	// GAME_OPTIONS: on connect and whenever any value differs from what this session heard (order 121, NEW_GAME, a debug option, a load, new_world).
+	GameOptionsView optionsNow;
+	if (const state::WorldOptions* world = sim_.worldOptions())
+	{
+		optionsNow.flags = (world->feedAnimals ? 1 : 0) | (world->shareFood ? 2 : 0);
+		optionsNow.chanceOfDeath = static_cast<float>(world->chanceOfDeath);
+		optionsNow.damageScale = static_cast<float>(world->damageScale);
+		optionsNow.hungerTime = static_cast<float>(world->hungerTime);
+	}
+	const bool sendOptions = initial || !gameOptionsKnown_ || !(optionsNow == gameOptionsSent_);
+	if (sendOptions)
+	{
+		gameOptionsSent_ = optionsNow;
+		gameOptionsKnown_ = true;
+	}
 	// UNLOCKS: on connect and whenever the completed research changed (the building list derives from it, so it is built only then).
 	std::vector<std::string> researchNow = sim_.completedResearch();
 	const bool sendUnlocks = initial || (unlocksKnown_ && researchNow != unlocksSent_);
@@ -4010,6 +4151,20 @@ void Session::sendTick(RecordWriter& out, bool initial)
 	{
 		relationsSent_ = relationsNow;
 		relationsKnown_ = true;
+	}
+	// TOWN_STATE: on connect, then checked once per sim-second, sent only on change and at most one frame per 5 sim-seconds.
+	std::vector<Simulation::TownStateRow> townNow;
+	bool sendTown = false;
+	if (initial || crossed(Simulation::kTownStateIntervalTicks))
+	{
+		townNow = sim_.townStates();
+		sendTown = townNow != townSent_ && (initial || !townKnown_ || ticksSince(tick, townSentTick_) >= Simulation::kTownStateMinGapTicks);
+	}
+	if (sendTown)
+	{
+		townSent_ = townNow;
+		townSentTick_ = tick;
+		townKnown_ = true;
 	}
 	// JOBS: every player character's list on connect; later only the characters whose list or `enabled` changed (SIMLINK.md section 6).
 	std::vector<std::pair<std::uint64_t, JobsView>> jobsOut;
@@ -5037,6 +5192,8 @@ void Session::sendTick(RecordWriter& out, bool initial)
 			writeBeams(w, tick, beamsNow);
 		if (sendPlayerSquads)
 			writePlayerSquads(w, tick, squadsNow);
+		if (sendOptions)
+			writeGameOptions(w, tick, optionsNow);
 		if (sendUnlocks)
 			writeUnlocks(w, tick, researchNow, buildingsNow);
 		if (sendUnlocks)
@@ -5045,6 +5202,8 @@ void Session::sendTick(RecordWriter& out, bool initial)
 			writeDiscovered(w, tick, discoveredNow);
 		if (sendRelations)
 			writeFactionRelations(w, tick, relationsNow);
+		if (sendTown)
+			writeTownState(w, tick, townNow);
 		if (sendTasks)
 			writeTaskProgress(w, tick, tasksNow);
 		if (!jobsOut.empty())

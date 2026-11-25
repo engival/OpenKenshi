@@ -394,7 +394,6 @@ int main(int argc, char** argv)
 		bool expectAbsent = false;
 		double absentX = 0.0, absentZ = 0.0, absentR = 0.0, absentArea = 0.0;
 		int positional = 0;
-		bool oracle = false; // --oracle: decide every gated island against the shipped navtiles (see OracleProbe)
 		std::string writeBaseline; // --write-baseline FILE: the gated islands not in the baseline, as pending lines
 		int zoneBox[4] = { 0, 0, kworld::kZoneCellsPerAxis - 1, kworld::kZoneCellsPerAxis - 1 }; // --zones X0 Z0 X1 Z1: a window of the world
 		for (int i = 1; i < argc; ++i)
@@ -421,9 +420,7 @@ int main(int argc, char** argv)
 				writeBaseline = argv[++i];
 			}
 			else if (std::string(argv[i]) == "--oracle")
-			{
-				oracle = true;
-			}
+				throw std::runtime_error("--oracle is retired: it compared against the shipped navtiles, which are no longer loaded (kenshi-k16.7.189)");
 			else if (std::string(argv[i]) == "--oracle-band" && i + 1 < argc)
 			{
 				oracleBandY = std::stof(argv[++i]);
@@ -452,6 +449,7 @@ int main(int argc, char** argv)
 		ksim::NativeCacheOptions cache;
 		cache.dir = outDir + "/navcache";
 		cache.worldKey = kworld::dataHash(order);
+		cache.keepTrees = 1; // this test's own tree dir: a dead recipe's tree is ~3.4 GB (kenshi-k16.6.814)
 		// ---- the walk graph over the whole world ----
 		// The blocks of the window: `onBlock` runs with the zones resident (the mesh is the navigator's now). Block rows [row0, row1).
 		std::mutex outMutex;
@@ -793,23 +791,6 @@ int main(int argc, char** argv)
 			}
 			const Owner who = owner(island);
 			const bool gated = who.found || island.area >= kOpenGate;
-			if (oracle && gated)
-			{
-				OracleProbe probe;
-				probe.rank = rank;
-				const std::vector<std::uint32_t>& ids = members.at(island.root);
-				std::vector<std::uint32_t> deep;
-				for (const std::uint32_t id : ids)
-					if (world.info[id].wallDist >= kOracleBand)
-						deep.push_back(id);
-				probe.deepPolys = deep.size();
-				probe.interior = !deep.empty();
-				const std::vector<std::uint32_t>& pool = probe.interior ? deep : ids;
-				const std::size_t step = std::max<std::size_t>(1, pool.size() / kOracleSamples);
-				for (std::size_t k = 0; k < pool.size(); k += step)
-					probe.points.push_back({ world.info[pool[k]].x, world.info[pool[k]].y, world.info[pool[k]].z });
-				probes.push_back(std::move(probe));
-			}
 			// The island's source (see Source): the loader's decision on the tiles its polygons are in.
 			Source source;
 			std::set<int> counted; // zones already counted for the interior-rebaked tally
@@ -909,153 +890,6 @@ int main(int argc, char** argv)
 				<< bestAt[0] << "\t" << bestAt[1] << "\t" << bestAt[2] << "\t" << note << "\n";
 		}
 		tsv.close();
-		if (oracle)
-		{
-			// Free the runtime graph (7 GB) and walk the shipped world the same way: its main component and its islands.
-			world = World{};
-			grid.clear();
-			members.clear();
-			ksim::NativeCacheOptions shippedCache = cache;
-			shippedCache.shippedOnly = true;
-			const std::shared_ptr<ksim::MeshNavigator> shipped = ksim::MeshNavigator::openNative(KENSHI_DATA, { { 20, 32 } },
-				[](const std::string&) {}, gameData.get(), shippedCache);
-			World original;
-			std::vector<std::vector<std::uint32_t>> hits(probes.size()); // per probe: the world id of the nearest shipped polygon of each sample
-			std::vector<std::vector<float>> dys(probes.size()); // per probe: that polygon's height minus the sample's
-			const std::uint32_t kNoId = 0xffffffffu;
-			dtNavMeshQuery query;
-			const dtQueryFilter filter;
-			walkBlocks(*shipped, original, 0, kRows, [&](const knav::NavMesh& mesh, const std::vector<kworld::ZoneCell>& zones)
-			{
-				const dtNavMesh& nav = mesh.detour();
-				test::require(dtStatusSucceed(query.init(&nav, 4096)), "dtNavMeshQuery init");
-				std::set<int> resident;
-				for (const kworld::ZoneCell zone : zones)
-					resident.insert(kworld::zoneIndexOf(zone));
-				for (std::size_t n = 0; n < probes.size(); ++n)
-				{
-					OracleProbe& probe = probes[n];
-					if (hits[n].empty())
-					{
-						hits[n].assign(probe.points.size(), kNoId - 1); // kNoId - 1: not asked yet
-						dys[n].assign(probe.points.size(), 0.0f);
-					}
-					for (std::size_t k = 0; k < probe.points.size(); ++k)
-					{
-						const std::array<float, 3>& at = probe.points[k];
-						if (hits[n][k] != kNoId - 1 || resident.count(kworld::zoneIndexOf(kworld::zoneCellOf(at[0], at[2]))) == 0)
-							continue;
-						// One query on the footprint (kOracleXz each way, kOracleLooseY up and down): the nearest shipped polygon in 3-D. Its height
-						// offset is kept, and the height band (kOracleBandY) is applied to it afterwards, so one run reports every band.
-						const float box[3] = { kOracleXz, kOracleLooseY, kOracleXz };
-						dtPolyRef ref = 0;
-						float nearest[3] = {};
-						std::uint32_t id = kNoId;
-						if (!dtStatusSucceed(query.findNearestPoly(at.data(), box, &filter, &ref, nearest)))
-							ref = 0;
-						if (ref != 0)
-						{
-							unsigned int salt = 0, it = 0, ip = 0;
-							nav.decodePolyId(ref, salt, it, ip);
-							const dtMeshTile* tile = nav.getTile(static_cast<int>(it));
-							const auto base = original.tileBase.find(tileKey(tile->header->x, tile->header->y));
-							if (base != original.tileBase.end())
-								id = base->second + ip;
-							dys[n][k] = nearest[1] - at[1];
-						}
-						hits[n][k] = id;
-					}
-				}
-			});
-			// The shipped components: their area (unclipped, dry), the main one the largest.
-			std::map<std::uint32_t, double> shippedArea;
-			for (std::uint32_t id = 0; id < original.parent.size(); ++id)
-				if (original.info[id].area > 0.0f && !original.info[id].clipped)
-					shippedArea[original.find(id)] += original.info[id].area;
-			std::uint32_t shippedMain = 0;
-			double shippedMainArea = 0.0;
-			for (const auto& [root, area] : shippedArea)
-				if (area > shippedMainArea)
-				{
-					shippedMainArea = area;
-					shippedMain = root;
-				}
-			std::cout << "shipped world: " << original.parent.size() << " polygons, main " << std::llround(shippedMainArea / 1e6) << "e6 u2\n";
-			std::ofstream out(outDir + "/nav_islands_oracle.tsv");
-			out << "rank\tarea_u2\tcx\tcy\tcz\tbuilding_record\tfloor_y_above_base\tsamples\ttight_main\ttight_island\tloose_main\tloose_island\tnone\t"
-				   "island_area_u2\tverdict\tsampled\tdeep_polys\tverdict_8u\tmain_within_dy_8_16_24_32_48_60\tisland_within_dy_8_16_24_32_48_60\n";
-			constexpr float kBands[] = { 8.0f, 16.0f, 24.0f, 32.0f, 48.0f, 60.0f };
-			for (std::size_t n = 0; n < probes.size(); ++n)
-			{
-				OracleProbe& probe = probes[n];
-				const std::size_t total = probe.points.size();
-				// The sample's nearest shipped polygon is "at the floor's height" within `band` in y, "another height" beyond it (up to kOracleLooseY).
-				struct Judged { std::size_t tightMain = 0, tightIsland = 0, looseMain = 0, looseIsland = 0, none = 0, topCount = 0; std::uint32_t topRoot = 0; std::string verdict; };
-				const auto judge = [&](float band)
-				{
-					Judged j;
-					std::map<std::uint32_t, std::size_t> rootCount;
-					for (std::size_t k = 0; k < total; ++k)
-					{
-						const std::uint32_t raw = hits[n][k];
-						if (raw == kNoId || raw == kNoId - 1)
-						{
-							++j.none;
-							continue;
-						}
-						const std::uint32_t root = original.find(raw);
-						if (std::fabs(dys[n][k]) > band)
-							++(root == shippedMain ? j.looseMain : j.looseIsland);
-						else if (root == shippedMain)
-							++j.tightMain;
-						else
-						{
-							++j.tightIsland;
-							++rootCount[root];
-						}
-					}
-					for (const auto& [root, count] : rootCount)
-						if (count > j.topCount)
-						{
-							j.topCount = count;
-							j.topRoot = root;
-						}
-					// The verdict: the shipped surface under the island's footprint (within kOracleLooseY of the floor) and what it joins.
-					// Under 30% of the points covered: the original has no floor there, our bake adds the surface. Else the main
-					// component takes at least half of what is covered: the original connects it (ours lost the link); else an island.
-					const std::size_t loose = j.looseMain + j.looseIsland;
-					const std::size_t covered = j.tightMain + j.tightIsland + loose;
-					const std::size_t mainHits = j.tightMain + j.looseMain;
-					j.verdict = covered * 10 < total * 3 ? "no shipped floor"
-						: mainHits * 2 >= covered ? (j.tightMain * 2 >= covered ? "connected" : "connected (other height)")
-						: "shipped island";
-					return j;
-				};
-				const Judged now = judge(oracleBandY);
-				const Judged old = judge(kOracleTightY);
-				std::string mainDy, islandDy;
-				for (const float band : kBands)
-				{
-					std::size_t m = 0, i = 0;
-					for (std::size_t k = 0; k < total; ++k)
-					{
-						const std::uint32_t raw = hits[n][k];
-						if (raw == kNoId || raw == kNoId - 1 || std::fabs(dys[n][k]) > band)
-							continue;
-						++(original.find(raw) == shippedMain ? m : i);
-					}
-					mainDy += (mainDy.empty() ? "" : ",") + std::to_string(m);
-					islandDy += (islandDy.empty() ? "" : ",") + std::to_string(i);
-				}
-				const Island& island = candidates[probe.rank];
-				const Owner who = owner(island);
-				out << std::fixed << std::setprecision(1) << probe.rank + 1 << "\t" << island.area << "\t" << island.cx << "\t" << island.cy << "\t" << island.cz << "\t"
-					<< (who.found ? who.record : std::string("open world")) << "\t" << (who.found ? who.floorY : 0.0) << "\t" << total << "\t" << now.tightMain << "\t"
-					<< now.tightIsland << "\t" << now.looseMain << "\t" << now.looseIsland << "\t" << now.none << "\t" << (now.topCount != 0 ? shippedArea[now.topRoot] : 0.0) << "\t" << now.verdict << "\t"
-					<< (probe.interior ? "interior" : "all polygons (none 4 u deep)") << "\t" << probe.deepPolys << "\t" << old.verdict << "\t" << mainDy << "\t" << islandDy << "\n";
-			}
-			std::cout << "oracle: " << probes.size() << " gated islands probed -> " << outDir << "/nav_islands_oracle.tsv\n";
-		}
 		std::cout << "report: " << outDir << "/nav_islands.tsv (" << candidates.size() << " islands: " << pending << " pending and " << bugs << " bug lines in the baseline, "
 				  << unknown.size() << " not in it)\ngated: " << gatedBuilding + gatedOpen << " (" << gatedBuilding << " inside a building, " << gatedOpen
 				  << " open world); source: " << gatedShipped << " shipped, " << gatedRebaked << " rebaked, " << gatedMixed << " mixed\n"

@@ -56,6 +56,14 @@ struct ZoneInstance
 	// The same record's town (`townTYPE` 13, `townC` / `townCS`: the hand of the town whose populate owns this building; TownPlacement::hand).
 	// 0 = none.
 	std::uint64_t townHand = 0;
+	// The same record's construction state (a player building's, kenshi-k16.7.156): `is complete`, `destroyed`, `broken`, `pause`, `power on`
+	// (absent = complete, whole, on) and `construction progress` (0..1, read only while not complete).
+	bool complete = true;
+	bool destroyed = false;
+	bool broken = false;
+	bool paused = false;
+	bool powerOn = true;
+	double progress = 1.0;
 
 	ZoneInstanceKind kind = ZoneInstanceKind::Deleted;
 };

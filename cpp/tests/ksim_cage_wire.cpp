@@ -357,7 +357,7 @@ int main(int argc, char** argv)
 				"order 99 on a character answers no cage bit");
 			// A tool and strength add 17 and 18.
 			give(cast.wanderer, tool);
-			me.skills.strength = 100.0;
+			fighter(cast.wanderer).skills.strength = 100.0;
 			wire.run(1);
 			test::require(wire.menuQuery(cast.wanderer, kHeftCage).empty() && wire.menu.entries == ((1u << 16) | (1u << 17) | (1u << 18)),
 				"MENU_ENTRIES with a tool and strength 100: bits 16, 17, 18: " + std::to_string(wire.menu.entries));
@@ -432,7 +432,7 @@ int main(int argc, char** argv)
 			fighter(cast.wanderer).skills.lockpicking = 40.0;
 
 			// 19 without a tool, 20 with too little strength: the Wanderer walks over and the run-time end is result 1 on the cage key.
-			me.skills.strength = 10.0;
+			fighter(cast.wanderer).skills.strength = 10.0;
 			fighter(cast.wanderer).skills.strength = 10.0;
 			{
 				// the tool goes back out of the carried grid (a fresh inventory)
@@ -454,7 +454,7 @@ int main(int argc, char** argv)
 			test::require(sim.cageDoorLocked(kHeftCage) && wire.cageFrames == 1, "a refused cut / break leaves the cage locked and sends no CAGES");
 
 			// 18: the pick, with a bar of kind 1 whose target is the cage key, ends result 0; CAGES is resent unlocked.
-			me.skills.lockpicking = 100.0;
+			fighter(cast.wanderer).skills.lockpicking = 100.0;
 			wire.bars.clear();
 			test::require(wire.interact(cast.wanderer, kHeftCage, kPickCageAction).empty(), "action 18 is accepted");
 			const End* picked = wire.runToEnd(kPickCageAction, 6000);

@@ -210,16 +210,28 @@ int main(int argc, char** argv)
 		{
 			const routines::SiteEntry* machine = nullptr;
 			std::uint64_t machineHome = 0;
+			const std::uint64_t worker = others[1];
+			// The piece's approach point must stand on the navmesh: the arena snaps an off-mesh fighter back (kCorrectionReach) on its first tick, and a
+			// rolled part whose node lies off the mesh (recipe 56's parts, a building whose interior failed to bake) would move the holder off its post.
+			// Stage the worker on each candidate and keep the first one it stays on.
 			for (const CombatArena::Member& m : sim.combat()->members())
 				for (std::uint16_t slot = 0; slot < 16 && machine == nullptr && m.fighter.homeBuilding != 0; ++slot)
 				{
-					machine = sim.routineSite({static_cast<std::uint8_t>(routines::SiteKind::Machine), m.fighter.homeBuilding, slot});
-					machineHome = machine != nullptr ? m.fighter.homeBuilding : machineHome;
+					const routines::SiteEntry* cand = sim.routineSite({static_cast<std::uint8_t>(routines::SiteKind::Machine), m.fighter.homeBuilding, slot});
+					if (cand == nullptr)
+						continue;
+					fighterRef(sim, worker).x = cand->x;
+					fighterRef(sim, worker).z = cand->z;
+					sim.run(1);
+					if (std::hypot(fighterRef(sim, worker).x - cand->x, fighterRef(sim, worker).z - cand->z) < 1e-6)
+					{
+						machine = cand;
+						machineHome = m.fighter.homeBuilding;
+					}
 				}
 			std::printf("    a home with a machine piece: %s\n", machine != nullptr ? "yes" : "none");
 			if (machine != nullptr)
 			{
-				const std::uint64_t worker = others[1];
 				fighterRef(sim, worker).homeBuilding = machineHome;
 				state::Routine* put = entityOf(sim, worker).get_mut<state::Routine>();
 				*put = state::Routine{};

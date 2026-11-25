@@ -511,7 +511,11 @@ static void logic_paths(FramePacket& pk)
 			}
 		}
 		if (app.sim.takeRejected()) { app.orderAge = 0; app.orderRejected = true; }
-		if (app.simCamera) { app.sim.view(app.pos[0], app.pos[2]); }	// only once the camera has gone to the sim's characters
+		if (app.simCamera)	// only once the camera has gone to the sim's characters
+		{
+			app.sim.view(app.pos[0], app.pos[2]);
+			app.sim.cameraFollow(camera_subject());	// the follow / drive camera's character, else the RTS auto-centre's, else 0; never the inspect focus (kenshi-k16.2.474.3)
+		}
 		if (app.centerOnStart && app.rts && !app.sim.selected().empty())
 		{
 			// A new game / scenario start's centring is an engage: it focuses the first selected character and the floor view snaps to its floor like a

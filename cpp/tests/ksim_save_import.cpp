@@ -31,6 +31,7 @@
 #include <map>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -871,6 +872,46 @@ int main(int argc, char** argv)
 			std::cout << "ksim_save_import: SkinHouse world state OK\n";
 		} else {
 			std::cout << "ksim_save_import: KSIM_SKINHOUSE not set, the SkinHouse section is skipped\n";
+		}
+		// A real player-town save (kenshi-k16.7.159: towntest_1 has one Campfire, towntest_2 an unfinished Storm House among finished buildings): KSIM_TOWNSAVE = its directory.
+		if (const char* townSave = std::getenv("KSIM_TOWNSAVE"); townSave != nullptr && *townSave != 0)
+		{
+			Simulation real = Simulation::newGame(KENSHI_DATA, order, spawn);
+			const auto realGd = real.gameData();
+			const auto realData = CombatData::build(*realGd, KENSHI_DATA);
+			real.enableCombat(realData, CombatSettings{});
+			const saveimport::Report townReport = saveimport::importSave(real, *realGd, *realData, townSave);
+			test::require(townReport.playerBuildings >= 1 && townReport.playerTowns >= 1, "town save: the player's buildings and a PlayerTown are imported");
+			std::set<std::string> stood;
+			for (const kworld::PlacedInstance& placed : real.world().placements())
+				stood.insert(placed.instanceID);
+			std::map<std::uint64_t, std::size_t> members; // town Id -> buildings naming it
+			std::size_t buildings = 0, unfinished = 0, withoutTown = 0, withoutCollision = 0;
+			real.world().ecs().each([&](const state::PlayerBuilding& b)
+			{
+				++buildings;
+				unfinished += b.built ? 0 : 1;
+				withoutTown += b.town == 0 ? 1 : 0;
+				withoutCollision += stood.count(b.placement) == 0 ? 1 : 0;
+				if (b.town != 0)
+					++members[b.town];
+				test::require(b.ownerFaction != 0 && (b.built ? b.hp == b.maxHp : b.hp < b.maxHp), "town save: a building's owner is the player faction, its hp follows its construction state");
+			});
+			test::require(buildings == townReport.playerBuildings, "town save: one PlayerBuilding per imported player building");
+			test::require(withoutCollision == 0 && withoutTown < buildings, "town save: every player building stands in the world (collision); those in the player's town (hand of a GAMESTATE_TOWN of the player faction) are in a PlayerTown, the rest (player-owned in another faction's town) are in none");
+			std::size_t towns = 0;
+			real.world().ecs().each([&](flecs::entity entity, const state::PlayerTown& town)
+			{
+				++towns;
+				test::require(town.name == "Desert Paradise", "town save: the PlayerTown carries the save's town name (GAMESTATE_TOWN `name`)");
+				test::require(town.members.size() == members[entity.get<state::Id>()->value] && !town.members.empty() && town.owner != 0, "town save: a PlayerTown lists exactly the buildings that name it");
+			});
+			test::require(towns == townReport.playerTowns, "town save: one PlayerTown per town hand");
+			if (std::string(townSave).find("towntest_2") != std::string::npos)
+				test::require(unfinished >= 20, "towntest_2: the unfinished Storm House and walls import as not built");
+			std::cout << "ksim_save_import: town save OK (" << buildings << " buildings, " << unfinished << " unfinished, " << towns << " towns)\n";
+		} else {
+			std::cout << "ksim_save_import: KSIM_TOWNSAVE not set, the town save section is skipped\n";
 		}
 		std::cout << "ksim_save_import: OK\n";
 		return 0;

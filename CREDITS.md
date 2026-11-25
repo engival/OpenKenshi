@@ -28,6 +28,7 @@ Read as documentation only. No code was copied from them; our implementations ar
 | flecs (Sander Mertens) | 4.0.4 | MIT | `cpp/third_party/flecs/` |
 | Lua (PUC-Rio) | 5.5.0 | MIT | `cpp/third_party/lua-5.5.0/` |
 | SMAA (Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro, Diego Gutierrez) | 2013 | MIT | `client/src/smaa_lut.*`, `client/shaders/smaa.inc` |
+| Clipper2 (Angus Johnson) | 2.0.1 | BSL-1.0 | `cpp/third_party/clipper2-2.0.1/` (`LICENSE`) |
 | aoTuV 6.03 packed codebooks (Xiph.Org Foundation, Adam Gashlin, via ww2ogg) | ww2ogg 14ed9b0 | BSD-3-Clause | `client/third_party/wwise_codebooks/` (`COPYING`) |
 
 Each library's own license text is in its directory or at the top of its files; binary distributions must carry

@@ -683,6 +683,7 @@ use `O` (centre), `-` and `+` (zoom); a touchpad or a fine-stepped wheel zooms b
 steadily as you zoom in, from half size at the whole-map view to full size near the closest zoom. Options `ui.map_icons_stepped`
 brings back the original's way: icons keep their size on screen and grow in two steps (at about 5x and 9x the whole-map view).
 A right click on the map sends the selection there as a move order. The map always opens centred on your camera (the squad you follow or have selected), at an area overview zoom on a new game (a deviation from the original, which starts on the whole world); the zoom is remembered, across closing and reopening the map and through saving and loading a game, the place you were looking at is not.
+Hovering a town you have visited shows its tooltip, as the original: the name, `Faction:` (its current owner), `Relations:` (that faction's relation to you, the number the FACTION page shows), then `Residents max`, `Actual Num Residents`, the roaming rows, a `Residents:` list of the factions living there and, when someone holds the town against its owner, `Hostile Occupiers:`. A value the game does not know yet reads `???` (today `Residents max` and `Roaming currentMax/desiredMax` always do: the server does not model them). A place you have only discovered has no tooltip, and a town's marker colour follows the owner's relation to you.
 
 ### 4.2 Squads page
 
@@ -873,9 +874,12 @@ follows the selection; pin it (the caption's pin) and it stays on the character 
   hostile that has seen it is attacked as usual (the target menu keeps Stealth KO either way).
 - **Hold right click for a moment on a target** opens its action menu where the button went down; releasing over a row
   picks it. The rows depend on the target: a character (Follow, Bodyguard, Talk / Attack, Loot, First aid, Pick up /
-  Put down), an item (Pick up), a door (Open / Close, Unlock, Pick Lock, Bash), a container (Open, Take all, Pick
+  Put down), an item (Pick up), a door (Open / Close, Lock / Unlock, Pick Lock, Bash), a container (Open, Take all, Pick
   Lock), a production building (Mine or Operate, Open). A machine that needs no operators (a well, a furnace) has no Mine / Operate row,
   and its right click opens its window.
+- **Lock / Unlock a door**: only on a door your faction owns, and only the one that applies (Lock on a shut door, Unlock on a locked
+  one; the server decides). Your selected character walks to the door and locks or unlocks it there. A door that is not yours has
+  neither row.
 - **A prisoner locked in a cage**: the cursor over it is the red **padlock** with the chance of picking the lock (green
   `N%`), and a right click orders nothing. The menu opens on the press as two columns side by side: the prisoner's own
   rows on the left and `Prisoner Cage` on the right with `Pick Lock N%`, `Use Tools` and `Use Strength` (only the ones

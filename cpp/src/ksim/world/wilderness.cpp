@@ -1,5 +1,6 @@
 #include "ksim/world/wilderness.hpp"
 
+#include "ksim/core/clock.hpp"
 #include "ksim/core/rng.hpp"
 #include "ksim/save/save.hpp"
 #include "ksim/world/nest_sources.hpp"
@@ -346,7 +347,7 @@ struct WildernessSpawner::Impl
 				+ std::to_string(slots.size()) + " in the data)");
 		RngStream rng(saved->rng);
 		Live counts = live(ecs);
-		SquadBuilder builder(ecs, data, rng);
+		SquadBuilder builder(ecs, data, rng, gameHoursIn(now));
 		Context context{ecs, builder, rng, {}, *saved, saved->population, {}, {}};
 		context.copies.resize(slots.size());
 		// The per-template density cap counts intact squads only (UNSURE: the exe's "loaded squad of that template" is S2 or S2 + S3): a
@@ -463,7 +464,7 @@ flecs::entity WildernessSpawner::placeHomeless(flecs::world& ecs, std::string_vi
 	if (slotIndex < 0)
 		throw SaveError("placeHomeless: the point is in no wilderness slot");
 	RngStream rng(saved->rng);
-	SquadBuilder builder(ecs, impl_->data, rng);
+	SquadBuilder builder(ecs, impl_->data, rng, gameHoursIn(ecs.get<state::Clock>()->tick));
 	Impl::Context context{ecs, builder, rng, {}, *saved, saved->population, {}, {}};
 	context.copies.resize(impl_->slots.size());
 	ecs.each([&](flecs::entity entity, const state::FactionState& faction)

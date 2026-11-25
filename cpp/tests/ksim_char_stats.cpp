@@ -90,6 +90,11 @@ struct Stats
 	float crimeTimer = 0.0f;
 	float escapeHoursLeft = 0.0f;
 	std::string localFaction;
+	// The engage trigger (row 34, k16.5.37).
+	std::uint8_t engageBasis = 0xEE;
+	std::uint8_t engageSense = 0xEE;
+	std::uint64_t engageCause = 1;
+	std::uint64_t engageTick = 1;
 	struct Bounty
 	{
 		std::uint32_t amount = 0; // row 14
@@ -209,6 +214,11 @@ struct Rig
 			bounty.claim = c.get<std::uint8_t>();
 			bounty.hoursLeft = c.get<float>();
 		}
+		test::require(c.p + 18 == c.b.size(), "row 34: 18 bytes close the frame (frame length)");
+		s.engageBasis = c.get<std::uint8_t>();
+		s.engageSense = c.get<std::uint8_t>();
+		s.engageCause = c.get<std::uint64_t>();
+		s.engageTick = c.get<std::uint64_t>();
 		c.done("CHAR_STATS");
 		return s;
 	}
@@ -334,6 +344,7 @@ int main(int argc, char** argv)
 			test::require(s.goalEnum == 0xFFFF && s.source == 0, "the idle character's tail: no goal enum, source 0");
 			test::require(s.stepEnum == 0xFFFF && s.stepIndex == 0 && s.stepCount == 0, "the idle character has no plan step");
 			test::require(s.targetId == 0 && std::isnan(s.targetX) && std::isnan(s.targetZ), "the idle character has no target point");
+			test::require(s.engageBasis == 0 && s.engageSense == 0 && s.engageCause == 0 && s.engageTick == 0, "row 34: zero when idle");
 			test::require(s.runSpeed > 11.0f && s.koPoint < 0.0f, "a run speed above the floor, a negative KO point");
 			std::cout << "player: run " << s.runSpeed << " u/s, KO point " << s.koPoint << "\n";
 		}
@@ -410,6 +421,21 @@ int main(int argc, char** argv)
 			test::require(s.goal.empty() && s.goalEnum == 0xFFFF && s.source == 0, "an idle NPC: Aimless, goalEnum 0xFFFF, source 0");
 			test::require(s.stepEnum == 0xFFFF && s.stepIndex == 0 && s.stepCount == 0, "an idle NPC has no plan step");
 			test::require(s.targetId == 0 && std::isnan(s.targetX) && std::isnan(s.targetZ), "an idle NPC has no target");
+		}
+		// ---- the engage trigger (row 34, k16.5.37): a selector commit onto the player reads basis 8 with its goal and tick; a dropped target zeroes it ----
+		{
+			CombatArena& arena = *const_cast<CombatArena*>(sim.combat());
+			test::require(arena.orderFight(enemy, player, 16), "orderFight refused");
+			const std::uint64_t setAt = sim.clockTick();
+			rig.run(21);
+			const Stats& s = rig.last(enemy);
+			test::require(s.engageBasis == 8 && s.engageCause == 0 && s.engageSense <= 3, "row 34: a selector commit is basis 8, no cause");
+			test::require(s.engageTick == setAt && s.targetId == player && s.goalEnum == 16, "row 34: the tick the target was set, goal 16 on row 16");
+			arena.dropTarget(enemy);
+			rig.run(21);
+			const Stats& cleared = rig.last(enemy);
+			test::require(cleared.engageBasis == 0 && cleared.engageSense == 0 && cleared.engageCause == 0 && cleared.engageTick == 0,
+				"row 34: cleared with the target");
 		}
 		// A medic mid-plan: the routine slot's 58 JOB_MEDIC with the [25, 58] chain on the player.
 		const state::Fighter& patient = *sim.combat()->find(player);

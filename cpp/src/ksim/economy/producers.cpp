@@ -470,24 +470,24 @@ void Simulation::stepProducers()
 		};
 		const auto consider = [&](const ProducerSite& site)
 		{
-			if (live.count(site.id) != 0 || producerOffMesh_.count(site.id) != 0 || !near(site.x, site.z, producers::kMaterialiseRadius))
+			if (live.count(site.id) != 0 || !near(site.x, site.z, producers::kMaterialiseRadius))
 				return;
 			if (navigation_ != nullptr)
 			{
 				// A streaming mesh may not hold the site's zone yet: try again once it does (not off-mesh for good).
 				if (!navigation_->covers(site.x, site.z))
 					return;
-				// A foliage rock cuts its footprint out of the navmesh: its origin snaps to the rock's edge.
+				// Every placement exists (kenshi-k16.5.30, rwh.299: the original has no work-spot drop). The use point (hauling only) is the
+				// walkable point nearest the origin when there is one (a foliage rock cuts its footprint out of the mesh: its edge), else the
+				// origin; operators walk to the approach point (routeToInteract), and a deposit with no mesh near fails the order there.
 				const bool bounded = site.boxMaxX > site.boxMinX;
 				const auto spot = navigation_->walker().snap({site.x, site.y, site.z}, bounded
 					? std::max(producers::kUseSnap, 0.6 * std::hypot(site.boxMaxX - site.boxMinX, site.boxMaxZ - site.boxMinZ))
-					: producers::kPlacementSnap);
-				if (!spot)
-				{
-					producerOffMesh_.insert(site.id);
-					return;
-				}
-				spawnProducer(site, spot->x, spot->y, spot->z);
+					: producers::kUseSnap);
+				if (spot)
+					spawnProducer(site, spot->x, spot->y, spot->z);
+				else
+					spawnProducer(site, site.x, site.y, site.z);
 			} else {
 				spawnProducer(site, site.x, site.y, site.z);
 			}

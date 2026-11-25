@@ -42,6 +42,12 @@ static int dump(const simlink::SimLinkDecoder& d)
 		for (const Inventory::Entry& e : inv.items) { printf(" %s x%u slot %u;", d.str(e.item).c_str(), e.count, e.slot); }
 		printf("\n");
 	}
+	for (const auto& [id, c] : d.charStats)	// row 34, the engage trigger (basis / sense by name when known, else the number)
+	{
+		const char* bn = CharStats::engageBasisName(c.engageBasis), *sn = CharStats::engageSenseName(c.engageSense);
+		printf("  char_stats %llu engage basis %u (%s) sense %u (%s) cause %llu tick %llu\n", (unsigned long long)id, (unsigned)c.engageBasis, bn ? bn : "?",
+			(unsigned)c.engageSense, sn ? sn : "?", (unsigned long long)c.engageCause, (unsigned long long)c.engageTick);
+	}
 	for (const auto& [id, s] : d.seenBy)
 	{
 		printf("  seen_by %llu tick %llu n %zu:", (unsigned long long)id, (unsigned long long)s.tick, s.by.size());
@@ -129,12 +135,25 @@ static int selftest()
 	{
 		W w(s, kCharStats);
 		w.put((uint64_t)101); w.put(id); w.put((uint8_t)0); w.put((uint8_t)0); w.put((uint32_t)0); w.put(0.0f);
-		w.put((uint8_t)0); w.put(0.0f); w.put((uint8_t)0); w.put((uint8_t)1); w.put((uint8_t)CharStats::kStrength); w.put(10.0f); w.put(0.0f);
+		w.put((uint8_t)(tail ? 5 : 0)); w.put((uint8_t)(tail ? 7 : 0xFF)); w.put(tail ? 12.5f : 0.0f);	// row 6: extraKind, extraSkill, extra (protocol 8)
+		w.put((uint8_t)0); w.put((uint8_t)1); w.put((uint8_t)CharStats::kStrength); w.put(10.0f); w.put(0.0f);
 		for (int i = 0; i < 8; i++) { w.put(0.0f); }	// athleticsXp .. light
-		w.put((uint8_t)0); w.put(0.0f);	// bounties, sentenceHours
+		w.put((uint8_t)(tail ? 1 : 0));	// bounties: n
+		if (tail) { w.put((uint32_t)2); w.put((int32_t)500); }	// {factionSid, amount}
+		w.put(0.0f);	// sentenceHours
 		if (!tail) { return; }
 		w.put((uint16_t)1); w.put((uint8_t)5); w.put((uint16_t)0xFFFF); w.put((uint8_t)0); w.put((uint8_t)0);	// goalEnum, source, stepEnum, stepIndex, stepCount
 		w.put((uint64_t)8); w.put(-50600.0f); w.put(-900.0f);	// targetId, targetX, targetZ
+		// the stats window tail (rows 21-23) and the HUD tag row tail (rows 24-32)
+		w.put((uint8_t)1); w.put((uint8_t)CharStats::kStrength); w.put(0.25f);	// progress: n, {skill, progress}
+		w.put(19.0f); w.put(101.0f);	// carryKg, carryMaxKg
+		w.put(0.125f);	// damageResist
+		w.put((uint16_t)(CharStats::kSquadLeader | CharStats::kObedient)); w.put((uint8_t)1);	// tagFlags, slaveState
+		w.put((uint32_t)0); w.put(-1.0f); w.put((uint8_t)255);	// captor, slaveHoursLeft, slaveLook
+		w.put((uint8_t)2); w.put(4.5f); w.put(-1.0f);	// crime, crimeTimer, escapeHoursLeft
+		w.put((uint32_t)0);	// localFaction
+		w.put((uint8_t)1); w.put((uint32_t)0x6); w.put((uint8_t)1); w.put(12.0f);	// bountyTags: n (= row 14's), {crimes, claim, hoursLeft}
+		w.put((uint8_t)2); w.put((uint8_t)1); w.put((uint64_t)8); w.put((uint64_t)4242);	// row 34: engageBasis, engageSense, engageCause, engageTick
 	};
 	stats(7, true);
 	stats(9, false);
@@ -230,6 +249,16 @@ static int selftest()
 		&& stats7->second.stepEnum == CharStats::kNoTaskValue && stats7->second.stepCount == 0 && stats7->second.targetId == 8
 		&& stats7->second.targetX == -50600.0f && stats7->second.targetZ == -900.0f && stats7->second.skills.size() == 1
 		&& stats7->second.skills[0].value == 10.0f, "char stats AI tail");
+	check(stats7 != d.charStats.end() && stats7->second.extraKind == 5 && stats7->second.extraSkill == 7 && stats7->second.extra == 12.5f
+		&& stats7->second.bounties.size() == 1 && stats7->second.bounties[0].amount == 500, "char stats row 6 and bounties");
+	check(stats7 != d.charStats.end() && stats7->second.hasProgress && stats7->second.progress.size() == 1 && stats7->second.progress[0].progress == 0.25f
+		&& stats7->second.hasCarry && stats7->second.carryKg == 19.0f && stats7->second.carryMaxKg == 101.0f
+		&& stats7->second.hasResist && stats7->second.damageResist == 0.125f, "char stats rows 21-23");
+	check(stats7 != d.charStats.end() && stats7->second.hasTag && stats7->second.tagFlags == (CharStats::kSquadLeader | CharStats::kObedient)
+		&& stats7->second.slaveState == 1 && stats7->second.slaveLook == 255 && stats7->second.crime == 2 && stats7->second.crimeTimer == 4.5f
+		&& stats7->second.bountyTags.size() == 1 && stats7->second.bountyTags[0].crimes == 6 && stats7->second.bountyTags[0].hoursLeft == 12.0f, "char stats tag tail");
+	check(stats7 != d.charStats.end() && stats7->second.engageBasis == 2 && stats7->second.engageSense == 1 && stats7->second.engageCause == 8
+		&& stats7->second.engageTick == 4242 && stats9 != d.charStats.end() && stats9->second.engageBasis == 0 && stats9->second.engageTick == 0, "char stats row 34");
 	check(stats9 != d.charStats.end() && !stats9->second.hasAi && stats9->second.goalEnum == CharStats::kNoTaskValue, "char stats without the tail");
 	const auto nt = d.navTiles.find({ 1, 2, 0 });
 	check(d.nav.valid && d.nav.meshId == 5 && d.nav.detourVersion == 7 && d.nav.tileWidth == 64.0f && d.nav.maxPolys == 2048, "nav params");
@@ -251,6 +280,8 @@ static int selftest()
 	// equip 4+2+4+2+8+2+6+1 = 29, transfer 4+2+4+2+8+8+2+5+2+1 = 38
 	check(o.size() == 30 + 35 + 20 + 29 + 29 + 38, "order frame sizes");
 	check(ow.profileQuery(o) == 6 && o.size() == 30 + 35 + 20 + 29 + 29 + 38 + 12, "profile query order");
+	// set_camera_follow 4+2+4+2+8 = 20
+	check(ow.setCameraFollow(o, 9) == 7 && o.size() == 30 + 35 + 20 + 29 + 29 + 38 + 12 + 20, "set_camera_follow order");
 	printf("selftest %s\n", fails ? "FAILED" : "ok");
 	return fails ? 1 : 0;
 }

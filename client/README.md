@@ -321,6 +321,7 @@ Each screenshot prints one line: frame, camera pos, ground height, yaw, pitch.
 <f> set pos X,Z | alt H | yaw DEG | pitch DEG   # pos keeps the height above ground
 <f> set particles N        # scripted particle step (s) after the pre-warm: 0 = frozen shot (default), > 0 advances it (verification shots)
 <f> screenshot /abs/out.png
+<f> wait world [SECONDS]   # holds the script clock until first_world_frame (a cold nav cache makes a server start ~100 s); later lines count frames from the release; no world in SECONDS (default 300): prints "wait world: no first_world_frame within N s" and quits
 <f> quit
 ```
 

@@ -118,6 +118,8 @@ ZoneFile parseZoneFile(std::span<const std::byte> bytes,
 		std::string interiorLayout;
 		std::string label;
 		std::uint64_t townHand = 0;
+		bool complete = true, destroyed = false, broken = false, paused = false, powerOn = true;
+		double progress = 1.0;
 	};
 	std::unordered_map<std::string, BuildingState> buildingStates;
 	for (const auto& record : file.records)
@@ -138,6 +140,21 @@ ZoneFile parseZoneFile(std::span<const std::byte> bytes,
 			const auto* townCS = record.findInt("townCS");
 			if (townType != nullptr && townType->value == kTownHandType && townC != nullptr && townCS != nullptr)
 				state.townHand = townHand(townC->value, townCS->value);
+			const auto flag = [&](const char* key, bool fallback)
+			{
+				if (const auto* value = record.findBool(key))
+					return value->value;
+				if (const auto* value = record.findInt(key))
+					return value->value != 0;
+				return fallback;
+			};
+			state.complete = flag("is complete", true);
+			state.destroyed = flag("destroyed", false);
+			state.broken = flag("broken", false);
+			state.paused = flag("pause", false);
+			state.powerOn = flag("power on", true);
+			if (const auto* value = record.findFloat("construction progress"))
+				state.progress = kdata::decodeFloat(*value);
 			buildingStates.emplace(record.stringID, std::move(state));
 		}
 	}
@@ -170,6 +187,12 @@ ZoneFile parseZoneFile(std::span<const std::byte> bytes,
 					entry.interiorLayout = found->second.interiorLayout;
 					entry.label = found->second.label;
 					entry.townHand = found->second.townHand;
+					entry.complete = found->second.complete;
+					entry.destroyed = found->second.destroyed;
+					entry.broken = found->second.broken;
+					entry.paused = found->second.paused;
+					entry.powerOn = found->second.powerOn;
+					entry.progress = found->second.progress;
 				}
 			}
 			for (const std::string& state : entry.states)

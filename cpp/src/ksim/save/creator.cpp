@@ -15,6 +15,8 @@
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <map>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -69,6 +71,39 @@ std::string editorFile(std::string_view dataDir, std::string path)
 	if (slash != std::string::npos)
 		path.erase(0, slash + 1);
 	return std::string(dataDir) + "/editor/" + path;
+}
+
+SkinPalette readSkinPalette(const std::string& path, bool female)
+{
+	SkinPalette out;
+	std::ifstream in(path);
+	if (!in)
+		return out;
+	std::stringstream ss;
+	ss << in.rdbuf();
+	const std::string xml = ss.str();
+	std::size_t at = xml.find(female ? "gender=\"Female\"" : "gender=\"Male\"");
+	if (at == std::string::npos)
+		return out;
+	at = xml.find("name=\"Skin Tone\"", at);
+	const std::size_t end = at == std::string::npos ? at : xml.find("</ColourRange>", at);
+	while (at != std::string::npos)
+	{
+		at = xml.find("<Colour ", at + 1);
+		if (at == std::string::npos || at > end)
+			break;
+		const std::size_t close = xml.find('>', at);
+		std::array<float, 3> colour{1.0f, 1.0f, 1.0f};
+		const char* keys[3] = {" r=\"", " g=\"", " b=\""};
+		for (int k = 0; k < 3; ++k)
+		{
+			const std::size_t v = xml.find(keys[k], at);
+			if (v != std::string::npos && v < close)
+				colour[k] = static_cast<float>(std::atof(xml.c_str() + v + 4)) / 255.0f;
+		}
+		out.push_back(colour);
+	}
+	return out;
 }
 
 bool anyFile(const kdata::Record& record, std::initializer_list<const char*> keys)
@@ -140,6 +175,35 @@ private:
 };
 
 } // namespace
+
+SkinPalette skinPalette(std::string_view dataDir, const std::string& editorLimits, bool female)
+{
+	static std::mutex lock;
+	static std::map<std::string, SkinPalette> cache;
+	if (editorLimits.empty())
+		return {};
+	const std::string path = editorFile(dataDir, editorLimits);
+	const std::string key = path + (female ? "|F" : "|M");
+	const std::lock_guard<std::mutex> guard(lock);
+	const auto found = cache.find(key);
+	if (found != cache.end())
+		return found->second;
+	return cache.emplace(key, readSkinPalette(path, female)).first->second;
+}
+
+std::array<float, 3> sampleSkin(const SkinPalette& palette, double skin)
+{
+	if (palette.empty())
+		return {1.0f, 1.0f, 1.0f};
+	const double t = std::clamp(skin, 0.0, 1.0) * static_cast<double>(palette.size() - 1);
+	const std::size_t i = std::min(static_cast<std::size_t>(t), palette.size() - 1);
+	const std::size_t j = std::min(i + 1, palette.size() - 1);
+	const float frac = static_cast<float>(t - static_cast<double>(i));
+	std::array<float, 3> out;
+	for (int k = 0; k < 3; ++k)
+		out[k] = palette[i][k] + (palette[j][k] - palette[i][k]) * frac;
+	return out;
+}
 
 CreatorCatalog CreatorCatalog::build(const kdata::GameData& gameData, std::string_view dataDir)
 {

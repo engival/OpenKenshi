@@ -36,6 +36,7 @@ constexpr std::uint64_t kFoeFaction = 20;
 constexpr std::uint64_t kNeutralFaction = 30; // relation 0 both ways: the sensor's kNeutral bit
 // The slavemaster's faction for the 41 fixture (dt24_41): hostile toward kFoeFaction, nothing else.
 constexpr std::uint64_t kMasterFaction = 40;
+constexpr std::uint64_t kTrigTick = 100; // the sim tick the fixture runs at (CHAR_STATS row 34's engageTick)
 
 // A seen record the resolvers accept: aware and sensed by the last scan (a `notice` alone leaves sinceSensed stale, the kNotSeen bit).
 void seen(state::Fighter& observer, std::uint64_t target)
@@ -76,6 +77,7 @@ struct Rig
 			return 0.0;
 		};
 		arena.setSensorContext(ctx);
+		arena.environmentMutable().tick = kTrigTick;
 		arena.setObserver([this](const CombatEvent& e)
 		{
 			if (e.kind == CombatEvent::Kind::Goal)
@@ -127,6 +129,39 @@ struct Rig
 	}
 };
 
+// CHAR_STATS row 34 (k16.5.37, SIMLINK.md): the basis, the cause and the tick the target was set at; a sense is named whenever a record held it.
+void expectTrigger(const state::Fighter& f, int basis, std::uint64_t cause, const char* label)
+{
+	const std::string who = std::string(label) + ": ";
+	test::require(f.engageBasis == basis, who + "engageBasis " + std::to_string(f.engageBasis) + ", want " + std::to_string(basis));
+	test::require(f.engageCause == cause, who + "engageCause " + std::to_string(f.engageCause) + ", want " + std::to_string(cause));
+	test::require(f.engageTick == kTrigTick, who + "engageTick " + std::to_string(f.engageTick));
+	test::require(f.engageSense >= 1 && f.engageSense <= 3, who + "engageSense " + std::to_string(f.engageSense));
+}
+
+// 1 / 8 and the clear: a player's attack order, a selector commit (orderFight), and a dropped target resets all four.
+void testEngageOrderSelectorClear()
+{
+	const kdata::GameData gd = kworld::loadMergedGameData(KENSHI_DATA);
+	Rig rig(gd, CombatData::build(gd, KENSHI_DATA), 17);
+	const std::uint64_t player = rig.spawn(0.0, 0.0, kMyFaction, 7, 0, true);
+	const std::uint64_t victim = rig.spawn(10.0, 0.0, kNeutralFaction, 9, 0);
+	rig.me(player).orderTarget = victim;
+	seen(rig.me(player), victim);
+	seen(rig.me(victim), player); // a victim that cannot sense an armed attacker reads sense 4 (shot from unsensed)
+	rig.run(2);
+	test::require(rig.me(player).target == victim, "1: the attack order did not set the target");
+	expectTrigger(rig.me(player), 1, 0, "1 order");
+	test::require(rig.arena.dropTarget(player), "no member to drop");
+	const state::Fighter& f = rig.me(player);
+	test::require(f.engageBasis == 0 && f.engageSense == 0 && f.engageCause == 0 && f.engageTick == 0, "a dropped target left the trigger set");
+
+	const std::uint64_t walker = rig.spawn(0.0, 30.0, kMyFaction, 8, 0);
+	seen(rig.me(walker), victim);
+	test::require(rig.arena.orderFight(walker, victim, 16), "orderFight refused");
+	expectTrigger(rig.me(walker), 8, 0, "8 selector");
+}
+
 // 143: A and B are one squad; B is fighting a bandit; A carries only PROTECT_OWN_SQUAD and joins B's attacker.
 void testProtectOwnSquad()
 {
@@ -143,6 +178,7 @@ void testProtectOwnSquad()
 	test::require(rig.me(a).target == bandit, "143: A did not join B's fight");
 	test::require(rig.firstPick(a) == 143, "143: A's first pick was goal " + std::to_string(rig.firstPick(a))
 		+ ", not PROTECT_OWN_SQUAD");
+	expectTrigger(rig.me(a), 3, b, "143");
 }
 
 // BQ18 (kinspect findings/bq18_leftover_bandits.md; patrol_aggro_town.md a8a41b7): 143 joins on the JOINER's own sight record of the
@@ -346,6 +382,7 @@ void testProtectAllies()
 	test::require(rig.me(a).target == bandit, "15: A did not join its ally's fight");
 	test::require(rig.firstPick(a) == 15, "15: A's first pick was goal " + std::to_string(rig.firstPick(a))
 		+ ", not PROTECT_ALLIES");
+	expectTrigger(rig.me(a), 3, ally, "15");
 }
 
 // k16.6.269 (rwh139 2): a member running a follow order does not take goal 15 while the order runs; the same member with the order
@@ -384,6 +421,7 @@ void testAttackEnemies()
 	test::require(rig.me(a).target == bandit, "16: A did not attack the enemy in sight");
 	test::require(rig.firstPick(a) == 16, "16: A's first pick was goal " + std::to_string(rig.firstPick(a))
 		+ ", not ATTACK_ENEMIES");
+	expectTrigger(rig.me(a), 4, 0, "16");
 }
 
 // 21: a neutral faction (`kNeutral`), nothing else going on; A carries only ATTACK_ENEMIES_AND_NEUTRALS and takes it on sight.
@@ -422,6 +460,7 @@ void testTroubleMakers()
 		test::require(rig.me(a).target == troublemaker, "34: A did not join the troublemaker in its town");
 		test::require(rig.firstPick(a) == 34, "34: A's first pick was goal " + std::to_string(rig.firstPick(a))
 			+ ", not ATTACK_TROUBLE_MAKERS");
+		expectTrigger(rig.me(a), 6, 0, "34");
 	}
 	{
 		// The same pair, but the neutral does nothing: it is not a troublemaker, and A has nothing to join.
@@ -500,6 +539,7 @@ void testSelfPreservationAndTownGoals()
 	test::require(rig.arena.setJoinGoals(a, true, 0), "no member A");
 	rig.run(3);
 	test::require(rig.me(a).target == bandit && rig.firstPick(a) == 32, "32: the attacker on me was not taken as goal 32");
+	expectTrigger(rig.me(a), 2, bandit, "32");
 }
 
 // 288 (kenshi-rwh.215): no town leash. A has no town; an ally's attacker within 150 u of the ally is taken as goal 288, one just
@@ -553,6 +593,7 @@ int main()
 	try
 	{
 		testProtectOwnSquad();
+		testEngageOrderSelectorClear();
 		testProtectOwnSquadNeedsTheRecord();
 		testSlavemasterEnemies();
 		testDefeatSquad();

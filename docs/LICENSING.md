@@ -34,8 +34,8 @@ the right choice?" then "Just MIT it I guess. Then we can call it open source?"
 
 ### Bundled libraries
 
-Bundled libraries must be **permissive** (MIT, BSD, zlib, Apache-2.0, public domain); no GPL-family code. Current
-vendored set: flecs (MIT), Lua (MIT), stb (MIT / public domain), sokol (zlib), tinyfiledialogs (zlib), recastnavigation (zlib), Jolt Physics
+Bundled libraries must be **permissive** (MIT, BSD, zlib, Apache-2.0, Boost (BSL-1.0), public domain); no GPL-family code. Current
+vendored set: flecs (MIT), Lua (MIT), stb (MIT / public domain), sokol (zlib), tinyfiledialogs (zlib), recastnavigation (zlib), Clipper2 2.0.1 (Boost Software License 1.0, `cpp/third_party/clipper2-2.0.1`, knav::surfgen polygon booleans), Jolt Physics
 v5.6.0 (MIT, `client/third_party/JoltPhysics`, client ragdolls). `client/third_party/wwise_codebooks/`: the aoTuV 6.03
 packed codebooks from hcs64/ww2ogg, BSD-3-Clause (its `COPYING`; data only, the reader is ours): ships. libwebp (BSD-3-Clause) is not bundled: the Linux dev build links the system library for the lossless WebP screenshots (`client/src/assets/imagewrite.cpp`, kenshi-k16.2.470.1); Windows and macOS builds do not use it. Binary
 releases carry the bundled libraries' notices (`CREDITS.md`).
