@@ -4379,7 +4379,7 @@ option(KSIM_NAV_TESTS "run the navmesh tests (off while the navmesh rework lands
 if(NOT KSIM_NAV_TESTS)
 	foreach(test IN LISTS allTests)
 		if(test MATCHES "^(knav_|ksim_nav_|ksim_native_|ksim_door_(sweep|plan)$|ksim_foyer_route$|ksim_storm_door$|ksim_route_|ksim_path_walk$|ksim_walk_kinematics$|ksim_stair_|ksim_move_(detour|no_route)$|ksim_offmesh_travel$|ksim_siv_|ksim_stand_building$)"
-			AND NOT test MATCHES "^knav_(bake_(hub|hub_single|stack|world_sample)|ground|ground_features|ground_objects|ground_buildings|surfgen|cutover|longhouse_door|hub|native_tiles)$")
+			AND NOT test MATCHES "^knav_(bake_(hub|hub_single|stack|world_sample)|ground|ground_features|ground_objects|ground_buildings|surfgen|cutover|longhouse_door|hub|native_tiles|door)$")
 			set_tests_properties(${test} PROPERTIES DISABLED TRUE)
 		endif()
 	endforeach()
@@ -4468,6 +4468,8 @@ if(KSIM_TEST_CAP)
 	add_test(NAME ksim_test_cap_selftest COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/../tools/test_cap_check.py --selftest)
 	set_property(TEST ksim_test_cap_selftest PROPERTY FIXTURES_REQUIRED worker_guard)
 	set_property(TEST ksim_test_cap_selftest APPEND PROPERTY LABELS infra)
+else()
+	list(APPEND KSIM_PLATFORM_ABSENT_TESTS ksim_test_cap_check ksim_test_cap_selftest) # their validity rows stay valid with the cap off (Windows CI, kenshi-k16.6.829)
 endif()
 
 # Validity labels (kenshi-k16.15.26): golden / pin / infra (+ unverified, wrong) per test, generated from cpp/tests/validity/*.tsv, the one home

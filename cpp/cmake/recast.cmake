@@ -22,9 +22,17 @@ endif()
 # 64-bit polygon refs everywhere Detour's headers are seen (the layout of dtNavMesh depends on it).
 foreach(t Detour DetourCrowd DetourTileCache DebugUtils)
 	if(TARGET ${t})
-		target_compile_definitions(${t} PUBLIC DT_POLYREF64)
+		target_compile_definitions(${t} PUBLIC DT_POLYREF64 DT_VIRTUAL_QUERYFILTER)
 	endif()
 endforeach()
+# The virtual query filter (a flat door cost, knav/query_filter.hpp) needs dtQueryFilter's typeinfo; the fork builds Detour -fno-rtti.
+if(NOT MSVC)
+	foreach(t Detour DetourCrowd DetourTileCache DebugUtils)
+		if(TARGET ${t})
+			target_compile_options(${t} PRIVATE -frtti)
+		endif()
+	endforeach()
+endif()
 # Recast builds as C++98, where MinGW's <stdint.h> hides INTPTR_MAX (RecastAlloc.h's RC_SIZE_MAX) unless __STDC_LIMIT_MACROS; PUBLIC because
 # consumer TUs include RecastAlloc.h too (kenshi-379.31.4).
 if(MINGW)

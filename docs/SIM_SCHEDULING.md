@@ -89,7 +89,7 @@ own tick; wire in formats/SIMLINK.md "Cadence" under SNAPSHOT_BEGIN / SNAPSHOT_E
   follows it in the same slot: the target / threat choice from the new sight list (the part of `pickTarget` that
   weighs candidates), the fight-goal pick and the routine scorer's pass for that member.
 - **What stays in act, every tick:** the state machine's transitions, including the picks the handlers make at once
-  per the exe (the hub re-pick, combat.cpp around 2338, "dt4"), the `incoming` check that enters defence, steering and
+  per the exe (a fighting member's hub re-pick, combat.cpp around 2338, "dt4"; an idle member is gated, see "Idle re-pick gate" before section 9), the `incoming` check that enters defence, steering and
   swing timers. A swing aimed at a member is answered on the tick, never on the think: blocks must not lag 0.64 s. If
   the oracle answer (section 8) shows the exe's combat class AI runs in the 8-per-frame tick, act shrinks to match.
 - **Budget:** keep the scan's own count budget (480 per game second, K = 24 per tick at 1x) as the think budget; the
@@ -235,6 +235,14 @@ none of the clearance search. So, in order:
    class AI runs.
 6. Re-measure 5x; then C (k16.6.236) and the encode thread on those numbers; parallel perception last.
 
+### Idle re-pick gate (k16.6.632)
+
+An idle member (state Done) sleeps instead of flipping Done -> Hub -> pickTarget every tick. It re-picks (Hub, same step) when: its own
+sensor scan ran this step (`senseAt == time`), it holds an order, a wake set it to Hub (hit, `markHostile`, being targeted, a squad-mate
+engaged; the wake is the persisted state), or it has spent 3-5 steps in Done (0.15-0.25 s, the count by dice key, times the cadence
+factor of the scan interval at game speed above 1: not for a player character or a fighter). Sight-to-react is at most one scan interval
++ 0.25 s. No faction or scenario special case.
+
 ## 9. Review
 
 One Fable sub-agent review, authorised by the user on kenshi-k16.6.302, of the first draft (88857828). Findings and what
@@ -244,7 +252,7 @@ was taken:
 |---|---|---|
 | 1 | The draft targeted the smaller cost: the think half is at most part of `cs_update` (~1-1.6 ms) while the encode is 2.8 ms per tick and runs after every catch-up tick (100 a second at 5x) | yes: 5O, step 2, and the measurement gate in step 3 |
 | 2 | Perception is already budgeted the same way (`scanInterval`, 480/s, staggered); the draft would add a second rotation and double the sight-to-react lag | yes: 5A makes the scan the think slot; the "new hostile" wake goes (verified in `combat.cpp` `senseAll`, `perception.hpp`) |
-| 3 | `pickTarget` is called from the state handlers and the hub re-picks at once per the exe; the `incoming` defence check is per tick; where the exe runs its combat class AI is unknown | yes: think is narrowed to the sensor-driven re-evaluation, transitions and defence stay in act; oracle question in step 5 |
+| 3 | `pickTarget` is called from the state handlers and the hub of a fighting member re-picks at once per the exe (an idle member in Done re-picks only after its own scan, on a wake, or on a 3-5 step slot: k16.6.632); the `incoming` defence check is per tick; where the exe runs its combat class AI is unknown | yes: think is narrowed to the sensor-driven re-evaluation, transitions and defence stay in act; oracle question in step 5 |
 | 4 | Joining the scorer to K = 24 scores 1.5x as often; the lockstep spikes are fixed by the `id % 20` offset alone | yes: the scorer keeps a 20-tick minimum period; the offset goes in step 1 |
 | 5 | `routeFrom` is three searches, not one Detour query; sliced state cannot be saved; mesh changes; head-of-line blocking; "stands until it arrives" is near-terminal; measure first; per-tick re-queries cost more | yes: 5E rewritten as measure, pre-check / negative cache, no re-queries, then overflow slicing with a bounded wait |
 | 6 | Scheduler state must be saved; think order affects results | yes: section 7 |

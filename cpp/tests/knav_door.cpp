@@ -292,6 +292,7 @@ int main(int argc, char** argv)
 			knav::TravelFilter landPriced;
 			landPriced.cost[static_cast<std::size_t>(knav::Area::DoorOpen)] = 1.0f;
 			landPriced.cost[static_cast<std::size_t>(knav::Area::DoorClosed)] = 1.0f;
+			landPriced.doorCrossing = 0.0f; // the flat +5 is the filter's, not the area cost's
 			const knav::PathResult flat = query.findPath(plain[i].outside, plain[i].inside, kReach, landPriced);
 			const float extra = open[i].cost - flat.cost;
 			std::cout << "door cost: +" << extra << " over a land-priced door\n";

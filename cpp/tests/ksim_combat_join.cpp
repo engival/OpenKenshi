@@ -567,6 +567,36 @@ void testProtectAlliesStayInTownBound()
 
 } // namespace
 
+// The idle re-pick gate (k16.6.632): an idle member re-picks on its stagger slot (at most 0.25 s = 5 steps) and on a wake (markHostile
+// here, as a hit or being targeted would) on the same step. Checked at every phase of the 5-step slot.
+void testIdleRepickGate()
+{
+	const kdata::GameData gd = kworld::loadMergedGameData(KENSHI_DATA);
+	for (int idle = 8; idle < 13; ++idle)
+	{
+		for (const bool wake : {false, true})
+		{
+			Rig rig(gd, CombatData::build(gd, KENSHI_DATA), 7);
+			const std::uint64_t a = rig.spawn(0.0, 0.0, kMyFaction, 7, 0);
+			const std::uint64_t bandit = rig.spawn(20.0, 0.0, kFoeFaction, 9, 1);
+			rig.me(a).yaw = 1.5707963267948966;
+			test::require(rig.arena.setJoinGoals(a, true, joins::kAttackEnemies), "no member A");
+			rig.run(idle); // nothing in sight: A sleeps in Done
+			seen(rig.me(a), bandit); // the candidate appears between scans
+			if (wake)
+				rig.arena.markHostile(a, bandit);
+			int steps = 0;
+			while (rig.me(a).target == 0 && steps < 20)
+			{
+				rig.run(1);
+				++steps;
+			}
+			test::require(rig.me(a).target == bandit, "idle gate: A never targeted the candidate");
+			test::require(steps <= (wake ? 1 : 5), "idle gate: A took " + std::to_string(steps) + " steps to react");
+		}
+	}
+}
+
 // k16.6.624: a player member carries the player faction's real id, never 0 (the factionless, wild animals among them, are faction 0).
 // A wild animal fighting a third party is no ally of the member: sensor::ally is false and the member does not take goal 15; a second
 // player member stays an ally.
@@ -588,6 +618,33 @@ void testFactionlessNotAlly()
 	test::require(rig.firstPick(a) != 15, "15: a player member took PROTECT_ALLIES for a wild animal");
 }
 
+// The sight-to-react bound (k16.6.632): the candidate is found by the member's own scan (nothing injected), and an idle member re-picks
+// after that scan or on its slot, so it targets within one scan interval + 0.25 s.
+void testIdleRepickAfterScan()
+{
+	const kdata::GameData gd = kworld::loadMergedGameData(KENSHI_DATA);
+	for (int idle = 8; idle < 13; ++idle)
+	{
+		Rig rig(gd, CombatData::build(gd, KENSHI_DATA), 7);
+		const std::uint64_t a = rig.spawn(0.0, 0.0, kMyFaction, 7, 0);
+		const std::uint64_t bandit = rig.spawn(3000.0, 0.0, kFoeFaction, 9, 1);
+		rig.me(a).yaw = 1.5707963267948966;
+		test::require(rig.arena.setJoinGoals(a, true, joins::kAttackEnemies), "no member A");
+		rig.run(idle); // out of sight: A sleeps in Done
+		test::require(rig.me(a).target == 0, "idle scan gate: A targeted a candidate out of sight");
+		rig.me(bandit).x = 20.0;
+		const double bound = perception::scanInterval(2) + 0.25;
+		int steps = 0;
+		while (rig.me(a).target == 0 && steps < 200)
+		{
+			rig.run(1);
+			++steps;
+		}
+		test::require(rig.me(a).target == bandit, "idle scan gate: the scan never found the candidate");
+		test::require(steps * kDt <= bound + kDt, "idle scan gate: sight-to-react " + std::to_string(steps) + " steps exceeds one scan interval + 0.25 s");
+	}
+}
+
 int main()
 {
 	try
@@ -605,6 +662,8 @@ int main()
 		testTroubleMakers();
 		testTerritorial();
 		testSelfPreservationAndTownGoals();
+		testIdleRepickGate();
+		testIdleRepickAfterScan();
 		testProtectAlliesStayInTownBound();
 	} catch (const std::exception& e) {
 		std::cerr << "FAIL: " << e.what() << "\n";

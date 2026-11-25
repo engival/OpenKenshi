@@ -52,6 +52,30 @@ std::array<std::size_t, knav::kAreaCount> countAreas(const knav::NavMesh& mesh)
 	return counts;
 }
 
+// Length of a route per area, sampled every 4 u, and the cost it pays under `travel`: says where two routes part.
+void printAreas(const char* name, const knav::NavMesh& mesh, const knav::NavQuery& query, const knav::PathResult& path)
+{
+	std::array<float, knav::kAreaCount> in{};
+	float off = 0.0f;
+	for (std::size_t i = 1; i < path.points.size(); ++i)
+	{
+		const Point a = path.points[i - 1];
+		const Point b = path.points[i];
+		const float len = std::hypot(b[0] - a[0], b[2] - a[2]);
+		const int steps = std::max(1, static_cast<int>(len / 4.0f));
+		for (int k = 0; k < steps; ++k)
+		{
+			const float t = (k + 0.5f) / steps;
+			knav::PolyLoc loc;
+			if (query.locate({ a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t }, { 8.0f, 40.0f, 8.0f }, loc))
+				in[mesh.detour().getTileAt(loc.tileX, loc.tileZ, 0)->polys[loc.poly].getArea()] += len / steps;
+			else
+				off += len / steps;
+		}
+	}
+	std::cout << "  " << name << ": land " << in[0] << " shallow " << in[1] << " swim " << in[2] << " off-mesh " << off << "\n";
+}
+
 } // namespace
 
 int main()
@@ -118,6 +142,10 @@ int main()
 		const knav::PathResult humanPath = coastQuery.findPath(from, to, kReach, human);
 		const knav::PathResult fishmanPath = coastQuery.findPath(from, to, kReach, fishman);
 		std::cout << "coast by race: human " << humanPath.length << ", fishman " << fishmanPath.length << "\n";
+		printAreas("free swim", coast, coastQuery, shortcut);
+		printAreas("fishman", coast, coastQuery, fishmanPath);
+		printAreas("land", coast, coastQuery, onLand);
+		printAreas("human", coast, coastQuery, humanPath);
 		test::require(humanPath.complete && fishmanPath.complete, "a race coast path is incomplete");
 		test::require(humanPath.length > onLand.length * 0.97f, "a human (water 7.0) took the swim shortcut");
 		test::require(fishmanPath.length < shortcut.length + 0.1f * (onLand.length - shortcut.length), "a Fishman (water 0.25) did not take the swim shortcut");

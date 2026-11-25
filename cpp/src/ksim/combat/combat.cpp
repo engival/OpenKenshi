@@ -652,6 +652,7 @@ struct CombatArena::Ctx
 		{
 			if (mate.fighter.squad != side.fighter.squad)
 				continue;
+			wakeIdle(mate);
 			mate.dirty = true;
 			auto& list = mate.fighter.hostileSquads;
 			const auto at = std::lower_bound(list.begin(), list.end(), other.squad);
@@ -953,6 +954,16 @@ struct CombatArena::Ctx
 		f.stateTime = 0.0;
 	}
 
+	// The idle re-pick gate's wake (k16.6.632): an idle member (Done) goes back to Hub through the normal transition, so it re-picks at its
+	// next update (the same step when it updates after the waker). The wake is the persisted state itself, so a save keeps it.
+	void wakeIdle(Member& m)
+	{
+		if (m.fighter.state != CombatState::Done)
+			return;
+		setState(m, CombatState::Hub);
+		m.dirty = true;
+	}
+
 	void stopTechnique(Fighter& f)
 	{
 		f.technique = -1;
@@ -1178,6 +1189,13 @@ struct CombatArena::Ctx
 			if (now != nullptr)
 			{
 				addEngaged(*now, m.id); // the target learns of its attacker (140999f00)
+				wakeIdle(*now);
+				for (Member& mate : arena.members_)
+					if (mate.fighter.squad == f.squad)
+					{
+						wakeIdle(mate); // a squad-mate engaged
+						mate.dirty = true;
+					}
 				if (now->fighter.target == 0)
 					now->fighter.orderInterrupt = true; // not in combat: onTargetedBy requests a replan (Simulation::stepOrderCombat)
 				learn(*now, m.id);
@@ -1934,6 +1952,13 @@ struct CombatArena::Ctx
 		return best;
 	}
 
+	// The slowdown of an NPC's scan and idle re-pick at game speed above 1 (k16.6.633): not for a player character or a fighter.
+	double cadenceFactor(const Fighter& f) const
+	{
+		return arena.environment_.cadenceScale > 1 && !f.playerControlled && f.target == 0 && f.engaged.empty()
+			? static_cast<double>(arena.environment_.cadenceScale) : 1.0;
+	}
+
 	// The sensors (perception.hpp): each character scans once per scanInterval, staggered by its dice key (task CC; the Id before,
 	// which moved the first scan of every character when anything spawned before it), before anyone moves.
 	void senseAll()
@@ -1947,8 +1972,7 @@ struct CombatArena::Ctx
 			if (!usable(f))
 				continue;
 			// An NPC outside a fight scans at the scaled interval at game speed above 1 (k16.6.633); a player character and a fighter keep it.
-			const double mine = arena.environment_.cadenceScale > 1 && !f.playerControlled && f.target == 0 && f.engaged.empty()
-				? interval * arena.environment_.cadenceScale : interval;
+			const double mine = interval * cadenceFactor(f);
 			// A due-stamp: `senseAt` is the time the clock counts from, so a member that is not due is not written (nothing owed, nothing dirty).
 			const double now = arena.time_;
 			if (f.senseAt <= Fighter::kNoStamp * 0.5)
@@ -2522,6 +2546,7 @@ struct CombatArena::Ctx
 		for (auto& entry : targets)
 		{
 			Member& def = *entry.second;
+			wakeIdle(def);
 			if (std::find(a.hitList.begin(), a.hitList.end(), def.id) == a.hitList.end())
 				a.hitList.push_back(def.id); // the swinger is a threat to it until the swing ends (incoming())
 			def.fightTier = true;
@@ -2741,6 +2766,11 @@ struct CombatArena::Ctx
 		}
 		return result(D.target == a.id ? 1 : 5);
 	}
+
+	// An idle member re-picks after 3..5 steps in Done (0.15-0.25 s at 20 Hz; the member's dice key picks its count) unless a wake or its own
+	// scan comes first. Counted on `stateTime`, which the save keeps (the arena's step count is not saved).
+	static constexpr std::uint64_t kIdleRepickMin = 3;
+	static constexpr std::uint64_t kIdleRepickMax = 5;
 
 	// ---- the hub, state 4 ----
 	void hub(Member& m)
@@ -5060,7 +5090,17 @@ struct CombatArena::Ctx
 			}
 			break;
 		case CombatState::Done:
-			setState(m, CombatState::Hub);
+			// The idle re-pick gate (k16.6.632): sleep in Done until a wake or the member's stagger slot (ids and step counts only).
+			// A wake (hit, markHostile, targeted, a squad-mate engaged) has already set Hub; here: the member's own scan ran this step
+			// (senseAll stamped senseAt with this time), an order, or the slot: 3..5 steps by dice key, scaled like the scan interval.
+			if (f.senseAt == arena.time_ || f.orderTarget != 0
+				|| f.stateTime + 0.5 * dt >= static_cast<double>(kIdleRepickMin + arena.diceKey(m.id) % (kIdleRepickMax - kIdleRepickMin + 1)) * dt * cadenceFactor(f))
+			{
+				setState(m, CombatState::Hub);
+				hub(m);
+				if (f.state == CombatState::Between)
+					between(m);
+			}
 			break;
 		}
 		// The chase's stuck timer (MINE/UNSURE: the exe's behaviour for a target it keeps moving at but cannot close on -
@@ -5683,10 +5723,12 @@ void CombatArena::markHostile(std::uint64_t id, std::uint64_t other)
 	const state::Fighter* them = find(other);
 	if (me == nullptr || them == nullptr || me->squad == them->squad)
 		return;
+	Ctx ctx(*this);
 	for (Member& mate : members_)
 	{
 		if (mate.fighter.squad != me->squad)
 			continue;
+		ctx.wakeIdle(mate);
 		mate.dirty = true;
 		auto& list = mate.fighter.hostileSquads;
 		const auto at = std::lower_bound(list.begin(), list.end(), them->squad);

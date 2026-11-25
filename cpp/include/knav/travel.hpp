@@ -44,14 +44,11 @@ constexpr std::uint16_t areaFlag(Area area) noexcept
 inline constexpr float kShallowCost = 1.5f;
 inline constexpr float kSwimCost = 3.0f;
 // A door costs the same closed or open to the search: the opening is a timed step of the walker (ksim interact.hpp), not an area
-// cost (DOORS.md section 6). Crossing a door costs +5 in the original's search (PATHFINDING_STATIC.md 2.3 / 6.3, rwh.144: the
-// water cost modifier at 1403b57e0 adds 5.0 for face data 4, constant _UNK_1416c8f84), so it prefers an open way round. Its cost
-// is in world units of distance, as ours are (humans' 4 u radius is the same unit), so the 5 carries over as it is. Detour's filter
-// charges per unit of distance inside a polygon and cannot take a flat add, so the 5 is spread over the door mat's nominal depth
-// (the door's thickness plus twice kDoorMargin in bake.cpp, measured 23-28 u on the Hub doors): a straight crossing pays 5, a clipped corner less.
+// cost (DOORS.md section 6). Crossing a door adds a flat +5 on the edge that enters a door polygon (PATHFINDING_STATIC.md 2.3 / 6.3,
+// rwh.144: the water cost modifier at 1403b57e0 adds 5.0 for face data 4), so a search prefers an open way round. It is in world
+// units of distance, as ours are. TravelQueryFilter (query_filter.hpp) adds it; the door polygon itself costs 1.0 per unit.
 inline constexpr float kDoorCrossingCost = 5.0f;
-inline constexpr float kDoorMatDepth = 25.0f;
-inline constexpr float kDoorClosedCost = 1.0f + kDoorCrossingCost / kDoorMatDepth;
+inline constexpr float kDoorClosedCost = 1.0f;
 inline constexpr float kDoorOpenCost = kDoorClosedCost;
 // UNSURE (ours): high enough that a route keeps to the open middle, low enough that a gap narrower than a body width (all
 // Edge) still beats a long way round. The original blocks gaps under 9 u outright (minCharacterWidth, BLOCK_EDGES).
@@ -60,6 +57,8 @@ inline constexpr float kEdgeCost = 2.0f;
 struct TravelFilter
 {
 	std::array<float, kAreaCount> cost{ 1.0f, kShallowCost, kSwimCost, kDoorOpenCost, kDoorClosedCost, kEdgeCost }; // per Area; >= 0
+	// The flat add on the edge that enters a door polygon (kDoorCrossingCost; 0 prices a door as plain walking).
+	float doorCrossing = kDoorCrossingCost;
 	// Door areas are always allowed here: a door is refused per class by the door state, not by this mask.
 	std::uint16_t allowed = areaFlag(Area::Land) | areaFlag(Area::Shallow) | areaFlag(Area::Swim)
 		| areaFlag(Area::DoorOpen) | areaFlag(Area::DoorClosed) | areaFlag(Area::Edge);

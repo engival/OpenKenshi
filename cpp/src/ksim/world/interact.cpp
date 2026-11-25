@@ -1216,6 +1216,15 @@ void Simulation::beginInteract(std::uint64_t id, std::uint64_t target, std::uint
 		f->routeSeq = seq;
 		f->routeApproach = approach;
 	}
+	if (routeTrace_ && f->playerControlled)
+	{
+		std::string line = "route: interact who=" + std::to_string(id) + " target=" + std::to_string(target) + " action=" + std::to_string(action)
+			+ " from=" + std::to_string(f->x) + "," + std::to_string(f->z) + " approach=" + std::to_string(approach ? 1 : 0)
+			+ (f->route.empty() ? " NO ROUTE (the walk is skipped)" : " points=");
+		for (const state::RoutePoint& p : f->route)
+			line += std::to_string(static_cast<int>(p.x)) + "," + std::to_string(static_cast<int>(p.z)) + ";";
+		logTask(line);
+	}
 	f->routeTries = 0;
 	f->drive = state::DriveMode::Stop;
 	f->driveStrafe = 0;
@@ -2344,12 +2353,41 @@ void Simulation::stepDoorSteps()
 	}
 }
 
+namespace
+{
+constexpr std::uint64_t kInteractStallTicks = 300; // 15 s at 20 ticks/s without moving 2 u while the walk's route is set
+}
+
 void Simulation::stepInteractions()
 {
 	if (combat_ == nullptr)
 		return;
 	flecs::world& ecs = ecsMutable();
 	const auto& members = combat_->members();
+	if (routeTrace_ && clockTick() % 100 == 0)
+	{
+		// Trace only (kenshi-xu27): one line per 5 s for every player character with an open interact, whether or not the loop below reaches it
+		// (inMembers 0 = no combat member, due 0 = skipped this tick), so a hang shows which path holds it.
+		ecs.each([&](flecs::entity actor, const state::Id& id, const state::InteractTask& task)
+		{
+			std::size_t at = members.size();
+			for (std::size_t k = 0; k < members.size(); ++k)
+			{
+				if (members[k].id == id.value)
+					at = k;
+			}
+			const state::Fighter* f = at < members.size() ? &members[at].fighter : nullptr;
+			if (f != nullptr && !f->playerControlled)
+				return;
+			const auto stall = interactStall_.find(id.value);
+			logTask("route: interact state who=" + std::to_string(id.value) + " target=" + std::to_string(task.target) + " tick=" + std::to_string(clockTick())
+				+ " at=" + (f != nullptr ? std::to_string(f->x) + "," + std::to_string(f->z) : std::string("?")) + " walking=" + std::to_string(f != nullptr && f->walking())
+				+ " doorStep=" + std::to_string(actor.has<state::DoorStep>()) + " routeNext=" + (f != nullptr ? std::to_string(f->routeNext) + "/" + std::to_string(f->route.size()) : std::string("?"))
+				+ " left=" + (stall != interactStall_.end() ? std::to_string(stall->second.left) : std::string("?"))
+				+ " stallSince=" + (stall != interactStall_.end() ? std::to_string(stall->second.since) : std::string("none"))
+				+ " inMembers=" + std::to_string(f != nullptr) + " due=" + std::to_string(f != nullptr && members[at].due));
+		});
+	}
 	for (std::size_t i = 0; i < members.size(); ++i)
 	{
 		if (!members[i].due)
@@ -2370,6 +2408,11 @@ void Simulation::stepInteractions()
 		{
 			done.result = result;
 			actor.remove<state::InteractTask>();
+			interactStall_.erase(members[i].id);
+			if (routeTrace_ && fighter.playerControlled)
+				logTask("route: interact end who=" + std::to_string(done.who) + " target=" + std::to_string(done.target) + " result="
+					+ std::to_string(result) + " at=" + std::to_string(fighter.x) + "," + std::to_string(fighter.z) + " routesBlocked="
+					+ std::to_string(combat_->routesBlocked()) + " clearedWhy=" + std::to_string(int(fighter.clearWhy)));
 			if (interactObserver_)
 				interactObserver_(done);
 		};
@@ -2424,6 +2467,39 @@ void Simulation::stepInteractions()
 				}
 			}
 		}
+		if (fighter.walking() || actor.has<state::DoorStep>())
+		{
+			// A walk that goes nowhere ends the order (the bounded-ticks rule: no layer reaches a terminal state, an interact always ends with
+			// event 13): no progress for kInteractStallTicks is an abandoned walk (kenshi-xu27). Progress is the distance left along the route,
+			// not the position: a walker that jitters or circles near a point (a stale corridor, a tile swap) gains nothing and still trips it.
+			// At a door step (no route set) the position stands in for it, and the limit is longer: the door's own steps take a while.
+			const bool onRoute = fighter.walking() && !actor.has<state::DoorStep>();
+			double left = 0.0;
+			if (onRoute)
+			{
+				double px = fighter.x;
+				double pz = fighter.z;
+				for (std::size_t k = std::min<std::size_t>(fighter.routeNext, fighter.route.size()); k < fighter.route.size(); ++k)
+				{
+					left += std::hypot(fighter.route[k].x - px, fighter.route[k].z - pz);
+					px = fighter.route[k].x;
+					pz = fighter.route[k].z;
+				}
+			}
+			InteractStall& stall = interactStall_[members[i].id];
+			const bool progressed = onRoute ? left < stall.left - 2.0 : std::hypot(fighter.x - stall.x, fighter.z - stall.z) > 2.0;
+			if (stall.since == 0 || progressed || stall.onRoute != onRoute)
+				stall = InteractStall{fighter.x, fighter.z, clockTick(), left, onRoute};
+			else if (clockTick() - stall.since > (onRoute ? kInteractStallTicks : 2 * kInteractStallTicks))
+			{
+				actor.remove<state::DoorStep>();
+				combat_->find(members[i].id)->clearRoute();
+				finish(InteractEvent::kUnreachable);
+				continue;
+			}
+		}
+		else
+			interactStall_.erase(members[i].id);
 		if (fighter.walking() || actor.has<state::DoorStep>())
 			continue; // still on the way, or busy at a door (stepDoorSteps)
 		if (const state::CarryStep* carry = actor.get<state::CarryStep>(); carry != nullptr && carry->phase != 1)

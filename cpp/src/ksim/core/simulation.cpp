@@ -2598,6 +2598,14 @@ void Simulation::apply(const Command& command)
 			// (far_orders.cpp); anything else is the route the server made.
 			const bool far = (command.value & 4) != 0;
 			const state::RoutePoint goal = {command.points.back().x, command.heights.back(), command.points.back().z};
+			if (routeTrace_ && f->playerControlled)
+			{
+				std::string line = "route: move who=" + std::to_string(command.subject) + " from=" + std::to_string(f->x) + "," + std::to_string(f->z)
+					+ " goal=" + std::to_string(goal.x) + "," + std::to_string(goal.z) + " far=" + std::to_string(far ? 1 : 0) + " points=";
+				for (const state::GroundPoint& q : command.points)
+					line += std::to_string(static_cast<int>(q.x)) + "," + std::to_string(static_cast<int>(q.z)) + ";";
+				logTask(line);
+			}
 			const bool legs = (far || std::hypot(goal.x - f->x, goal.z - f->z) > kworld::RoadNetwork::kLongMove)
 				&& startMoveOrder(command.subject, *f, goal.x, goal.z, goal.y, static_cast<std::uint32_t>(command.object), far);
 			if (far && !legs)

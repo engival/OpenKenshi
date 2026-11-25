@@ -1,4 +1,5 @@
 #include "knav/coarse.hpp"
+#include "knav/query_filter.hpp"
 
 #include "kworld/error.hpp"
 
@@ -176,8 +177,7 @@ public:
 			straight_.resize(3ull * kMaxPathPolys);
 			crossingRefs_.resize(kMaxPathPolys);
 		}
-		dtQueryFilter filter;
-		configureFilter(filter, travel_);
+		TravelQueryFilter filter(travel_);
 		if (avoidDoors)
 			filter.setExcludeFlags(filter.getExcludeFlags() | areaFlag(Area::DoorOpen) | areaFlag(Area::DoorClosed));
 		int polyCount = 0;
@@ -201,6 +201,7 @@ public:
 				DT_STRAIGHTPATH_ALL_CROSSINGS)))
 			return false;
 		cost = 0.0f;
+		bool prevDoor = false;
 		std::map<DoorKey, float> inside;
 		for (int i = 0; i + 1 < crossings; ++i)
 		{
@@ -210,6 +211,9 @@ public:
 			const float* a = &straight_[3ull * i];
 			const float length = distance({ a[0], a[1], a[2] }, { a[3], a[4], a[5] });
 			cost += length * travel_.cost[poly->getArea()];
+			if (isDoorArea(poly->getArea()) && !prevDoor)
+				cost += travel_.doorCrossing;
+			prevDoor = isDoorArea(poly->getArea());
 			if (const auto door = doorOf_.find(crossingRefs_[static_cast<std::size_t>(i)]); door != doorOf_.end())
 				inside[door->second] += length;
 		}

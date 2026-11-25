@@ -1,4 +1,5 @@
 #include "knav/navmesh.hpp"
+#include "knav/query_filter.hpp"
 
 #include "kworld/error.hpp"
 
@@ -90,7 +91,7 @@ bool snapToMesh(const dtNavMeshQuery& query, const Point& point, const Point& ha
 // both ends lie within 0.001 of a polygon edge in 3D, and a sliver triangle whose detail vertices were
 // sampled at another height than the straight edge has none. Such a polygon gets its flags redone in
 // the xz plane. Works on the Detour copy, so the cache bytes do not change and older bakes are covered.
-void repairDetailEdges(unsigned char* data)
+void repairDetailEdges(unsigned char* data, std::size_t size)
 {
 	const auto* header = reinterpret_cast<const dtMeshHeader*>(data);
 	std::size_t at = dtAlign4(sizeof(dtMeshHeader));
@@ -104,6 +105,15 @@ void repairDetailEdges(unsigned char* data)
 	const auto* detailVerts = reinterpret_cast<const float*>(data + at);
 	at += dtAlign4(sizeof(float) * 3 * static_cast<std::size_t>(header->detailVertCount));
 	auto* tris = data + at;
+	at += dtAlign4(sizeof(unsigned char) * 4 * static_cast<std::size_t>(header->detailTriCount));
+	if (at > size)
+		throw kworld::Error("navmesh tile " + std::to_string(header->x) + " " + std::to_string(header->y) + ": its sections run past its "
+			+ std::to_string(size) + " bytes (a tile baked with another Detour layout?)");
+
+	for (int i = 0; i < header->polyCount; ++i)
+		if (details[i].triBase + details[i].triCount > static_cast<unsigned>(header->detailTriCount))
+			throw kworld::Error("navmesh tile " + std::to_string(header->x) + " " + std::to_string(header->y) + ": polygon " + std::to_string(i)
+				+ " has detail triangles past the tile's " + std::to_string(header->detailTriCount) + " (a tile of another Detour layout?)");
 
 	constexpr float kEdgeTolerance = 0.05f; // world units, xz
 	for (int i = 0; i < header->polyCount; ++i)
@@ -147,6 +157,37 @@ void repairDetailEdges(unsigned char* data)
 	}
 }
 
+// Tiles baked before Detour was built with DT_POLYREF64 (kenshi-k16.7.189 step a) carry 12-byte links (32-bit poly refs); the
+// dtLink of this build is 16 bytes, so every section after the links sits 4 bytes per link further. Detour rebuilds the links
+// on addTile and ignores what the section holds, so such a tile is the same data with a longer link section. Returns false for a
+// tile that matches neither layout.
+bool normalizeTileLayout(std::vector<unsigned char>& data)
+{
+	const auto* header = reinterpret_cast<const dtMeshHeader*>(data.data());
+	const auto sizeWith = [&](std::size_t linkSize)
+	{
+		return static_cast<std::size_t>(dtAlign4(sizeof(dtMeshHeader)) + dtAlign4(sizeof(float) * 3 * static_cast<std::size_t>(header->vertCount))
+			+ dtAlign4(sizeof(dtPoly) * static_cast<std::size_t>(header->polyCount)) + dtAlign4(linkSize * static_cast<std::size_t>(header->maxLinkCount))
+			+ dtAlign4(sizeof(dtPolyDetail) * static_cast<std::size_t>(header->detailMeshCount)) + dtAlign4(sizeof(float) * 3 * static_cast<std::size_t>(header->detailVertCount))
+			+ dtAlign4(4 * static_cast<std::size_t>(header->detailTriCount)) + dtAlign4(sizeof(dtBVNode) * static_cast<std::size_t>(header->bvNodeCount))
+			+ dtAlign4(sizeof(dtOffMeshConnection) * static_cast<std::size_t>(header->offMeshConCount)));
+	};
+	if (data.size() == sizeWith(sizeof(dtLink)))
+		return true;
+	constexpr std::size_t kOldLink = 12;
+	if (sizeof(dtLink) == kOldLink || data.size() != sizeWith(kOldLink))
+		return false;
+	const auto linksAt = static_cast<std::size_t>(dtAlign4(sizeof(dtMeshHeader)) + dtAlign4(sizeof(float) * 3 * static_cast<std::size_t>(header->vertCount))
+		+ dtAlign4(sizeof(dtPoly) * static_cast<std::size_t>(header->polyCount)));
+	const auto oldLinks = static_cast<std::size_t>(dtAlign4(kOldLink * static_cast<std::size_t>(header->maxLinkCount)));
+	const auto newLinks = static_cast<std::size_t>(dtAlign4(sizeof(dtLink) * static_cast<std::size_t>(header->maxLinkCount)));
+	std::vector<unsigned char> out(data.size() - oldLinks + newLinks, 0);
+	std::memcpy(out.data(), data.data(), linksAt);
+	std::memcpy(out.data() + linksAt + newLinks, data.data() + linksAt + oldLinks, data.size() - linksAt - oldLinks);
+	data = std::move(out);
+	return true;
+}
+
 // Detour owns the copy (DT_TILE_FREE_DATA).
 void addToDetour(dtNavMesh& mesh, const BakedTile& tile)
 {
@@ -155,7 +196,7 @@ void addToDetour(dtNavMesh& mesh, const BakedTile& tile)
 			+ std::to_string(header->polyCount) + " polygons, more than the poly id allows");
 	auto* data = static_cast<unsigned char*>(dtAlloc(tile.data.size(), DT_ALLOC_PERM));
 	std::memcpy(data, tile.data.data(), tile.data.size());
-	repairDetailEdges(data);
+	repairDetailEdges(data, tile.data.size());
 	if (dtStatusFailed(mesh.addTile(data, static_cast<int>(tile.data.size()), DT_TILE_FREE_DATA, 0, nullptr)))
 	{
 		dtFree(data);
@@ -711,6 +752,8 @@ std::vector<BakedTile> NavMesh::readTiles(const std::vector<std::string>& paths,
 			{
 				tile.data.resize(size);
 				in.read(reinterpret_cast<char*>(tile.data.data()), size);
+				if (in && !normalizeTileLayout(tile.data))
+					throw kworld::Error("navmesh cache tile " + std::to_string(tile.x) + " " + std::to_string(tile.z) + " matches no Detour tile layout: " + path);
 			} else {
 				in.seekg(size, std::ios::cur);
 			}
@@ -1364,8 +1407,7 @@ bool NavQuery::nearestPointXZ(const Point& point, float reach, Point& out, const
 bool NavQuery::locate(const Point& point, const Point& halfExtents, PolyLoc& out, const TravelFilter& travel) const
 {
 	dtPolyRef ref;
-	dtQueryFilter filter;
-	configureFilter(filter, travel);
+	TravelQueryFilter filter(travel);
 	if (!snapToMesh(*query_, point, halfExtents, ref, out.point, filter))
 		return false;
 	unsigned int salt;
@@ -1382,8 +1424,7 @@ bool NavQuery::locate(const Point& point, const Point& halfExtents, PolyLoc& out
 bool NavQuery::locateWhere(const Point& point, const Point& halfExtents,
 	const std::function<bool(const PolyLoc&)>& accept, PolyLoc& out, const TravelFilter& travel) const
 {
-	dtQueryFilter filter;
-	configureFilter(filter, travel);
+	TravelQueryFilter filter(travel);
 	std::array<dtPolyRef, 2048> refs;
 	int count = 0;
 	if (dtStatusFailed(query_->queryPolygons(point.data(), halfExtents.data(), &filter, refs.data(), &count,
@@ -1460,8 +1501,7 @@ bool NavQuery::slide(const Point& from, const Point& to, const Point& halfExtent
 			return true;
 		}
 	}
-	dtQueryFilter filter;
-	configureFilter(filter, travel);
+	TravelQueryFilter filter(travel);
 	dtPolyRef startRef = 0;
 	Point start;
 	if (!snapToMesh(*query_, from, halfExtents, startRef, start, filter))
@@ -1688,8 +1728,7 @@ bool NavQuery::straightWalk(const Point& from, const Point& to, const TravelFilt
 	if (distance(from, to) < 1e-3f || !locate(to, { 1.0f, 12.0f, 1.0f }, at, travel) || wallDistance(at, travel.radius) < travel.radius
 		|| !walkLeg(from, to, travel.radius, travel))
 		return false;
-	dtQueryFilter filter;
-	configureFilter(filter, travel);
+	TravelQueryFilter filter(travel);
 	const float extents[3] = { 1.0f, 12.0f, 1.0f };
 	dtPolyRef a = 0;
 	dtPolyRef b = 0;
@@ -1715,8 +1754,7 @@ std::vector<CorridorPortal> NavQuery::corridor(const std::vector<Point>& points,
 	std::vector<CorridorPortal> out;
 	if (points.size() < 2)
 		return out;
-	dtQueryFilter filter;
-	configureFilter(filter, travel);
+	TravelQueryFilter filter(travel);
 	const dtQueryFilter walls = wallFilter();
 	const dtNavMesh& nav = *query_->getAttachedNavMesh();
 	const float extents[3] = { 1.0f, 12.0f, 1.0f };
@@ -2214,8 +2252,7 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 	PathResult result;
 	bool exemptFirst = false;
 	ClearanceMap& clearance = clearanceFor().known;
-	dtQueryFilter filter;
-	configureFilter(filter, travel);
+	TravelQueryFilter filter(travel);
 	dtPolyRef startRef = 0;
 	dtPolyRef endRef = 0;
 	Point start;
@@ -2503,6 +2540,7 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 		result.cost = result.length;
 		return result;
 	}
+	bool prevDoor = false;
 	for (int i = 0; i + 1 < crossings; ++i)
 	{
 		const dtMeshTile* tile = nullptr;
@@ -2510,6 +2548,9 @@ PathResult NavQuery::planPathFrom(const Point& from, const Point& to, const Poin
 		mesh_.detour().getTileAndPolyByRefUnsafe(refs[static_cast<std::size_t>(i)], &tile, &poly);
 		const float* a = &straight[3ull * i];
 		result.cost += distance({ a[0], a[1], a[2] }, { a[3], a[4], a[5] }) * travel.cost[poly->getArea()];
+		if (isDoorArea(poly->getArea()) && !prevDoor)
+			result.cost += travel.doorCrossing;
+		prevDoor = isDoorArea(poly->getArea());
 	}
 	return result;
 }
@@ -2621,8 +2662,7 @@ void NavQuery::throughDoorMiddle(PathResult& result, const Point& from, const Po
 		axisX = -axisX;
 		axisZ = -axisZ;
 	}
-	dtQueryFilter filter;
-	configureFilter(filter, travel);
+	TravelQueryFilter filter(travel);
 	const auto runIn = [&](double side) -> std::optional<Point>
 	{
 		const Point target{ static_cast<float>(centre[0] + axisX * side * kDoorRunIn), centre[1], static_cast<float>(centre[2] + axisZ * side * kDoorRunIn) };

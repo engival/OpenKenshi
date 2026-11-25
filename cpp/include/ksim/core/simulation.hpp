@@ -232,6 +232,10 @@ struct WorldRuntime
 	std::map<std::uint64_t, double> memberScores_; // member Id -> its template's score, for a member with no record (token_fights.cpp; derived, not saved)
 	// Task BO: the (member, body) pairs a world task gave up on and the tick they may be tried again (derived, not saved).
 	std::map<std::pair<std::uint64_t, std::uint64_t>, std::uint64_t> worldTaskBlocks_;
+	bool routeTrace_ = false; // setRouteTrace
+	// A walking interact that has not moved: where it stood and since which tick (stepInteractions' stall watch; derived, not saved).
+	struct InteractStall { double x = 0.0; double z = 0.0; std::uint64_t since = 0; double left = 0.0; bool onRoute = false; };
+	std::map<std::uint64_t, InteractStall> interactStall_;
 	// A slave's captor hand and its timers (slave_state.cpp; the captor is saved as the 187 row's target, the rest is derived).
 	struct SlaveTrack
 	{
@@ -1061,6 +1065,10 @@ public:
 	// starts following its captor (171), and one line per item a LOOT_THE_DEAD 177 take moves off a body (the item, the count, the
 	// body, the taker). Observation only; never saved.
 	void setTaskLog(std::function<void(const std::string&)> sink) { taskLog_ = std::move(sink); }
+	// The player-order route trace (--ai-routes, kenshi-k16.6.821): the approach point, the route points and the end reason of a player's
+	// interact and move orders, as task-log lines "route: ...".
+	void setRouteTrace(bool on) { routeTrace_ = on; }
+	bool routeTrace() const { return routeTrace_; }
 	void logTask(const std::string& line) const
 	{
 		if (taskLog_)

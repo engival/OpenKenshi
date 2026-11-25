@@ -47,7 +47,7 @@
 // The sim is paused (CLOCK says so) while no session has completed HELLO: it starts paused, resumes at the first ready session, pauses again
 // when the last one leaves, keeps its speed, and an admin pause order wins. --run-without-clients keeps it ticking with no client (a server
 // config will replace the flag). --dump-snapshot is unaffected.
-// --ai-routes: also send CHAR_ROUTE for AI characters (debug overlay).
+// --ai-routes: also send CHAR_ROUTE for AI characters (debug overlay), and log "route:" lines for the player's interact and move orders.
 // --debug-view: answer the debug view's frames 200-219 to a loopback peer (docs/formats/SIMLINK.md "DEBUG VIEW"); only a
 // KSIM_DEBUG_VIEW build sends the data (Release: the frames are accepted and dropped).
 // The default mesh reads the native patch cache (docs/formats/NAVMESH_CACHE.md "Patch cache") from $XDG_CACHE_HOME/kenshi-sim/
@@ -776,6 +776,7 @@ int runServer(const ServerConfig& options, std::atomic<bool>& stop)
 			err << "ksim_server: --paused: the admin pause is set until a client's first speed or pause order\n";
 		}
 		context.sendAiRoutes = options.aiRoutes;
+		sim.setRouteTrace(options.aiRoutes); // --ai-routes also prints the player orders' approach point, route and end reason
 		context.debugView = options.debugView; // the view itself answers only a loopback peer (Session::setDebugPeer)
 		if (options.logWorldSquads != 0)
 			sim.setWorldSquadLog(options.logWorldSquads, [&err](const std::string& line) { err << "ksim_server: " << line << "\n"; });
