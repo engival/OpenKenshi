@@ -1774,6 +1774,184 @@ void Gen::tops(const std::vector<Cutter>& cutters, const Params& prm, Stats& st)
 			}
 		}
 	}
+	if (prm.uniqueTops)
+	{
+		// One surface per covered area (kenshi-k16.7.207): two collision parts with the same flat top (or one object's overlapping triangles) made two
+		// pieces over each other; the earlier one stays whole and a later piece keeps only what is not under an earlier piece at the same height
+		// (within 0.3 u at the overlap's centre; a deck over the ground or a roof over a deck is another layer and stays).
+		struct Kept
+		{
+			std::vector<P2> xz;
+			size_t src; // the original piece whose surface it is
+			Box2 box;
+		};
+		const std::vector<std::vector<int>> orig = topPolys_;
+		// height of an original piece at (x, z): its fan triangle that holds the point (the pieces are not all planar), else the nearest triangle's plane
+		const auto hAt = [&](size_t piece, double x, double z)
+		{
+			const std::vector<int>& ids = orig[piece];
+			double best = 1e300, y = P_[ids[0]][1];
+			for (size_t k = 1; k + 1 < ids.size(); ++k)
+			{
+				const P3& p0 = P_[ids[0]], & p1 = P_[ids[k]], & p2 = P_[ids[k + 1]];
+				const double det = (p1[0] - p0[0]) * (p2[2] - p0[2]) - (p2[0] - p0[0]) * (p1[2] - p0[2]);
+				if (std::fabs(det) < 1e-12)
+					continue;
+				const double u = ((x - p0[0]) * (p2[2] - p0[2]) - (p2[0] - p0[0]) * (z - p0[2])) / det;
+				const double v = ((p1[0] - p0[0]) * (z - p0[2]) - (x - p0[0]) * (p1[2] - p0[2])) / det;
+				const double out = std::max({ -u, -v, u + v - 1.0, 0.0 }); // how far outside the triangle (barycentric)
+				if (out < best)
+				{
+					best = out;
+					y = p0[1] + u * (p1[1] - p0[1]) + v * (p2[1] - p0[1]);
+				}
+			}
+			return y;
+		};
+		std::vector<Kept> kept;
+		std::unordered_map<uint64_t, std::vector<size_t>> cells;
+		constexpr double cell = 32.0;
+		const auto cellOf = [&](double v) { return (int64_t)std::floor(v / cell); };
+		std::vector<std::vector<int>> outPolys;
+		std::vector<int> outLabel;
+		const auto edges = [](const std::vector<P2>& q)
+		{
+			std::vector<Line> lines;
+			const double sg = area2(q) < 0 ? -1.0 : 1.0;
+			for (size_t e = 0; e < q.size(); ++e)
+			{
+				const P2& u = q[e], & w = q[(e + 1) % q.size()];
+				const double nx = -sg * (w[1] - u[1]), nz = sg * (w[0] - u[0]), l = std::hypot(nx, nz);
+				if (l > 1e-12)
+					lines.push_back({ nx / l, nz / l, -(nx * u[0] + nz * u[1]) / l });
+			}
+			return lines;
+		};
+		for (size_t i = 0; i < topPolys_.size(); ++i)
+		{
+			std::vector<P2> xz;
+			for (const int v : topPolys_[i])
+				xz.push_back({ P_[v][0], P_[v][2] });
+			{
+				const double sg = area2(xz) < 0 ? -1.0 : 1.0;
+				for (size_t k = 0; k < xz.size(); ++k)
+				{
+					const P2& u = xz[k], & v = xz[(k + 1) % xz.size()], & w = xz[(k + 2) % xz.size()];
+					if (sg * ((v[0] - u[0]) * (w[1] - v[1]) - (v[1] - u[1]) * (w[0] - v[0])) < -1e-3)
+					{
+						++st.topNonConvex;
+						break;
+					}
+				}
+			}
+			const Box2 box = boxOf(xz);
+			bool touched = false;
+			std::vector<std::vector<P2>> frags = { xz };
+			std::set<size_t> near;
+			for (int64_t cx = cellOf(box.x0); cx <= cellOf(box.x1); ++cx)
+				for (int64_t cz = cellOf(box.z0); cz <= cellOf(box.z1); ++cz)
+					if (const auto it = cells.find(cellKeyOf(cx, cz)); it != cells.end())
+						near.insert(it->second.begin(), it->second.end());
+			for (const size_t j : near)
+			{
+				const Kept& k = kept[j];
+				if (!k.box.overlaps(box))
+					continue;
+				const std::vector<Line> cover = edges(k.xz);
+				std::vector<std::vector<P2>> next;
+				for (std::vector<P2>& frag : frags)
+				{
+					// the part under k
+					std::vector<P2> in = frag;
+					std::vector<P2> neg, pos;
+					bool ok = true;
+					for (const Line& L : cover)
+					{
+						if (splitBy(in, L, neg, pos))
+							in = pos;
+						else
+							for (const P2& q : in)
+								if (L.at(q) < -1e-4)
+								{
+									ok = false;
+									break;
+								}
+						if (!ok)
+							break;
+					}
+					if (!ok || in.size() < 3 || std::fabs(area2(in)) / 2 <= 0.005)
+					{
+						next.push_back(std::move(frag));
+						continue;
+					}
+					P2 mid = { 0, 0 };
+					for (const P2& q : in)
+						mid = { mid[0] + q[0] / in.size(), mid[1] + q[1] / in.size() };
+					if (std::fabs(hAt(i, mid[0], mid[1]) - hAt(k.src, mid[0], mid[1])) > 0.3)
+					{
+						next.push_back(std::move(frag));
+						continue;
+					}
+					touched = true;
+					// subtract: the part outside each cover edge in turn
+					std::vector<P2> rest = std::move(frag);
+					for (const Line& L : cover)
+					{
+						if (splitBy(rest, L, neg, pos))
+						{
+							next.push_back(neg);
+							rest = pos;
+						} else {
+							bool outside = false;
+							for (const P2& q : rest)
+								outside = outside || L.at(q) < -1e-4;
+							if (outside)
+							{
+								next.push_back(std::move(rest));
+								rest.clear();
+								break;
+							}
+						}
+					}
+				}
+				frags = std::move(next);
+				if (frags.empty())
+					break;
+			}
+			for (const std::vector<P2>& frag : frags)
+			{
+				if (frag.size() < 3)
+					continue;
+				double perimeter = 0;
+				for (size_t k = 0; k < frag.size(); ++k)
+					perimeter += std::hypot(frag[(k + 1) % frag.size()][0] - frag[k][0], frag[(k + 1) % frag.size()][1] - frag[k][1]);
+				if (std::fabs(area2(frag)) < 0.04 || std::fabs(area2(frag)) / perimeter < 0.02)
+					continue;
+				std::vector<int> ids;
+				if (!touched)
+					ids = topPolys_[i]; // untouched
+				else
+					for (const P2& q : frag)
+					{
+						const int v = topVertex(q[0], hAt(i, q[0], q[1]), q[1]);
+						if (ids.empty() || (ids.back() != v && ids.front() != v))
+							ids.push_back(v);
+					}
+				if (ids.size() < 3)
+					continue;
+				Kept k{ frag, i, boxOf(frag) };
+				kept.push_back(k);
+				for (int64_t cx = cellOf(k.box.x0); cx <= cellOf(k.box.x1); ++cx)
+					for (int64_t cz = cellOf(k.box.z0); cz <= cellOf(k.box.z1); ++cz)
+						cells[cellKeyOf(cx, cz)].push_back(kept.size() - 1);
+				outPolys.push_back(std::move(ids));
+				outLabel.push_back(topLabel_[i]);
+			}
+		}
+		st.topPieces = st.topPieces - topPolys_.size() + outPolys.size();
+		topPolys_ = std::move(outPolys);
+		topLabel_ = std::move(outLabel);
+	}
 	st.msTops = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
@@ -2282,6 +2460,7 @@ native::Mesh Gen::finish(const std::vector<std::array<double, 2>>& seeds, Stats&
 		if (dead[f])
 			continue;
 		native::Face face;
+		face.top = isTop[f];
 		face.startEdge = (uint32_t)mesh.edges.size();
 		face.numEdges = (uint16_t)poly[f].size();
 		for (size_t k = 0; k < poly[f].size(); ++k)

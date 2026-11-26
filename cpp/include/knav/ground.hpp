@@ -102,6 +102,7 @@ struct Params
 	bool straighten = false;	// off until the user has inspected it in the helper's viewer (kenshi-ffmi.15); on at 2,2 passes the knav suite (kenshi-k16.7.221)
 	double slopY = 2;
 	double slopXZ = 2;
+	bool uniqueTops = true;	// one top surface per covered area: a top piece over another at the same height keeps only what the earlier one leaves (kenshi-k16.7.207)
 	bool keepLooseTops = false;	// debug: tops that reach no ground stay, so a viewer or a test can see what the prune would drop
 };
 
@@ -125,6 +126,7 @@ struct Stats
 	std::map<std::string, double> topDropped;	// dropped xz area per Cutter::label
 	std::map<std::string, double> topKept;	// kept xz area per Cutter::label
 	std::vector<std::string> underTerrain;	// the shapes of walkable objects that lie wholly under the terrain (the Pontoon Bridge outliers): reported, inert
+	std::size_t topNonConvex = 0;	// top pieces that are not convex (uniqueTops subtracts by half-planes and needs convex pieces); expected 0
 	std::vector<std::uint32_t> topFaceIndex;	// the output mesh's faces that are tops
 	// pairs of the output mesh's faces with edges that meet the matcher's rule (linkTops), whether that stretch got the link or not: one
 	// component for a prune (a stretch of an edge links once)

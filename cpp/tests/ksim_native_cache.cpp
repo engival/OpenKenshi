@@ -176,7 +176,12 @@ void mirrorTree(const fs::path& source, const fs::path& target, const std::set<f
 
 int main()
 {
-	unsetenv("KENSHI_NAV_CACHE_SHARED"); // the cold/warm contract is of the test's own dir; the shared world cache would turn every miss into a hit (kenshi-k16.7.209)
+	// the cold/warm contract is of the test's own dir; the shared world cache would turn every miss into a hit (kenshi-k16.7.209)
+#ifdef _WIN32
+	_putenv_s("KENSHI_NAV_CACHE_SHARED", ""); // an empty value removes it (MinGW has no unsetenv; kenshi-k16.6.833)
+#else
+	::unsetenv("KENSHI_NAV_CACHE_SHARED");
+#endif
 	try
 	{
 		// The cache root from a faked environment (no data needed): the option wins, then XDG, the Windows variables, HOME.

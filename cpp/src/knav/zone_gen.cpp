@@ -210,6 +210,7 @@ std::vector<BakedTile> bakeZone(const NavConfig& config, const kworld::Heightmap
 	const std::vector<std::array<double, 2>>& seeds, int threads, ZoneGenReport* report, GroundWindows* windows, kworld::ZoneCell zone)
 {
 	ZoneGenReport local;
+	const bool wantWelded = report != nullptr && report->wantWelded;
 	std::vector<GeneratedBuilding> generated;
 	std::shared_ptr<GroundWindows::Entry> own;
 	if (windows != nullptr)
@@ -373,6 +374,8 @@ std::vector<BakedTile> bakeZone(const NavConfig& config, const kworld::Heightmap
 		local.seamPruned = ground::pruneJoined(world, stats.topFaceIndex, joined, &stats.topTouching);
 		stats.topFaces -= local.seamPruned;
 	}
+	if (wantWelded)
+		local.preWeldWorld = world;
 	const ground::WeldStats weld = ground::weldMesh(world);
 	local.welded = weld.welded;
 	local.weldSplit = weld.split;
@@ -383,8 +386,40 @@ std::vector<BakedTile> bakeZone(const NavConfig& config, const kworld::Heightmap
 	local.weldThrough = weld.through;
 	for (int i = 0; i < 4; ++i)
 		local.weldByLive[i] = weld.byLive[i];
+	for (const native::Face& face : world.faces)
+	{
+		// reflex corner: a turn against the winding of the whole face; self overlap: the fan triangles' areas add up to more than the face's
+		double twice = 0.0, fan = 0.0;
+		for (std::uint32_t k = 0; k < face.numEdges; ++k)
+		{
+			const auto& a = world.vertices[world.edges[face.startEdge + k].a];
+			const auto& b = world.vertices[world.edges[face.startEdge + (k + 1) % face.numEdges].a];
+			twice += a[0] * b[2] - b[0] * a[2];
+		}
+		const double sign = twice < 0 ? -1.0 : 1.0;
+		bool reflex = false;
+		for (std::uint32_t k = 0; k < face.numEdges; ++k)
+		{
+			const auto& a = world.vertices[world.edges[face.startEdge + k].a];
+			const auto& b = world.vertices[world.edges[face.startEdge + (k + 1) % face.numEdges].a];
+			const auto& c = world.vertices[world.edges[face.startEdge + (k + 2) % face.numEdges].a];
+			reflex = reflex || sign * ((b[0] - a[0]) * (c[2] - b[2]) - (b[2] - a[2]) * (c[0] - b[0])) < -0.02;
+		}
+		const auto& o = world.vertices[world.edges[face.startEdge].a];
+		for (std::uint32_t k = 1; k + 1 < face.numEdges; ++k)
+		{
+			const auto& a = world.vertices[world.edges[face.startEdge + k].a];
+			const auto& b = world.vertices[world.edges[face.startEdge + k + 1].a];
+			fan += std::fabs((a[0] - o[0]) * (b[2] - o[2]) - (a[2] - o[2]) * (b[0] - o[0]));
+		}
+		local.reflexFaces += reflex;
+		local.selfOverlapFaces += fan > std::fabs(twice) + 0.02;
+	}
+	if (wantWelded)
+		local.weldedWorld = world;
 	local.groundFaces = world.faces.size();
 	local.topFaces = stats.topFaces;
+	local.topNonConvex = stats.topNonConvex;
 	local.topKept = stats.topKept;
 	local.msGround = msSince(groundStart);
 	const auto painted = paintDoors(world, generated);
@@ -409,6 +444,10 @@ std::vector<BakedTile> bakeZone(const NavConfig& config, const kworld::Heightmap
 	local.openLinks = tileStats.openLinks;
 	local.openShared = tileStats.openShared;
 	local.tilePolys = tileStats.tilePolys;
+	local.topPolys = std::move(tileStats.topPolys);
+	local.polyFace = std::move(tileStats.polyFace);
+	local.nativeFanned = tileStats.fanned;
+	local.fannedFaces = tileStats.fannedFaces;
 	local.msTiles = msSince(tileStart);
 	if (report != nullptr)
 		*report = std::move(local);

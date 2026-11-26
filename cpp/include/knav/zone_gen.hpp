@@ -37,12 +37,21 @@ struct ZoneGenReport
 	std::vector<std::string> failedWhy; // the exception text of each failedIds entry (same index)
 	// bakeZone (the cutover: ground + surfgen, no Recast)
 	std::size_t groundFaces = 0, topFaces = 0; // the zone window's faces, and the walkable tops among them
+	std::size_t reflexFaces = 0, selfOverlapFaces = 0; // the welded mesh's faces with a reflex corner (turn against the face's winding over 0.01 u^2), and those whose vertex-0 fan overlaps itself (concave faces: a count of non-convex faces, not of folds)
 	std::size_t welded = 0, weldSplit = 0, weldPaired = 0, weldDropped = 0, weldOrphanOpen = 0, weldOrphanGap = 0, seamPruned = 0, weldThrough = 0, weldByLive[4] = {}; // ground::weldMesh over the window
 	std::size_t stitched = 0; // rim vertices inserted by stitchRims over the four neighbour windows
 	std::size_t doorFaces = 0, doorFacesPainted = 0; // zone-side door faces (data 4 / 5) and ground faces painted from them
 	std::size_t tiles = 0, overfullTiles = 0; // tiles built / left out over the polygon cap
 	int maxPolys = 0; // most polygons in one tile
 	std::size_t openLinks = 0, openShared = 0; // NativeTileStats: streaming-link / shared edges that found no partner polygon
+	std::map<std::pair<int, int>, std::vector<std::uint32_t>> polyFace; // see NativeTileStats::polyFace
+	std::vector<std::uint32_t> fannedFaces;
+	std::size_t nativeFanned = 0; // faces nativeTiles could not ear-clip
+	std::map<std::pair<int, int>, std::vector<std::uint8_t>> topPolys; // see NativeTileStats::topPolys
+	std::size_t topNonConvex = 0; // see ground::Stats::topNonConvex
+	bool wantWelded = false; // input: keep weldedWorld (a copy of the whole zone mesh; the fold census asks for it)
+	native::Mesh preWeldWorld; // the same before weldMesh (after stitchRims and pruneJoined)
+	native::Mesh weldedWorld; // the world mesh after weldMesh, before nativeTiles (the fold census)
 	std::vector<std::array<int, 3>> tilePolys; // {x, z, polygons} per tile reached, over the cap or not
 	std::map<std::string, double> topKept; // kept top area (xz u2) per source label (a building id, "foliage", "feature @ x, z")
 	double msGround = 0, msSurf = 0, msTiles = 0;

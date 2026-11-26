@@ -2020,7 +2020,7 @@ target_compile_definitions(knav_ground_buildings PRIVATE KENSHI_DATA="${KENSHI_D
 kdata_warnings(knav_ground_buildings)
 add_test(NAME knav_ground_buildings COMMAND knav_ground_buildings)
 add_executable(knav_cutover tests/knav_cutover.cpp)
-target_link_libraries(knav_cutover PRIVATE knav)
+target_link_libraries(knav_cutover PRIVATE knav clipper2)
 target_compile_definitions(knav_cutover PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(knav_cutover)
 add_test(NAME knav_cutover COMMAND knav_cutover)

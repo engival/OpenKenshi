@@ -2,6 +2,7 @@
 // Zone 46,16 (Heft, 12 x tops) and the Hub's zone: every building is generated or reported, the tiles over the polygon cap are listed, the tiles
 // exist, the bake is the same twice, and the wall time of a cold bake is printed.
 
+#include "clipper2/clipper.h"
 #include "knav/area.hpp"
 #include "knav/navmesh.hpp"
 #include "knav/seeds.hpp"
@@ -31,6 +32,14 @@ struct FoldCensus
 	std::size_t pairs = 0;
 	double worst = 0.0;
 	std::string where;
+	// by source, told by provenance (the polygon's source face is an object top or ground): ground/ground, ground/top, top/top
+	std::array<std::size_t, 3> byClass{};
+	std::array<double, 3> worstByClass{};
+	std::array<std::string, 3> whereByClass;
+	std::array<std::array<double, 2>, 3> atByClass{};
+	std::size_t over025 = 0, over1 = 0; // pairs above 0.25 u^2 (16 cells of the 1/8 u grid: above the quantization noise) and above 1 u^2
+	std::size_t sameFace = 0; // pairs whose two polygons come from one welded face
+	std::array<std::string, 3> shapeByClass; // the worst pair's two polygons, vertices (x,y,z)
 };
 
 double clippedArea(const std::vector<std::array<double, 2>>& subject, const std::vector<std::array<double, 2>>& clip, std::array<double, 2>& centre)
@@ -66,7 +75,8 @@ double clippedArea(const std::vector<std::array<double, 2>>& subject, const std:
 	return std::abs(area) * 0.5;
 }
 
-FoldCensus foldCensus(const knav::NavMesh& mesh, double eps)
+FoldCensus foldCensus(const knav::NavMesh& mesh, double eps, const std::map<std::pair<int, int>, std::vector<std::uint8_t>>& tops,
+	const std::map<std::pair<int, int>, std::vector<std::uint32_t>>& faceOf)
 {
 	FoldCensus census;
 	for (const knav::BakedTile& baked : mesh.tiles())
@@ -78,13 +88,18 @@ FoldCensus foldCensus(const knav::NavMesh& mesh, double eps)
 		{
 			std::vector<std::array<double, 2>> xz;
 			std::vector<double> ys;
+			int area = 0;
 			double y = 0.0, x0 = 1e30, x1 = -1e30, z0 = 1e30, z1 = -1e30;
 		};
+		const auto from = faceOf.find({ baked.x, baked.z });
+		const auto marks = tops.find({ baked.x, baked.z });
+		const auto isTop = [&](std::size_t p) { return marks != tops.end() && p < marks->second.size() && marks->second[p] != 0; };
 		std::vector<Poly> polys(static_cast<std::size_t>(tile->header->polyCount));
 		for (int p = 0; p < tile->header->polyCount; ++p)
 		{
 			const dtPoly& poly = tile->polys[p];
 			Poly& out = polys[static_cast<std::size_t>(p)];
+			out.area = poly.getArea();
 			for (int k = 0; k < poly.vertCount; ++k)
 			{
 				const float* v = &tile->verts[poly.verts[k] * 3];
@@ -132,7 +147,40 @@ FoldCensus foldCensus(const knav::NavMesh& mesh, double eps)
 				};
 				if (std::abs(heightAt(pa) - heightAt(pb)) > 0.3)
 					continue;
+				// by provenance (the source face's top flag through nativeTiles), not by height: the simplifier lets ground sit up to heightError off the grid
+				const int cls = (isTop(a) ? 1 : 0) + (isTop(b) ? 1 : 0);
+				++census.byClass[cls];
+				census.over025 += area > 0.25;
+				census.over1 += area > 1.0;
+				if (from != faceOf.end() && a < from->second.size() && b < from->second.size() && from->second[a] == from->second[b] && from->second[a] != 0xffffffffu && census.sameFace < 3)
+				{
+					std::cout << "    same-face pair tile " << baked.x << "," << baked.z << " face " << from->second[a] << " polys " << a << "/" << b << " overlap " << area << ":";
+					for (const Poly* poly : { &pa, &pb })
+					{
+						std::cout << " [";
+						for (std::size_t k = 0; k < poly->xz.size(); ++k)
+							std::cout << " (" << poly->xz[k][0] << "," << poly->ys[k] << "," << poly->xz[k][1] << ")";
+						std::cout << "]";
+					}
+					std::cout << "\n";
+				}
+				census.sameFace += from != faceOf.end() && a < from->second.size() && b < from->second.size() && from->second[a] == from->second[b] && from->second[a] != 0xffffffffu;
 				++census.pairs;
+				if (area > census.worstByClass[cls])
+				{
+					census.worstByClass[cls] = area;
+					std::string shape;
+					for (const Poly* poly : { &pa, &pb })
+					{
+						shape += " [area " + std::to_string(poly->area) + ":";
+						for (std::size_t k = 0; k < poly->xz.size(); ++k)
+							shape += " (" + std::to_string(poly->xz[k][0]).substr(0, 9) + "," + std::to_string(poly->ys[k]).substr(0, 7) + "," + std::to_string(poly->xz[k][1]).substr(0, 9) + ")";
+						shape += "]";
+					}
+					census.shapeByClass[cls] = shape;
+					census.atByClass[cls] = at;
+					census.whereByClass[cls] = "tile " + std::to_string(baked.x) + "," + std::to_string(baked.z) + " at " + std::to_string(at[0]) + "," + std::to_string(at[1]);
+				}
 				if (area > census.worst)
 				{
 					census.worst = area;
@@ -142,6 +190,123 @@ FoldCensus foldCensus(const knav::NavMesh& mesh, double eps)
 			}
 	}
 	return census;
+}
+
+
+// Exact overlap census of a face mesh (kenshi-k16.7.207): face pairs whose xz outlines share area above 0.01 u^2 (Clipper2 intersection, the outlines as the
+// faces hold them, non-convex or not) at heights within 0.3 u of each other at the overlap's first point (the faces are read per fan triangle, nearest wins).
+// Classes: ground/ground, ground/top, top/top (native::Face::top).
+struct FaceFolds
+{
+	std::array<std::size_t, 3> pairs{};
+	std::array<double, 3> worst{};
+	std::array<std::string, 3> where;
+};
+
+FaceFolds faceFolds(const knav::native::Mesh& m)
+{
+	struct F
+	{
+		Clipper2Lib::Path64 path;
+		std::vector<std::array<double, 3>> v;
+		double x0 = 1e30, x1 = -1e30, z0 = 1e30, z1 = -1e30;
+	};
+	std::vector<F> faces(m.faces.size());
+	for (std::size_t f = 0; f < m.faces.size(); ++f)
+	{
+		const knav::native::Face& face = m.faces[f];
+		for (std::uint32_t k = 0; k < face.numEdges; ++k)
+		{
+			const auto& p = m.vertices[m.edges[face.startEdge + k].a];
+			faces[f].v.push_back(p);
+			faces[f].path.push_back({ std::llround(p[0] * 1000.0), std::llround(p[2] * 1000.0) });
+			faces[f].x0 = std::min(faces[f].x0, p[0]); faces[f].x1 = std::max(faces[f].x1, p[0]);
+			faces[f].z0 = std::min(faces[f].z0, p[2]); faces[f].z1 = std::max(faces[f].z1, p[2]);
+		}
+	}
+	const auto heightAt = [](const F& face, double x, double z)
+	{
+		double best = 1e300, y = face.v[0][1];
+		for (std::size_t k = 1; k + 1 < face.v.size(); ++k)
+		{
+			const auto& p0 = face.v[0]; const auto& p1 = face.v[k]; const auto& p2 = face.v[k + 1];
+			const double det = (p1[0] - p0[0]) * (p2[2] - p0[2]) - (p2[0] - p0[0]) * (p1[2] - p0[2]);
+			if (std::abs(det) < 1e-12)
+				continue;
+			const double u = ((x - p0[0]) * (p2[2] - p0[2]) - (p2[0] - p0[0]) * (z - p0[2])) / det;
+			const double w = ((p1[0] - p0[0]) * (z - p0[2]) - (x - p0[0]) * (p1[2] - p0[2])) / det;
+			const double out = std::max({ -u, -w, u + w - 1.0, 0.0 });
+			if (out < best)
+			{
+				best = out;
+				y = p0[1] + u * (p1[1] - p0[1]) + w * (p2[1] - p0[1]);
+			}
+		}
+		return y;
+	};
+	std::vector<std::size_t> order(faces.size());
+	for (std::size_t i = 0; i < order.size(); ++i)
+		order[i] = i;
+	std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return faces[a].x0 < faces[b].x0; });
+	FaceFolds out;
+	for (std::size_t oi = 0; oi < order.size(); ++oi)
+		for (std::size_t oj = oi + 1; oj < order.size() && faces[order[oj]].x0 < faces[order[oi]].x1; ++oj)
+		{
+			const std::size_t a = order[oi], b = order[oj];
+			if (faces[a].z1 <= faces[b].z0 || faces[b].z1 <= faces[a].z0 || faces[a].path.size() < 3 || faces[b].path.size() < 3)
+				continue;
+			const Clipper2Lib::Paths64 hit = Clipper2Lib::Intersect({ faces[a].path }, { faces[b].path }, Clipper2Lib::FillRule::NonZero);
+			double area = 0.0;
+			for (const auto& path : hit)
+				area += std::abs(Clipper2Lib::Area(path)) / 1e6;
+			if (area <= 0.01 || hit.empty() || hit[0].empty())
+				continue;
+			const double x = hit[0][0].x / 1000.0, z = hit[0][0].y / 1000.0;
+			if (std::abs(heightAt(faces[a], x, z) - heightAt(faces[b], x, z)) > 0.3)
+				continue;
+			const int cls = (m.faces[a].top ? 1 : 0) + (m.faces[b].top ? 1 : 0);
+			++out.pairs[cls];
+			if (area > out.worst[cls])
+			{
+				out.worst[cls] = area;
+				out.where[cls] = "faces " + std::to_string(a) + "/" + std::to_string(b) + " at " + std::to_string(x) + "," + std::to_string(z);
+			}
+		}
+	return out;
+}
+
+// Faces whose outline crosses itself (two non-adjacent edges cross properly in xz): counted by ground / top, the first of each listed.
+void selfCrossing(const knav::native::Mesh& m, const char* stage)
+{
+	std::array<std::size_t, 2> count{};
+	std::array<std::string, 2> first;
+	for (std::size_t f = 0; f < m.faces.size(); ++f)
+	{
+		const knav::native::Face& face = m.faces[f];
+		const std::uint32_t n = face.numEdges;
+		const auto at = [&](std::uint32_t k) -> const std::array<double, 3>& { return m.vertices[m.edges[face.startEdge + k % n].a]; };
+		const auto orient = [](const auto& a, const auto& b, const auto& c) { return (b[0] - a[0]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[0] - a[0]); };
+		bool crossing = false;
+		for (std::uint32_t i = 0; i < n && !crossing; ++i)
+			for (std::uint32_t j = i + 2; j < n && !crossing; ++j)
+			{
+				if (i == 0 && j == n - 1)
+					continue;
+				const auto& a = at(i); const auto& b = at(i + 1); const auto& c = at(j); const auto& d = at(j + 1);
+				const double o1 = orient(a, b, c), o2 = orient(a, b, d), o3 = orient(c, d, a), o4 = orient(c, d, b);
+				crossing = ((o1 > 1e-6 && o2 < -1e-6) || (o1 < -1e-6 && o2 > 1e-6)) && ((o3 > 1e-6 && o4 < -1e-6) || (o3 < -1e-6 && o4 > 1e-6));
+			}
+		if (!crossing)
+			continue;
+		++count[face.top];
+		if (first[face.top].empty())
+		{
+			first[face.top] = "face " + std::to_string(f) + ":";
+			for (std::uint32_t k = 0; k < n; ++k)
+				first[face.top] += " (" + std::to_string(at(k)[0]).substr(0, 9) + "," + std::to_string(at(k)[2]).substr(0, 9) + ")";
+		}
+	}
+	std::cout << "  self-crossing faces " << stage << ": ground " << count[0] << ", top " << count[1] << " of " << m.faces.size() << "; first ground " << first[0] << "; first top " << first[1] << "\n";
 }
 
 // The polygons within `radius` of a point (the 828 spot): index, vertex count, mean y, and the edges with no neighbour (wall or open).
@@ -184,6 +349,7 @@ std::vector<knav::BakedTile> bake(const std::string& dataDir, const kworld::Heig
 	const knav::AreaGeometry area = knav::gatherArea(dataDir, terrain, zone, zone);
 	const knav::NavConfig config = knav::configForWorldZones(zone, zone);
 	const std::vector<std::array<double, 2>> seeds = knav::zoneBakeSeeds(terrain, area, knav::readSeedsDef(dataDir + "/navtiles"), zone, config.waterLevel);
+	report.wantWelded = true;
 	const auto start = std::chrono::steady_clock::now();
 	std::vector<knav::BakedTile> tiles = knav::bakeZone(config, terrain, area, seeds, 4, &report);
 	ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -219,10 +385,65 @@ void zone(const std::string& dataDir, const kworld::Heightmap& terrain, const ch
 	for (const std::string& id : report.failedIds)
 		std::cout << "  building not generated: " << id << "\n";
 	test::require(!tiles.empty(), std::string(name) + ": the zone has tiles");
+	std::cout << "  non-convex top pieces (uniqueTops needs 0): " << report.topNonConvex << "\n";
+	test::require(report.topNonConvex == 0, std::string(name) + ": every top piece is convex");
 	{
 		const knav::NavMesh whole = knav::NavMesh::fromTiles(knav::configForWorldZones(cell, cell), tiles);
-		const FoldCensus fold = foldCensus(whole, 0.01);
+		const FoldCensus fold = foldCensus(whole, 0.01, report.topPolys, report.polyFace);
 		std::cout << "  fold census " << name << ": " << fold.pairs << " overlapping polygon pairs (> 0.01 u^2), worst " << fold.worst << " u^2 " << fold.where << "\n";
+		std::cout << "  final fold pairs from one welded face: " << fold.sameFace << " of " << fold.pairs << "; above 0.25 u2 (over the 1/8 u quantization noise): " << fold.over025 << ", above 1 u2: " << fold.over1 << "; faces nativeTiles left out (not simple) " << report.nativeFanned << "\n";
+		for (std::size_t i = 0; i < report.fannedFaces.size() && i < 4; ++i)
+		{
+			const knav::native::Mesh& w = report.weldedWorld;
+			const knav::native::Face& face = w.faces[report.fannedFaces[i]];
+			std::cout << "    left-out face " << report.fannedFaces[i] << " top " << face.top << ":";
+			for (std::uint32_t k = 0; k < face.numEdges; ++k)
+			{
+				const auto& v = w.vertices[w.edges[face.startEdge + k].a];
+				std::cout << " (" << v[0] << "," << v[1] << "," << v[2] << ")";
+			}
+			std::cout << "\n";
+		}
+		std::cout << "  welded mesh faces with a reflex corner " << report.reflexFaces << ", with a self-overlapping fan " << report.selfOverlapFaces << " of " << report.groundFaces << "\n";
+		static const char* const kClass[3] = { "ground/ground", "ground/top", "top/top" };
+		for (int c = 0; c < 3; ++c)
+			std::cout << "    " << kClass[c] << ": " << fold.byClass[c] << " pairs, worst " << fold.worstByClass[c] << " u^2 " << fold.whereByClass[c] << fold.shapeByClass[c] << "\n";
+		for (const auto& [stage, mesh] : { std::pair<const char*, const knav::native::Mesh*>{ "before weld", &report.preWeldWorld }, { "after weld", &report.weldedWorld } })
+		{
+			selfCrossing(*mesh, stage);
+			const FaceFolds ff = faceFolds(*mesh);
+			std::cout << "  face folds " << name << " " << stage << " (exact):";
+			for (int c = 0; c < 3; ++c)
+				std::cout << " " << kClass[c] << " " << ff.pairs[c] << " (worst " << ff.worst[c] << " u2 " << ff.where[c] << ")";
+			std::cout << "\n";
+		}
+		// the welded mesh's faces over each class's worst point: is the overlap already there before nativeTiles?
+		for (int c = 0; c < 3; ++c)
+		{
+			const auto& at = fold.atByClass[c];
+			const knav::native::Mesh& w = report.weldedWorld;
+			for (std::size_t f = 0; f < w.faces.size(); ++f)
+			{
+				const knav::native::Face& face = w.faces[f];
+				bool inside = false;
+				for (std::uint32_t k = 0; k < face.numEdges; ++k)
+				{
+					const auto& a = w.vertices[w.edges[face.startEdge + k].a];
+					const auto& b = w.vertices[w.edges[face.startEdge + (k + 1) % face.numEdges].a];
+					if ((a[2] > at[1]) != (b[2] > at[1]) && at[0] < a[0] + (at[1] - a[2]) / (b[2] - a[2]) * (b[0] - a[0]))
+						inside = !inside;
+				}
+				if (!inside)
+					continue;
+				std::cout << "    welded face " << f << " over " << kClass[c] << " worst point, top " << face.top << ":";
+				for (std::uint32_t k = 0; k < face.numEdges; ++k)
+				{
+					const auto& a = w.vertices[w.edges[face.startEdge + k].a];
+					std::cout << " (" << a[0] << "," << a[1] << "," << a[2] << ")";
+				}
+				std::cout << "\n";
+			}
+		}
 		if (cell.x == 46 && cell.z == 16)
 		{
 			spotReport(whole, "828a", 67037, -72177, 6);

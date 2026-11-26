@@ -21,6 +21,7 @@ struct Face
 	std::uint32_t startEdge = 0;
 	std::uint16_t numEdges = 0;
 	std::int32_t data = 0; // faceData: 4 = an open door, 5 = closed, others material ids (UNSURE)
+	bool top = false; // an object top the ground generator made (provenance for the fold census; not stored, not part of the mesh)
 	std::uint64_t door = 0; // a door face (data 4 / 5) painted by the generator: the door's kworld::DoorKey; 0 = none (shipped faces carry no id)
 };
 

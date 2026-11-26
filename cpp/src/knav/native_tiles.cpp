@@ -76,10 +76,20 @@ bool blocksEar(const Point3& p, const Point3& a, const Point3& b, const Point3& 
 	return !same(a) && !same(b) && !same(c) && cross(a, b, p) <= 0.0 && cross(b, c, p) <= 0.0 && cross(c, a, p) <= 0.0;
 }
 
-// Ear clipping of a negative-wound outline; false when no ear is left (a self-touching outline), the rest then fanned.
+// Twice the signed xz area of an outline (negative for Detour's winding).
+double outlineArea(const Outline& o)
+{
+	double area = 0.0;
+	for (std::size_t i = 1; i + 1 < o.points.size(); ++i)
+		area += cross(o.points[0], o.points[i], o.points[i + 1]);
+	return area;
+}
+
+// Ear clipping of a negative-wound simple outline. False when no ear is left over a remainder that still has area (the outline is not simple):
+// `out` is then empty and the face is left out of the tile, never fanned (a fan over a non-simple outline lays triangles over its neighbours,
+// kenshi-k16.7.207). A remainder with no area (corners on one line) is cut down to zero-width triangles, the bridges they are.
 bool earClip(Outline outline, std::vector<Outline>& out)
 {
-	bool clean = true;
 	while (outline.points.size() > 3)
 	{
 		const std::size_t n = outline.points.size();
@@ -100,8 +110,12 @@ bool earClip(Outline outline, std::vector<Outline>& out)
 		}
 		if (ear == n)
 		{
-			clean = false;
-			ear = 1;
+			if (std::fabs(outlineArea(outline)) > 1e-3)
+			{
+				out.clear();
+				return false;
+			}
+			ear = 1; // a remainder with no area (corners on one line): cut down to triangles as before, they are zero-width bridges
 		}
 		const std::size_t prev = (ear + n - 1) % n;
 		const std::size_t next = (ear + 1) % n;
@@ -112,7 +126,91 @@ bool earClip(Outline outline, std::vector<Outline>& out)
 		outline.kinds.erase(outline.kinds.begin() + static_cast<std::ptrdiff_t>(ear));
 	}
 	out.push_back(std::move(outline));
-	return clean;
+	return true;
+}
+
+// An outline made simple (kenshi-k16.7.207): corners where the outline folds back onto itself (a spike: two edges on one line, running the same way
+// out and back) are dropped, and an outline that touches itself at a repeated corner (a pinch) is split there into one outline per lobe. False when a
+// lobe winds the other way (a hole) or two edges still cross: the face is not simple and is left out.
+bool simplify(Outline outline, std::vector<Outline>& loops)
+{
+	std::vector<Outline> work;
+	work.push_back(std::move(outline));
+	while (!work.empty())
+	{
+		Outline o = std::move(work.back());
+		work.pop_back();
+		// spikes
+		for (bool again = true; again && o.points.size() >= 3;)
+		{
+			again = false;
+			const std::size_t n = o.points.size();
+			for (std::size_t i = 0; i < n; ++i)
+			{
+				const Point3& a = o.points[(i + n - 1) % n];
+				const Point3& b = o.points[i];
+				const Point3& c = o.points[(i + 1) % n];
+				const double la = std::hypot(a.x - b.x, a.z - b.z), lc = std::hypot(c.x - b.x, c.z - b.z);
+				if (la <= 0.0 || lc <= 0.0)
+					continue;
+				if (std::fabs(cross(a, b, c)) <= 1e-3 * la * lc && (a.x - b.x) * (c.x - b.x) + (a.z - b.z) * (c.z - b.z) > 0.0)
+				{
+					o.points.erase(o.points.begin() + static_cast<std::ptrdiff_t>(i));
+					o.kinds.erase(o.kinds.begin() + static_cast<std::ptrdiff_t>(i));
+					again = true;
+					break;
+				}
+			}
+		}
+		if (o.points.size() < 3)
+			continue;
+		// a pinch: a corner repeated
+		const std::size_t n = o.points.size();
+		bool split = false;
+		for (std::size_t i = 0; i < n && !split; ++i)
+			for (std::size_t j = i + 1; j < n && !split; ++j)
+				if (o.points[i].x == o.points[j].x && o.points[i].z == o.points[j].z)
+				{
+					Outline inner, outer;
+					for (std::size_t k = i; k < j; ++k)
+					{
+						inner.points.push_back(o.points[k]);
+						inner.kinds.push_back(o.kinds[k]);
+					}
+					for (std::size_t k = 0; k < n; ++k)
+						if (k < i || k >= j)
+						{
+							outer.points.push_back(o.points[k]);
+							outer.kinds.push_back(o.kinds[k]);
+						}
+					work.push_back(std::move(inner));
+					work.push_back(std::move(outer));
+					split = true;
+				}
+		if (split)
+			continue;
+		const double area = outlineArea(o);
+		if (area > 1e-3)
+			return false; // a lobe the other way round: a hole
+		if (std::fabs(area) <= 1e-3)
+		{
+			loops.push_back(std::move(o)); // no area: kept as it is (the zero-width bridge between its neighbours)
+			continue;
+		}
+		// no two edges cross
+		for (std::size_t i = 0; i < n; ++i)
+			for (std::size_t j = i + 2; j < n; ++j)
+			{
+				if (i == 0 && j == n - 1)
+					continue;
+				const Point3& a = o.points[i]; const Point3& b = o.points[(i + 1) % n]; const Point3& c = o.points[j]; const Point3& d = o.points[(j + 1) % n];
+				const double o1 = cross(a, b, c), o2 = cross(a, b, d), o3 = cross(c, d, a), o4 = cross(c, d, b);
+				if (((o1 > 1e-6 && o2 < -1e-6) || (o1 < -1e-6 && o2 > 1e-6)) && ((o3 > 1e-6 && o4 < -1e-6) || (o3 < -1e-6 && o4 > 1e-6)))
+					return false;
+			}
+		loops.push_back(std::move(o));
+	}
+	return true;
 }
 
 // The crossing of segment p-q with the line axis = value, interpolated from the lower endpoint, so the two faces that
@@ -331,6 +429,9 @@ struct TilePoly
 	Piece piece;
 	Area area = Area::Land;
 	DoorKey door = 0;
+	bool top = false; // from the source face (census only)
+	std::uint32_t srcFace = 0; // ... and its index in its mesh (census only)
+	std::uint32_t srcMesh = 0;
 };
 
 // A mesh's vertex positions with the two ends of every opposite-edge pair moved onto one vertex (the original's opposite
@@ -589,8 +690,18 @@ std::optional<BakedTile> buildTile(const NavConfig& c, const std::vector<native:
 		if (face.numEdges < 3)
 			continue;
 		std::vector<Outline> triangles;
-		if (!earClip(faceOutline(mesh, faces[f].mesh, vertices[faces[f].mesh], face, splits), triangles))
+		std::vector<Outline> loops;
+		bool placed = simplify(faceOutline(mesh, faces[f].mesh, vertices[faces[f].mesh], face, splits), loops);
+		for (const Outline& loop : loops)
+			placed = placed && earClip(loop, triangles);
+		if (!placed)
+		{
+			// not a simple outline: left out of the tile (a hole is better than a fold), counted and listed
+			triangles.clear();
 			++stats.fanned;
+			if (faces[f].mesh == 0)
+				stats.fannedFaces.push_back(faces[f].face);
+		}
 		Clipped entry{ f, {} };
 		for (const Outline& triangle : triangles)
 		{
@@ -628,6 +739,9 @@ std::optional<BakedTile> buildTile(const NavConfig& c, const std::vector<native:
 		{
 			stats.slivers += piece.sliver ? 1 : 0;
 			TilePoly poly;
+			poly.top = face.top;
+			poly.srcFace = faces[entry.face].face;
+			poly.srcMesh = faces[entry.face].mesh;
 			std::array<double, 3> centre{};
 			for (const int id : piece.corners)
 			{
@@ -684,6 +798,15 @@ std::optional<BakedTile> buildTile(const NavConfig& c, const std::vector<native:
 		return std::nullopt;
 	stats.maxPolys = std::max(stats.maxPolys, static_cast<int>(polys.size()));
 	stats.tilePolys.push_back({ tx, tz, static_cast<int>(polys.size()) });
+	{
+		std::vector<std::uint8_t>& marks = stats.topPolys[{ tx, tz }];
+		std::vector<std::uint32_t>& src = stats.polyFace[{ tx, tz }];
+		for (const TilePoly& poly : polys)
+		{
+			marks.push_back(poly.top);
+			src.push_back(poly.srcMesh == 0 ? poly.srcFace : 0xffffffffu); // the world mesh is mesh 0
+		}
+	}
 	if (polys.size() > static_cast<std::size_t>(kMaxPolysPerTile) || tile.verts.size() >= 0xffff)
 	{
 		++stats.overfull;
