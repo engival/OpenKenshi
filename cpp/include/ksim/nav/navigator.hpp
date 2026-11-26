@@ -217,6 +217,14 @@ struct NativeCacheOptions
 	// Trees kept under the root, the newest by mtime (the tree in use always stays). 0 = the default (3: a few mod sets or recipes).
 	// A test's private cache dir sets 1: every recipe or bake-source change otherwise leaves a dead ~3.4 GB tree (kenshi-k16.6.814).
 	std::size_t keepTrees = 0;
+	// A read-only shared cache root (KENSHI_NAV_CACHE_SHARED when empty; kenshi-k16.7.190): the same tree name under it is read
+	// when an entry is missing from `dir`'s tree. Nothing is ever written, created or pruned there.
+	std::string sharedDir;
+	// Name the tree by recipe + world data alone, w<recipe>_<data>, the name a server's shared lookup uses (ksim_navcache_bake; kenshi-k16.7.215).
+	bool lookupName = false;
+	// bakeNativeZone shares each zone's ground window with its neighbours (knav::GroundWindows): for a bake that walks zones in row order
+	// (ksim_navcache_bake); a streaming server bakes zones in any order and leaves it off (kenshi-k16.7.215).
+	bool shareGroundWindows = false;
 };
 // The default cache root from an environment lookup (getenv-like, null = unset): KENSHI_NAV_CACHE, else
 // $XDG_CACHE_HOME/kenshi-sim/navmesh, else %LOCALAPPDATA%/kenshi-sim/navmesh, else %APPDATA%/..., else
@@ -230,6 +238,7 @@ struct NativeCacheStats
 	std::size_t regionMisses = 0; // converted and written
 	std::size_t zoneHits = 0; // a zone rebake read from the cache
 	std::size_t zoneMisses = 0; // rebaked and written
+	std::size_t sharedHits = 0; // ... of the region / zone hits, the ones read from the shared tree
 	std::size_t filesWritten = 0;
 	std::size_t bytesWritten = 0;
 	std::size_t loadFailures = 0; // corrupt, truncated or another version: deleted, logged and rebuilt
@@ -420,7 +429,8 @@ public:
 	{
 		std::size_t zonesShipped = 0;
 		std::size_t zonesForestOnly = 0; // counted in zonesShipped too: the hash differs by the forest word alone, the shipped tile is kept
-		std::size_t zonesRebaked = 0; // a stale zone hash
+		std::size_t zonesRebaked = 0; // a stale zone hash, baked now
+		std::size_t zonesCached = 0; // a stale zone hash, our bake read from the cache (own or shared tree)
 		std::size_t zonesNotComputable = 0; // rebaked without a verdict
 		std::size_t interiorsShipped = 0;
 		std::size_t interiorsRebaked = 0; // a stale interior hash, in a fresh zone
@@ -474,6 +484,23 @@ public:
 	// Totals over all setCoverage calls.
 	const CoverageChange& coverageTotals() const noexcept { return totals_; }
 
+	// ---- The resident world (kenshi-k16.7.204: "a character position must never be out of bounds; the navmesh is those bounds") ----
+	// Every zone of the world (the 64 x 64 grid, row by row), for makeResident.
+	static std::vector<kworld::ZoneCell> worldZones();
+	// Loads exactly `zones` (a region at a time, so the converted tiles are not held twice at once), builds the connected sets the planner uses,
+	// and from then on the mesh is resident: setCoverage changes nothing (no zone streaming, no prefetch) and Simulation::syncNavCoverage only
+	// furnishes. The server passes worldZones(); a test passes a small named set. Tiles of a stood or changed building still swap
+	// (standBuilding / replaceTiles). A zone with no tiles is simply an empty zone.
+	CoverageChange makeResident(const std::vector<kworld::ZoneCell>& zones);
+	bool resident() const noexcept { return resident_; }
+	struct ResidentLoad
+	{
+		std::size_t zones = 0, tiles = 0, polys = 0;
+		double loadMs = 0.0; // reading / baking the zones and adding the tiles
+		double setsMs = 0.0; // the connected sets (the clearance components of the planner), built once
+	};
+	const ResidentLoad& residentLoad() const noexcept { return residentLoad_; }
+
 	// The nav cache's recipe number, and a digest of one zone's fresh bake (the canary test pins the two together:
 	// tests/ksim_nav_cache_canary.cpp). Needs openNative.
 	static std::uint32_t nativeCacheRecipe();
@@ -523,6 +550,7 @@ private:
 	const kdata::GameData* sharedGameData_ = nullptr; // openNative: the caller's game data (not owned)
 	bool nativeSource_ = false;
 	NativeCacheOptions cacheOptions_;
+	std::string sharedTree_; // <sharedRoot>/w<recipe>_<worldKey> (no source hash) when it exists; read-only, empty = none
 	std::string cacheTree_; // <root>/w<recipe>_<srcHash>_<worldKey> (openNative); empty = no cache
 	mutable NativeCacheStats cacheStats_;
 	std::unique_ptr<kworld::Heightmap> terrain_;
@@ -532,6 +560,8 @@ private:
 	std::function<void(const std::string&)> log_;
 	mutable std::map<int, NativeTileReport> staleReports_; // openNative: by zone index, last conversion
 	mutable NativeStaleStats staleStats_;
+	mutable std::mutex windowsMutex_; // bakeNativeZoneFresh with cacheOptions_.shareGroundWindows: one zone at a time
+	mutable knav::GroundWindows groundWindows_;
 	mutable std::mutex bakeMemoMutex_;
 	mutable std::vector<std::pair<kworld::ZoneCell, std::vector<knav::BakedTile>>> bakeMemo_; // the last bakeNativeZone results
 	mutable std::map<int, std::vector<knav::BakedTile>> nativeRegions_; // openNative: the converted tiles of each region held now
@@ -539,6 +569,9 @@ private:
 	mutable std::set<int> zones_; // resident zone indices (kworld::zoneIndexOf)
 	mutable std::map<int, bool> fileOk_; // canCover answers (a stat per zone per tick would be waste)
 	mutable CoverageChange totals_;
+	bool resident_ = false; // makeResident: setCoverage is a no-op from here on
+	ResidentLoad residentLoad_;
+	CoverageChange applyCoverage(const std::vector<kworld::ZoneCell>& wanted, std::size_t cap) const;
 	// Mutable for applyDoors only: the paint is the navigator's door view, the tiles themselves never change.
 	mutable knav::NavMesh mesh_;
 	mutable std::uint64_t doorPaints_ = 0;

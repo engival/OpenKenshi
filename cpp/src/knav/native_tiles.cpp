@@ -809,6 +809,35 @@ std::optional<BakedTile> buildTile(const NavConfig& c, const std::vector<native:
 			for (const std::uint32_t other : edgeOwners[edgeKey(static_cast<std::uint32_t>(a), static_cast<std::uint32_t>(b))])
 				if (other != p)
 					return static_cast<int>(other);
+		if (tag.kind != EdgeKind::Wall)
+		{
+			// Last: whatever polygon of the tile has an edge running the other way along this one (the face across was collapsed or
+			// clipped away on the grid): the one overlapping most, within the climb in height.
+			const QuantVertex& va = tile.verts[static_cast<std::size_t>(a)];
+			const QuantVertex& vb = tile.verts[static_cast<std::size_t>(b)];
+			int best = -1;
+			double most = 0.0;
+			for (std::size_t q = 0; q < polys.size(); ++q)
+			{
+				const auto& corners = polys[q].piece.corners;
+				for (std::size_t k = 0; q != p && k < corners.size(); ++k)
+				{
+					const QuantVertex& vc = tile.verts[static_cast<std::size_t>(corners[k])];
+					const QuantVertex& vd = tile.verts[static_cast<std::size_t>(corners[(k + 1) % corners.size()])];
+					if ((vb.x - va.x) * (vd.x - vc.x) + (vb.z - va.z) * (vd.z - vc.z) >= 0)
+						continue;
+					if (std::abs((vc.y + vd.y) - (va.y + vb.y)) * 0.5 * kCell > 5.0)
+						continue;
+					const double shared = overlap(a, b, corners[k], corners[(k + 1) % corners.size()]);
+					if (shared > most)
+					{
+						most = shared;
+						best = static_cast<int>(q);
+					}
+				}
+			}
+			return best;
+		}
 		return -1;
 	};
 	const int side = static_cast<int>(std::lround(c.tileSize / kCell));

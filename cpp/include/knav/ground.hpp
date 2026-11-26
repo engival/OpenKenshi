@@ -14,6 +14,14 @@
 // T-junctions repaired, the pieces re-triangulated; the outlines then simplify by the border rule like any other border.
 // Walkable tops of objects (section 12): faces cut against the terrain grid, linked to the ground and each other, pruned to what reaches the ground.
 // Buildings' zone-side surfaces (surfgen) join as prebuilt tops (zoneSideCutter): terrain cut, links to the ground, prune to ground or seam.
+//
+// HARD RULE (user 2026-11-26, kenshi-k16.7.225): the walkable faces of one object (its tops, a building's zone side and interior floors)
+// cover at most 2 x 2 zone cells (4608 u each). So a zone plus its 8 neighbours always holds every walkable face of every object that
+// touches the zone. The rule is about walkable faces, not collision: an object that only blocks (cuts the ground, no walkable face) may be
+// any size, and the cutter code must not assume a bound. Measured by tools/zone_span_audit.py over the shipped world, on whole collision
+// footprints, which bound the walkable faces: every collision object stays within 2 x 2 (the widest is 6.6 k, Bones_Town_Ribs). The only
+// 3 x 2 object is render-only (the Ashland Skylink). Code may rely on the rule. A mod that breaks it is to be refused at the bake, not
+// handled (the check, on walkable faces: kenshi-k16.7.226).
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -75,6 +83,7 @@ struct Params
 	double trimWidth = 2;
 	double trimAngleDeg = 30;
 	double trimMaxDepth = 60;	// a needle (angle near 0) is cut at most this far from its tip
+	bool trimAfterSimplify = true;	// the same trim again on the simplified mesh: the simplifier makes new tips (kenshi-ffmi.10, Heft's 28 x 0.9 u needle)
 	// Walkable tops (section 12 steps 1-5)
 	double topSlopeDeg = 60;	// surfgen's building slope limit
 	double topTerrainTol = 0.25;	// a top piece this close to the terrain (or under it) is the ground's
@@ -85,6 +94,14 @@ struct Params
 	double matchStep = 5;
 	double matchOverlap = 0.2;
 	bool fixWholeRim = true;	// no rim sample goes by the inner rule: two neighbouring windows then keep the same rim vertices (no T-junction across the seam)
+	// Straightening with a slop (kenshi-k16.7.213, default off: the production mesh is unchanged; kenshi-k16.7.221 added the pinch guard, and knav_ground fails with it on at 2,2). Border vertices go while every outline point already
+	// dropped on their chord stays within `slopXZ` of it in xz and `slopY` in height (a drift bound against the ORIGINAL outline, not against the
+	// neighbours: the simplifier's area rule creeps along a curve); polygons merge when the union is convex and no vertex lies more than `slopY` off its
+	// best-fit plane (as well as by `planarCos`). A chord never ends at a pinch vertex (two pieces of ground touching) or passes within `slopXZ` of another
+	// piece's outline: reachability stays as without it (the prune drops islands); a removal past the bound only passes by the old border rule.
+	bool straighten = false;	// off until the user has inspected it in the helper's viewer (kenshi-ffmi.15); on at 2,2 passes the knav suite (kenshi-k16.7.221)
+	double slopY = 2;
+	double slopXZ = 2;
 	bool keepLooseTops = false;	// debug: tops that reach no ground stay, so a viewer or a test can see what the prune would drop
 };
 
@@ -98,6 +115,8 @@ struct Stats
 	double msCut = 0;
 	std::size_t trimmedTips = 0, trimSkipped = 0;
 	double trimmedArea = 0, msTrim = 0;
+	std::size_t postTrimmedTips = 0;	// of trimmedTips / trimmedArea: the pass after the simplifier
+	double postTrimmedArea = 0;
 	std::vector<std::array<std::array<double, 3>, 3>> culled;	// the trim's dropped triangles, world
 	// Walkable tops
 	std::size_t topShapes = 0, topTris = 0, deckTris = 0, deckRejected = 0, topPieces = 0, topFaces = 0, topLinks = 0, topDroppedFaces = 0;
@@ -107,6 +126,10 @@ struct Stats
 	std::map<std::string, double> topKept;	// kept xz area per Cutter::label
 	std::vector<std::string> underTerrain;	// the shapes of walkable objects that lie wholly under the terrain (the Pontoon Bridge outliers): reported, inert
 	std::vector<std::uint32_t> topFaceIndex;	// the output mesh's faces that are tops
+	// pairs of the output mesh's faces with edges that meet the matcher's rule (linkTops), whether that stretch got the link or not: one
+	// component for a prune (a stretch of an edge links once)
+	std::vector<std::array<std::uint32_t, 2>> topTouching;
+	std::size_t topSurfgen = 0;		// objects whose walkable faces surfgen built (step 1)
 };
 
 // Seeds: xz points. Output in world coordinates; rim edges are marked `linked` (a seam to the next window). Cutters in the order given
@@ -123,24 +146,47 @@ Cutter zoneSideCutter(const native::Mesh& zoneSide, const std::string& label);
 // in xz. Returns the vertices inserted. (Each window's cut points on the rim exist only where its own ground is kept; the grid samples are the same.)
 std::size_t stitchRims(native::Mesh& a, native::Mesh& b, int axis, double edge);
 
+// The prune over the joined windows (kenshi-k16.7.189, 197 F4): `world` and its neighbours, tops given by face index. A top component that reaches
+// no ground face in any of them, no seam to an interior and no rim edge left without a mirror is dropped from `world` (a deck crossing a seam is
+// one component; an unlinked rim top is dropped once both sides are known). Call after stitchRims, before weldMesh (face indices stay). Returns the tops dropped.
+struct JoinedSide
+{
+	const native::Mesh* mesh;
+	const std::vector<std::uint32_t>* tops;
+	const std::vector<std::array<std::uint32_t, 2>>* touching = nullptr;	// Stats::topTouching of that mesh: joined like opposite edges
+};
+std::size_t pruneJoined(native::Mesh& world, const std::vector<std::uint32_t>& worldTops, const std::vector<JoinedSide>& sides,
+	const std::vector<std::array<std::uint32_t, 2>>* worldTouching = nullptr);
+
 struct WeldStats
 {
 	std::size_t welded = 0; // vertices merged into another (within `grid` in xz and `climb` in y)
+	std::size_t refused = 0; // faces the merge would have made reflex, flipped or pinched: their moved corners went back
+	std::size_t declared = 0; // boundary edge pairs declared opposite with their ends apart (up to grid), no vertex moved
 	std::size_t split = 0; // vertices inserted into a boundary edge they lie on
 	std::size_t dropped = 0; // faces left with no width (area / half perimeter < 1/32 u)
+	std::size_t byLive[4] = {}; // dropped faces by the number of edges that had an opposite (0, 1, 2, 3 or more)
+	std::size_t through = 0; // neighbour pairs joined across a dropped collapsed strip
+	std::size_t orphanGap = 0; // of those, with an unpaired edge running the other way along the same line: a gap
+	std::size_t orphanOpen = 0; // edges beside a dropped face still without a partner after the weld
 	std::size_t paired = 0; // boundary edge pairs that became opposites (counted once per pair)
 };
 
-// One weld pass over a window's mesh (kenshi-k16.7.189, ksim 2026-11-25): vertices within `grid` in xz and `climb` in y become one; every vertex lying on
-// another face's boundary edge (xz distance <= grid, y within `climb` at that point; not a `linked` rim edge, not an edge with an opposite) splits that
-// edge; boundary edges that then run over the same two vertices pair up as opposites. No T-junction is left between ground, zone-side and top faces, so
-// Detour's shared-edge links hold. Generic: no building case. Faces keep their order (a face left with fewer than three edges is dropped).
-WeldStats weldMesh(native::Mesh& m, double grid = 0.125, double climb = 5.0);
+// One weld pass over a window's mesh (kenshi-k16.7.189, ksim 2026-11-25; reworked kenshi-ffmi.10): vertices within `grid` of each other in xz and `climb`
+// in y join transitively (a cluster sits at its rim vertex or lowest index); a face the merge would make reflex, flipped or pinched keeps its corners;
+// every vertex lying on another face's boundary edge (xz distance <= grid, y within `climb` at that point; not a `linked` rim edge, not an edge with an
+// opposite; once per face) splits that edge; boundary edges that then run over the same two vertices pair up as opposites, and so do those whose
+// ends are within `grid` of each other (declared, no vertex moved: a corner the shape check kept, two clusters the reach kept apart). No T-junction is left
+// between ground, zone-side and top faces, so Detour's shared-edge links hold. Generic: no building case. Faces keep their order (a face left with
+// fewer than three edges is dropped). `climb` is float noise, not a step: a step between levels is a link (linkTops), never a weld (it pulled a deck
+// corner 4 u down onto the ground when it was 5).
+WeldStats weldMesh(native::Mesh& m, double grid = 0.125, double climb = 0.5);
 
 // What gatherCutters collected.
 struct CutterCounts
 {
 	std::size_t buildingShapes = 0, maskShapes = 0, foliage = 0, features = 0, doorsSkipped = 0;
+	std::size_t lowWalkable = 0;	// walkable foliage within the climb of the terrain: left to the ground (cuttersOfArea)
 };
 
 // The original's zone height grid over the world box: fullmap.tif every `stride` samples (2: 36 u), the samples covering [x0, x1] x [z0, z1].
@@ -151,8 +197,10 @@ Grid makeGrid(const kworld::Heightmap& terrain, double x0, double z0, double x1,
 std::vector<Cutter> gatherCutters(const std::string& dataDir, const kworld::Heightmap& terrain, double x0, double z0, double x1, double z1,
 	CutterCounts* counts = nullptr);
 
-// The same from an area already gathered (the runtime bake's: it holds the placements the data files do not).
-std::vector<Cutter> cuttersOfArea(const kworld::AreaGeometry& area, double x0, double z0, double x1, double z1, CutterCounts* counts = nullptr);
+// The same from an area already gathered (the runtime bake's: it holds the placements the data files do not). Walkable foliage whose every
+// vertex lies within the climb (5 u) of the full-detail terrain under it is no cutter (kenshi-ffmi.14: a fallen log level with the ground).
+std::vector<Cutter> cuttersOfArea(const kworld::AreaGeometry& area, const kworld::Heightmap& terrain, double x0, double z0, double x1, double z1,
+	CutterCounts* counts = nullptr);
 
 // The whole job over a world box: grid, a 3 x 3 seed grid (the original's per-zone probes) plus `extraSeeds`, cutters (`cut`), generate.
 // `msGather` receives the cutter gather's wall time. `extra`: cutters added after the gathered ones (zoneSideCutter).

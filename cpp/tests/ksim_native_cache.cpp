@@ -21,6 +21,8 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -86,8 +88,7 @@ long statusKb(const char* field)
 	return -1;
 }
 
-// One open's result: the mesh's hash and tiles, the time and RSS, the cache counters and the log; for the first wanted zone,
-// its stale-check decision.
+// One open's result: the mesh's hash and tiles, the time and RSS, the cache counters and the log.
 struct Opening
 {
 	std::uint64_t hash = 0;
@@ -98,8 +99,6 @@ struct Opening
 	long peakKb = -1; // the process's peak when the open returned
 	ksim::NativeCacheStats cache;
 	std::string tree;
-	std::optional<MeshNavigator::NativeChoice> choice;
-	std::optional<std::uint32_t> ours;
 	std::vector<std::string> log;
 };
 
@@ -118,12 +117,6 @@ Opening open(const std::string& dataDir, const std::vector<kworld::ZoneCell>& zo
 	opening.zones = nav->coveredZones().size();
 	opening.cache = nav->nativeCacheStats();
 	opening.tree = nav->nativeCacheDir();
-	if (!zones.empty())
-		if (const MeshNavigator::NativeTileReport* report = nav->nativeReport(zones.front()))
-		{
-			opening.choice = report->decision.choice;
-			opening.ours = report->decision.ours;
-		}
 	return opening;
 }
 
@@ -183,6 +176,7 @@ void mirrorTree(const fs::path& source, const fs::path& target, const std::set<f
 
 int main()
 {
+	unsetenv("KENSHI_NAV_CACHE_SHARED"); // the cold/warm contract is of the test's own dir; the shared world cache would turn every miss into a hit (kenshi-k16.7.209)
 	try
 	{
 		// The cache root from a faked environment (no data needed): the option wins, then XDG, the Windows variables, HOME.
@@ -218,7 +212,7 @@ int main()
 		cache.worldKey = worldKey;
 		const Opening cold = open(KENSHI_DATA, hubZones, cache);
 		test::require(cold.hash != 0 && cold.tiles > 0, "the cold open has no mesh");
-		test::require(cold.cache.regionMisses == 4, "the cold open did not convert 4 regions: "
+		test::require(cold.cache.regionMisses == 0, "the cold open converted a shipped region (none after the cutover): "
 			+ std::to_string(cold.cache.regionMisses));
 		test::require(cold.cache.zoneMisses >= 1, "the cold open rebaked no zone");
 		test::require(cold.cache.filesWritten == cold.cache.regionMisses + cold.cache.zoneMisses,
@@ -287,6 +281,35 @@ int main()
 			std::cout << "ksim_native_cache: cache off " << disabled.ms << " ms, nothing written\n";
 		}
 
+		// ---- the shared tree: found by recipe + world data alone, never by the source hash (kenshi-k16.7.214) ----
+		{
+			const fs::path shared = kScratch / "shared";
+			char hex[17];
+			std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(worldKey));
+			const std::string name = "w" + std::to_string(MeshNavigator::nativeCacheRecipe()) + "_" + hex;
+			fs::create_directories(shared / name);
+			for (const auto& entry : fs::directory_iterator(cold.tree))
+				if (entry.is_regular_file())
+					fs::copy_file(entry.path(), shared / name / entry.path().filename());
+			ksim::NativeCacheOptions use;
+			use.dir = (kScratch / "sharedUse").string();
+			use.sharedDir = shared.string();
+			use.worldKey = worldKey;
+			use.bakeSrcHash = "cccccccccccccccccccc"; // another build: its own tree name, the shared one still found
+			const Opening hit = open(KENSHI_DATA, hubZones, use);
+			test::require(hit.hash == cold.hash, "the shared hit's mesh differs");
+			test::require(hit.cache.zoneHits == cold.cache.zoneMisses && hit.cache.zoneMisses == 0,
+				"a build with another source hash missed the shared tree");
+			test::require(hit.cache.filesWritten == 0, "a shared hit wrote files");
+			// Another world key (a different mod set) finds no shared tree: a cold bake into its own tree.
+			ksim::NativeCacheOptions other = use;
+			other.dir = (kScratch / "sharedOther").string();
+			other.worldKey = worldKey ^ 1;
+			const Opening miss = open(KENSHI_DATA, hubZones, other);
+			test::require(miss.cache.zoneHits == 0 && miss.cache.zoneMisses >= 1, "another world key hit the shared tree");
+			std::cout << "ksim_native_cache: shared tree hit " << hit.cache.zoneHits << " zones with another source hash, miss on another world key\n";
+		}
+
 		// ---- one changed zone placement: only that zone's entry is rebuilt ----
 		{
 			// The install mirrored (symlinks) with newland/leveldata as real directories, so one zone file can be replaced.
@@ -303,7 +326,7 @@ int main()
 			test::require(changed.worldKey == worldKey, "the mirrored data has another load order hash");
 
 			const Opening before = open(mirror.string(), { { 20, 32 } }, changed);
-			test::require(before.choice.has_value() && before.ours.has_value(), "the Hub has no first report");
+			test::require(before.cache.zoneMisses == 1, "the Hub's first open did not bake its zone");
 			const Opening other = open(mirror.string(), { { 38, 22 } }, changed);
 			const std::map<std::string, std::uint64_t> filesBefore = cacheFiles(before.tree);
 			test::require(filesBefore.size() == before.cache.filesWritten + other.cache.filesWritten,
@@ -343,11 +366,8 @@ int main()
 			const Opening afterHub = open(mirror.string(), { { 20, 32 } }, changed);
 			test::require(afterHub.cache.zoneMisses == 1 && afterHub.cache.zoneHits == 0,
 				"the changed zone was not the one rebaked");
-			test::require(afterHub.cache.regionHits == 1 && afterHub.cache.regionMisses == 0,
-				"the changed zone's region was converted again");
-			test::require(afterHub.ours.has_value() && *afterHub.ours != *before.ours, "the placement change did not move the Hub's zone hash");
-			test::require(afterHub.choice.has_value() && *afterHub.choice != MeshNavigator::NativeChoice::Shipped,
-				"the changed Hub zone ships");
+			test::require(afterHub.cache.regionHits == 0 && afterHub.cache.regionMisses == 0,
+				"a region entry was read or written after the cutover");
 			const Opening afterOther = open(mirror.string(), { { 38, 22 } }, changed);
 			test::require(afterOther.cache.zoneHits == 1 && afterOther.cache.zoneMisses == 0,
 				"another zone's entry was not reused");
@@ -360,8 +380,7 @@ int main()
 			test::require(kept == filesBefore.size(), "an unchanged entry was rewritten");
 			test::require(filesAfter.size() == filesBefore.size() + 1, "the change wrote more than one new entry");
 			std::cout << "ksim_native_cache: one zone changed: " << filesBefore.size() << " entries kept, "
-				<< afterHub.cache.filesWritten + afterOther.cache.filesWritten << " written (zone hash "
-				<< std::hex << *before.ours << " -> " << *afterHub.ours << std::dec << ")\n";
+				<< afterHub.cache.filesWritten + afterOther.cache.filesWritten << " written\n";
 		}
 
 		std::cout << "ksim_native_cache: ok\n";

@@ -394,7 +394,9 @@ private:
 		{
 			// The renderer call (140a46460) stores each plant as u16 offsets
 			// inside its page, a yaw byte and a scale byte; the game renders
-			// and collides with the decoded values (live-checked at the Hub).
+			// with the decoded values (live-checked at the Hub). Its physics
+			// body sits at whole-unit x/z (FOLIAGE_EXE.md, collision pose
+			// 2026-11-25); ksim collides at the decoded x/z, under 1 u off.
 			// The vertical offset above used the raw scale draw.
 			const float decodedX = quantisePosition(x, minX_);
 			const float decodedZ = quantisePosition(z, minZ_);

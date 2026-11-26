@@ -88,6 +88,8 @@ bool blocks(const ground::Cutter& c, double x, double z, double lo, double hi)
 	std::sort(hits.begin(), hits.end());
 	if (c.projected && !hits.empty())
 		return true;
+	if (hits.empty() || hits.front() >= hi) // nothing at or below the band: an overhead feature whose open bottom the odd count below would reach down to the ground (52.52 patch, kenshi-k16.7.216)
+		return false;
 	if (hits.size() % 2)
 		hits.insert(hits.begin(), -1e30);
 	for (std::size_t k = 0; k + 1 < hits.size(); k += 2)
@@ -225,6 +227,31 @@ int main()
 		const Run heft = build(dataDir, terrain, 68339 - 400, -71264 - 400, 68339 + 400, -71264 + 400);
 		report("Heft patch", heft, "273 cutters, 559 ground tris cut, 7645 / 9781 pieces, 9 tips, 202 faces; cut 39, simplify 84 ms");
 		invariants("Heft patch", heft);
+
+		// a dense patch of zone 52.52, map features standing in each other (kenshi-k16.7.212): a part of a face that a cut leaves whole is one face.
+		// Before, every cut line stayed as an edge: this patch came out in slivers and the zone had 31 tiles over the polygon cap.
+		{
+			const Run dense = build(dataDir, terrain, 94177 - 600, 94434 - 600, 94177 + 600, 94434 + 600);
+			report("zone 52.52 patch", dense, "");
+			invariants("zone 52.52 patch", dense);
+			std::size_t small = 0;
+			double area = 0;
+			for (const auto& f : dense.mesh.faces)
+			{
+				const std::vector<P3> c = corners(dense.mesh, f);
+				double a2 = 0;
+				for (std::size_t k = 0; k < c.size(); ++k)
+					a2 += c[k][0] * c[(k + 1) % c.size()][2] - c[(k + 1) % c.size()][0] * c[k][2];
+				small += std::fabs(a2) < 2;
+				area += std::fabs(a2) / 2;
+			}
+			std::cout << "  " << dense.mesh.faces.size() << " faces, " << small << " under 1 u2, area " << area << " u2, " << dense.stats.topFaces << " tops (" << dense.stats.topArea << " u2), "
+				<< dense.stats.topPieces << " top pieces\n";
+			// pins of this bake: 736 faces (93 under 1 u2), 1,155,540 u2, tops 136,960 u2; the fragmenting cut made 3,817 faces of the same patch
+			test::require(dense.mesh.faces.size() <= 1200, "zone 52.52 patch: a face a cut leaves whole stays one face (736 faces, 3817 when every cut line stayed)");
+			test::require(small * 5 <= dense.mesh.faces.size(), "zone 52.52 patch: under a fifth of the faces are below 1 u2");
+			test::require(area >= 1.14e6 && dense.stats.topArea >= 130000, "zone 52.52 patch: the walkable area stays (1,155,540 u2, tops 136,960 u2)");
+		}
 
 		// rim vertices of both neighbouring windows: zone 47.16 shares x = 46.16's east edge, 46.17 its south edge
 		for (const int dz : { 0, 1 })

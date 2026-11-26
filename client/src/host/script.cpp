@@ -900,6 +900,16 @@ void exec_cmd(const Cmd& c)
 		const uint8_t flags = a.size() == 3 ? (uint8_t)atoi(a[2].c_str()) : 0;
 		if (!(action == 5 ? open_body(id, false) : app.sim.interact(id, (uint8_t)action, false, flags))) { script_error(c); }
 	}
+	else if (c.op == "gameoption" && a.size() == 2 && (a[0] == "feed_animals" || a[0] == "share_food") && (a[1] == "on" || a[1] == "off"))	// gameoption feed_animals|share_food on|off: order 121 (the sim's answer is the GAME_OPTIONS frame; kenshi-ehn5)
+	{
+		if (!app.sim.setGameOption(a[0] == "share_food" ? 1 : 0, a[1] == "on")) { script_error(c); }
+	}
+	else if (c.op == "options" && a.size() == 2 && a[0] == "tab" && app.options) { app.options->showTab(a[1]); }	// options tab NAME: open the options window on that tab (Game; kenshi-s3je)
+	else if (c.op == "options" && a.size() == 2 && a[0] == "click" && (a[1] == "feed_animals" || a[1] == "share_food"))	// options click feed_animals|share_food: the World group's box click, as the UI does
+	{
+		ui::Button* b = app.options ? app.options->worldBox(a[1] == "share_food" ? ui::kShareFood : ui::kFeedAnimals) : nullptr;
+		if (!b || !b->enabled || !b->onClicked) { script_error(c); } else { b->onClicked(); }
+	}
 	else if (c.op == "portrait" && !a.empty())	// portrait [add] NAME... | id=N: a click (add: Shift) on that character's bar portrait, the HUD's own path (a follow moves to the selection's first in squad order)
 	{
 		const bool add = a[0] == "add", dbl = a[0] == "dbl";

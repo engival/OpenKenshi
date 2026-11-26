@@ -1,0 +1,11 @@
+10 set animate 1
+110 set simspeed 6
+300 dump chars
+600 dump chars
+900 dump chars
+1500 dump chars
+2100 dump chars
+2700 dump chars
+3300 dump chars
+8000 dump chars
+8100 quit

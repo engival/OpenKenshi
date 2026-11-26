@@ -744,6 +744,8 @@ merged data file, which the server already computes for the SIMLINK HELLO. A dif
 starts a different tree and never reads a neighbour's. The key is `NativeCacheOptions::worldKey`; 0 (no load order, as in
 a test or a tool) means no tree and no cache at all.
 
+**Shared tree (MINE, kenshi-k16.7.214).** A read-only second root (`KENSHI_NAV_CACHE_SHARED`, `NativeCacheOptions::sharedDir`) is searched for `w<recipeVersion>_<dataHash>/` (no `srcHash`): a bake from another build, compiler or machine is the same mesh while the recipe and the game data stand, so a source edit does not miss the 9 h world bake. The own tree keeps the source hash. `ksim_navcache_bake` writes its tree under that lookup name (`NativeCacheOptions::lookupName`, kenshi-k16.7.215).
+
 **The key (MINE; the three parts you named, split between the tree and the entry).**
 - Zone bake: `zone_<x>_<z>_<zoneKey>.knav`, `zoneKey = FNV(our recomputed zone hash, the zone's interior hashes)`. The
   cell in the name is for a human reading the directory; the key alone is the identity. Ours are the

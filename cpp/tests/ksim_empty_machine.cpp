@@ -223,6 +223,8 @@ Squad placeSquad(Game& game)
 			break;
 	}
 	test::require(!squad.members.empty(), "the world squad has members");
+	for (std::uint64_t id : squad.members)
+		test::require(sim.combat()->find(id) != nullptr, "every squad member was built into the arena (a member with no ground under it is skipped)");
 	const state::SquadInstance* instance = squad.entity.get<state::SquadInstance>();
 	test::require(instance != nullptr && instance->faction.id != 0, "the placed squad has a faction");
 	if (const state::FactionState* faction = ecsOf(sim).entity(instance->faction.id).get<state::FactionState>())

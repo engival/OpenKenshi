@@ -310,6 +310,9 @@ public:
 	// The protected character (the follow / drive camera's, else the RTS auto-centre's, else 0): set_camera_follow only when it changes, and once after every
 	// (re)connect / reset snapshot. A refusal (bad_target: it died or left the world) is dropped quietly; nothing is resent until the id changes.
 	void cameraFollow(uint64_t id);
+	// Order 121 set_game_option (SIMLINK 6, kenshi-ehn5): option 0 feed_animals, 1 share_food. The host shows decoder().gameOptions (the GAME_OPTIONS frame),
+	// never its own click: nothing is remembered here. The ack and a refusal are log lines; a refusal leaves the state as it was.
+	bool setGameOption(uint8_t option, bool on);
 	static constexpr double kInterestRadius = 2000, kInterestMove = 250, kViewMove = 1000;	// 2000: render.interest_radius's default (kenshi-k16.2.258.10.1)
 	// a hit splash for the terrain blood (BLOOD_DECALS.md: 140793b20): world x, z, size (0.05..0.5), dirRad (x-z angle, the image's u axis), colour
 	// kind: a hit splash (decal type 1), a bleed drop (2), a growing pool (2, resized by id: BloodDecals::pool) or a smear (3)
@@ -374,6 +377,7 @@ private:
 	void cueSounds(const Characters& chars, const simlink::Event& e, const std::set<std::pair<uint64_t, uint64_t>>& shots);
 	bool pump();	// moves bytes into the decoder: the file up to the frames needed, the socket whatever is there; false on a fatal error
 	void sync(Characters& chars, const std::function<double(double, double)>& ground);
+	mutable std::set<uint64_t> warnedNoMuscle_;	// ids already logged for a wire without the body key "muscle" (kenshi-5j7p)
 	Characters::Spec specOf(uint64_t id, const Characters& chars, bool low = false) const;	// low: the minimal figure of a kFlagLowDetail character (kenshi-9mw3)
 	int severedOf(uint64_t id, const std::string& race, const Characters& chars) const;	// specOf's severed bits, race its race
 	int severedOf(uint64_t id, const Characters& chars) const { return dec_.medical.count(id) ? severedOf(id, chars.nameOf(dec_.str(dec_.chars.at(id).look.race)), chars) : 0; }
@@ -484,5 +488,6 @@ private:
 	bool viewOnce_ = false;
 	uint64_t followSent_ = 0;
 	uint32_t followSeq_ = 0;
+	std::unordered_map<uint32_t, std::string> gameOptionSent_;	// order 121 seq -> its log name, until the ack / refusal
 	bool followOnce_ = false;
 };

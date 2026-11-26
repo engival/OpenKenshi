@@ -121,6 +121,9 @@
 #include "kworld/loadorder.hpp"
 #include "kworld/roadfixups.hpp"
 #include "ksim/dev/build_paths.hpp"
+#if KSIM_DEV
+#include "ksim/dev/nav_zone_set.hpp"
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -426,6 +429,15 @@ int parseServerArgs(int argc, char** argv, ServerConfig& options)
 				options.navworld = argv[++i];
 			else if (arg == "--native-nav")
 				options.nativeNav = true;
+			else if (arg == "--nav-resident" && hasValue)
+			{
+				const std::string mode = argv[++i];
+				if (mode != "world" && mode != "off")
+					throw std::runtime_error("--nav-resident: world or off");
+				options.navResident = mode == "world";
+			}
+			else if (arg == "--nav-zones" && hasValue)
+				options.navZones = argv[++i];
 			else if (arg == "--ai-routes")
 				options.aiRoutes = true;
 			else if (arg == "--debug-view")
@@ -733,13 +745,35 @@ int runServer(const ServerConfig& options, std::atomic<bool>& stop)
 				hubZones.push_back({simlink::kHubZoneX + dx, simlink::kHubZoneZ + dz});
 		}
 		const bool native = options.navworld.empty() && options.navmesh.empty();
-		sim.enableNavigation(native ? MeshNavigator::openNative(dataDir, hubZones,
+		const std::shared_ptr<MeshNavigator> mesh = (native ? MeshNavigator::openNative(dataDir, hubZones,
 			[&err](const std::string& line) { err << "ksim_server: " << line << "\n"; }, context.gameData.get(),
 			NativeCacheOptions{ {}, options.navCache, context.dataHash })
 			: !options.navworld.empty() ? MeshNavigator::openWorld(options.navworld, hubZones, dataDir)
 			: MeshNavigator::load(options.navmesh, dataDir));
-		err << "ksim_server: navmesh " << (native ? "streaming the shipped navtiles"
-			: !options.navworld.empty() ? "streaming from " + options.navworld : "loaded") << " ("
+		// The whole world's navmesh is resident before tick 0 (kenshi-k16.7.204): no ground streaming, no prefetch. Missing zones bake, as in a cold cache.
+		// Default is still streaming: the whole world takes 282 s and 21.5 GB (kenshi-k16.7.209), so every test that starts a server would pay it; --nav-zones implies resident.
+		if (mesh->streaming() && (options.navResident || !options.navZones.empty()))
+		{
+			std::vector<kworld::ZoneCell> resident = MeshNavigator::worldZones();
+			if (!options.navZones.empty())
+			{
+#if KSIM_DEV
+				const auto named = dev::namedZoneSet(options.navZones);
+				if (!named)
+					throw std::runtime_error("--nav-zones: not a zone set: " + options.navZones);
+				resident = *named;
+#else
+				throw std::runtime_error("--nav-zones is a dev option");
+#endif
+			}
+			mesh->makeResident(resident);
+			const MeshNavigator::ResidentLoad& load = mesh->residentLoad();
+			err << "ksim_server: resident navmesh: " << load.zones << " zones, " << load.tiles << " tiles, " << load.polys << " polys; load "
+				<< load.loadMs / 1000.0 << " s, connected sets " << load.setsMs / 1000.0 << " s\n";
+		}
+		sim.enableNavigation(mesh);
+		err << "ksim_server: navmesh " << (mesh->resident() ? "resident"
+			: mesh->streaming() ? "streaming" : "loaded") << (native ? ", shipped navtiles" : !options.navworld.empty() ? ", from " + options.navworld : "") << " ("
 			<< sim.navigation()->mesh().tiles().size() << " tiles, " << sim.navigation()->mesh().polyCount()
 			<< " polys, stage " << lap() << " s, " << seconds() << " s since start)\n";
 		if (native)
@@ -748,7 +782,7 @@ int runServer(const ServerConfig& options, std::atomic<bool>& stop)
 			// (docs/formats/NAVMESH_CACHE.md "The stale-tile check in the loader").
 			const MeshNavigator::NativeStaleStats& stale = sim.navigation()->nativeStaleStats();
 			err << "ksim_server: native stale check: zones " << stale.zonesShipped << " shipped, " << stale.zonesRebaked
-				<< " rebaked (stale hash), " << stale.zonesNotComputable << " unverifiable; interiors "
+				<< " rebaked (stale hash), " << stale.zonesCached << " from cache (stale hash), " << stale.zonesNotComputable << " unverifiable; interiors "
 				<< stale.interiorsShipped << " shipped, " << stale.interiorsRebaked << " rebaked (stale hash), "
 				<< stale.interiorsNotComputable << " unverifiable; check " << stale.checkMs << " ms, bake " << stale.bakeMs << " ms\n";
 		}

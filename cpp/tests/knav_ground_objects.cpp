@@ -112,12 +112,32 @@ Observed observe(const std::string& dataDir, const kworld::Heightmap& terrain, c
 	std::vector<std::uint32_t> stack;
 	for (const std::uint32_t f : tops)
 	{
+		// a corner within reach, or a point of the reach box (a 7 x 7 grid over it) inside the face: a face is as big as its surface, its
+		// corners can all lie outside the box (kenshi-k16.7.212)
 		bool in = false;
-		for (std::uint32_t k = 0; k < cut.faces[f].numEdges; ++k)
+		const std::uint32_t n = cut.faces[f].numEdges, e0 = cut.faces[f].startEdge;
+		for (std::uint32_t k = 0; k < n; ++k)
 		{
-			const auto& v = cut.vertices[cut.edges[cut.faces[f].startEdge + k].a];
+			const auto& v = cut.vertices[cut.edges[e0 + k].a];
 			in = in || (std::fabs(v[0] - fx.x) <= fx.reach && std::fabs(v[2] - fx.z) <= fx.reach);
 		}
+		for (int i = -3; i <= 3 && !in; ++i)
+			for (int j = -3; j <= 3 && !in; ++j)
+			{
+				const double x = fx.x + i * fx.reach / 3, z = fx.z + j * fx.reach / 3;
+				double turn = 0;
+				bool inside = true;
+				for (std::uint32_t k = 0; k < n && inside; ++k)
+				{
+					const auto& v = cut.vertices[cut.edges[e0 + k].a];
+					const auto& w = cut.vertices[cut.edges[e0 + k].b];
+					const double side = (w[0] - v[0]) * (z - v[2]) - (w[2] - v[2]) * (x - v[0]);
+					inside = side * turn >= 0;
+					if (side != 0)
+						turn = side;
+				}
+				in = inside;
+			}
 		if (!in)
 			continue;
 		++o.topFaces;
@@ -177,7 +197,8 @@ int main()
 			{ "town prop pm2", "Market Stall A", -82816, -37762, true, false, 15 },
 			{ "town prop pm3", "Swamp Walkboard", -62079, 33594, true, true, 20 },
 			{ "foliage with collision (Obstacle)", "ResourceRock-IRON01", -12833, -144021, true, false, 15 },
-			{ "foliage walkable collision", "TreeFall01", -77686, -83856, true, true, 15 },
+			{ "foliage walkable collision, level with the ground (no cutter: walked across in the original, kenshi-ffmi.14)", "TreeFall01", -77686, -83856, false, false, 15 },
+			{ "foliage walkable collision over the climb (the shipped mesh lies on its top)", "TreeFall03", -75884, -88229, true, true, 15 },
 			{ "foliage cutter disc only (Projected: the footprint of its walls cuts the ground)", "FOLIAGE_Boulder01", -71596, 616, true, false, 8 },
 			{ "foliage neither (grass)", "PhantomGrass001", 82019, -51239, false, false, 15 },
 			{ "feature: bridge", "Metal Arch Bridge", -54433, -95121, true, true, 600, 900 },

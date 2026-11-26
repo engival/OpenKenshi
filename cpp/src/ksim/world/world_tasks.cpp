@@ -4922,7 +4922,7 @@ void Simulation::syncBoardStates() const
 			arrests.entries.push_back({guard, order.victim, order.since, order.lift, order.started, order.snatched, order.gaveUp});
 		ecs.set<state::ArrestStates>(std::move(arrests));
 	}
-	const bool streaming = navigation_ != nullptr && navigation_->streaming();
+	const bool streaming = navigation_ != nullptr && navigation_->streaming() && !navigation_->resident(); // a resident mesh saves no zone list: every load is the whole world
 	const bool treesBuilt = los_ != nullptr && los_->loadedRegions() > 0; // line of sight enabled but with no tree built is the same as off: a load need not enable it
 	const bool inFlight = streaming || treesBuilt || travelKnown_ || (residentData_ != nullptr && !residentData_->queued.empty());
 	if (limbPlay_.empty() && alarms_.empty() && alarmDwell_.empty() && alarms_.last() == 0 && farOrders_.empty() && !inFlight)

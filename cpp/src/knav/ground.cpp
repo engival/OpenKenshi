@@ -1,18 +1,24 @@
 #include "knav/ground.hpp"
 
+#include "knav/surfgen.hpp"
+
 #include "kworld/collision_area.hpp"
 #include "kworld/coords.hpp"
 
 #include <algorithm>
+#include <deque>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <functional>
 #include <map>
 #include <queue>
+#include <set>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace knav::ground
 {
@@ -178,23 +184,58 @@ uint64_t cellKeyOf(int64_t cx, int64_t cz)
 	return ((uint64_t)(uint32_t)cx << 32) | (uint32_t)cz;
 }
 
+// The cell index of a cutter's flat triangles, built on first use.
+void buildIndex(const PreparedCutter& pc)
+{
+	if (pc.indexed)
+		return;
+	pc.indexed = true;
+	for (size_t k = 0; k < pc.tris.size(); ++k)
+	{
+		const CutTri& t = pc.tris[k];
+		if (!t.flat)
+			continue;
+		for (int64_t cx = (int64_t)std::floor(t.box.x0 / kIndexCell); cx <= (int64_t)std::floor(t.box.x1 / kIndexCell); ++cx)
+			for (int64_t cz = (int64_t)std::floor(t.box.z0 / kIndexCell); cz <= (int64_t)std::floor(t.box.z1 / kIndexCell); ++cz)
+				pc.cells[cellKeyOf(cx, cz)].push_back((int)k);
+	}
+}
+
+// The flat triangles whose box may touch `box` grown by `tol`, in the cutter's own order: the cells under the box, or every triangle when the
+// cutter is small or the box covers more cells than it has triangles. The caller still tests each box (kenshi-k16.7.212: the cut and its drop
+// test walked every triangle of a cutter for every piece).
+void trisNear(const PreparedCutter& pc, const Box2& box, double tol, std::vector<int>& out)
+{
+	out.clear();
+	const int64_t cx0 = (int64_t)std::floor((box.x0 - tol) / kIndexCell), cx1 = (int64_t)std::floor((box.x1 + tol) / kIndexCell);
+	const int64_t cz0 = (int64_t)std::floor((box.z0 - tol) / kIndexCell), cz1 = (int64_t)std::floor((box.z1 + tol) / kIndexCell);
+	if (pc.tris.size() <= 16 || (double)(cx1 - cx0 + 1) * (double)(cz1 - cz0 + 1) >= (double)pc.tris.size())
+	{
+		for (size_t k = 0; k < pc.tris.size(); ++k)
+			if (pc.tris[k].flat)
+				out.push_back((int)k);
+		return;
+	}
+	buildIndex(pc);
+	for (int64_t cx = cx0; cx <= cx1; ++cx)
+		for (int64_t cz = cz0; cz <= cz1; ++cz)
+		{
+			const auto it = pc.cells.find(cellKeyOf(cx, cz));
+			if (it != pc.cells.end())
+				out.insert(out.end(), it->second.begin(), it->second.end());
+		}
+	if (cx0 != cx1 || cz0 != cz1)
+	{
+		std::sort(out.begin(), out.end());
+		out.erase(std::unique(out.begin(), out.end()), out.end());
+	}
+}
+
 // The cutter's surface heights straight over / under q, by the cell index.
 // Each hit with whether it faces up (the cooker's winding: cross2 < 0 in the generator's order, CutTri::sign < 0).
 void hitsIndexed(const PreparedCutter& pc, const P2& q, std::vector<std::pair<double, bool>>& hits)
 {
-	if (!pc.indexed)
-	{
-		pc.indexed = true;
-		for (size_t k = 0; k < pc.tris.size(); ++k)
-		{
-			const CutTri& t = pc.tris[k];
-			if (!t.flat)
-				continue;
-			for (int64_t cx = (int64_t)std::floor(t.box.x0 / kIndexCell); cx <= (int64_t)std::floor(t.box.x1 / kIndexCell); ++cx)
-				for (int64_t cz = (int64_t)std::floor(t.box.z0 / kIndexCell); cz <= (int64_t)std::floor(t.box.z1 / kIndexCell); ++cz)
-					pc.cells[cellKeyOf(cx, cz)].push_back((int)k);
-		}
-	}
+	buildIndex(pc);
 	const auto it = pc.cells.find(cellKeyOf((int64_t)std::floor(q[0] / kIndexCell), (int64_t)std::floor(q[1] / kIndexCell)));
 	if (it == pc.cells.end())
 		return;
@@ -279,12 +320,16 @@ PreparedCutter prepare(const Cutter& c)
 }
 
 // The cutter's surface heights straight over / under q (xz).
-void hitsAt(const PreparedCutter& pc, const P2& q, std::vector<double>& hits)
+void hitsAt(const PreparedCutter& pc, const P2& q, std::vector<double>& hits, std::vector<int>& near)
 {
 	hits.clear();
-	for (const CutTri& t : pc.tris)
+	Box2 at;
+	at.add(q[0], q[1]);
+	trisNear(pc, at, 1e-9, near);
+	for (const int k : near)
 	{
-		if (!t.flat || !t.box.contains(q))
+		const CutTri& t = pc.tris[k];
+		if (!t.box.contains(q))
 			continue;
 		bool inside = true;
 		for (int i = 0; i < 3 && inside; ++i)
@@ -330,7 +375,17 @@ private:
 		double cost = 0;
 		std::vector<int> ring;
 		std::vector<std::array<int, 3>> tris;
+		int pa = -1, pb = -1;	// straighten: the border chord the removal makes and the original outline points it now stands for
+		std::vector<P3> owned;
 	};
+	std::unordered_map<int64_t, std::vector<int>> outline_;	// straighten: the original outline vertices by 8 u cell (pinch guard)
+	static int64_t cellKey(int cx, int cz) { return ((int64_t)cx << 32) ^ (uint32_t)cz; }
+	std::unordered_map<int, std::vector<int>> vcomp_;	// straighten: vertex -> the pieces its triangles belong to
+	std::unordered_set<int> pinchV_;	// straighten: vertices where two pieces touch (a zero-width pinch)
+	void indexOutline();
+	bool pinched(const Plan& plan, int v) const;
+	std::map<std::pair<int, int>, std::vector<P3>> dropped_;	// straighten: per border edge (smaller id first), the outline points dropped under it
+	static std::pair<int, int> edgeKey(int a, int b) { return { std::min(a, b), std::max(a, b) }; }
 
 	bool walkable(const P3& a, const P3& b, const P3& c) const
 	{
@@ -376,6 +431,7 @@ private:
 	std::vector<int> topLabel_;	// per top polygon: index into topLabels_
 	std::vector<std::string> topLabels_;
 	std::vector<const Cutter*> topCutter_;	// per label: the cutter it came from (its seam)
+	std::deque<Cutter> madeTops_;	// tops(): an object's walkable faces as surfgen made them (stable addresses)
 	std::unordered_map<uint64_t, std::vector<int>> topPos_;	// vertex hash for the tops (xz at 1e-3, searched 3 x 3, y within 1e-3)
 
 	struct TerrTri
@@ -389,7 +445,7 @@ private:
 	int topVertex(double x, double y, double z);
 	double clearUnder(const P2& q, double y) const;
 	void linkTops(std::vector<std::vector<int>>& poly, std::vector<uint8_t>& dead, std::vector<uint8_t>& isTop, std::unordered_map<uint64_t, int>& owner,
-		std::vector<Link>& links, Stats& st);
+		std::vector<Link>& links, std::vector<std::pair<int, int>>& touching, Stats& st);
 };
 
 void Gen::build(Stats& st)
@@ -475,13 +531,25 @@ void Gen::build(Stats& st)
 // Cuts `pieces` (convex xz polygons lying on the plane y = gA x + gB z + gC) by one cutter: split along its triangles' xz edges and the lines where
 // its planes cross the plane + lo / + hi, each piece dropped by its centre (the span rule; `projected`: any hit). `skipSelf` >= 0: hits within it of
 // the plane do not count (a top face does not cut itself). Returns the number of pieces dropped.
+// A part of a piece that loses nothing comes back whole, not as the fragments the cut lines made of it.
 std::size_t cutByCutter(const PreparedCutter& pc, std::vector<std::vector<P2>>& pieces, double gA, double gB, double gC, double lo, double hi,
 	double skipSelf)
 {
+	// One piece under the cuts: a binary tree, each split line making two children of every leaf it crosses. A node all of whose leaves stay comes
+	// out whole (kenshi-k16.7.212): the cut lines of a part that loses nothing leave no fragments (zone 52,52's tops were 4.4 M pieces, two thirds
+	// of its faces under 1 u2, 31 tiles over the polygon cap).
+	struct Node
+	{
+		std::vector<P2> poly;
+		int kid[2] = { -1, -1 };
+		bool split = false, kept = false;
+	};
 	std::size_t dropped = 0;
 	std::vector<double> hits;
 	std::vector<P2> neg, pos;
 	std::vector<std::vector<P2>> next;
+	std::vector<Node> nodes;
+	std::vector<int> leaves, grown, near;
 	for (std::vector<P2>& piece : pieces)
 	{
 		const Box2 pbox = boxOf(piece);
@@ -490,30 +558,42 @@ std::size_t cutByCutter(const PreparedCutter& pc, std::vector<std::vector<P2>>& 
 			next.push_back(std::move(piece));
 			continue;
 		}
-		std::vector<std::vector<P2>> work = { std::move(piece) };
+		nodes.clear();
+		nodes.push_back({ std::move(piece) });
+		leaves = { 0 };
 		const auto splitAll = [&](const Line& L, const Box2& within)
 		{
-			std::vector<std::vector<P2>> out;
-			for (std::vector<P2>& w : work)
+			grown.clear();
+			for (const int at : leaves)
 			{
-				if (boxOf(w).overlaps(within) && splitBy(w, L, neg, pos))
+				if (!boxOf(nodes[at].poly).overlaps(within) || !splitBy(nodes[at].poly, L, neg, pos))
 				{
-					if (std::fabs(area2(neg)) > 1e-8)
-						out.push_back(neg);
-					if (std::fabs(area2(pos)) > 1e-8)
-						out.push_back(pos);
-				} else {
-					out.push_back(std::move(w));
+					grown.push_back(at);
+					continue;
+				}
+				nodes[at].split = true;
+				int side = 0;
+				for (const std::vector<P2>* half : { &neg, &pos })
+				{
+					if (std::fabs(area2(*half)) > 1e-8)
+					{
+						nodes[at].kid[side] = (int)nodes.size();
+						grown.push_back((int)nodes.size());
+						nodes.push_back({ *half });
+					}
+					++side;
 				}
 			}
-			work = std::move(out);
+			leaves.swap(grown);
 		};
 		for (const Wall& w : pc.walls)
 			if (w.box.overlaps(pbox))
 				splitAll(w.L, w.box);
-		for (const CutTri& t : pc.tris)
+		trisNear(pc, pbox, 1e-6, near);
+		for (const int k : near)
 		{
-			if (!t.flat || !t.box.overlaps(pbox))
+			const CutTri& t = pc.tris[k];
+			if (!t.box.overlaps(pbox))
 				continue;
 			for (const Line& L : t.edge)
 				splitAll(L, t.box);
@@ -526,15 +606,16 @@ std::size_t cutByCutter(const PreparedCutter& pc, std::vector<std::vector<P2>>& 
 			for (const double h : { lo, hi })
 				splitAll(Line{ da / len, db / len, (t.C - gC - h) / len }, t.box);
 		}
-		for (std::vector<P2>& w : work)
+		for (const int at : leaves)
 		{
+			const std::vector<P2>& w = nodes[at].poly;
 			P2 m = { 0, 0 };
 			for (const P2& p : w)
 			{
 				m[0] += p[0] / w.size();
 				m[1] += p[1] / w.size();
 			}
-			hitsAt(pc, m, hits);
+			hitsAt(pc, m, hits, near);
 			const double g = gA * m[0] + gB * m[1] + gC;
 			if (skipSelf >= 0)
 				hits.erase(std::remove_if(hits.begin(), hits.end(), [&](double h) { return std::fabs(h - g) <= skipSelf; }), hits.end());
@@ -543,8 +624,8 @@ std::size_t cutByCutter(const PreparedCutter& pc, std::vector<std::vector<P2>>& 
 			{
 				// any surface over it, or inside the walls' outline (an open shell, no caps): even-odd crossings of a ray towards +x
 				bool in = false;
-				for (const Wall& w : pc.walls)
-					if ((w.a[1] > m[1]) != (w.b[1] > m[1]) && m[0] < w.a[0] + (m[1] - w.a[1]) * (w.b[0] - w.a[0]) / (w.b[1] - w.a[1]))
+				for (const Wall& wall : pc.walls)
+					if ((wall.a[1] > m[1]) != (wall.b[1] > m[1]) && m[0] < wall.a[0] + (m[1] - wall.a[1]) * (wall.b[0] - wall.a[0]) / (wall.b[1] - wall.a[1]))
 						in = !in;
 				drop = in || !hits.empty();
 			} else {
@@ -556,10 +637,24 @@ std::size_t cutByCutter(const PreparedCutter& pc, std::vector<std::vector<P2>>& 
 				for (size_t k = 0; k + 1 < hits.size() && !drop; k += 2)
 					drop = hits[k] < y1 && hits[k + 1] > y0;
 			}
-			if (drop)
-				++dropped;
+			nodes[at].kept = !drop;
+			dropped += drop;
+		}
+		// children come after their parent: bottom-up, a split node is kept when both halves are (a half with no area counts as lost)
+		for (int at = (int)nodes.size() - 1; at >= 0; --at)
+			if (nodes[at].split)
+				nodes[at].kept = nodes[at].kid[0] >= 0 && nodes[at].kid[1] >= 0 && nodes[nodes[at].kid[0]].kept && nodes[nodes[at].kid[1]].kept;
+		grown = { 0 };
+		while (!grown.empty())
+		{
+			const int at = grown.back();
+			grown.pop_back();
+			if (nodes[at].kept)
+				next.push_back(std::move(nodes[at].poly));
 			else
-				next.push_back(std::move(w));
+				for (const int kid : { nodes[at].kid[1], nodes[at].kid[0] })
+					if (kid >= 0)
+						grown.push_back(kid);
 		}
 	}
 	pieces = std::move(next);
@@ -1037,6 +1132,7 @@ bool Gen::evaluate(int v, Plan& plan)
 		return false;
 	plan.ring.clear();
 	plan.tris.clear();
+	plan.pa = plan.pb = -1;
 	const bool boundary = starts == 1;
 	int cur = boundary ? start : edges[0].first;
 	for (size_t guard = 0; guard <= edges.size() + 1; ++guard)
@@ -1069,8 +1165,34 @@ bool Gen::evaluate(int v, Plan& plan)
 		{
 			if (area > 1e-6 || chord > prm_.heightError)
 				return false;
-		} else if (area > (turn > 0 ? prm_.borderArea : prm_.concaveArea) || chord > prm_.borderHeight) {
-			return false;
+		} else {
+			bool bounded = false;	// straighten: the chord stands for the outline points it drops within slopXZ / slopY, and joins no pinch
+			if (prm_.straighten)
+			{
+				plan.pa = p;
+				plan.pb = n;
+				plan.owned = { V };
+				for (const auto& key : { edgeKey(p, v), edgeKey(v, n) })
+				{
+					const auto it = dropped_.find(key);
+					if (it != dropped_.end())
+						plan.owned.insert(plan.owned.end(), it->second.begin(), it->second.end());
+				}
+				if (pinched(plan, v))
+					return false;
+				// only at a convex corner: the chord then cuts ground away. A reflex corner lays ground over the cutter the outline hugs (a thin
+				// cutter bridged whole, knav_ground zone 46.16), so it stays on the production area rule
+				bounded = turn > 0;
+				for (const P3& q : plan.owned)
+				{
+					const double u = std::clamp(((q[0] - A[0]) * dx + (q[2] - A[2]) * dz) / len2, 0.0, 1.0);
+					bounded = bounded && std::hypot(q[0] - (A[0] + u * dx), q[2] - (A[2] + u * dz)) <= prm_.slopXZ
+						&& std::fabs(q[1] - (A[1] + u * (B[1] - A[1]))) <= prm_.slopY;
+				}
+			}
+			// a removal that drifts past the straighten bound may still pass the production rule (small area, small chord)
+			if (!bounded && (area > (turn > 0 ? prm_.borderArea : prm_.concaveArea) || chord > prm_.borderHeight))
+				return false;
 		}
 		// the closing edge n -> p must not cross the ring
 		for (size_t k = 1; k + 2 < plan.ring.size(); ++k)
@@ -1115,6 +1237,12 @@ bool Gen::evaluate(int v, Plan& plan)
 
 void Gen::apply(int v, const Plan& plan)
 {
+	if (plan.pa >= 0)
+	{
+		dropped_.erase(edgeKey(plan.pa, v));
+		dropped_.erase(edgeKey(v, plan.pb));
+		dropped_[edgeKey(plan.pa, plan.pb)] = plan.owned;
+	}
 	std::vector<int> pts = { v };
 	for (const int t : vt_[v])
 	{
@@ -1145,8 +1273,83 @@ void Gen::apply(int v, const Plan& plan)
 	removed_[v] = 1;
 }
 
+// The outline vertices as they stand before any removal, and the edge-connected piece (component) each belongs to: a hole's outline and the
+// outer outline are one piece, an island is another. A vertex where two pieces touch is a pinch vertex.
+void Gen::indexOutline()
+{
+	outline_.clear();
+	pinchV_.clear();
+	vcomp_.clear();
+	std::map<std::pair<int, int>, int> dir;	// directed edge -> triangle
+	for (int t = 0; t < (int)T_.size(); ++t)
+		if (T_[t].alive)
+			for (int k = 0; k < 3; ++k)
+				dir[{ T_[t].v[k], T_[t].v[(k + 1) % 3] }] = t;
+	std::vector<int> uf(T_.size());
+	for (int t = 0; t < (int)uf.size(); ++t)
+		uf[t] = t;
+	const std::function<int(int)> root = [&](int t) { return uf[t] == t ? t : uf[t] = root(uf[t]); };
+	for (const auto& [e, t] : dir)
+	{
+		const auto o = dir.find({ e.second, e.first });
+		if (o != dir.end())
+			uf[root(t)] = root(o->second);
+	}
+	std::unordered_map<int, int> outs;
+	for (const auto& [e, t] : dir)
+	{
+		const int c = root(t);
+		for (const int x : { e.first, e.second })
+		{
+			auto& cs = vcomp_[x];
+			if (std::find(cs.begin(), cs.end(), c) == cs.end())
+				cs.push_back(c);
+		}
+		if (!dir.count({ e.second, e.first }))
+		{
+			if (++outs[e.first] == 1)
+				outline_[cellKey((int)std::floor(P_[e.first][0] / 8), (int)std::floor(P_[e.first][2] / 8))].push_back(e.first);
+		}
+	}
+	for (const auto& [x, cs] : vcomp_)
+		if (cs.size() > 1)
+			pinchV_.insert(x);
+}
+
+// The chord A-B the removal of v makes must not join another piece of ground: no pinch vertex at its ends, no outline vertex of another piece within
+// slopXZ of it (the prune drops islands; a chord across the pinch would hand them to the rim component).
+bool Gen::pinched(const Plan& plan, int v) const
+{
+	if (pinchV_.count(plan.pa) || pinchV_.count(plan.pb))
+		return true;
+	const int mine = vcomp_.at(v).front();
+	const P3& A = P_[plan.pa], & B = P_[plan.pb];
+	const double r = prm_.slopXZ, dx = B[0] - A[0], dz = B[2] - A[2], len2 = dx * dx + dz * dz;
+	const int c0x = (int)std::floor((std::min(A[0], B[0]) - r) / 8), c1x = (int)std::floor((std::max(A[0], B[0]) + r) / 8);
+	const int c0z = (int)std::floor((std::min(A[2], B[2]) - r) / 8), c1z = (int)std::floor((std::max(A[2], B[2]) + r) / 8);
+	for (int cx = c0x; cx <= c1x; ++cx)
+		for (int cz = c0z; cz <= c1z; ++cz)
+		{
+			const auto it = outline_.find(cellKey(cx, cz));
+			if (it == outline_.end())
+				continue;
+			for (const int x : it->second)
+			{
+				if (vcomp_.at(x).front() == mine)
+					continue;
+				const P3& q = P_[x];
+				const double u = std::clamp(((q[0] - A[0]) * dx + (q[2] - A[2]) * dz) / len2, 0.0, 1.0);
+				if (std::hypot(q[0] - (A[0] + u * dx), q[2] - (A[2] + u * dz)) < r)
+					return true;
+			}
+		}
+	return false;
+}
+
 void Gen::simplify(Stats& st)
 {
+	if (prm_.straighten)
+		indexOutline();
 	using Item = std::tuple<double, int, uint32_t>;
 	std::priority_queue<Item, std::vector<Item>, std::greater<Item>> pq;
 	Plan plan;
@@ -1409,11 +1612,82 @@ void Gen::tops(const std::vector<Cutter>& cutters, const Params& prm, Stats& st)
 				st.deckRejected += !u.ok;
 			}
 		}
+		// Step 1 by surfgen (kenshi-ffmi.7; section 12: "an object uses the same machinery as a building with no mask"): the kept up-facing
+		// triangles are the walkable shape, the whole object an obstacle shape for its own cuts (railings, posts), no mask, no pruning (the prune
+		// is step 4's). Its faces (merged, welded, the narrow cut) replace the raw triangles; steps 2-4 run on them as before. Without this every
+		// source triangle stayed its own face, split again by its own span cut and the terrain cells: a Metal Arch Bridge deck came out 922 faces,
+		// median 20 u2, against surfgen's 280 on the same collision. A prebuilt top (a zone side) is surfgen's already.
+		const Cutter* src = &c;
+		if (!c.prebuilt)
+		{
+			kworld::WorldShape walk, whole;
+			walk.use = kworld::NavUse::Walkable;
+			whole.use = kworld::NavUse::Obstacle;
+			const auto addTri = [](kworld::WorldShape& s, const P3& a, const P3& b, const P3& d)
+			{
+				for (const P3* q : { &a, &b, &d })
+				{
+					s.indices.push_back((std::uint32_t)(s.vertices.size() / 3));
+					for (int i = 0; i < 3; ++i)
+						s.vertices.push_back((float)(*q)[i]);
+				}
+			};
+			for (const Up& u : ups)
+				if (u.ok)
+					addTri(walk, c.tris[u.k], c.tris[u.k + 1], c.tris[u.k + 2]);
+			for (size_t k = 0; k + 2 < c.tris.size(); k += 3)
+				addTri(whole, c.tris[k], c.tris[k + 1], c.tris[k + 2]);
+			for (kworld::WorldShape* s : { &walk, &whole })
+			{
+				s->min = { 1e30f, 1e30f, 1e30f };
+				s->max = { -1e30f, -1e30f, -1e30f };
+				for (size_t i = 0; i < s->vertices.size(); ++i)
+				{
+					s->min[i % 3] = std::min(s->min[i % 3], s->vertices[i]);
+					s->max[i % 3] = std::max(s->max[i % 3], s->vertices[i]);
+				}
+			}
+			if (walk.indices.empty())
+				continue;
+			surfgen::Input in;
+			in.shapes = { &walk, &whole };
+			in.paintDoors = false;
+			surfgen::Settings sg;
+			sg.slopeDegrees = prm.topSlopeDeg;
+			sg.characterHeight = prm.characterHeight;
+			sg.cutBase = prm.cutBase;
+			sg.keepIslands = true;
+			// no narrow cut: surfgen normalises the tops here, it does not decide what is walkable. The tops had no width rule before (a fallen
+			// tree's trunk, TreeFall01 in knav_ground_objects, is under minPassage wide and lost its top with it); one is ksim's call.
+			sg.minPassage = 0;
+			const native::Mesh made = surfgen::generate(in, sg);
+			madeTops_.push_back(zoneSideCutter(made, c.label));
+			madeTops_.back().prebuilt = false;
+			madeTops_.back().seam.clear();
+			src = &madeTops_.back();
+			++st.topSurfgen;
+			ups.clear();
+			for (size_t k = 0; k + 2 < src->tris.size(); k += 3)
+			{
+				const P3& a = src->tris[k], & b = src->tris[k + 1], & d = src->tris[k + 2];
+				const P3 un = normal(a, b, d);
+				const P3 n = { -un[0], -un[1], -un[2] };
+				if (length(n) < 1e-9 || n[1] <= 0)
+					continue;
+				Up u;
+				u.k = k;
+				u.fA = -n[0] / n[1];
+				u.fB = -n[2] / n[1];
+				u.fC = a[1] - u.fA * a[0] - u.fB * a[2];
+				u.area = -cross2(a, b, d) * 0.5;
+				ups.push_back(u);
+			}
+		}
 		for (const Up& u : ups)
 		{
 			if (!u.ok)
 				continue;
-			const P3& a = c.tris[u.k], & b = c.tris[u.k + 1], & d = c.tris[u.k + 2];
+			const P3& a = src->tris[u.k], & b = src->tris[u.k + 1], & d = src->tris[u.k + 2];
 			const double fA = u.fA, fB = u.fB, fC = u.fC, area = u.area;
 			(void)area;
 			std::vector<P2> poly = { { a[0], a[2] }, { d[0], d[2] }, { b[0], b[2] } };
@@ -1462,13 +1736,13 @@ void Gen::tops(const std::vector<Cutter>& cutters, const Params& prm, Stats& st)
 				}
 			if (pieces.empty())
 				continue;
-			// F4: the cut rule against every solid above the face (its own shape's other faces included)
+			// F4: the cut rule against every other solid above the face (surfgen cut the object by its own shape)
 			const Box2 fb = boxOf(poly);
 			for (const PreparedCutter& pc : pcs_)
 			{
 				if (pieces.empty() || c.prebuilt)
 					break;
-				if (!pc.box.overlaps(fb))
+				if (pc.src == &c || !pc.box.overlaps(fb))
 					continue;
 				cutByCutter(pc, pieces, fA, fB, fC, prm.cutBase, prm.characterHeight, 0.05);
 			}
@@ -1504,10 +1778,10 @@ void Gen::tops(const std::vector<Cutter>& cutters, const Params& prm, Stats& st)
 }
 
 // Step 3: link the tops' boundary edges to the ground's and to each other. Two boundary edges of different faces link where they run against each
-// other within matchSeparation in xz over at least matchOverlap, and no step above matchStep at either end of the overlap; an edge is split
+// other within matchSeparation in xz and matchStep in height over at least matchOverlap (the stretch of the overlap where both hold); an edge is split
 // at the overlap ends (each side at its own end), and a stretch links once. A pair of ground edges never links here.
 void Gen::linkTops(std::vector<std::vector<int>>& poly, std::vector<uint8_t>& dead, std::vector<uint8_t>& isTop,
-	std::unordered_map<uint64_t, int>& owner, std::vector<Link>& links, Stats& st)
+	std::unordered_map<uint64_t, int>& owner, std::vector<Link>& links, std::vector<std::pair<int, int>>& touching, Stats& st)
 {
 	const auto t0 = std::chrono::steady_clock::now();
 	const auto key = [](int a, int b) { return ((uint64_t)(uint32_t)a << 32) | (uint32_t)b; };
@@ -1551,6 +1825,9 @@ void Gen::linkTops(std::vector<std::vector<int>>& poly, std::vector<uint8_t>& de
 		double len;
 	};
 	std::vector<Cand> cands;
+	// the edge that last tested each edge: an edge lies in several cells and is tested once (a list searched per test was quadratic in the edges near a
+	// long edge: 52,52's ground took 1000 s on it, kenshi-k16.7.212)
+	std::vector<int> seenBy(E.size(), -1);
 	for (size_t ea = 0; ea < E.size(); ++ea)
 	{
 		const Edge& A = E[ea];
@@ -1558,7 +1835,6 @@ void Gen::linkTops(std::vector<std::vector<int>>& poly, std::vector<uint8_t>& de
 			continue;
 		const P3& a0 = P_[A.u], & a1 = P_[A.w];
 		const double dax = a1[0] - a0[0], daz = a1[2] - a0[2];
-		std::vector<int> seen;
 		for (int64_t cx = (int64_t)std::floor((std::min(a0[0], a1[0]) - 2.5) / cell); cx <= (int64_t)std::floor((std::max(a0[0], a1[0]) + 2.5) / cell); ++cx)
 			for (int64_t cz = (int64_t)std::floor((std::min(a0[2], a1[2]) - 2.5) / cell); cz <= (int64_t)std::floor((std::max(a0[2], a1[2]) + 2.5) / cell); ++cz)
 			{
@@ -1567,28 +1843,68 @@ void Gen::linkTops(std::vector<std::vector<int>>& poly, std::vector<uint8_t>& de
 					continue;
 				for (const int eb : it->second)
 				{
-					if ((size_t)eb == ea || E[eb].f == A.f || (isTop[E[eb].f] && (size_t)eb < ea) || std::find(seen.begin(), seen.end(), eb) != seen.end())
+					if ((size_t)eb == ea || E[eb].f == A.f || (isTop[E[eb].f] && (size_t)eb < ea) || seenBy[eb] == (int)ea)
 						continue;
-					seen.push_back(eb);
+					seenBy[eb] = (int)ea;
 					const Edge& B = E[eb];
 					const P3& b0 = P_[B.u], & b1 = P_[B.w];
 					const double dbx = b1[0] - b0[0], dbz = b1[2] - b0[2];
 					if ((dax * dbx + daz * dbz) / (A.len * B.len) > -0.9)
 						continue;
 					const double t0a = ((b0[0] - a0[0]) * dax + (b0[2] - a0[2]) * daz) / (A.len * A.len), t1a = ((b1[0] - a0[0]) * dax + (b1[2] - a0[2]) * daz) / (A.len * A.len);
-					const double lo = std::max(0.0, std::min(t0a, t1a)), hi = std::min(1.0, std::max(t0a, t1a));
+					double lo = std::max(0.0, std::min(t0a, t1a)), hi = std::min(1.0, std::max(t0a, t1a));
 					if ((hi - lo) * A.len < prm_.matchOverlap)
 						continue;
-					bool ok = true;
-					for (const double t : { lo, hi })
+					// the rule at a point of A: the nearest point of B within matchSeparation in xz and matchStep in height
+					const auto meets = [&](double t)
 					{
 						const double px = a0[0] + t * dax, pz = a0[2] + t * daz, py = a0[1] + t * (a1[1] - a0[1]);
 						const double s = std::clamp(((px - b0[0]) * dbx + (pz - b0[2]) * dbz) / (B.len * B.len), 0.0, 1.0);
 						const double qx = b0[0] + s * dbx, qz = b0[2] + s * dbz, qy = b0[1] + s * (b1[1] - b0[1]);
-						ok = ok && std::hypot(qx - px, qz - pz) <= prm_.matchSeparation && std::fabs(qy - py) <= prm_.matchStep;
+						return std::hypot(qx - px, qz - pz) <= prm_.matchSeparation && std::fabs(qy - py) <= prm_.matchStep;
+					};
+					if (!meets(lo) || !meets(hi))
+					{
+						// Two edges that run against each other for part of the overlap link over that part (kenshi-k16.7.212: with both ends tested only,
+						// a long edge linked nothing and the link hung on how finely the faces happened to be cut). Along A the distance to B's line and
+						// the height over it are linear: the stretch where both are within the limits, checked by the rule at its ends.
+						const auto off = [&](double t, double& gap, double& step)
+						{
+							const double px = a0[0] + t * dax, pz = a0[2] + t * daz;
+							const double s = ((px - b0[0]) * dbx + (pz - b0[2]) * dbz) / (B.len * B.len);
+							gap = ((px - b0[0]) * dbz - (pz - b0[2]) * dbx) / B.len;
+							step = a0[1] + t * (a1[1] - a0[1]) - (b0[1] + s * (b1[1] - b0[1]));
+						};
+						double gap0, step0, gap1, step1, u0 = 0, u1 = 1;	// the stretch as fractions of lo .. hi
+						off(lo, gap0, step0);
+						off(hi, gap1, step1);
+						const auto clip = [&](double f0, double f1, double limit)
+						{
+							for (const double sign : { 1.0, -1.0 })
+							{
+								// sign * f(u) <= limit, f linear from f0 to f1
+								const double g0 = sign * f0 - limit, g1 = sign * f1 - limit;
+								if (g0 > 0 && g1 > 0)
+									u1 = -1;
+								else if (g0 > 0)
+									u0 = std::max(u0, g0 / (g0 - g1));
+								else if (g1 > 0)
+									u1 = std::min(u1, g0 / (g0 - g1));
+							}
+						};
+						clip(gap0, gap1, prm_.matchSeparation);
+						clip(step0, step1, prm_.matchStep);
+						if (u1 <= u0)
+							continue;
+						// a hair inside, so the rule holds at the ends in floating point
+						const double nlo = lo + (u0 > 0 ? u0 + 1e-9 : 0.0) * (hi - lo), nhi = lo + (u1 < 1 ? u1 - 1e-9 : 1.0) * (hi - lo);
+						lo = nlo;
+						hi = nhi;
+						if ((hi - lo) * A.len < prm_.matchOverlap || !meets(lo) || !meets(hi))
+							continue;
 					}
-					if (ok)
-						cands.push_back({ (int)ea, eb, lo, hi, (hi - lo) * A.len });
+					cands.push_back({ (int)ea, eb, lo, hi, (hi - lo) * A.len });
+					touching.push_back({ A.f, B.f });
 				}
 			}
 	}
@@ -1638,6 +1954,33 @@ void Gen::linkTops(std::vector<std::vector<int>>& poly, std::vector<uint8_t>& de
 				continue;
 			const double sp = bOfA(p), sq = bOfA(q);
 			Piece pc = { cd.a, cd.b, p, q, std::min(sp, sq), std::max(sp, sq) };
+			// B's claims in B's own fractions: the projection of A's free part can reach a few hundredths into a stretch B already linked
+			// (the edges are not parallel), and a cut inside that stretch leaves the earlier link's ends on two sub-edges, so it is lost
+			// at emission (a Metal Arch Bridge deck fell in two at a 0.8 u step, kenshi-ffmi.7). Shrink the piece to B's free part.
+			bool inside = false, lo = false, hi = false;
+			for (const auto& [x, y] : B.claimed)
+			{
+				if (y <= pc.b0 || x >= pc.b1)
+					continue;
+				if (x <= pc.b0)
+				{
+					pc.b0 = y;
+					lo = true;
+				} else if (y >= pc.b1) {
+					pc.b1 = x;
+					hi = true;
+				} else {
+					inside = true;
+				}
+			}
+			if (inside || pc.b1 <= pc.b0)
+				continue;
+			// the A end that faces a moved B end follows it (antiparallel: B's low end pairs with A's high end)
+			const bool same = sp < sq;
+			if (lo)
+				*(same ? &pc.a0 : &pc.a1) = std::clamp(aOfB(pc.b0), p, q);
+			if (hi)
+				*(same ? &pc.a1 : &pc.a0) = std::clamp(aOfB(pc.b1), p, q);
 			for (double* f : { &pc.a0, &pc.a1 })
 			{
 				if (*f * A.len < 0.01) *f = 0;
@@ -1763,54 +2106,86 @@ native::Mesh Gen::finish(const std::vector<std::array<double, 2>>& seeds, Stats&
 				c /= len;
 		return n;
 	};
-	std::vector<std::tuple<double, int, int>> shared;
-	for (const auto& [k, f] : owner)
+	// Production merge first (aligned faces only, as before straighten), then the straighten pass over what is left: a union that spans the
+	// same faces in another order leaves needles stranded (knav_ground zone 46.16)
+	for (int pass = 0; pass < (prm_.straighten ? 2 : 1); ++pass)
 	{
-		(void)f;
-		const int a = (int)(k >> 32), b = (int)(k & 0xffffffffu);
-		if (a < b && owner.count(key(b, a)))
-			shared.push_back({ std::hypot(P_[a][0] - P_[b][0], P_[a][2] - P_[b][2]), a, b });
-	}
-	std::sort(shared.begin(), shared.end(), [](const auto& x, const auto& y) { return std::get<0>(x) > std::get<0>(y); });
-	for (const auto& [len, a, b] : shared)
-	{
-		(void)len;
-		const auto ia = owner.find(key(a, b)), ib = owner.find(key(b, a));
-		if (ia == owner.end() || ib == owner.end())
-			continue;
-		const int fp = ia->second, fq = ib->second;
-		if (fp == fq || dead[fp] || dead[fq])
-			continue;
-		const std::vector<int>& p = poly[fp], & q = poly[fq];
-		const P3 np = polyNormal(p), nq = polyNormal(q);
-		if (np[0] * nq[0] + np[1] * nq[1] + np[2] * nq[2] < prm_.planarCos)
-			continue;
-		// p holds a -> b, q holds b -> a: p from b round to a, then q's vertices after a up to before b
-		const size_t pb = std::find(p.begin(), p.end(), b) - p.begin(), qa = std::find(q.begin(), q.end(), a) - q.begin();
-		std::vector<int> m;
-		for (size_t k = 0; k < p.size(); ++k)
-			m.push_back(p[(pb + k) % p.size()]);
-		for (size_t k = 1; k + 1 < q.size(); ++k)
-			m.push_back(q[(qa + k) % q.size()]);
-		bool convex = true;
-		for (size_t k = 0; k < m.size() && convex; ++k)
-			convex = cross2(P_[m[k]], P_[m[(k + 1) % m.size()]], P_[m[(k + 2) % m.size()]]) >= -1e-9;
-		if (!convex)
-			continue;
-		owner.erase(key(a, b));
-		owner.erase(key(b, a));
-		for (size_t k = 0; k < q.size(); ++k)
+		std::vector<std::tuple<double, int, int>> shared;
+		for (const auto& [k, f] : owner)
 		{
-			const int x = q[k], y = q[(k + 1) % q.size()];
-			if (!(x == b && y == a))
-				owner[key(x, y)] = fp;
+			(void)f;
+			const int a = (int)(k >> 32), b = (int)(k & 0xffffffffu);
+			if (a < b && owner.count(key(b, a)))
+				shared.push_back({ std::hypot(P_[a][0] - P_[b][0], P_[a][2] - P_[b][2]), a, b });
 		}
-		poly[fp] = std::move(m);
-		dead[fq] = 1;
+		std::sort(shared.begin(), shared.end(), [](const auto& x, const auto& y) { return std::get<0>(x) > std::get<0>(y); });
+		for (const auto& [len, a, b] : shared)
+		{
+			(void)len;
+			const auto ia = owner.find(key(a, b)), ib = owner.find(key(b, a));
+			if (ia == owner.end() || ib == owner.end())
+				continue;
+			const int fp = ia->second, fq = ib->second;
+			if (fp == fq || dead[fp] || dead[fq])
+				continue;
+			const std::vector<int>& p = poly[fp], & q = poly[fq];
+			const P3 np = polyNormal(p), nq = polyNormal(q);
+			const bool aligned = np[0] * nq[0] + np[1] * nq[1] + np[2] * nq[2] >= prm_.planarCos;
+			if (!aligned && (pass == 0 || isTop[fp] || isTop[fq]))	// a deck never merges across its slope limit
+				continue;
+			// p holds a -> b, q holds b -> a: p from b round to a, then q's vertices after a up to before b
+			const size_t pb = std::find(p.begin(), p.end(), b) - p.begin(), qa = std::find(q.begin(), q.end(), a) - q.begin();
+			std::vector<int> m;
+			for (size_t k = 0; k < p.size(); ++k)
+				m.push_back(p[(pb + k) % p.size()]);
+			for (size_t k = 1; k + 1 < q.size(); ++k)
+				m.push_back(q[(qa + k) % q.size()]);
+			// two faces that share edges apart (a ring round a hole) would union into a ring that visits a corner twice
+			bool convex = true;
+			for (size_t k = 0; k < m.size() && convex; ++k)
+				for (size_t l = k + 1; l < m.size() && convex; ++l)
+					convex = m[k] != m[l];
+			for (size_t k = 0; k < m.size() && convex; ++k)
+				convex = cross2(P_[m[k]], P_[m[(k + 1) % m.size()]], P_[m[(k + 2) % m.size()]]) >= -1e-9;
+			if (!convex)
+				continue;
+			if (!aligned)
+			{
+				// two corners on one spot (a zero-area triangle the union would carry in) keep the union out of the straighten pass
+				bool twice = false;
+				for (size_t k = 0; k < m.size() && !twice; ++k)
+					for (size_t l = k + 1; l < m.size() && !twice; ++l)
+						twice = std::hypot(P_[m[k]][0] - P_[m[l]][0], P_[m[k]][2] - P_[m[l]][2]) < 0.01;
+				if (twice)
+					continue;
+				// straighten: the union's corners within slopY of its best-fit plane (area-weighted normal through the centroid)
+				const P3 nm = polyNormal(m);
+				P3 c = { 0, 0, 0 };
+				for (const int x : m)
+					for (int k = 0; k < 3; ++k)
+						c[k] += P_[x][k] / m.size();
+				double dev = 0;
+				for (const int x : m)
+					dev = std::max(dev, std::fabs(nm[0] * (P_[x][0] - c[0]) + nm[1] * (P_[x][1] - c[1]) + nm[2] * (P_[x][2] - c[2])));
+				if (dev > prm_.slopY)
+					continue;
+			}
+			owner.erase(key(a, b));
+			owner.erase(key(b, a));
+			for (size_t k = 0; k < q.size(); ++k)
+			{
+				const int x = q[k], y = q[(k + 1) % q.size()];
+				if (!(x == b && y == a))
+					owner[key(x, y)] = fp;
+			}
+			poly[fp] = std::move(m);
+			dead[fq] = 1;
+		}
 	}
 	std::vector<Link> links;
+	std::vector<std::pair<int, int>> touching;
 	if (!topPolys_.empty())
-		linkTops(poly, dead, isTop, owner, links, st);
+		linkTops(poly, dead, isTop, owner, links, touching, st);
 	const auto t1 = std::chrono::steady_clock::now();
 
 	// Components over shared edges and the tops' links; keep those with a seed point or a rim edge
@@ -1826,6 +2201,11 @@ native::Mesh Gen::finish(const std::vector<std::array<double, 2>>& seeds, Stats&
 	}
 	for (const Link& l : links)
 		parent[root(l.fa)] = root(l.fb);
+	// Every pair of faces whose edges meet the matcher's rule is one component for the prune, linked or not: a stretch of an edge links once, so a
+	// face that meets an edge already linked to another gets no link there, and a deck hung on that one meeting was dropped whole (zone 41,54,
+	// kenshi-k16.7.212; before, the fragments of the cut left enough spare edges). nativeTiles pairs the edges still open.
+	for (const auto& [fa, fb] : touching)
+		parent[root(fa)] = root(fb);
 	std::vector<uint8_t> keepRoot(poly.size(), 0);
 	for (size_t f = 0; f < poly.size(); ++f)
 	{
@@ -1895,7 +2275,7 @@ native::Mesh Gen::finish(const std::vector<std::array<double, 2>>& seeds, Stats&
 	const auto t2 = std::chrono::steady_clock::now();
 
 	native::Mesh mesh;
-	std::vector<int> remap(P_.size(), -1);
+	std::vector<int> remap(P_.size(), -1), meshFace(poly.size(), -1);
 	std::unordered_map<uint64_t, int> edgeAt;
 	for (size_t f = 0; f < poly.size(); ++f)
 	{
@@ -1937,6 +2317,7 @@ native::Mesh Gen::finish(const std::vector<std::array<double, 2>>& seeds, Stats&
 			mesh.edges.push_back(e);
 		}
 		mesh.faces.push_back(face);
+		meshFace[f] = (int)mesh.faces.size() - 1;
 		if (isTop[f])
 		{
 			st.topFaceIndex.push_back((uint32_t)mesh.faces.size() - 1);
@@ -1975,6 +2356,9 @@ native::Mesh Gen::finish(const std::vector<std::array<double, 2>>& seeds, Stats&
 		mesh.edges[b->second].oppositeFace = faceOf[a->second];
 		mesh.edges[a->second].linked = mesh.edges[b->second].linked = false;
 	}
+	for (const auto& [fa, fb] : touching)
+		if (meshFace[fa] >= 0 && meshFace[fb] >= 0)
+			st.topTouching.push_back({ (uint32_t)meshFace[fa], (uint32_t)meshFace[fb] });
 	st.faces = mesh.faces.size();
 	st.msMerge = std::chrono::duration<double, std::milli>(t1 - t0).count();
 	st.msPrune = std::chrono::duration<double, std::milli>(t2 - t1).count();
@@ -2000,6 +2384,14 @@ native::Mesh generate(const Grid& grid, const std::vector<std::array<double, 2>>
 	const auto tc = std::chrono::steady_clock::now();
 	st.msTrim = std::chrono::duration<double, std::milli>(tc - tt).count();
 	gen.simplify(st);
+	if (params.trimAfterSimplify)
+	{
+		const std::size_t tips = st.trimmedTips;
+		const double area = st.trimmedArea;
+		gen.trim(st);
+		st.postTrimmedTips = st.trimmedTips - tips;
+		st.postTrimmedArea = st.trimmedArea - area;
+	}
 	const auto t2 = std::chrono::steady_clock::now();
 	gen.tops(cutters, params, st);
 	st.msGrid = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -2024,7 +2416,7 @@ std::size_t insertOnLine(native::Mesh& m, int axis, double edge, const std::vect
 			const native::Edge& ed = m.edges[e];
 			if (ed.oppositeEdge >= 0)
 				continue;
-			const auto& u = m.vertices[ed.a], & w = m.vertices[ed.b];
+			const std::array<double, 3> u = m.vertices[ed.a], w = m.vertices[ed.b];	// copies: the insert below grows m.vertices (references dangled, kenshi-k16.7.212)
 			if (std::fabs(u[axis] - edge) > 1e-6 || std::fabs(w[axis] - edge) > 1e-6 || std::fabs(w[other] - u[other]) < 1e-3)
 				continue;
 			std::vector<std::pair<double, std::uint32_t>> at;
@@ -2106,51 +2498,332 @@ std::size_t stitchRims(native::Mesh& a, native::Mesh& b, int axis, double edge)
 	return insertOnLine(a, axis, edge, vb) + insertOnLine(b, axis, edge, va);
 }
 
+std::size_t pruneJoined(native::Mesh& world, const std::vector<std::uint32_t>& worldTops, const std::vector<JoinedSide>& sides,
+	const std::vector<std::array<std::uint32_t, 2>>* worldTouching)
+{
+	// Faces of every mesh in one numbering; union over opposite edges, and over the rim edges that run over the same two points across a seam.
+	std::vector<const native::Mesh*> meshes{ &world };
+	std::vector<const std::vector<std::uint32_t>*> topLists{ &worldTops };
+	std::vector<const std::vector<std::array<std::uint32_t, 2>>*> touching{ worldTouching };
+	for (const JoinedSide& side : sides)
+	{
+		meshes.push_back(side.mesh);
+		topLists.push_back(side.tops);
+		touching.push_back(side.touching);
+	}
+	std::vector<std::size_t> base(meshes.size() + 1, 0);
+	for (std::size_t i = 0; i < meshes.size(); ++i)
+		base[i + 1] = base[i] + meshes[i]->faces.size();
+	std::vector<std::size_t> parent(base.back());
+	for (std::size_t i = 0; i < parent.size(); ++i)
+		parent[i] = i;
+	const std::function<std::size_t(std::size_t)> find = [&](std::size_t x) { while (parent[x] != x) x = parent[x] = parent[parent[x]]; return x; };
+	const auto unite = [&](std::size_t a, std::size_t b) { parent[find(a)] = find(b); };
+	for (std::size_t i = 0; i < meshes.size(); ++i)
+		if (touching[i] != nullptr)
+			for (const auto& pair : *touching[i])
+				unite(base[i] + pair[0], base[i] + pair[1]);
+	std::vector<uint8_t> open(base.back(), 0);	// a face with a way out of what is known: ground, a seam to an interior, a rim edge to a window not given
+	std::map<std::array<std::int64_t, 4>, std::size_t> rimAt;	// (a, b) xz in 1/1000 u -> the face on it
+	const auto q = [](double v) { return (std::int64_t)std::llround(v * 1000.0); };
+	for (std::size_t i = 0; i < meshes.size(); ++i)
+	{
+		const native::Mesh& m = *meshes[i];
+		std::vector<uint8_t> top(m.faces.size(), 0);
+		for (const std::uint32_t f : *topLists[i])
+			top[f] = 1;
+		double lo[2] = { 1e300, 1e300 }, hi[2] = { -1e300, -1e300 };
+		for (const native::Edge& e : m.edges)
+			for (const std::uint32_t v : { e.a, e.b })
+				for (int k = 0; k < 2; ++k)
+				{
+					lo[k] = std::min(lo[k], m.vertices[v][k * 2]);
+					hi[k] = std::max(hi[k], m.vertices[v][k * 2]);
+				}
+		for (std::size_t f = 0; f < m.faces.size(); ++f)
+		{
+			open[base[i] + f] = !top[f];
+			for (std::uint32_t k = m.faces[f].startEdge; k < m.faces[f].startEdge + m.faces[f].numEdges; ++k)
+			{
+				const native::Edge& e = m.edges[k];
+				if (e.oppositeEdge >= 0)
+				{
+					unite(base[i] + f, base[i] + (std::size_t)e.oppositeFace);
+					continue;
+				}
+				const auto& a = m.vertices[e.a];
+				const auto& b = m.vertices[e.b];
+				bool border = false;
+				for (int c = 0; c < 2; ++c)
+					for (const double edge : { lo[c], hi[c] })
+						border = border || (std::fabs(a[c * 2] - edge) < 1e-6 && std::fabs(b[c * 2] - edge) < 1e-6);
+				if (!border)
+				{
+					open[base[i] + f] |= e.linked;	// a seam to an interior keeps the top
+					continue;
+				}
+				// a rim edge: its mirror on the other window joins the two faces (the other way round, the same points)
+				const auto mirror = rimAt.find({ q(b[0]), q(b[2]), q(a[0]), q(a[2]) });
+				if (mirror != rimAt.end())
+				{
+					unite(base[i] + f, mirror->second);
+					open[base[i] + f] = open[mirror->second] = open[base[i] + f] || open[mirror->second];
+				}
+				else
+					rimAt[{ q(a[0]), q(a[2]), q(b[0]), q(b[2]) }] = base[i] + f;
+			}
+		}
+	}
+	// a rim edge whose mirror never turned up (a window beyond, or the world's edge) leaves the face undecided: kept
+	std::vector<uint8_t> rootOpen(base.back(), 0);
+	for (const auto& [key, f] : rimAt)
+	{
+		bool matched = false;
+		const auto mirror = rimAt.find({ key[2], key[3], key[0], key[1] });
+		matched = mirror != rimAt.end();
+		if (!matched)
+			open[f] = 1;
+	}
+	for (std::size_t f = 0; f < open.size(); ++f)
+		rootOpen[find(f)] |= open[f];
+	std::vector<uint8_t> dead(world.faces.size(), 0);
+	std::size_t dropped = 0;
+	for (const std::uint32_t f : worldTops)
+		if (!rootOpen[find(f)] && !dead[f])
+		{
+			dead[f] = 1;
+			++dropped;
+		}
+	if (dropped == 0)
+		return 0;
+	native::Mesh out = world;
+	out.faces.clear();
+	out.edges.clear();
+	std::vector<std::int32_t> newEdge(world.edges.size(), -1), newFace(world.faces.size(), -1);
+	for (std::size_t f = 0; f < world.faces.size(); ++f)
+	{
+		if (dead[f])
+			continue;
+		native::Face face = world.faces[f];
+		face.startEdge = (std::uint32_t)out.edges.size();
+		newFace[f] = (std::int32_t)out.faces.size();
+		for (std::uint32_t k = world.faces[f].startEdge; k < world.faces[f].startEdge + world.faces[f].numEdges; ++k)
+		{
+			newEdge[k] = (std::int32_t)out.edges.size();
+			out.edges.push_back(world.edges[k]);
+		}
+		out.faces.push_back(face);
+	}
+	for (native::Edge& e : out.edges)
+		if (e.oppositeEdge >= 0)
+		{
+			const std::int32_t to = newEdge[(std::size_t)e.oppositeEdge];
+			e.oppositeFace = to >= 0 ? newFace[(std::size_t)e.oppositeFace] : -1;
+			e.oppositeEdge = to;
+		}
+	world = std::move(out);
+	return dropped;
+}
+
 WeldStats weldMesh(native::Mesh& m, double grid, double climb)
 {
 	WeldStats stats;
 	const std::size_t nv = m.vertices.size();
-	// (i) vertices within grid in xz and climb in y: the first seen stays
+	// (i) clusters (kenshi-ffmi.10): vertices within `grid` of each other in xz and `climb` in y join, transitively (a first-seen pick split a fan
+	// apex's cluster: two corners 0.012 u apart ended 0.145 u apart, a 2.4 u2 overlap). A cluster sits at its root: a rim vertex (an end of a
+	// `linked` edge: the window border and the interior seam stay put) if it has one, else its lowest index; two rim vertices join only along
+	// one border line, and two clusters join only while their roots are within `grid` of each other (no chains).
 	std::vector<std::uint32_t> rep(nv);
 	for (std::size_t i = 0; i < nv; ++i)
 		rep[i] = (std::uint32_t)i;
+	std::vector<uint8_t> used(nv, 0), rim(nv, 0);
+	for (const native::Edge& e : m.edges)
 	{
-		const double cell = grid * 2;
+		used[e.a] = used[e.b] = 1;
+		if (e.linked)
+			rim[e.a] = rim[e.b] = 1;
+	}
+	{
+		std::vector<std::uint32_t> up(nv);
+		for (std::size_t i = 0; i < nv; ++i)
+			up[i] = (std::uint32_t)i;
+		const std::function<std::uint32_t(std::uint32_t)> root = [&](std::uint32_t v) { while (up[v] != v) v = up[v] = up[up[v]]; return v; };
+		const auto near = [&](std::uint32_t a, std::uint32_t b, double r)
+		{
+			const auto& p = m.vertices[a];
+			const auto& q = m.vertices[b];
+			return std::hypot(p[0] - q[0], p[2] - q[2]) <= r && std::fabs(p[1] - q[1]) <= climb;
+		};
+		// two clusters join only while their roots are within `reach` (so no corner moves farther than that)
+		const auto join = [&](std::uint32_t a, std::uint32_t b, double reach)
+		{
+			const std::uint32_t ra = root(a), rb = root(b);
+			if (ra == rb || !near(ra, rb, reach))
+				return;
+			// two rim vertices join only on one border line (one coordinate equal): the root stays on the border wherever the cluster sits
+			const auto& pa = m.vertices[ra];
+			const auto& pb = m.vertices[rb];
+			if (rim[ra] && rim[rb] && pa[0] != pb[0] && pa[2] != pb[2])
+				return;
+			// the root: the rim vertex, else the lower index
+			if (rim[rb] || (!rim[ra] && rb < ra))
+				up[ra] = rb;
+			else
+				up[rb] = ra;
+		};
+		// opposite edges first: their ends are one vertex in nativeTiles (weldedVertices) and on the ground; linkTops keeps each side's own (up to
+		// 0.125 u apart on surfgen's tops), and a pair whose ends stay apart is a sliver of overlap or gap along the whole edge
+		for (const native::Edge& e : m.edges)
+			if (e.oppositeEdge >= 0)
+			{
+				const native::Edge& o = m.edges[(std::size_t)e.oppositeEdge];
+				if (near(e.a, o.b, grid))
+					join(e.a, o.b, grid);
+				if (near(e.b, o.a, grid))
+					join(e.b, o.a, grid);
+			}
+		const double cell = grid;
 		std::unordered_map<uint64_t, std::vector<std::uint32_t>> grid2;
 		const auto cellOf = [&](double v) { return (int64_t)std::floor(v / cell); };
-		std::vector<uint8_t> used(nv, 0);
-		for (const native::Edge& e : m.edges)
-			used[e.a] = used[e.b] = 1;
+		for (std::size_t i = 0; i < nv; ++i)
+			if (used[i])
+				grid2[cellKeyOf(cellOf(m.vertices[i][0]), cellOf(m.vertices[i][2]))].push_back((std::uint32_t)i);
 		for (std::size_t i = 0; i < nv; ++i)
 		{
 			if (!used[i])
 				continue;
 			const auto& v = m.vertices[i];
 			const int64_t cx = cellOf(v[0]), cz = cellOf(v[2]);
-			bool found = false;
-			for (int64_t dx = -1; dx <= 1 && !found; ++dx)
-				for (int64_t dz = -1; dz <= 1 && !found; ++dz)
+			for (int64_t dx = -1; dx <= 1; ++dx)
+				for (int64_t dz = -1; dz <= 1; ++dz)
 				{
 					const auto it = grid2.find(cellKeyOf(cx + dx, cz + dz));
 					if (it == grid2.end())
 						continue;
 					for (const std::uint32_t o : it->second)
 					{
-						const auto& w = m.vertices[o];
-						if (std::fabs(w[0] - v[0]) <= grid && std::fabs(w[2] - v[2]) <= grid && std::fabs(w[1] - v[1]) <= climb)
-						{
-							rep[i] = o;
-							found = true;
-							break;
-						}
+						if (o > i && near((std::uint32_t)i, o, grid))
+							join((std::uint32_t)i, o, grid);
 					}
 				}
-			if (found)
-				++stats.welded;
-			else
-				grid2[cellKeyOf(cx, cz)].push_back((std::uint32_t)i);
+		}
+		for (std::size_t i = 0; i < nv; ++i)
+			rep[i] = root((std::uint32_t)i);
+	}
+	// (i b) no face may come out of the merge worse than it went in: one that was convex (reflex depth under 0.05 u), wound one way and simple
+	// must stay so, unless it collapses (the thin-face drop below takes it). A face that fails gets its moved corners back (rep = itself), and
+	// the faces round them are checked again. Nothing re-checked after the first weld: 40 of 43 reflex tops on the Metal Arch Bridge were its moves.
+	{
+		const auto shape = [&](std::uint32_t f, bool welded, double& reflex, double& area2, bool& simple, double& perimeter)
+		{
+			std::vector<std::uint32_t> ring;
+			for (std::uint32_t k = m.faces[f].startEdge; k < m.faces[f].startEdge + m.faces[f].numEdges; ++k)
+			{
+				const std::uint32_t v = welded ? rep[m.edges[k].a] : m.edges[k].a;
+				if (ring.empty() || ring.back() != v)
+					ring.push_back(v);
+			}
+			while (ring.size() > 1 && ring.front() == ring.back())
+				ring.pop_back();
+			reflex = 0;
+			area2 = 0;
+			perimeter = 0;
+			simple = true;
+			const std::size_t n = ring.size();
+			for (std::size_t k = 0; k < n; ++k)
+			{
+				const auto& p = m.vertices[ring[k]];
+				const auto& q = m.vertices[ring[(k + 1) % n]];
+				area2 += p[0] * q[2] - q[0] * p[2];
+				perimeter += std::hypot(q[0] - p[0], q[2] - p[2]);
+				for (std::size_t j = k + 1; j < n && simple; ++j)
+					simple = ring[j] != ring[k];
+			}
+			const double s = area2 >= 0 ? 1 : -1;
+			for (std::size_t k = 0; k < n && n >= 3; ++k)
+			{
+				const auto& a = m.vertices[ring[(k + n - 1) % n]];
+				const auto& b = m.vertices[ring[k]];
+				const auto& c = m.vertices[ring[(k + 1) % n]];
+				const double len = std::hypot(c[0] - a[0], c[2] - a[2]);
+				if (len < 1e-9)
+					continue;
+				const double turn = (b[0] - a[0]) * (c[2] - b[2]) - (b[2] - a[2]) * (c[0] - b[0]);	// > 0 with s > 0: a convex corner
+				if (s * turn < 0)
+					reflex = std::max(reflex, -s * turn / len);
+			}
+			return n;
+		};
+		std::vector<std::vector<std::uint32_t>> facesOf(nv);
+		for (std::uint32_t f = 0; f < m.faces.size(); ++f)
+			for (std::uint32_t k = m.faces[f].startEdge; k < m.faces[f].startEdge + m.faces[f].numEdges; ++k)
+				facesOf[m.edges[k].a].push_back(f);
+		struct Before
+		{
+			double reflex, area2;
+			bool simple;
+		};
+		std::vector<Before> before(m.faces.size());
+		std::vector<std::uint32_t> check;
+		for (std::uint32_t f = 0; f < m.faces.size(); ++f)
+		{
+			double r, a, p;
+			bool s;
+			shape(f, false, r, a, s, p);
+			before[f] = { r, a, s };
+			check.push_back(f);
+		}
+		std::vector<uint8_t> queued(m.faces.size(), 1);
+		while (!check.empty())
+		{
+			const std::uint32_t f = check.back();
+			check.pop_back();
+			queued[f] = 0;
+			double r, a, p;
+			bool s;
+			const std::size_t n = shape(f, true, r, a, s, p);
+			if (n < 3 || std::fabs(a) / 2 < p / 2 / 32)
+				continue;	// collapsed: the thin-face drop's
+			// 0.05 u: at 0.005 the given-back corners left Deadlands 189 open edge pairs; 0.05 keeps the worst merge-made reflex corner near 0.1 u
+			const bool ok = (s || !before[f].simple) && (a > 0) == (before[f].area2 > 0) && r <= std::max(0.05, before[f].reflex + 1e-9);
+			if (ok)
+				continue;
+			++stats.refused;
+			for (std::uint32_t k = m.faces[f].startEdge; k < m.faces[f].startEdge + m.faces[f].numEdges; ++k)
+			{
+				const std::uint32_t v = m.edges[k].a;
+				if (rep[v] == v)
+					continue;
+				rep[v] = v;
+				for (const std::uint32_t g : facesOf[v])
+					if (!queued[g])
+					{
+						queued[g] = 1;
+						check.push_back(g);
+					}
+			}
+			if (!queued[f])
+			{
+				queued[f] = 1;
+				check.push_back(f);
+			}
 		}
 	}
+	// (i c) vertices at one position are one (a corner given back above can sit exactly on another given back: no move, so no face changes)
+	{
+		std::map<std::array<double, 3>, std::uint32_t> at;
+		for (std::size_t i = 0; i < nv; ++i)
+			if (used[i] && rep[i] == i)
+			{
+				const auto [it, fresh] = at.try_emplace({ m.vertices[i][0], m.vertices[i][1], m.vertices[i][2] }, (std::uint32_t)i);
+				if (!fresh)
+					rep[i] = it->second;
+			}
+		for (std::size_t i = 0; i < nv; ++i)
+			rep[i] = rep[rep[i]];
+	}
+	for (std::size_t i = 0; i < nv; ++i)
+		stats.welded += used[i] && rep[i] != i;
 	// the faces as loops of entries: the old edge each came from, -1 for a part made by a split
 	struct Entry
 	{
@@ -2170,6 +2843,11 @@ WeldStats weldMesh(native::Mesh& m, double grid, double climb)
 	// a face with no width left on the grid (area / half perimeter under a 32nd of a unit: collinear after the weld, or thinner than the tile's 1/8 u
 	// quanta can keep apart) is dropped: nativeTiles could not place it, and its neighbours would stay open over its edges. Its neighbours' edges become
 	// boundary edges and take part in the split and pair steps below.
+	std::vector<std::int32_t> through(m.edges.size(), -1); // old edge -> the old edge it became the opposite of, across a dropped strip
+	std::vector<std::int32_t> faceOfEdge(m.edges.size(), -1);
+	for (std::size_t f = 0; f < m.faces.size(); ++f)
+		for (std::uint32_t k = m.faces[f].startEdge; k < m.faces[f].startEdge + m.faces[f].numEdges; ++k)
+			faceOfEdge[k] = (std::int32_t)f;
 	std::vector<std::int32_t> droppedOpp; // old edges whose opposite went with a dropped face
 	for (std::size_t f = 0; f < loops.size(); ++f)
 	{
@@ -2183,15 +2861,43 @@ WeldStats weldMesh(native::Mesh& m, double grid, double climb)
 		}
 		if (loops[f].size() >= 3 && std::fabs(area) / 2 >= perimeter / 2 / 32)
 			continue;
+		std::size_t live = 0;
+		// the keep rule: two edges of the dropped face that run over the same two vertices, opposite ways (a collapsed strip: a digon, or a
+		// triangle folded on itself) are one weld of their two neighbours, which become each other's opposite
+		for (std::size_t i = 0; i < loops[f].size(); ++i)
+		{
+			const Entry& ei = loops[f][i];
+			if (ei.old < 0 || m.edges[ei.old].oppositeEdge < 0 || through[(std::size_t)m.edges[ei.old].oppositeEdge] >= 0)
+				continue;
+			for (std::size_t j = i + 1; j < loops[f].size(); ++j)
+			{
+				const Entry& ej = loops[f][j];
+				if (ej.old < 0 || m.edges[ej.old].oppositeEdge < 0 || ej.a != ei.b || ej.b != ei.a
+					|| through[(std::size_t)m.edges[ej.old].oppositeEdge] >= 0)
+					continue;
+				const std::int32_t oi = m.edges[ei.old].oppositeEdge, oj = m.edges[ej.old].oppositeEdge;
+				through[(std::size_t)oi] = oj;
+				through[(std::size_t)oj] = oi;
+				++stats.through;
+				break;
+			}
+		}
 		for (const Entry& en : loops[f])
 			if (en.old >= 0 && m.edges[en.old].oppositeEdge >= 0)
+			{
 				droppedOpp.push_back(m.edges[en.old].oppositeEdge);
+				++live;
+			}
+		++stats.byLive[std::min<std::size_t>(live, 3)];
 		loops[f].clear();
 		++stats.dropped;
 	}
 	std::vector<uint8_t> orphan(m.edges.size(), 0);
 	for (const std::int32_t e : droppedOpp)
 		orphan[(std::size_t)e] = 1;
+	for (std::size_t e = 0; e < through.size(); ++e)
+		if (through[e] >= 0)
+			orphan[e] = 0;
 	// (ii) vertices on boundary edges
 	struct Ref
 	{
@@ -2215,9 +2921,10 @@ WeldStats weldMesh(native::Mesh& m, double grid, double climb)
 	std::vector<std::vector<std::pair<double, std::uint32_t>>> cuts(0);
 	std::unordered_map<uint64_t, std::vector<std::pair<double, std::uint32_t>>> cutsOf; // (face, entry) -> (t, vertex)
 	std::vector<uint8_t> done(nv, 0);
+	std::unordered_set<uint64_t> insertedIn;	// (face, vertex)
 	for (std::size_t i = 0; i < nv; ++i)
 	{
-		if (rep[i] != i || done[i])
+		if (rep[i] != i || done[i] || !used[i])
 			continue;
 		const auto& v = m.vertices[i];
 		const auto it = byCell.find(cellKeyOf((int64_t)std::floor(v[0] / cell), (int64_t)std::floor(v[2] / cell)));
@@ -2244,6 +2951,10 @@ WeldStats weldMesh(native::Mesh& m, double grid, double climb)
 			for (const Entry& other : loops[r.face])
 				own = own || other.a == i;
 			if (own)
+				continue;
+			// once per face (two edges of one strip: a pinch). A vertex inside the face is still a cut (refusing those left the bridge open edge
+			// pairs for 26 fewer Deadlands corners over 0.01 u)
+			if (!insertedIn.insert(((uint64_t)r.face << 32) | (std::uint32_t)i).second)
 				continue;
 			cutsOf[((uint64_t)r.face << 32) | r.at].push_back({ t, (std::uint32_t)i });
 		}
@@ -2297,7 +3008,12 @@ WeldStats weldMesh(native::Mesh& m, double grid, double climb)
 			if (en.old >= 0)
 			{
 				newOf[en.old] = (std::int32_t)out.edges.size();
-				if (!orphan[(std::size_t)en.old])
+				if (through[(std::size_t)en.old] >= 0)
+				{
+					e.oppositeEdge = through[(std::size_t)en.old];
+					e.oppositeFace = faceOfEdge[(std::size_t)e.oppositeEdge];
+				}
+				else if (!orphan[(std::size_t)en.old])
 				{
 					e.oppositeEdge = m.edges[en.old].oppositeEdge;
 					e.oppositeFace = m.edges[en.old].oppositeFace;
@@ -2340,7 +3056,118 @@ WeldStats weldMesh(native::Mesh& m, double grid, double climb)
 			at[((uint64_t)e.a << 32) | e.b] = (std::int32_t)k;
 		}
 	}
+	// and those whose ends are apart by no more than the merge reach (a corner the shape check gave back, or two vertices the reach kept apart): a
+	// declared pair, no vertex moved (nativeTiles' weldedVertices joins the ends within its own 0.25 u)
+	{
+		std::unordered_map<uint64_t, std::vector<std::int32_t>> byMid;
+		const auto midCell = [&](const native::Edge& e)
+		{
+			const auto& p = out.vertices[e.a];
+			const auto& q = out.vertices[e.b];
+			return std::pair<std::int64_t, std::int64_t>{ (std::int64_t)std::floor((p[0] + q[0]) / 2 / 4), (std::int64_t)std::floor((p[2] + q[2]) / 2 / 4) };
+		};
+		for (std::size_t k = 0; k < out.edges.size(); ++k)
+			if (out.edges[k].oppositeEdge < 0 && !out.edges[k].linked)
+			{
+				const auto [cx, cz] = midCell(out.edges[k]);
+				byMid[cellKeyOf(cx, cz)].push_back((std::int32_t)k);
+			}
+		const auto close = [&](std::uint32_t a, std::uint32_t b)
+		{
+			const auto& p = out.vertices[a];
+			const auto& q = out.vertices[b];
+			return std::hypot(p[0] - q[0], p[2] - q[2]) <= grid && std::fabs(p[1] - q[1]) <= climb;
+		};
+		for (std::size_t k = 0; k < out.edges.size(); ++k)
+		{
+			native::Edge& e = out.edges[k];
+			if (e.oppositeEdge >= 0 || e.linked || close(e.a, e.b))
+				continue;
+			const auto [cx, cz] = midCell(e);
+			std::int32_t best = -1;
+			double bestD = 1e300;
+			for (std::int64_t dx = -1; dx <= 1; ++dx)
+				for (std::int64_t dz = -1; dz <= 1; ++dz)
+				{
+					const auto it = byMid.find(cellKeyOf(cx + dx, cz + dz));
+					if (it == byMid.end())
+						continue;
+					for (const std::int32_t j : it->second)
+					{
+						const native::Edge& o = out.edges[(std::size_t)j];
+						if ((std::size_t)j == k || o.oppositeEdge >= 0 || faceOfNew[(std::size_t)j] == faceOfNew[k] || !close(e.a, o.b) || !close(e.b, o.a))
+							continue;
+						const double d = std::hypot(out.vertices[e.a][0] - out.vertices[o.b][0], out.vertices[e.a][2] - out.vertices[o.b][2])
+							+ std::hypot(out.vertices[e.b][0] - out.vertices[o.a][0], out.vertices[e.b][2] - out.vertices[o.a][2]);
+						if (d < bestD)
+						{
+							bestD = d;
+							best = j;
+						}
+					}
+				}
+			if (best < 0)
+				continue;
+			native::Edge& other = out.edges[(std::size_t)best];
+			e.oppositeEdge = best;
+			e.oppositeFace = faceOfNew[(std::size_t)best];
+			other.oppositeEdge = (std::int32_t)k;
+			other.oppositeFace = faceOfNew[k];
+			++stats.declared;
+		}
+	}
 	(void)faceOfOld;
+	std::unordered_map<uint64_t, std::vector<std::int32_t>> openCells; // the unpaired edges by the 4 u cells their endpoints are in
+	for (std::size_t k = 0; k < out.edges.size(); ++k)
+		if (out.edges[k].oppositeEdge < 0 && !out.edges[k].linked)
+			for (const std::uint32_t v : { out.edges[k].a, out.edges[k].b })
+			{
+				auto& list = openCells[cellKeyOf((std::int64_t)std::floor(out.vertices[v][0] / 4), (std::int64_t)std::floor(out.vertices[v][2] / 4))];
+				if (list.empty() || list.back() != (std::int32_t)k)
+					list.push_back((std::int32_t)k);
+			}
+	for (std::size_t f = 0; f < loops.size(); ++f)
+		for (std::uint32_t k = 0; k < loops[f].size(); ++k)
+		{
+			const Entry& en = loops[f][k];
+			if (en.old < 0 || !orphan[(std::size_t)en.old] || newOf[(std::size_t)en.old] < 0)
+				continue;
+			const native::Edge& e = out.edges[(std::size_t)newOf[(std::size_t)en.old]];
+			if (e.oppositeEdge >= 0)
+				continue;
+			++stats.orphanOpen;
+			{
+				// an unpaired edge running the other way along the same line (within 1/8 u, a climb in y), overlapping this one: a gap the weld left
+				const auto& p = out.vertices[e.a];
+				const auto& q = out.vertices[e.b];
+				const double dx = q[0] - p[0], dz = q[2] - p[2], l = std::hypot(dx, dz);
+				bool partner = false;
+				const std::int64_t cx0 = (std::int64_t)std::floor((std::min(p[0], q[0]) - 0.25) / 4), cx1 = (std::int64_t)std::floor((std::max(p[0], q[0]) + 0.25) / 4);
+				const std::int64_t cz0 = (std::int64_t)std::floor((std::min(p[2], q[2]) - 0.25) / 4), cz1 = (std::int64_t)std::floor((std::max(p[2], q[2]) + 0.25) / 4);
+				for (std::int64_t cx = cx0; cx <= cx1 && !partner; ++cx)
+				for (std::int64_t cz = cz0; cz <= cz1 && !partner; ++cz)
+				{
+				const auto cell = openCells.find(cellKeyOf(cx, cz));
+				if (cell == openCells.end())
+					continue;
+				for (const std::int32_t j : cell->second)
+				{
+					const native::Edge& o = out.edges[(std::size_t)j];
+					if (partner || &o == &e)
+						continue;
+					const auto& a2 = out.vertices[o.a];
+					const auto& b2 = out.vertices[o.b];
+					const auto along = [&](const std::array<double, 3>& v) { return ((v[0] - p[0]) * dx + (v[2] - p[2]) * dz) / l; };
+					const auto off = [&](const std::array<double, 3>& v) { return std::fabs((v[0] - p[0]) * dz - (v[2] - p[2]) * dx) / l; };
+					const double s0 = along(a2), s1 = along(b2);
+					if (s1 < s0 && off(a2) < 0.125 && off(b2) < 0.125 && std::min(s0, l) - std::max(s1, 0.0) > 0.05 && std::fabs(a2[1] - p[1]) < 5)
+						partner = true;
+				}
+				}
+				if (partner)
+					++stats.orphanGap;
+			}
+		}
 	m = std::move(out);
 	return stats;
 }
@@ -2412,13 +3239,27 @@ std::vector<Cutter> gatherCutters(const std::string& dataDir, const kworld::Heig
 		return c;
 	};
 	const kworld::AreaGeometry area = kworld::gatherArea(dataDir, terrain, clampCell(kworld::zoneCellOf(x0, z0)), clampCell(kworld::zoneCellOf(x1, z1)));
-	return cuttersOfArea(area, x0, z0, x1, z1, counts);
+	return cuttersOfArea(area, terrain, x0, z0, x1, z1, counts);
 }
 
-std::vector<Cutter> cuttersOfArea(const kworld::AreaGeometry& area, double x0, double z0, double x1, double z1, CutterCounts* counts)
+std::vector<Cutter> cuttersOfArea(const kworld::AreaGeometry& area, const kworld::Heightmap& terrain, double x0, double z0, double x1, double z1,
+	CutterCounts* counts)
 {
 	CutterCounts n;
 	std::vector<Cutter> cutters;
+	// Walkable foliage whose every vertex is within the climb of the terrain under it is the ground's: no cut, no tops (kenshi-ffmi.14,
+	// TreeFall01 at -77686, -83856: a slab 1-3 u over the terrain, walked straight across in the original; the shipped mesh there has
+	// no hole). Taken from the full-detail terrain, not the window's grid, so every window decides alike.
+	constexpr double kLowWalkable = 5;	// the original's climb (HAVOK_NAV.md)
+	const auto lowWalkable = [&](const kworld::WorldShape& s)
+	{
+		if (!s.foliage || s.use != kworld::NavUse::Walkable)
+			return false;
+		for (std::size_t i = 0; i + 2 < s.vertices.size(); i += 3)
+			if (s.vertices[i + 1] - terrain.terrainHeight(s.vertices[i], s.vertices[i + 2]) > kLowWalkable)
+				return false;
+		return true;
+	};
 	const auto add = [&](const kworld::WorldShape& s, std::size_t& count, Cutter::Top top, const std::string& label)
 	{
 		if (s.use == kworld::NavUse::Door)
@@ -2428,6 +3269,11 @@ std::vector<Cutter> cuttersOfArea(const kworld::AreaGeometry& area, double x0, d
 		}
 		if (s.max[0] < x0 - 1 || s.min[0] > x1 + 1 || s.max[2] < z0 - 1 || s.min[2] > z1 + 1 || s.indices.size() < 3)
 			return;
+		if (lowWalkable(s))
+		{
+			++n.lowWalkable;
+			return;
+		}
 		Cutter c;
 		c.projected = s.use == kworld::NavUse::Projected;
 		c.top = s.use == kworld::NavUse::Walkable ? top : Cutter::Top::None;

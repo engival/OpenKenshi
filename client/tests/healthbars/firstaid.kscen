@@ -1,0 +1,14 @@
+# healthbars (kenshi-1fxq, k16.2.512): the Wanderer (unarmed) fights two Blood raiders on the open ground past the Hub's Bar; the Medic carries a Basic First Aid Kit
+# and stands 150 u away. Used by run.sh: the bars' cut / stun / bandage layers against the wire values.
+KSCEN 2
+source save=playtest game=1.0.68 radius=0 centre=-50622,-908 leader=Wanderer
+clock day=1 hour=14 minute=0
+squad id=1 name=Wanderer faction=204-gamedata.base player=1 money=0
+char id=1 squad=1 name=Wanderer template=1533662-rebirth.mod faction=204-gamedata.base x=-50622 y=1102 z=-886 yaw=0 leader=1 player=1 chase=1
+char id=2 squad=1 name=Medic template=1533662-rebirth.mod faction=204-gamedata.base x=-50772 y=1102 z=-886 yaw=0 player=1
+item char=2 sid=209-gamedata.base section=main qty=2
+squad id=2 name=Raiders faction=16860-gamedata.base template=16865-gamedata.base package=16846-gamedata.base player=0
+char id=3 squad=2 name=Raider template=16863-gamedata.base faction=16860-gamedata.base x=-50622 y=1102 z=-930 yaw=3.14 leader=1 chase=1
+squad id=3 name=Samaritans faction=204-gamedata.base template=1533662-rebirth.mod player=0
+char id=6 squad=3 name=Samaritan template=1533662-rebirth.mod faction=204-gamedata.base x=-50700 y=1102 z=-900 yaw=0 leader=1
+item char=6 sid=209-gamedata.base section=main qty=2

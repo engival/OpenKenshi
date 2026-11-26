@@ -195,6 +195,7 @@ public:
 	void rootOffset(size_t i, double out[2]) const { out[0] = out[1] = 0; if (i < chars_.size()) { out[0] = chars_[i].rootXZ[0]; out[1] = chars_[i].rootXZ[1]; } }
 	void setRagdoll(size_t i, std::vector<RagBone> v);
 	size_t size() const { return chars_.size(); }
+	bool bodySize(size_t i, float& m, float& m1, float& forearm) const;	// dev dump: muscle m, its factor M1, the right forearm's width scale of the built body
 	// Live driving (the sim link, simview.cpp): per-frame state of character i. pos, yaw, move, strafe, combat, stealth and legs take effect at the next update().
 	Spec& live(size_t i) { return chars_[i].spec; }
 	std::vector<SoundNote> takeSounds() { std::vector<SoundNote> out; out.swap(sounds_); return out; }	// the notifies fired since the last call

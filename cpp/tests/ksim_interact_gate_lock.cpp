@@ -200,6 +200,62 @@ int main(int argc, char** argv)
 			test::require(osc >= 300, "the oscillating walk ended before the 15 s stall limit (" + std::to_string(osc) + " ticks): the stall stop was not what ended it");
 			std::cout << "oscillating walker -> event 13 unreachable after " << osc << " ticks\n";
 		}
+		// A walker that really travels is not stalled (kenshi-k16.6.832): the same walk again, the body pushed 0.3 u per tick AWAY from its next
+		// route point (the distance left grows, so only travel from the stall baseline shows progress). 400 ticks, past the 300 limit, must not
+		// end it by the stall stop.
+		{
+			bool done = false;
+			std::uint8_t res = 255;
+			sim.setInteractObserver([&](const InteractEvent& e)
+			{
+				if (e.kind == InteractEvent::Kind::Done && e.who == who)
+				{
+					done = true;
+					res = e.result;
+				}
+			});
+			ecsOf(sim).each([&](const state::Id& id, state::Door& d) { if (id.value == door) d.state = 1; });
+			fighterOf(sim, who)->x = 67113.33;
+			fighterOf(sim, who)->z = -72102.62;
+			std::vector<std::uint8_t> third;
+			ks::BinaryWriter tw(third);
+			tw.begin(ks::kOrder);
+			tw.u32("clientSeq", seq++);
+			tw.u16("kind", 60);
+			tw.u16("n", 1);
+			tw.u64("id", who);
+			tw.u64("target", door);
+			tw.u8("action", 21);
+			tw.u8("queue", 0);
+			tw.end();
+			std::vector<std::uint8_t> reply3;
+			ks::BinaryWriter rw3(reply3);
+			test::require(session.onFrame(ks::kOrder, third.data() + 6, third.size() - 6, rw3), "the third order kicked the client");
+			double px = 0.0;
+			double pz = 0.0;
+			bool have = false;
+			int drift = 0;
+			for (; drift < 400 && !done; ++drift)
+			{
+				state::Fighter* w = fighterOf(sim, who);
+				if (w->walking())
+				{
+					if (!have) { px = w->x; pz = w->z; have = true; }
+					const state::RoutePoint& next = w->route[w->routeNext];
+					const double dx = px - next.x;
+					const double dz = pz - next.z;
+					const double len = std::max(1.0, std::hypot(dx, dz));
+					px += 0.3 * dx / len;
+					pz += 0.3 * dz / len;
+					w->x = px;
+					w->z = pz;
+					w->forwardSpeed = 0.0;
+				}
+				sim.tick();
+			}
+			test::require(!(done && res == InteractEvent::kUnreachable), "a walker travelling away from its next point was ended by the stall stop after " + std::to_string(drift) + " ticks");
+			std::cout << "travelling walker not stalled (" << drift << " ticks, ended " << done << ")\n";
+		}
 		std::cout << "ksim_interact_gate_lock: ok after " << tick << " ticks\n";
 		return 0;
 	} catch (const std::exception& e) {

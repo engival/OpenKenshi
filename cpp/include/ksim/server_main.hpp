@@ -35,6 +35,8 @@ struct ServerConfig
 	std::string navmesh; // knav_bake --out cache for the duel's navmesh; empty = bake the Hub zone at startup
 	std::string navworld; // knav_bake --world DIR: the navmesh follows the players' full-detail areas; empty = --navmesh / the Hub bake
 	bool nativeNav = false; // --native-nav: accepted, the default (a no-op); the same streaming over the shipped navtiles (MeshNavigator::openNative)
+	bool navResident = false; // --nav-resident=world|off: load the whole world's navmesh before tick 0 (default off until the world cache is baked)
+	std::string navZones; // --nav-zones SET (dev only; ksim/dev/nav_zone_set.hpp): the resident navmesh holds this zone set, not the whole world
 	bool navCache = true; // --no-nav-cache: no native patch cache on disk (docs/formats/NAVMESH_CACHE.md "Patch cache")
 	bool followHeadingFix = false; // squad.follow_heading_fix
 	bool fixExtraAttackSlots = true; // --fix-extra-attack-slots on|off: CombatSettings::fixExtraAttackSlots (COMBAT_OPTIONS.md 1)

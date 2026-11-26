@@ -326,6 +326,7 @@ RunLog runOne(const Options& options, const kworld::LoadOrder& order, std::share
 	if (options.medicalClock > 0.0)
 		settings.medicalClock = options.medicalClock;
 	sim.enableCombat(combatData, settings);
+	sim.setNavPrefetch(false); // the fight's heading flips: prefetched zones loading and dropping rebuilt the clearance components every few steps (kenshi-q0ou)
 	std::vector<kworld::ZoneCell> hubZones;
 	for (int dz = -1; dz <= 1; ++dz)
 	{

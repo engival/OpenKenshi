@@ -3,7 +3,9 @@
 # "these cli options are getting nuts. I either need a launcher, or some more launch scripts").
 # usage: client/tools/play.sh [MODE [ARGS]] [-- KCLIENT_ARGS...]
 #   play.sh                      list the modes
-#   play.sh fly [--at PLACE|x,z] the debug free camera (kclient --debug --fly) over a place, no title screen (default: the Hub); e.g. play.sh fly --at Squin
+#   play.sh fly [--at PLACE|x,z] [--server]  the debug free camera (kclient --debug --fly) over a place, no title screen (default: the Hub); e.g. play.sh fly --at Squin
+#                                --server: with OpenKenshi-server behind it (demo.sh's newgame), so Ctrl+F5 draws the server's navmesh tiles (the start
+#                                area only until kenshi-gm64 streams the camera's zones); plain fly has no server and no navmesh (kenshi-k16.2.527)
 #   play.sh title [--playtest] [--bead ID]  the title screen, which starts its own OpenKenshi-server; the journey start (kenshi-k16.2.94);
 #                                --playtest shows SCENARIOS on the title and pause menus without --debug, to tag a journey playtest run
 #                                (kenshi-k16.2.110); --bead ID also posts the run's notes, verdict and F12 shots to that beads item
@@ -39,11 +41,14 @@ usage()
 play.sh: the named launch modes for kclient (the Kenshi runtime rewrite client)
 
   play.sh fly [--at PLACE|x,z]  the debug free camera over a place, no title screen (default: the Hub)   e.g. play.sh fly --at Squin
+    --server                    with an OpenKenshi-server (demo.sh newgame): Ctrl+F5 draws its navmesh (start area only until kenshi-gm64)
+                                e.g. play.sh fly --server --at -77686,-83856
+    --world-nav                 (with --server) the whole-world navmesh resident in the server: Ctrl+F5 shows it anywhere; ~280 s to start, ~21 GB RAM
   play.sh title [--playtest]    the title screen with its own OpenKenshi-server (New Game starts a game)       e.g. play.sh title
                                 --bead ID: pinned to the item's playtest (the item or a parent is the bead: of a playtests/*/versions.md,
                                 else an error and no run): no SCENARIOS button, the playtest's window and Notes dock up at once; notes, verdict and shots also as comments there
                                 --playtest: the SCENARIOS button (tag a journey playtest run), no --debug
-  play.sh game                  a new game: the Wanderer start at the Hub, a OpenKenshi-server behind it      e.g. play.sh game
+  play.sh game [--world-nav]    a new game: the Wanderer start at the Hub, a OpenKenshi-server behind it      e.g. play.sh game
   play.sh scenario [NAME]       a scenario fixture from scenarios/ (no NAME: list them)                 e.g. play.sh scenario bar_lure
   play.sh spectate [NAME]       a player-less spectator fixture (spectate_*) (no NAME: list them)        e.g. play.sh spectate spectate_fight
   play.sh --help                this list
@@ -127,9 +132,13 @@ case "$MODE" in
 	fly)
 		PLACE=Hub
 		EXTRA=()
+		WITH_SERVER=0
+		WORLDNAV=()
 		while [ $# -gt 0 ]
 		do
 			case "$1" in
+				--server) WITH_SERVER=1; shift ;;
+				--world-nav) WORLDNAV=(--world-nav); shift ;;
 				--at) [ $# -ge 2 ] || { echo "play.sh: --at needs PLACE or x,z" >&2; exit 2; }; PLACE=$2; shift 2 ;;
 				--at=*) PLACE=${1#--at=}; shift ;;
 				--) shift; EXTRA+=("$@"); break ;;
@@ -138,6 +147,14 @@ case "$MODE" in
 		done
 		CLIENT_CMD=(${KCLIENT:-$CLIENT})
 		[ -x "${CLIENT_CMD[0]}" ] || missing_client
+		if [ ${#WORLDNAV[@]} -gt 0 ] && [ "$WITH_SERVER" != 1 ]; then echo "play.sh: fly --world-nav needs --server" >&2; exit 2; fi
+		if [ "$WITH_SERVER" = 1 ]
+		then
+			# A game behind the free camera: Ctrl+F5 draws the NAV_TILE the server streams. The client never bakes a navmesh itself (user 2026-11-25);
+			# tiles for the camera's own zones wait on the server (kenshi-gm64), so today only the start area's navmesh draws.
+			echo "play.sh: fly --server: the navmesh overlay shows the server's start area only until kenshi-gm64 (tiles round the camera)" >&2
+			exec "$DEMO" --scenario newgame ${WORLDNAV[@]+"${WORLDNAV[@]}"} -- --fly --at "$PLACE" --alt 400 --pitch -35 ${EXTRA[@]+"${EXTRA[@]}"}
+		fi
 		# 400 up, looking down 35 degrees: the place fills the frame (the fly-around defaults; --alt / --pitch after -- override)
 		exec "${CLIENT_CMD[@]}" --debug --fly --at "$PLACE" --alt 400 --pitch -35 ${EXTRA[@]+"${EXTRA[@]}"}
 		;;
@@ -173,16 +190,18 @@ case "$MODE" in
 		;;
 	game)
 		EXTRA=()
+		WORLDNAV=()
 		while [ $# -gt 0 ]
 		do
 			case "$1" in
+				--world-nav) WORLDNAV=(--world-nav); shift ;;
 				--) shift; EXTRA=("$@"); break ;;
-				*) echo "play.sh: game takes no options (kclient args go after --)" >&2; exit 2 ;;
+				*) echo "play.sh: game takes only --world-nav (kclient args go after --)" >&2; exit 2 ;;
 			esac
 		done
 		CLIENT_CMD=(${KCLIENT:-$CLIENT})
 		[ -x "${CLIENT_CMD[0]}" ] || missing_client
-		exec "$DEMO" --scenario newgame ${EXTRA[@]+-- "${EXTRA[@]}"}
+		exec "$DEMO" --scenario newgame ${WORLDNAV[@]+"${WORLDNAV[@]}"} ${EXTRA[@]+-- "${EXTRA[@]}"}
 		;;
 	scenario|spectate)
 		NAME=

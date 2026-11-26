@@ -22,6 +22,14 @@ void Simulation::syncNavCoverage(bool spread)
 {
 	if (navigation_ == nullptr || !navigation_->streaming() || regions_ == nullptr)
 		return;
+	if (navigation_->resident())
+	{
+		// The whole mesh is loaded (kenshi-k16.7.204): no zone comes or goes, only the doors and containers of the zones are furnished.
+		navCoverageNow_ = false;
+		promotionSaved_.nav = false;
+		furnishNavCoverage();
+		return;
+	}
 	if (navCoverageNow_)
 	{
 		navCoverageNow_ = false;
@@ -85,7 +93,7 @@ void Simulation::syncNavCoverage(bool spread)
 	const std::size_t areaZones = wanted.size();
 	// Prefetch: the area the player walks into, from the heading (stepPlayerAreas), once past the middle of the region: its zones come last.
 	const state::PlayerAreas* centres = world_.ecs().get<state::PlayerAreas>();
-	if (travelKnown_ && centres != nullptr && !centres->centres.empty())
+	if (navPrefetch_ && travelKnown_ && centres != nullptr && !centres->centres.empty())
 	{
 		const double reach = regions_->config().regionSize * 0.75;
 		const std::int32_t ahead = regions_->regionOf(travelX_ + headX_ * reach, travelZ_ + headZ_ * reach);

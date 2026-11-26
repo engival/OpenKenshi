@@ -498,22 +498,31 @@ void NavMesh::countPolys()
 
 void NavMesh::replaceTiles(const std::vector<TileCoord>& removed, std::vector<BakedTile> added)
 {
+	// One pass over tiles_ for every tile that leaves or is replaced (the whole world is some 300000 tiles: a search per tile is quadratic).
+	std::set<TileCoord> leaving;
 	const auto drop = [&](TileCoord at)
 	{
-		const auto found = std::find_if(tiles_.begin(), tiles_.end(),
-			[&](const BakedTile& t) { return t.x == at.x && t.z == at.z; });
-		if (found == tiles_.end())
+		const dtTileRef ref = mesh_->getTileRefAt(at.x, at.z, 0);
+		if (ref == 0)
 			return;
-		mesh_->removeTile(mesh_->getTileRefAt(at.x, at.z, 0), nullptr, nullptr);
-		tiles_.erase(found);
+		mesh_->removeTile(ref, nullptr, nullptr);
+		leaving.insert(at);
 	};
 	std::vector<TileCoord> touched = removed;
 	for (const TileCoord& at : removed)
 		drop(at);
-	for (BakedTile& tile : added)
+	for (const BakedTile& tile : added)
 	{
 		touched.push_back({ tile.x, tile.z });
 		drop({ tile.x, tile.z });
+	}
+	if (!leaving.empty())
+	{
+		tiles_.erase(std::remove_if(tiles_.begin(), tiles_.end(),
+			[&](const BakedTile& t) { return leaving.count({ t.x, t.z }) != 0; }), tiles_.end());
+	}
+	for (BakedTile& tile : added)
+	{
 		addToDetour(*mesh_, tile);
 		tiles_.push_back(std::move(tile));
 	}
@@ -1205,11 +1214,24 @@ struct NavQuery::ClearanceCache
 	ClearanceMap known;
 	std::uint64_t revision = 0; // the mesh revision `known` was computed on
 	std::map<std::pair<int, int>, std::uint32_t> versions; // the tile set (x, z -> tileVersion) `known` was computed on
-	// Clearance components (refusedByComponents): per radius, a label per polygon (dense index: tileBase[tile] + poly).
+	// Clearance components (refusedByComponents): per radius, a label per polygon, kept per Detour tile slot (labels[radius][slot][poly]; the ids
+	// are opaque). A rebake that swaps a few tiles (replaceTiles) relabels only a window round them (updateLabels), not the whole mesh (kenshi-k16.7.203).
+	struct RadiusLabels
+	{
+		std::vector<std::vector<std::uint32_t>> slot;
+		std::uint32_t next = 0; // the next unused label id
+	};
 	std::uint64_t geometry = 0; // the mesh geometry revision they are for
-	std::vector<std::uint32_t> tileBase;
+	struct SlotInfo
+	{
+		unsigned salt = 0;
+		bool valid = false;
+		int x = 0, z = 0;
+	};
+	std::vector<SlotInfo> slots; // the tile slots the labels were computed on
 	bool offMesh = false; // the mesh has off-mesh links, whose hops the labels do not model: no refusals
-	std::map<float, std::vector<std::uint32_t>> labels;
+	std::map<float, RadiusLabels> labels;
+	unsigned builds = 0, updates = 0, fallbacks = 0; // whole builds finished, window updates done, window updates that gave up (a radius rebuilt)
 	// The label build in progress, run in slices (kenshi-k16.6.699): a whole-mesh build is 200 ms at r 4 and 800 ms at r 22 on a streamed
 	// mesh, and every streamed-in region restarts it, so one call must not do it all. Until it is done the query answers "no refusal".
 	struct Build
@@ -1219,6 +1241,7 @@ struct NavQuery::ClearanceCache
 		std::uint32_t total = 0;
 		int tile = 0;
 		int poly = 0;
+		std::vector<std::uint32_t> tileBase; // dense index of a tile slot's first polygon, for this build
 		std::vector<std::uint32_t> parent;
 		std::uint64_t ns = 0; // wall time over all slices
 	} build;
@@ -1981,6 +2004,167 @@ bool NavQuery::passesOtherLocked(const std::vector<DoorKey>& doors, DoorKey held
 }
 
 
+// The clearance components after a few tile slots changed (kenshi-k16.7.203: a building's rebake swaps tiles; the labels of a whole-world mesh took
+// seconds to build). Only the polygons of the changed tiles and the ring of tiles round them (the window) are relabelled, over a union-find of the
+// window's own polygons and the polygons outside it that they touch (the portals). Everything outside the window is unchanged, so a label that
+// reached it keeps its meaning, provided the portals of one old label are still joined inside the window; when they are not (the change may have
+// cut the component) it returns false and the radius is rebuilt whole. Labels that the window joins are merged. The partition equals a whole build's.
+template <class Cache, class Labels, class Slots>
+bool updateLabels(const Cache& cc, Labels& r, float radius, const std::vector<int>& changed, const Slots& now, const dtNavMesh& nav,
+	const dtNavMeshQuery& query, ClearanceMap& cache)
+{
+	std::set<std::pair<int, int>> window;
+	for (const int t : changed)
+	{
+		for (const auto* info : { &cc.slots[static_cast<std::size_t>(t)], &now[static_cast<std::size_t>(t)] })
+		{
+			if (!info->valid)
+				continue;
+			for (int dz = -1; dz <= 1; ++dz)
+				for (int dx = -1; dx <= 1; ++dx)
+					window.insert({ info->x + dx, info->z + dz });
+		}
+		const dtMeshTile* tile = nav.getTile(t);
+		r.slot[static_cast<std::size_t>(t)].assign(tile->header != nullptr ? static_cast<std::size_t>(tile->header->polyCount) : 0, 0u);
+	}
+	const auto inWindow = [&](dtPolyRef ref)
+	{
+		const dtMeshTile* tile = nullptr;
+		const dtPoly* poly = nullptr;
+		nav.getTileAndPolyByRefUnsafe(ref, &tile, &poly);
+		return window.count({ tile->header->x, tile->header->y }) != 0;
+	};
+	std::vector<dtPolyRef> inside;
+	for (const auto& [x, z] : window)
+	{
+		const dtMeshTile* tile = nav.getTileAt(x, z, 0);
+		if (tile == nullptr)
+			continue;
+		for (int p = 0; p < tile->header->polyCount; ++p)
+			inside.push_back(nav.getPolyRefBase(tile) | static_cast<dtPolyRef>(p));
+	}
+	std::unordered_map<dtPolyRef, dtPolyRef> parent;
+	const auto find = [&](dtPolyRef a)
+	{
+		parent.emplace(a, a);
+		while (parent[a] != a)
+		{
+			parent[a] = parent[parent[a]];
+			a = parent[a];
+		}
+		return a;
+	};
+	const auto unite = [&](dtPolyRef a, dtPolyRef b) { parent[find(a)] = find(b); };
+	std::vector<dtPolyRef> outside; // the polygons outside the window that a window polygon links to, in first-seen order
+	std::set<dtPolyRef> outsideSeen;
+	for (const dtPolyRef ref : inside)
+	{
+		find(ref);
+		const dtMeshTile* tile = nullptr;
+		const dtPoly* poly = nullptr;
+		nav.getTileAndPolyByRefUnsafe(ref, &tile, &poly);
+		for (unsigned i = poly->firstLink; i != DT_NULL_LINK; i = tile->links[i].next)
+		{
+			const dtLink& link = tile->links[i];
+			if (link.ref == 0)
+				continue;
+			float left[3];
+			float right[3];
+			portalOf(*tile, *poly, link, left, right);
+			if (fits(query, cache, ref, i, left, right, radius))
+				unite(ref, link.ref);
+			if (!inWindow(link.ref) && outsideSeen.insert(link.ref).second)
+				outside.push_back(link.ref);
+		}
+	}
+	// The same links seen from the outside polygons (a portal is joined when either side fits).
+	std::vector<dtPolyRef> portals;
+	for (const dtPolyRef ref : outside)
+	{
+		const dtMeshTile* tile = nullptr;
+		const dtPoly* poly = nullptr;
+		nav.getTileAndPolyByRefUnsafe(ref, &tile, &poly);
+		for (unsigned i = poly->firstLink; i != DT_NULL_LINK; i = tile->links[i].next)
+		{
+			const dtLink& link = tile->links[i];
+			if (link.ref == 0 || !inWindow(link.ref))
+				continue;
+			float left[3];
+			float right[3];
+			portalOf(*tile, *poly, link, left, right);
+			if (fits(query, cache, ref, i, left, right, radius))
+				unite(ref, link.ref);
+		}
+	}
+	const auto labelAt = [&](dtPolyRef ref)
+	{
+		unsigned salt = 0;
+		unsigned tile = 0;
+		unsigned poly = 0;
+		nav.decodePolyId(ref, salt, tile, poly);
+		return r.slot[tile][poly];
+	};
+	// An outside polygon is a portal when the window's union-find joined it to a window polygon (it is a node with a parent other than itself,
+	// or someone's parent): count it by whether its class holds a window polygon.
+	std::map<dtPolyRef, std::set<std::uint32_t>> classLabels; // class root -> the old labels of its portals
+	std::map<std::uint32_t, std::set<dtPolyRef>> labelClasses; // old label -> the classes its portals are in
+	std::set<dtPolyRef> windowRoots;
+	for (const dtPolyRef ref : inside)
+		windowRoots.insert(find(ref));
+	for (const dtPolyRef ref : outside)
+	{
+		const dtPolyRef root = find(ref);
+		if (windowRoots.count(root) == 0)
+			continue; // not joined to anything in the window
+		const std::uint32_t label = labelAt(ref);
+		classLabels[root].insert(label);
+		labelClasses[label].insert(root);
+	}
+	for (const auto& entry : labelClasses)
+	{
+		if (entry.second.size() > 1)
+			return false; // the old component may have run through the window: rebuild it whole
+	}
+	std::unordered_map<std::uint32_t, std::uint32_t> merge;
+	std::map<dtPolyRef, std::uint32_t> assigned;
+	for (const dtPolyRef ref : inside)
+	{
+		const dtPolyRef root = find(ref);
+		auto found = assigned.find(root);
+		if (found == assigned.end())
+		{
+			const auto labels = classLabels.find(root);
+			std::uint32_t label = r.next;
+			if (labels == classLabels.end())
+				++r.next;
+			else
+			{
+				label = *labels->second.begin();
+				for (const std::uint32_t other : labels->second)
+					if (other != label)
+						merge[other] = label;
+			}
+			found = assigned.emplace(root, label).first;
+		}
+		unsigned salt = 0;
+		unsigned tile = 0;
+		unsigned poly = 0;
+		nav.decodePolyId(ref, salt, tile, poly);
+		r.slot[tile][poly] = found->second;
+	}
+	if (!merge.empty())
+	{
+		for (std::vector<std::uint32_t>& slot : r.slot)
+			for (std::uint32_t& label : slot)
+			{
+				const auto to = merge.find(label);
+				if (to != merge.end())
+					label = to->second;
+			}
+	}
+	return true;
+}
+
 bool NavQuery::refusedByComponents(dtPolyRef startRef, dtPolyRef endRef, const Point& end, float radius, bool exemptFirst) const
 {
 	constexpr std::size_t kMaxRadiusClasses = 32;
@@ -1989,30 +2173,56 @@ bool NavQuery::refusedByComponents(dtPolyRef startRef, dtPolyRef endRef, const P
 	if (cc.geometry != mesh_.geometryRevision())
 	{
 		cc.geometry = mesh_.geometryRevision();
-		cc.labels.clear();
-		cc.build = {};
-		cc.tileBase.assign(static_cast<std::size_t>(nav.getMaxTiles()), 0);
+		std::vector<ClearanceCache::SlotInfo> now(static_cast<std::size_t>(nav.getMaxTiles()));
+		std::vector<int> changed; // slots whose tile is not the one the labels were computed on
 		cc.offMesh = false;
-		std::uint32_t total = 0;
 		for (int t = 0; t < nav.getMaxTiles(); ++t)
 		{
 			const dtMeshTile* tile = nav.getTile(t);
-			if (tile->header == nullptr)
-				continue;
-			cc.tileBase[static_cast<std::size_t>(t)] = total;
-			total += static_cast<std::uint32_t>(tile->header->polyCount);
-			cc.offMesh = cc.offMesh || tile->header->offMeshConCount > 0;
+			ClearanceCache::SlotInfo& info = now[static_cast<std::size_t>(t)];
+			info.salt = tile->salt;
+			info.valid = tile->header != nullptr;
+			if (info.valid)
+			{
+				info.x = tile->header->x;
+				info.z = tile->header->y;
+				cc.offMesh = cc.offMesh || tile->header->offMeshConCount > 0;
+			}
+			if (cc.slots.size() != now.size() || cc.slots[static_cast<std::size_t>(t)].salt != info.salt || cc.slots[static_cast<std::size_t>(t)].valid != info.valid)
+				changed.push_back(t);
 		}
+		// A few swapped tiles (a building's rebake) relabel a window round them; a new mesh, a streamed region or a build in flight start over.
+		constexpr std::size_t kMaxIncrementalSlots = 64;
+		const bool incremental = cc.slots.size() == now.size() && !cc.build.active && changed.size() <= kMaxIncrementalSlots && !cc.offMesh;
+		cc.build = {};
+		if (!incremental)
+			cc.labels.clear();
+		else
+		{
+			ClearanceMap& cache = clearanceFor().known;
+			for (auto it = cc.labels.begin(); it != cc.labels.end();)
+			{
+				if (updateLabels(cc, it->second, it->first, changed, now, nav, *query_, cache))
+				{
+					++cc.updates;
+					++it;
+				} else {
+					++cc.fallbacks;
+					it = cc.labels.erase(it);
+				}
+			}
+		}
+		cc.slots = std::move(now);
 	}
 	if (cc.offMesh)
 		return false;
-	const auto dense = [&](dtPolyRef ref)
+	const auto labelOf = [&](const ClearanceCache::RadiusLabels& r, dtPolyRef ref)
 	{
 		unsigned salt = 0;
 		unsigned tile = 0;
 		unsigned poly = 0;
 		nav.decodePolyId(ref, salt, tile, poly);
-		return cc.tileBase[tile] + poly;
+		return r.slot[tile][poly];
 	};
 	auto found = cc.labels.find(radius);
 	if (found == cc.labels.end())
@@ -2028,9 +2238,15 @@ bool NavQuery::refusedByComponents(dtPolyRef startRef, dtPolyRef endRef, const P
 			build = {};
 			build.active = true;
 			build.radius = radius;
+			build.tileBase.assign(static_cast<std::size_t>(nav.getMaxTiles()), 0);
 			for (int t = 0; t < nav.getMaxTiles(); ++t)
-				if (nav.getTile(t)->header != nullptr)
-					build.total = std::max(build.total, cc.tileBase[static_cast<std::size_t>(t)] + static_cast<std::uint32_t>(nav.getTile(t)->header->polyCount));
+			{
+				const dtMeshTile* tile = nav.getTile(t);
+				if (tile->header == nullptr)
+					continue;
+				build.tileBase[static_cast<std::size_t>(t)] = build.total;
+				build.total += static_cast<std::uint32_t>(tile->header->polyCount);
+			}
 			build.parent.resize(build.total);
 			std::iota(build.parent.begin(), build.parent.end(), 0u);
 		}
@@ -2040,6 +2256,14 @@ bool NavQuery::refusedByComponents(dtPolyRef startRef, dtPolyRef endRef, const P
 			while (parent[i] != i)
 				i = parent[i] = parent[parent[i]];
 			return i;
+		};
+		const auto dense = [&](dtPolyRef ref)
+		{
+			unsigned salt = 0;
+			unsigned tile = 0;
+			unsigned poly = 0;
+			nav.decodePolyId(ref, salt, tile, poly);
+			return build.tileBase[tile] + poly;
 		};
 		// Off unless setSlicedComponents (live server). The slice is a polygon count, not wall time: the answer "no refusal" while a build is pending must not depend on the clock, or
 		// the sim's routes (and world hash) vary run to run. 1024 polys is ~3 ms.
@@ -2075,7 +2299,7 @@ bool NavQuery::refusedByComponents(dtPolyRef startRef, dtPolyRef endRef, const P
 					const dtLink& link = tile->links[i];
 					if (link.ref == 0)
 						continue;
-					const std::uint32_t a = root(cc.tileBase[static_cast<std::size_t>(build.tile)] + static_cast<std::uint32_t>(p));
+					const std::uint32_t a = root(build.tileBase[static_cast<std::size_t>(build.tile)] + static_cast<std::uint32_t>(p));
 					const std::uint32_t b = root(dense(link.ref));
 					if (a == b)
 						continue;
@@ -2094,22 +2318,33 @@ bool NavQuery::refusedByComponents(dtPolyRef startRef, dtPolyRef endRef, const P
 #endif
 		if (paused)
 			return false;
-		std::vector<std::uint32_t> label(build.total);
-		for (std::uint32_t i = 0; i < build.total; ++i)
-			label[i] = root(i);
+		ClearanceCache::RadiusLabels label;
+		label.next = build.total;
+		label.slot.resize(static_cast<std::size_t>(nav.getMaxTiles()));
+		for (int t = 0; t < nav.getMaxTiles(); ++t)
+		{
+			const dtMeshTile* tile = nav.getTile(t);
+			if (tile->header == nullptr)
+				continue;
+			std::vector<std::uint32_t>& out = label.slot[static_cast<std::size_t>(t)];
+			out.resize(static_cast<std::size_t>(tile->header->polyCount));
+			for (int p = 0; p < tile->header->polyCount; ++p)
+				out[static_cast<std::size_t>(p)] = root(build.tileBase[static_cast<std::size_t>(t)] + static_cast<std::uint32_t>(p));
+		}
 #if KSIM_PROFILE
 		if (std::getenv("KSIM_SLOWQ"))
 			std::fprintf(stderr, "COMPONENTS r=%.2f polys=%u ms=%.1f bytes=%llu\n", radius, build.total, static_cast<double>(build.ns) / 1.0e6,
 				static_cast<unsigned long long>(2ull * sizeof(std::uint32_t) * build.total));
 #endif
 		cc.build = {};
+		++cc.builds;
 		found = cc.labels.emplace(radius, std::move(label)).first;
 	}
-	const std::vector<std::uint32_t>& label = found->second;
+	const ClearanceCache::RadiusLabels& label = found->second;
 	// The comps a polygon's own is joined by an exempt hop: its neighbours' (the goal's last hop, the start's first).
 	const auto reachable = [&](dtPolyRef ref, bool withNeighbours, std::vector<std::uint32_t>& out)
 	{
-		out.push_back(label[dense(ref)]);
+		out.push_back(labelOf(label, ref));
 		if (!withNeighbours)
 			return;
 		const dtMeshTile* tile = nullptr;
@@ -2117,7 +2352,7 @@ bool NavQuery::refusedByComponents(dtPolyRef startRef, dtPolyRef endRef, const P
 		nav.getTileAndPolyByRefUnsafe(ref, &tile, &poly);
 		for (unsigned i = poly->firstLink; i != DT_NULL_LINK; i = tile->links[i].next)
 			if (tile->links[i].ref != 0)
-				out.push_back(label[dense(tile->links[i].ref)]);
+				out.push_back(labelOf(label, tile->links[i].ref));
 	};
 	std::vector<std::uint32_t> from;
 	std::vector<std::uint32_t> to;
@@ -2152,7 +2387,7 @@ bool NavQuery::refusedByComponents(dtPolyRef startRef, dtPolyRef endRef, const P
 				{
 					seen.push_back(link.ref);
 					todo.push_back(link.ref);
-					to.push_back(label[dense(link.ref)]);
+					to.push_back(labelOf(label, link.ref));
 				}
 			}
 		}
@@ -2161,6 +2396,46 @@ bool NavQuery::refusedByComponents(dtPolyRef startRef, dtPolyRef endRef, const P
 		if (std::find(to.begin(), to.end(), a) != to.end())
 			return false;
 	return true;
+}
+
+std::uint64_t NavQuery::componentsDigest(float radius) const
+{
+	const dtNavMesh& nav = mesh_.detour();
+	for (int t = 0; t < nav.getMaxTiles(); ++t)
+	{
+		const dtMeshTile* tile = nav.getTile(t);
+		if (tile->header == nullptr || tile->header->polyCount == 0)
+			continue;
+		const dtPolyRef ref = nav.getPolyRefBase(tile);
+		refusedByComponents(ref, ref, { 0.0f, 0.0f, 0.0f }, radius, false);
+		break;
+	}
+	const auto found = clearance_->labels.find(radius);
+	if (found == clearance_->labels.end())
+		return 0;
+	// The partition, not the ids: each label by order of first appearance (tile slots differ between meshes, polygons within a tile do not).
+	std::map<std::uint32_t, std::uint32_t> canon;
+	std::vector<const dtMeshTile*> order;
+	for (int t = 0; t < nav.getMaxTiles(); ++t)
+		if (nav.getTile(t)->header != nullptr)
+			order.push_back(nav.getTile(t));
+	std::sort(order.begin(), order.end(), [](const dtMeshTile* a, const dtMeshTile* b) { return std::make_pair(a->header->y, a->header->x) < std::make_pair(b->header->y, b->header->x); });
+	std::uint64_t hash = 1469598103934665603ull;
+	for (const dtMeshTile* tile : order)
+	{
+		const std::vector<std::uint32_t>& slot = found->second.slot[static_cast<std::size_t>(tile - nav.getTile(0))];
+		for (const std::uint32_t label : slot)
+		{
+			const std::uint32_t id = canon.emplace(label, static_cast<std::uint32_t>(canon.size())).first->second;
+			hash = (hash ^ id) * 1099511628211ull;
+		}
+	}
+	return hash;
+}
+
+unsigned NavQuery::componentStat(int which) const
+{
+	return which == 0 ? clearance_->builds : which == 1 ? clearance_->updates : clearance_->fallbacks;
 }
 
 PathResult NavQuery::findPath(const Point& from, const Point& to, const Point& halfExtents,

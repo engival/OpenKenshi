@@ -34,6 +34,8 @@ class RouteSets
 {
 public:
 	std::uint32_t of(const NavMesh& mesh, const PolyLoc& loc);
+	// Builds the sets for the mesh's current revision now (the whole world's, at load) instead of on the first route.
+	void build(const NavMesh& mesh);
 	std::uint32_t size(std::uint32_t label) const { return label < sizes_.size() ? sizes_[label] : 0; }
 
 private:

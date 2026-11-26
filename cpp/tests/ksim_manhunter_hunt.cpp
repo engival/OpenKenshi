@@ -185,7 +185,10 @@ std::vector<Person> builtMembers(Simulation& sim, flecs::entity squad, double se
 			break;
 		sim.run(1);
 	}
-	return membersOf(sim, squad);
+	members = membersOf(sim, squad);
+	for (const Person& p : members)
+		test::require(sim.combat()->find(p.id) != nullptr, "every patrol member was built into the arena (a member with no ground under it is skipped)");
+	return members;
 }
 
 // Case 1: the wild hunt (dialogue -> chase-forever fight -> KO -> the 167 capture chain).

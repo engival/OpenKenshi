@@ -2355,6 +2355,7 @@ void Simulation::stepDoorSteps()
 
 namespace
 {
+constexpr double kInteractStallTravel = 20.0; // u from the stall baseline that count as progress on a route (a jitter or circle stays inside it)
 constexpr std::uint64_t kInteractStallTicks = 300; // 15 s at 20 ticks/s without moving 2 u while the walk's route is set
 }
 
@@ -2487,7 +2488,10 @@ void Simulation::stepInteractions()
 				}
 			}
 			InteractStall& stall = interactStall_[members[i].id];
-			const bool progressed = onRoute ? left < stall.left - 2.0 : std::hypot(fighter.x - stall.x, fighter.z - stall.z) > 2.0;
+			// A walker that really travels is never stalled, whatever routeNext says (kenshi-k16.6.832: a walk through a portal corridor or a re-plan
+			// moved ~270 u with routeNext pinned and the distance left unchanged): on a route, moving kInteractStallTravel from the baseline counts too.
+			const double moved = std::hypot(fighter.x - stall.x, fighter.z - stall.z);
+			const bool progressed = onRoute ? (left < stall.left - 2.0 || moved > kInteractStallTravel) : moved > 2.0;
 			if (stall.since == 0 || progressed || stall.onRoute != onRoute)
 				stall = InteractStall{fighter.x, fighter.z, clockTick(), left, onRoute};
 			else if (clockTick() - stall.since > (onRoute ? kInteractStallTicks : 2 * kInteractStallTicks))

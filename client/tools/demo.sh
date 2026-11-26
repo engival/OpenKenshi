@@ -1,7 +1,7 @@
 #!/bin/bash
 # One-command SIMLINK demo: starts OpenKenshi-server, then kclient connected to it.
 # Usage: client/tools/demo.sh [--scenario newgame|duel|squad] [--port N] [--navworld DIR|none] [--ai DIR|none]
-#          [--bandits] [--scenario-file FILE.kscen] [--server-arg ARG]... [--build] [-- KCLIENT_ARGS...]
+#          [--bandits] [--scenario-file FILE.kscen] [--server-arg ARG]... [--world-nav] [--dry-run] [--build] [-- KCLIENT_ARGS...]
 #   --scenario    server scenario (default newgame: a new game of the Wanderer start at the Hub, fresh stats;
 #                 squad = the old test squad with the duel-log Engival next to bandits)
 #   --navworld    world bake for the streamed navmesh, opt-in; default none = no nav args: the server's runtime mesh (shipped navtiles +
@@ -11,6 +11,11 @@
 #   --scenario-file  a KSCEN save import (docs/reference/SCENARIO_IMPORT.md); its FILE.kclient_args sidecar (camera) goes to kclient
 #                 (without one, the camera starts on the file's source centre=, as --pos)
 #   --server-arg  one extra OpenKenshi-server argument, repeatable (e.g. --server-arg --log-world-squads --server-arg 30)
+#   --world-nav   the whole-world navmesh resident in the server (kenshi-8u0o, kenshi-4m9h): OpenKenshi-server --nav-resident world, with
+#                 KENSHI_NAV_CACHE_SHARED (the server's environment only; default $HOME/.cache/kenshi/navcache_shared, a set value wins; a
+#                 missing dir is an error and nothing starts). Opt-in, never the default: ~280 s to start, ~21 GB RAM. The navmesh round a far camera
+#                 and attacks on far squads work. The server wait allows 400 s without output (900 s overall) with it.
+#   --dry-run     print the server command line and its extra environment, start nothing
 #   --port        TCP port on 127.0.0.1 (default: a free port)
 #   --build       build kclient, and OpenKenshi-server when this tree must build it, first (under flock client/build/.build.lock)
 #   KSIM_SERVER=<path>  the server binary; else the shared master build (client/tools/shared_server.sh); else this build
@@ -36,6 +41,10 @@ BUILD=0
 NAVWORLD=none
 AI=none
 EXTRA=()
+WORLDNAV=0
+DRYRUN=0
+SRVENV=()	# extra environment for the server alone (--world-nav)
+STALL=150 OVERALL=600
 SCENFILE=
 CAMARGS=()
 
@@ -49,15 +58,36 @@ do
 		--bandits) EXTRA+=(--place-squad 1302-gamedata.base -48880 -823); shift ;;
 		--scenario-file) SCENFILE=${2:?--scenario-file needs a .kscen file}; shift 2 ;;
 		--server-arg) EXTRA+=("${2?--server-arg needs a value}"); shift 2 ;;
+		--world-nav) WORLDNAV=1; shift ;;
+		--dry-run) DRYRUN=1; shift ;;
 		--build) BUILD=1; shift ;;
 		--) shift; break ;;
-		-h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+		-h|--help) sed -n '2,25p' "$0"; exit 0 ;;
 		*) echo "demo.sh: unknown option '$1' (kclient args go after --)" >&2; exit 2 ;;
 	esac
 done
 
 case "$SCENARIO" in newgame|duel|squad) ;; *) echo "demo.sh: scenario must be newgame, duel or squad" >&2; exit 2 ;; esac
 case "$PORT" in *[!0-9]*) echo "demo.sh: bad port '$PORT'" >&2; exit 2 ;; esac
+NAVARGS=()
+if [ "$WORLDNAV" = 1 ]
+then
+	if [ "$NAVWORLD" != none ]
+	then
+		echo "demo.sh: --world-nav and --navworld are alternatives" >&2
+		exit 2
+	fi
+	NAVCACHE=${KENSHI_NAV_CACHE_SHARED:-$HOME/.cache/kenshi/navcache_shared}
+	if [ ! -d "$NAVCACHE" ]
+	then
+		echo "demo.sh: --world-nav: missing navmesh cache dir $NAVCACHE (the baked world navmesh, kenshi-k16.7.209; set KENSHI_NAV_CACHE_SHARED): nothing started" >&2
+		exit 1
+	fi
+	NAVARGS=(--nav-resident world)	# two words: the server takes no --opt=value form
+	SRVENV=("KENSHI_NAV_CACHE_SHARED=$NAVCACHE")
+	STALL=400 OVERALL=900	# the resident load can log nothing for most of its ~280 s
+	echo "world navmesh: ~280 s to start, ~21 GB RAM"
+fi
 WANT_PORT=$PORT	# --port N: kept or fails; unset: picked at each server start (retried on a bind failure, kenshi-k16.2.417.1)
 
 pick_server "$ROOT" "$SERVER"	# prints 'server: shared PATH' / 'server: built (reason)'; SHARED=1 for the first two sources
@@ -118,7 +148,6 @@ then
 	exit 1
 fi
 
-NAVARGS=()
 if [ "$NAVWORLD" != none ]
 then
 	if [ ! -d "$NAVWORLD" ]
@@ -184,14 +213,20 @@ cleanup()
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
+if [ "$DRYRUN" = 1 ]
+then
+	echo "demo.sh: dry run: env -C $ROOT ${SRVENV[*]:-} $SERVER ${SRV_ARGS[*]:-} --listen 127.0.0.1:PORT --debug-view ${SCENARGS[*]} ${NAVARGS[*]:-} ${EXTRA[*]:-}"
+	exit 0
+fi
+
 for try in 1 2 3
 do
 	# from the repo root, as it is run in development
-	launch_server "$LOG" "$WANT_PORT" env -C "$ROOT" "$SERVER" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen "127.0.0.1:@PORT@" --debug-view "${SCENARGS[@]}" "${NAVARGS[@]}" ${EXTRA[@]+"${EXTRA[@]}"}
+	launch_server "$LOG" "$WANT_PORT" env -C "$ROOT" ${SRVENV[@]+"${SRVENV[@]}"} "$SERVER" ${SRV_ARGS[@]+"${SRV_ARGS[@]}"} --listen "127.0.0.1:@PORT@" --debug-view "${SCENARGS[@]}" "${NAVARGS[@]}" ${EXTRA[@]+"${EXTRA[@]}"}
 	SPID=$SERVER_PID; PORT=$SERVER_PORT
 	echo "demo.sh: server pid $SPID (${SCENFILE:-$SCENARIO}, port $PORT, navworld $NAVWORLD, AI bake $AI), waiting for world + navmesh bake..."
 	# A cold nav cache makes the start slow (one zone's ground takes 10-100 s; kenshi-oi32): keep waiting while the server is alive and still printing.
-	# Any new log output (a `nav zone` or stage line) resets the stall timer (150 s: a zone's line comes only when it finishes, and one took 102 s); 600 s is the overall bound.
+	# Any new log output (a `nav zone` or stage line) resets the stall timer (150 s: a zone's line comes only when it finishes, and one took 102 s); 600 s is the overall bound (--world-nav: 400 s / 900 s).
 	WAIT_START=$SECONDS WAIT_PROGRESS=$SECONDS WAIT_SIZE=0 WAIT_WHY=
 	while :
 	do
@@ -199,8 +234,8 @@ do
 		kill -0 "$SPID" 2>/dev/null || break
 		size=$(stat -c %s "$LOG" 2>/dev/null || echo 0)
 		if [ "$size" != "$WAIT_SIZE" ]; then WAIT_SIZE=$size WAIT_PROGRESS=$SECONDS; fi
-		if [ $((SECONDS - WAIT_PROGRESS)) -ge 150 ]; then WAIT_WHY="no new server output for 150 s"; break; fi
-		if [ $((SECONDS - WAIT_START)) -ge 600 ]; then WAIT_WHY="not up after the overall bound of 600 s"; break; fi
+		if [ $((SECONDS - WAIT_PROGRESS)) -ge $STALL ]; then WAIT_WHY="no new server output for $STALL s"; break; fi
+		if [ $((SECONDS - WAIT_START)) -ge $OVERALL ]; then WAIT_WHY="not up after the overall bound of $OVERALL s"; break; fi
 		sleep 0.5
 	done
 	grep -q '^listening ' "$LOG" && break

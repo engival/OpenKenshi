@@ -48,6 +48,7 @@ std::vector<GeneratedBuilding> generateBuildings(const kworld::AreaGeometry& are
 	const bool logBuildings = std::getenv("KSIM_NAV_GEN_LOG") != nullptr; // one stderr line per building as it starts: finds the slow one
 	std::vector<GeneratedBuilding> made(todo.size());
 	std::vector<char> ok(todo.size(), 0);
+	std::vector<std::string> why(todo.size());
 	const auto work = [&](std::size_t i)
 	{
 		const kworld::AreaBuilding& building = *todo[i];
@@ -69,13 +70,11 @@ std::vector<GeneratedBuilding> generateBuildings(const kworld::AreaGeometry& are
 			one.interior = surfgen::generate(in);
 			in.side = surfgen::Side::Zone;
 			one.zoneSide = surfgen::generate(in);
-			if (one.interior.faces.empty())
-				throw std::runtime_error("no interior faces");
-			// A building the runtime opens doors of needs door faces to paint: a gate whose door the generator did not make stays Recast, whose
-			// door polygons carry the key (kenshi-k16.7.145 A2: the locked gate of the raid test had no door polygon).
-			if (!building.nav.doors.empty() && std::none_of(one.interior.faces.begin(), one.interior.faces.end(), [](const native::Face& f) { return f.data == 4 || f.data == 5; })
-				&& std::none_of(one.zoneSide.faces.begin(), one.zoneSide.faces.end(), [](const native::Face& f) { return f.data == 4 || f.data == 5; }))
-				throw std::runtime_error("the building has doors and the generator made no door face");
+			// Only a building with no walkable face on either side fails. An outdoor-only one (the floor all outside the mask hull: ramparts, platforms)
+			// keeps its zone side; a door the generator painted no face for (its volume misses the floor) still leaves the building's floor: the Recast
+			// pass that kept such a gate is gone, and dropping the building left it out of bounds (kenshi-k16.7.216).
+			if (one.interior.faces.empty() && one.zoneSide.faces.empty())
+				throw std::runtime_error("no walkable faces on either side (" + std::to_string(building.shapes->size()) + " shapes, mask " + std::to_string(building.mask->size()) + ")");
 			one.interior.info = building.id;
 			one.min[0] = one.min[1] = 1e30;
 			one.max[0] = one.max[1] = -1e30;
@@ -87,7 +86,8 @@ std::vector<GeneratedBuilding> generateBuildings(const kworld::AreaGeometry& are
 				one.max[1] = std::max<double>(one.max[1], shape.max[2]);
 			}
 			ok[i] = 1;
-		} catch (const std::exception&) {
+		} catch (const std::exception& e) {
+			why[i] = e.what();
 		}
 	};
 	std::atomic<std::size_t> next{ 0 };
@@ -111,6 +111,7 @@ std::vector<GeneratedBuilding> generateBuildings(const kworld::AreaGeometry& are
 		{
 			++report->buildingsFailed;
 			report->failedIds.push_back(todo[i]->id);
+			report->failedWhy.push_back(why[i]);
 		}
 	}
 	if (report != nullptr)
@@ -197,70 +198,191 @@ std::vector<std::array<double, 2>> zoneBakeSeeds(const kworld::Heightmap& terrai
 	return seeds;
 }
 
+struct GroundWindows::Entry
+{
+	native::Mesh mesh;
+	ground::Stats stats;
+	std::vector<GeneratedBuilding> generated; // moved out by the zone's own bake
+	ZoneGenReport gen; // generateBuildings' counts for it
+};
+
 std::vector<BakedTile> bakeZone(const NavConfig& config, const kworld::Heightmap& terrain, const kworld::AreaGeometry& area,
-	const std::vector<std::array<double, 2>>& seeds, int threads, ZoneGenReport* report)
+	const std::vector<std::array<double, 2>>& seeds, int threads, ZoneGenReport* report, GroundWindows* windows, kworld::ZoneCell zone)
 {
 	ZoneGenReport local;
-	const auto surfStart = std::chrono::steady_clock::now();
-	std::vector<GeneratedBuilding> generated = generateBuildings(area, &local, threads, &config);
-	local.msSurf = msSince(surfStart);
+	std::vector<GeneratedBuilding> generated;
+	std::shared_ptr<GroundWindows::Entry> own;
+	if (windows != nullptr)
+	{
+		auto found = windows->entries.find({ zone.x, zone.z });
+		if (found != windows->entries.end())
+			own = found->second;
+	}
+	if (own != nullptr)
+	{
+		generated = std::move(own->generated);
+		local = own->gen;
+	} else {
+		const auto surfStart = std::chrono::steady_clock::now();
+		generated = generateBuildings(area, &local, threads, &config);
+		local.msSurf = msSince(surfStart);
+	}
 	const ground::Params params;
+	const bool logWindows = std::getenv("KSIM_NAV_GEN_LOG") != nullptr;
 	const double wx0 = config.originX + config.window.x0 * config.tileSize, wx1 = config.originX + (config.window.x1 + 1) * config.tileSize;
 	const double wz0 = config.originZ + config.window.z0 * config.tileSize, wz1 = config.originZ + (config.window.z1 + 1) * config.tileSize;
 	const double width = wx1 - wx0, depth = wz1 - wz0;
 	// One window's ground: the area's cutters (no re-gather: the placements are in `area`), the zone sides of the generated buildings that reach it.
-	const auto window = [&](double x0, double z0, double x1, double z1, ground::Stats* stats) -> native::Mesh
+	const auto window = [&](const std::vector<GeneratedBuilding>& generated, const std::vector<std::array<double, 2>>& seeds, const kworld::AreaGeometry& source,
+		double x0, double z0, double x1, double z1, ground::Stats* stats) -> native::Mesh
 	{
 		const ground::Grid grid = ground::makeGrid(terrain, x0, z0, x1, z1, params.stride);
-		std::vector<ground::Cutter> cutters = ground::cuttersOfArea(area, grid.x0, grid.z0, grid.x0 + (grid.nx - 1) * grid.step, grid.z0 + (grid.nz - 1) * grid.step);
+		std::vector<ground::Cutter> cutters = ground::cuttersOfArea(source, terrain, grid.x0, grid.z0, grid.x0 + (grid.nx - 1) * grid.step, grid.z0 + (grid.nz - 1) * grid.step);
 		for (const GeneratedBuilding& one : generated)
 			if (!one.zoneSide.faces.empty() && one.max[0] >= x0 - 16.0 && one.min[0] <= x1 + 16.0 && one.max[1] >= z0 - 16.0 && one.min[1] <= z1 + 16.0)
 				cutters.push_back(ground::zoneSideCutter(one.zoneSide, one.building->id));
-		return ground::generate(grid, seeds, cutters, params, stats);
+		if (!logWindows)
+			return ground::generate(grid, seeds, cutters, params, stats);
+		// one stderr line per window: what it was given and where its time went (kenshi-k16.7.212: finds the slow window and its phase)
+		std::size_t tris = 0, biggest = 0;
+		for (std::size_t i = 0; i < cutters.size(); ++i)
+		{
+			tris += cutters[i].tris.size() / 3;
+			if (cutters[i].tris.size() > cutters[biggest].tris.size())
+				biggest = i;
+		}
+		native::Mesh mesh = ground::generate(grid, seeds, cutters, params, stats);
+		// face sizes in xz: a mesh of slivers shows here before it shows as a tile over the polygon cap
+		std::size_t under1 = 0, under10 = 0;
+		double area = 0;
+		for (const native::Face& face : mesh.faces)
+		{
+			double area2 = 0;
+			for (std::uint32_t k = 0; k < face.numEdges; ++k)
+			{
+				const native::Edge& e = mesh.edges[face.startEdge + k];
+				area2 += mesh.vertices[e.a][0] * mesh.vertices[e.b][2] - mesh.vertices[e.b][0] * mesh.vertices[e.a][2];
+			}
+			area += std::fabs(area2) / 2;
+			under1 += std::fabs(area2) < 2;
+			under10 += std::fabs(area2) < 20;
+		}
+		const std::pair<const std::string, double>* worst = nullptr;
+		for (const auto& dropped : stats->topDropped)
+			if (worst == nullptr || dropped.second > worst->second)
+				worst = &dropped;
+		std::fprintf(stderr, "knav: ground window %.0f,%.0f: %zu cutters, %zu triangles (largest %zu: %s), %zu top shapes (%zu by surfgen), %zu top pieces, %zu faces"
+			" (%zu under 1 u2, %zu under 10 u2), area %.0f u2 (tops %.0f; %zu top faces pruned, %.0f u2, most %.0f: %s), %zu links;"
+			" ms grid %.0f, cut %.0f, trim %.0f, simplify %.0f, tops %.0f, link %.0f, merge %.0f, prune %.0f\n", x0, z0, cutters.size(), tris,
+			cutters.empty() ? 0 : cutters[biggest].tris.size() / 3, cutters.empty() ? "" : cutters[biggest].label.c_str(), stats->topShapes, stats->topSurfgen,
+			stats->topPieces, mesh.faces.size(), under1, under10, area, stats->topArea, stats->topDroppedFaces, stats->topDroppedArea, worst ? worst->second : 0.0,
+			worst ? worst->first.c_str() : "", stats->topLinks, stats->msGrid, stats->msCut, stats->msTrim, stats->msSimplify, stats->msTops, stats->msLink, stats->msMerge - stats->msLink, stats->msPrune);
+		return mesh;
 	};
 	const auto groundStart = std::chrono::steady_clock::now();
-	// own window + four neighbours (E, W, S, N), the neighbours only for their rims: stitchRims makes the shared vertex sets equal
+	// own window + four neighbours (E, W, S, N), the neighbours only for their rims: stitchRims makes the shared vertex sets equal.
+	// With `windows` each is the zone's own window, built once for the whole run; without, the neighbours are built here from this zone's data.
 	struct Side
 	{
 		double x0, z0, x1, z1;
 		int axis;
 		double edge;
-		native::Mesh mesh;
+		int dx, dz;
+		std::shared_ptr<GroundWindows::Entry> entry;
 	};
 	std::array<Side, 4> sides = { {
-		{ wx1, wz0, wx1 + width, wz1, 0, wx1, {} }, { wx0 - width, wz0, wx0, wz1, 0, wx0, {} },
-		{ wx0, wz1, wx1, wz1 + depth, 2, wz1, {} }, { wx0, wz0 - depth, wx1, wz0, 2, wz0, {} } } };
-	ground::Stats stats;
-	native::Mesh world;
+		{ wx1, wz0, wx1 + width, wz1, 0, wx1, 1, 0, {} }, { wx0 - width, wz0, wx0, wz1, 0, wx0, -1, 0, {} },
+		{ wx0, wz1, wx1, wz1 + depth, 2, wz1, 0, 1, {} }, { wx0, wz0 - depth, wx1, wz0, 2, wz0, 0, -1, {} } } };
+	const auto inWorld = [](const Side& side) { return side.x0 >= kworld::kWorldMin && side.x1 <= -kworld::kWorldMin && side.z0 >= kworld::kWorldMin && side.z1 <= -kworld::kWorldMin; };
+	// a window to build: its entry, the data it is built from, and its box
+	struct Job
+	{
+		std::shared_ptr<GroundWindows::Entry> entry;
+		const std::vector<GeneratedBuilding>* generated;
+		std::vector<std::array<double, 2>> seeds;
+		std::shared_ptr<const kworld::AreaGeometry> area;
+		double x0, z0, x1, z1;
+	};
+	const std::shared_ptr<const kworld::AreaGeometry> ownArea(std::shared_ptr<void>(), &area); // not owned
+	std::vector<Job> jobs;
+	if (windows == nullptr)
+	{
+		own = std::make_shared<GroundWindows::Entry>();
+		jobs.push_back({ own, &generated, seeds, ownArea, wx0, wz0, wx1, wz1 });
+		for (Side& side : sides)
+			if (inWorld(side))
+			{
+				side.entry = std::make_shared<GroundWindows::Entry>();
+				jobs.push_back({ side.entry, &generated, seeds, ownArea, side.x0, side.z0, side.x1, side.z1 }); // this zone's data stands for the neighbour's
+			}
+	} else {
+		if (own == nullptr)
+		{
+			own = std::make_shared<GroundWindows::Entry>();
+			own->gen = local;
+			windows->entries[{ zone.x, zone.z }] = own;
+			jobs.push_back({ own, &generated, seeds, ownArea, wx0, wz0, wx1, wz1 });
+		}
+		for (Side& side : sides)
+		{
+			if (!inWorld(side))
+				continue;
+			const kworld::ZoneCell other{ zone.x + side.dx, zone.z + side.dz };
+			auto found = windows->entries.find({ other.x, other.z });
+			if (found != windows->entries.end())
+			{
+				side.entry = found->second;
+				continue;
+			}
+			side.entry = std::make_shared<GroundWindows::Entry>();
+			windows->entries[{ other.x, other.z }] = side.entry;
+			auto otherArea = std::make_shared<const kworld::AreaGeometry>(windows->gather(other));
+			const NavConfig otherConfig = configForWorldZones(other, other);
+			side.entry->generated = generateBuildings(*otherArea, &side.entry->gen, threads, &otherConfig);
+			jobs.push_back({ side.entry, &side.entry->generated, zoneBakeSeeds(terrain, *otherArea, windows->seedsDef, other, config.waterLevel), otherArea,
+				side.x0, side.z0, side.x1, side.z1 });
+		}
+	}
 	std::atomic<int> next{ 0 };
 	const auto drain = [&]
 	{
-		for (int i = next++; i < 5; i = next++)
+		for (std::size_t i = next++; i < jobs.size(); i = next++)
 		{
-			if (i == 4)
-				world = window(wx0, wz0, wx1, wz1, &stats);
-			else
-			{
-				const bool inWorld = sides[i].x0 >= kworld::kWorldMin && sides[i].x1 <= -kworld::kWorldMin && sides[i].z0 >= kworld::kWorldMin && sides[i].z1 <= -kworld::kWorldMin;
-				if (inWorld)
-					sides[i].mesh = window(sides[i].x0, sides[i].z0, sides[i].x1, sides[i].z1, nullptr);
-			}
+			Job& job = jobs[i];
+			job.entry->mesh = window(*job.generated, job.seeds, *job.area, job.x0, job.z0, job.x1, job.z1, &job.entry->stats);
 		}
 	};
 	std::vector<std::thread> pool;
-	for (int t = 1; t < std::max(1, std::min(threads, 5)); ++t)
+	for (int t = 1; t < std::max(1, std::min<int>(threads, jobs.size())); ++t)
 		pool.emplace_back(drain);
 	drain();
 	for (std::thread& thread : pool)
 		thread.join();
+	ground::Stats stats = own->stats;
+	native::Mesh world = own->mesh;
+	if (windows != nullptr)
+		windows->entries.erase({ zone.x, zone.z - 1 }); // every zone that needs it is baked by now (row-order scan)
 	for (Side& side : sides)
-		if (!side.mesh.faces.empty())
-			local.stitched += ground::stitchRims(world, side.mesh, side.axis, side.edge);
+		if (side.entry != nullptr && !side.entry->mesh.faces.empty())
+			local.stitched += ground::stitchRims(world, side.entry->mesh, side.axis, side.edge);
+	{
+		std::vector<ground::JoinedSide> joined;
+		for (std::size_t i = 0; i < sides.size(); ++i)
+			if (sides[i].entry != nullptr && !sides[i].entry->mesh.faces.empty())
+				joined.push_back({ &sides[i].entry->mesh, &sides[i].entry->stats.topFaceIndex, &sides[i].entry->stats.topTouching });
+		local.seamPruned = ground::pruneJoined(world, stats.topFaceIndex, joined, &stats.topTouching);
+		stats.topFaces -= local.seamPruned;
+	}
 	const ground::WeldStats weld = ground::weldMesh(world);
 	local.welded = weld.welded;
 	local.weldSplit = weld.split;
 	local.weldPaired = weld.paired;
 	local.weldDropped = weld.dropped;
+	local.weldOrphanOpen = weld.orphanOpen;
+	local.weldOrphanGap = weld.orphanGap;
+	local.weldThrough = weld.through;
+	for (int i = 0; i < 4; ++i)
+		local.weldByLive[i] = weld.byLive[i];
 	local.groundFaces = world.faces.size();
 	local.topFaces = stats.topFaces;
 	local.topKept = stats.topKept;
@@ -273,7 +395,8 @@ std::vector<BakedTile> bakeZone(const NavConfig& config, const kworld::Heightmap
 	std::vector<native::Mesh> meshes;
 	meshes.push_back(std::move(world));
 	for (GeneratedBuilding& one : generated)
-		meshes.push_back(one.interior);
+		if (!one.interior.faces.empty())
+			meshes.push_back(one.interior);
 	std::vector<TileCoord> coords;
 	for (int z = config.window.z0; z <= config.window.z1; ++z)
 		for (int x = config.window.x0; x <= config.window.x1; ++x)

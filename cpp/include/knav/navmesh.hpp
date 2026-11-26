@@ -102,8 +102,10 @@ struct NavConfig
 inline constexpr int kTilesPerZone = 18; // 4608 / 256
 inline constexpr int kRegionZones = 4;
 // Most tiles one dtNavMesh holds, and most polygons in one tile. Detour is built with DT_POLYREF64 (cmake/recast.cmake): a
-// dtPolyRef is 16 salt + 28 tile + 20 poly bits, so these are limits of our own, not of the ref.
-inline constexpr int kMaxResidentTiles = 8192;
+// dtPolyRef is 16 salt + 28 tile + 20 poly bits, so these are limits of our own, not of the ref. The tile limit holds the whole world's
+// 64 x 64 zones of 18 x 18 tiles (kenshi-k16.7.204: the whole navmesh is resident); a search window (a zone set, a route's box) stays small.
+inline constexpr int kMaxResidentTiles = 1 << 21; // 64 x 64 zones x 18 x 18 = 1.33 M tiles at most; 1 << 19 ran out of slots at ~half the world (kenshi-k16.7.209)
+inline constexpr int kMaxWindowTiles = 8192;
 inline constexpr int kMaxPolysPerTile = 8192;
 static_assert(kMaxResidentTiles <= (1 << DT_TILE_BITS) && kMaxPolysPerTile <= (1 << DT_POLY_BITS), "dtPolyRef split");
 
@@ -452,6 +454,13 @@ private:
 	// body fits, the first hop out of the start when `exemptFirst` and the last into the goal exempt, as in the search). Labelled per radius
 	// over the whole mesh on first use, kept until tiles change. Doors and filters are ignored, so a refusal is never wrong.
 	bool refusedByComponents(dtPolyRef startRef, dtPolyRef endRef, const Point& end, float radius, bool exemptFirst) const;
+public:
+	// Tests: a hash of the clearance partition at `radius` (labels by first appearance, so it does not depend on the ids), building the labels if need be;
+	// and how many whole builds (0), window updates after a tile swap (1) and window updates that fell back to a rebuild (2) have run.
+	std::uint64_t componentsDigest(float radius) const;
+	unsigned componentStat(int which) const;
+
+private:
 
 	ClearanceCache& clearanceFor() const; // the cache, emptied first if the mesh changed since it was filled
 

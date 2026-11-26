@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -23,6 +24,15 @@
 namespace ui
 {
 	enum class OptionsScope { kSettings, kDebug };
+
+	// The world options of the game being played (kenshi-bjv2): not cfg options, their value lives on the server (GAME_OPTIONS, type 67). The
+	// host copies its last GAME_OPTIONS in every frame; known false (no world, or none received yet) shows them disabled.
+	struct WorldOptionsState
+	{
+		bool known = false, feedAnimals = false, shareFood = false;
+		float cod = 1, gdm = 1, ht = 4;	// chance of death, damage scale, hunger time: shown read-only
+	};
+	enum WorldOption : uint8_t { kFeedAnimals = 0, kShareFood = 1 };	// order 121's option byte
 
 	class Options
 	{
@@ -62,6 +72,14 @@ namespace ui
 		void reveal(const std::string& key);
 		std::vector<std::string> groups() const;	// the shown tab's group headers, in order
 		Label* needsLabel(const std::string& key) const;	// the row's needs note, null without one	// scroll the shown tab's row into view (at the next layout)
+		// The Game tab's "World (this game)" group (kenshi-bjv2), above its cfg groups. A box shows the state set here, never its own click: a
+		// click calls onWorldOption(option, !shown value) and the box changes when a later setWorldOptions says so (a refusal leaves it).
+		void setWorldOptions(const WorldOptionsState& s);	// the host, every frame
+		std::function<void(uint8_t option, bool on)> onWorldOption;
+		const WorldOptionsState& worldOptions() const { return world_; }
+		Button* worldBox(uint8_t option) const { return option < 2 ? worldBoxes_[option] : nullptr; }	// null while the Game tab is not shown
+		Label* worldNote() const { return worldNote_; }
+		Label* worldStats() const { return worldStats_; }
 
 	private:
 		struct Tab { std::string section, group, title; Button* button; };	// group "": the whole section
@@ -100,5 +118,12 @@ namespace ui
 		void go(int hit);	// show the match: its tab, scrolled to, highlighted
 		void mark();	// the highlight on the shown rows
 		void focusSearch();
+		WorldOptionsState world_;
+		Button* worldBoxes_[2] = {};
+		Widget* worldRows_[2] = {};
+		Label* worldNames_[2] = {};
+		Label *worldNote_ = nullptr, *worldStats_ = nullptr;
+		void addWorld();	// the world group into the rows list
+		void applyWorld();	// its widgets from world_
 	};
 }

@@ -496,6 +496,10 @@ void init_ui()
 	app.hud = std::make_unique<ui::Hud>(std::move(act));
 	app.hud->show(false);	// shown once the sim is live
 	app.options = std::make_unique<ui::Options>();
+	app.options->onWorldOption = [](uint8_t option, bool on)	// order 121; the box changes only when GAME_OPTIONS says so (kenshi-s3je)
+	{
+		if (!app.sim.setGameOption(option, on)) { printf("options: set_game_option %s %s refused (no live server)\n", option ? "share_food" : "feed_animals", on ? "on" : "off"); }
+	};
 	app.items = std::make_unique<ui::ItemWindows>(item_actions());
 	app.items->holdTime = (float)kHoldMenu;
 	app.stats = std::make_unique<ui::Stats>(ui::StatsActions{});	// toggle_stats (C / STA): update_ui fills it from CHAR_STATS each frame
@@ -621,6 +625,13 @@ void update_ui(double dt)
 		pauseSeen = paused;
 	}
 	if (!app.uiOn) { return; }
+	{
+		const auto& g = app.sim.decoder().gameOptions;	// the last GAME_OPTIONS frame, copied every frame (setWorldOptions returns early when equal)
+		ui::WorldOptionsState w;
+		w.known = g.received && app.sim.active();
+		w.feedAnimals = g.feedAnimals; w.shareFood = g.shareFood; w.cod = g.cod; w.gdm = g.gdm; w.ht = g.ht;
+		app.options->setWorldOptions(w);
+	}
 	app.options->update();
 	const uint32_t prospectSerial = app.sim.decoder().prospectSerial;
 	if (prospectSerial != app.prospectSeen)

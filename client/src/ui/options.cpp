@@ -44,6 +44,13 @@ namespace ui
 		}
 
 		constexpr float kW = 960, kBodyH = 620, kMinW = 700, kMinH = 420, kRowH = 40, kHeaderH = 38, kNeedsH = 22;
+		// The Game tab's world options (kenshi-bjv2): server values, by order 121's option byte. Help text is ours.
+		constexpr const char* kWorldGroup = "World (this game)";
+		struct WorldRow { const char* label; const char* help; };
+		const WorldRow kWorldRows[2] = {
+			{ "Feed animals", "Your animals eat from the squad's food when they are hungry. Saved with this game." },
+			{ "Share food", "Hungry squad members eat food a squadmate carries, not only their own. Saved with this game." },
+		};
 		constexpr const char* kPinnedTip = "set on the command line for this run; changing it here saves it";	// a --set row's tooltip (k16.2.303.1)
 
 		// A group's header in the rows list: its name in the Accent colour (Title is a dark red under the original style) over a hairline rule, the same in both styles.
@@ -472,7 +479,8 @@ namespace ui
 			tabBar_->heading("SETTINGS");
 			for (const std::string& sec : cfg::sectionNames())
 			{
-				if (std::none_of(all.begin(), all.end(), [&](const cfg::Info& i) { return sectionOf(i) == sec; })) { continue; }
+				const bool world = sec == "Game";	// the world options' tab (kenshi-bjv2), with or without a cfg option in it
+				if (!world && std::none_of(all.begin(), all.end(), [&](const cfg::Info& i) { return sectionOf(i) == sec; })) { continue; }
 				tabBar_->add(sec);
 				tabs_.push_back({ sec, "", sec, tabBar_->tab(tabs_.size()) });
 			}
@@ -533,7 +541,12 @@ namespace ui
 		Widget& body = rows_->body();
 		body.clear();
 		shownRows_.clear();
+		worldBoxes_[0] = worldBoxes_[1] = nullptr;
+		worldRows_[0] = worldRows_[1] = nullptr;
+		worldNames_[0] = worldNames_[1] = nullptr;
+		worldNote_ = worldStats_ = nullptr;
 		rows_->offset = 0;
+		if (scope_ == OptionsScope::kSettings && t < tabs_.size() && tabs_[t].section == "Game") { addWorld(); }
 		const std::string* group = nullptr;
 		const std::vector<cfg::Info> infos = options(t);
 		for (const cfg::Info& info : infos)
@@ -556,6 +569,74 @@ namespace ui
 		}
 		mark();
 		gen_ = 0;	// values next update
+	}
+
+	// The world options (kenshi-bjv2): a header, a note, a tick row per option, the read-only numbers. The ticks are not checkable: a click asks
+	// the host (onWorldOption) and the tick shows what the server says (applyWorld from setWorldOptions), so a refused change never shows.
+	void Options::addWorld()
+	{
+		using A = Widget::Align;
+		Widget& body = rows_->body();
+		GroupHeader& h = body.add<GroupHeader>(kWorldGroup);
+		h.halign = A::kStretch;
+		h.rect.h = kHeaderH;
+		worldNote_ = &body.add<Label>("", "Kenshi_StandardFont_MediumSmall");
+		worldNote_->halign = A::kStretch;
+		worldNote_->wrap = true;
+		worldNote_->colour = res::colour("Main").alpha(0.7f);
+		for (uint8_t o = 0; o < 2; o++)
+		{
+			Flex& line = body.add<Line>();
+			line.halign = A::kStretch;
+			line.rect.h = kRowH;
+			Label& name = line.add<Label>(FlexItem{ 230 }, kWorldRows[o].label);
+			name.fit = false;
+			name.valign = A::kStretch;
+			line.add<Widget>(FlexItem{ .fill = 1 });
+			TickBox& tb = line.add<TickBox>();
+			tb.rect.h = kRowH;
+			tb.checkable = false;	// the server's value only
+			tb.onClicked = [this, o]
+			{
+				const bool now = o == kFeedAnimals ? world_.feedAnimals : world_.shareFood;
+				if (world_.known && onWorldOption) { onWorldOption(o, !now); }
+			};
+			line.add<Widget>(FlexItem{ 26 });	// the cfg rows' reset cell: the ticks line up with theirs
+			worldBoxes_[o] = &tb;
+			worldRows_[o] = &line;
+			worldNames_[o] = &name;
+		}
+		worldStats_ = &body.add<Label>("", "Kenshi_StandardFont_MediumSmall");
+		worldStats_->halign = A::kStretch;
+		worldStats_->colour = res::colour("Main").alpha(0.75f);
+		applyWorld();
+	}
+
+	void Options::applyWorld()
+	{
+		if (!worldNote_) { return; }
+		const bool on[2] = { world_.feedAnimals, world_.shareFood };
+		for (int o = 0; o < 2; o++)
+		{
+			worldBoxes_[o]->checked = world_.known && on[o];
+			worldBoxes_[o]->enabled = world_.known;
+			worldNames_[o]->colour = res::colour("Main").alpha(world_.known ? 1.0f : 0.45f);	// greyed with the tick
+		}
+		worldNote_->text = world_.known ? "Saved with this game; the server applies a change." : "Needs a running game.";
+		char b[160];
+		if (world_.known) { snprintf(b, sizeof b, "Chance of death %g, damage %g, hunger time %g (set when the game was made)", world_.cod, world_.gdm, world_.ht); }
+		else { b[0] = 0; }
+		worldStats_->text = b;
+		worldStats_->visible = world_.known;
+	}
+
+	void Options::setWorldOptions(const WorldOptionsState& s)
+	{
+		const bool same = s.known == world_.known && s.feedAnimals == world_.feedAnimals && s.shareFood == world_.shareFood && s.cod == world_.cod
+			&& s.gdm == world_.gdm && s.ht == world_.ht;
+		if (same) { return; }
+		world_ = s;
+		applyWorld();
 	}
 
 	// One row into the list: the name, the control, the reset button.
@@ -743,6 +824,10 @@ namespace ui
 			if (!r.box->shown() || !r.box->screen().contains(mx, my) || !rows_->screen().contains(mx, my)) { continue; }
 			help = r.info.help;
 			if (r.info.pinned) { help += std::string(" (") + kPinnedTip + ")"; }
+		}
+		for (int o = 0; o < 2; o++)
+		{
+			if (worldRows_[o] && worldRows_[o]->shown() && worldRows_[o]->screen().contains(mx, my) && rows_->screen().contains(mx, my)) { help = kWorldRows[o].help; }
 		}
 		help_->text = help;
 	}

@@ -45,6 +45,10 @@ std::vector<knav::BakedTile> bakeRange(knav::AreaGatherer& gatherer, const kworl
 	kworld::ZoneCell min, kworld::ZoneCell max, int threads, double& gatherSeconds)
 {
 	std::vector<knav::BakedTile> tiles;
+	// each ground window built once for the region, its rims shared with the neighbours (kenshi-k16.7.215)
+	knav::GroundWindows windows;
+	windows.gather = [&](kworld::ZoneCell cell) { return gatherer.gather(cell, cell); };
+	windows.seedsDef = seedsDef;
 	for (int z = min.z; z <= max.z; ++z)
 		for (int x = min.x; x <= max.x; ++x)
 		{
@@ -54,10 +58,10 @@ std::vector<knav::BakedTile> bakeRange(knav::AreaGatherer& gatherer, const kworl
 			gatherSeconds += secondsSince(step);
 			const knav::NavConfig zoneConfig = knav::configForWorldZones(zone, zone);
 			knav::ZoneGenReport report;
-			for (knav::BakedTile& tile : knav::bakeZone(zoneConfig, terrain, area, knav::zoneBakeSeeds(terrain, area, seedsDef, zone, zoneConfig.waterLevel), threads, &report))
+			for (knav::BakedTile& tile : knav::bakeZone(zoneConfig, terrain, area, knav::zoneBakeSeeds(terrain, area, seedsDef, zone, zoneConfig.waterLevel), threads, &report, &windows, zone))
 				tiles.push_back(std::move(tile));
-			for (const std::string& id : report.failedIds)
-				std::cerr << "knav_bake: zone " << x << "," << z << ": building not generated: " << id << "\n";
+			for (std::size_t i = 0; i < report.failedIds.size(); ++i)
+				std::cerr << "knav_bake: zone " << x << "," << z << ": building not generated: " << report.failedIds[i] << ": " << report.failedWhy[i] << "\n";
 			if (report.overfullTiles != 0)
 				std::cerr << "knav_bake: zone " << x << "," << z << ": " << report.overfullTiles << " tiles over " << knav::kMaxPolysPerTile << " polygons left out\n";
 		}

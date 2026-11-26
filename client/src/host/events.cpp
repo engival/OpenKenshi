@@ -240,7 +240,18 @@ constexpr double kBoxDragPx = 4;
 // A debug toggle by its keys:: action name: what the key does (the key handler and the debug panel both call it).
 void debug_toggle(const std::string& id)
 {
-	if (id == "debug.navmesh") { kNavOverlay.set(!kNavOverlay.get()); }
+	if (id == "debug.navmesh")
+	{
+		kNavOverlay.set(!kNavOverlay.get());
+		// The overlay draws only the tiles ksim's server streams (kenshi-k16.2.527): with no server there are none, so say so once, not silently
+		if (kNavOverlay.get() && !app.sim.active())
+		{
+			static const char* const kNote = "navmesh: no server in fly mode, use play.sh fly --server";
+			fprintf(stderr, "kclient: %s\n", kNote);
+			printf("%s\n", kNote);
+			ui::message(kNote);
+		}
+	}
 	else if (id == "debug.collision") { dev::collisionToggle(); }
 	else if (id == "debug.collision_fill") { dev::collisionFillToggle(); }
 #ifdef KCLIENT_DEV_TOOLS

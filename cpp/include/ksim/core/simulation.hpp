@@ -1942,6 +1942,11 @@ public:
 	void markPlayerFactionLive();
 	// Tests: the per-tick promotion budget (squads, members) in place of routines::kPromotesPerTick / kPromoteMembersPerTick, to keep a queue in flight.
 	void setPromoteBudget(std::size_t squads, std::uint64_t members) { promoteSquadsPerTick_ = squads; promoteMembersPerTick_ = members; }
+public:
+	// The zones ahead of the player's heading are prefetched (syncNavCoverage). A fight harness turns it off: its heading flips with the fight, the zones
+	// load and drop again, and every mesh change restarts the clearance-component build (3-8 s each; kenshi-q0ou).
+	void setNavPrefetch(bool on) { navPrefetch_ = on; }
+
 private:
 	// corpses.cpp, before dropGoneFighters: decay of dead characters (corpses.hpp, ARCHITECTURE.md "Corpses"; state::CorpseDecay, save v54).
 	void stepCorpses();
@@ -2449,6 +2454,7 @@ private:
 	double travelX_ = 0.0, travelZ_ = 0.0; // the first player area's centre at the last stepPlayerAreas pass, and the unit heading since (prefetch); derived
 	double headX_ = 0.0, headZ_ = 0.0;
 	bool travelKnown_ = false;
+	bool navPrefetch_ = true; // setNavPrefetch; never saved
 	// What a v126 save held of the region promotion's work in flight (RunStates), read by reload and used by the first resident pass, syncNavCoverage and
 	// syncLineOfSight that follow; empty = nothing saved: those load everything wanted at once.
 	struct PromotionSaved

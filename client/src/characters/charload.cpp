@@ -1789,6 +1789,19 @@ void Characters::boneSizes(Char& c, const std::unordered_map<std::string, float>
 	for (const char* bone : { "L Boob", "R Boob" }) { set(bone, { bx * Fs, by * Hs, bs * Fs }, { bh, bsp * cz * Fs * (1 + 0.5f * (h2 - 1)), h2 * cz * Fs }); }
 }
 
+// The built body's size numbers for the dev dump (`dump body`): the stat muscle m, its factor M1 (boneSizes) and the right forearm's width scale.
+bool Characters::bodySize(size_t i, float& m, float& m1, float& forearm) const
+{
+	if (i >= chars_.size() || !chars_[i].body) { return false; }
+	const Char& c = chars_[i];
+	m = c.spec.muscle;
+	m1 = 1 + (c.spec.female ? 0.24f : 0.27f) * m;	// lerp(1, 1.24 / 1.27, m), as boneSizes
+	forearm = 1;
+	const int b = c.body->skel.bone("Bip01 R Forearm");
+	if (b >= 0 && (size_t)b < c.size.size()) { forearm = c.size[(size_t)b].x; }
+	return true;
+}
+
 bool Characters::add(const Spec& in, std::string& err, bool* notReady)
 {
 	if (notReady) { *notReady = false; }

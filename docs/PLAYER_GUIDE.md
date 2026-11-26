@@ -14,7 +14,7 @@ Developer detail (flags, scripts, scenes, rendering) is in [`client/README.md`](
 | Mode | What you get |
 |---|---|
 | `play.sh` | The list of modes, one line each. `play.sh --help` is the same. |
-| `play.sh fly [--at PLACE\|x,z]` | The free camera over a place, no title screen; the Hub by default. `--at` takes a town name or `x,z`. |
+| `play.sh fly [--at PLACE\|x,z] [--server]` | The free camera over a place, no title screen; the Hub by default. `--at` takes a town name or `x,z`. `--server` runs a game server behind it for `Ctrl+F5`'s navmesh (6.5; round the camera once kenshi-gm64 lands); without it fly mode has no navmesh. |
 | `play.sh title` | The title screen. New Game starts a game; the client starts its own game server behind the title. |
 | `play.sh game` | A new game at the Hub with a game server behind it (the Wanderer start). |
 | `play.sh scenario [NAME]` | A scenario fixture from `scenarios/`; no NAME lists them. |
@@ -137,6 +137,9 @@ when the client next starts.
 - **Keys** (its own tab, after Interface) — every action with its keys. Click a box, then press the key (hold Ctrl, Alt or Shift with it).
   Escape cancels, a right click clears it; red means another action already has that key.
 - **Interface / Colours** — the flat style's colours, each with a swatch.
+- **Game / World (this game)** — **Feed animals** and **Share food**, saved with the game you are playing, not with the
+  client: a tick asks the game server, and the box changes once the server has applied it. Greyed with "Needs a running
+  game." on the title screen. Below them, the game's chance of death, damage and hunger time, as set when it was made (read only).
 - **Debug / Debug keys** (only with `--debug`) — the client's development keys.
 - **Follow mode** (`--debug --follow-stream 127.0.0.1:PORT --import-save DIR`, side-by-side with the original) — the camera, pause / speed, selection and orders follow the inspector agent's stream, and your own camera and mouse orders are locked with a toast; the F8 panel's "Follow mirror lock" row releases or re-takes the lock (`client/docs/FOLLOW_STREAM.md`).
 - **Drift view** (follow mode; F8 panel "Drift view", or `debug.drift_view`) — a ghost marks where the original has each character at the same game time, with a line to ours (green under `debug.drift_near` 1 u, yellow under `debug.drift_far` 10 u, red beyond); the panel lists the 5 worst drifts under its toggles (the toggles scroll with the wheel when the panel is short), and a `drift` record per character goes back to the agent once a second.
@@ -959,7 +962,9 @@ These are development views. They exist only when the client runs with `--debug`
   at the top, the hours running clockwise (6 on the left, 18 on the right), daylight shaded gold, the hand at the game
   time. Click or drag on the dial to set that time (to the quarter hour, sent when you let go); its tooltip shows the
   time under the pointer. **Weather** — a scrollable list of the game's weathers,
-  "auto" first. With a running game these go through the server's debug view.
+  "auto" first. With a running game these go through the server's debug view. With no server (`play.sh fly`, a scene) a pick applies the weather locally,
+  the same path as `Ctrl+,` / `Ctrl+.` and `--weather NAME`: "auto" is the regional weather, and an extra first row "default (clear)" turns the weather off
+  (`--weather default`). The time buttons need a game.
 
 ### 6.2 The animation lab
 
@@ -1010,6 +1015,12 @@ raw rows.
 `Ctrl+F5` draws the client's navmesh as glowing edges within the overlay range (6.1) of the selected character, else the focus: walkable polygons, stairs and ramps in orange,
 the wall band, the height band round the selected character's feet (below dimmed, above faint), the hovered polygon
 white, tile seams and splits of one flat face fainter, and — from the F8 panel's "Navmesh: pruned polygons" — the polygons the bake pruned in dim red.
+
+The overlay draws only the tiles ksim's server streams (NAV_TILE); the client never bakes or guesses a navmesh. Today the server streams only the zones
+it loaded for the game's start and round the player; a free camera flown far from the squad sends set_view, but no tiles come for its zones yet
+(kenshi-gm64). Plain `play.sh fly` has no server: `Ctrl+F5` there prints one line, "navmesh: no server in fly mode, use play.sh fly --server", and draws
+nothing. `play.sh fly --server [--at PLACE]` starts a server behind the free camera (demo.sh's new game); until kenshi-gm64 lands it draws only the
+start area's navmesh (the Hub), not the camera's. `play.sh fly --server --world-nav` shows the navmesh anywhere: the server holds the whole baked world (`--nav-resident world`, cache `~/.cache/kenshi/navcache_shared`), at ~280 s to start and ~21 GB RAM; opt-in. `dump navzones` lists the tiles held per zone.
 
 ### 6.5a The vertical height probe
 

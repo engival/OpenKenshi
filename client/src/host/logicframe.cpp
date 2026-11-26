@@ -1257,13 +1257,15 @@ static void record_debug_views(const FramePacket& pk, ovl::List& out, ovl::List&
 	cam.mvp(mvp);
 	ovl::Record rec(out);
 	// the overlays' range centre (debug.overlay_range, kenshi-uuh8): the first selected character, else the camera focus
+	// the free / fly camera (not RTS, not following) draws round its own position, never the selection (kenshi-ez2x); the RTS default keeps the selection
+	const bool freeCam = !app.rts && !app.follow;
 	double centre[3];
 	{
 		const double* f = app.rts ? app.focus : app.pos;
 		std::copy(f, f + 3, centre);
 		double at[3];
 		float hull[3];
-		if (app.opt.debug && !app.sim.selected().empty() && app.sim.placed(app.sim.selected().front(), at, hull)) { std::copy(at, at + 3, centre); }
+		if (app.opt.debug && !freeCam && !app.sim.selected().empty() && app.sim.placed(app.sim.selected().front(), at, hull)) { std::copy(at, at + 3, centre); }
 	}
 	if (app.opt.debug && kNavOverlay.get() && app.nav.mesh())	// a debug overlay: --debug gates the config key too
 	{
@@ -1278,7 +1280,7 @@ static void record_debug_views(const FramePacket& pk, ovl::List& out, ovl::List&
 		const double* f = app.rts ? app.focus : app.pos;
 		std::copy(f, f + 3, bands.at);
 		bands.at[1] = bands.ref;
-		if (!app.sim.selected().empty() && app.sim.placed(app.sim.selected().front(), at, hull)) { bands.ref = at[1]; std::copy(at, at + 3, bands.at); }
+		if (!freeCam && !app.sim.selected().empty() && app.sim.placed(app.sim.selected().front(), at, hull)) { bands.ref = at[1]; std::copy(at, at + 3, bands.at); }
 		bands.cut = [](const double p[3]) { return app.buildings.cutAway(p); };
 		const Pick hp = pick_screen(app.mouseX, app.mouseY, nullptr, true);
 		bands.hover = hp.kind == Pick::Ground && app.nav.walkable(hp.hit) == ClientNav::Reach::kYes;	// the cursor's own test: no highlight where it says invalidmove

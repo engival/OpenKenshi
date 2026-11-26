@@ -1284,6 +1284,19 @@ bool SimLinkDecoder::frame(uint16_t type, const uint8_t* p, size_t n)
 		events.push_back(e);
 		break;
 	}
+	case kGameOptions:	// u64 tick, u8 flags (bit 0 feed_animals, bit 1 share_food), f32 cod, f32 gdm, f32 ht; read by the frame length, a longer tail is skipped
+	{
+		GameOptions g;
+		g.tick = r.u64();
+		const uint8_t f = r.u8();
+		g.feedAnimals = (f & 1) != 0;
+		g.shareFood = (f & 2) != 0;
+		g.cod = r.f32();
+		g.gdm = r.f32();
+		g.ht = r.f32();
+		if (!r.bad) { g.received = true; gameOptions = g; }
+		break;
+	}
 	case kProfile:
 	{
 		// PROFILE (SIMLINK.md "PROFILE", kenshi-k16.2.148): the answer to order 120 from a KSIM_PROFILE server. Fields in the doc's order; a
@@ -1819,6 +1832,17 @@ uint32_t OrderWriter::setInterest(std::vector<uint8_t>& out, float x, float z, f
 	w.put(x);
 	w.put(z);
 	w.put(radius);
+	return seq_;
+}
+
+uint32_t OrderWriter::setGameOption(std::vector<uint8_t>& out, uint8_t option, uint8_t value)
+{
+	Writer w(out, kOrder);
+	w.put(++seq_);
+	w.put((uint16_t)121);
+	w.put((uint8_t)1);
+	w.put(option);
+	w.put(value);
 	return seq_;
 }
 

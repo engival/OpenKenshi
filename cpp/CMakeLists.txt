@@ -636,6 +636,11 @@ if(KSIM_DEV)
 	target_link_libraries(ksim_navcoll_export PRIVATE ksim knav RecastNavigation::Detour)
 	target_compile_definitions(ksim_navcoll_export PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 	kdata_warnings(ksim_navcoll_export)
+	# kenshi-k16.7.190: fills the native nav cache tree for a range of regions (the whole-world bake into the shared cache).
+	add_executable(ksim_navcache_bake tools/ksim_navcache_bake.cpp)
+	target_link_libraries(ksim_navcache_bake PRIVATE ksim knav RecastNavigation::Detour)
+	target_compile_definitions(ksim_navcache_bake PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+	kdata_warnings(ksim_navcache_bake)
 	# kenshi-k16.7.131: grades the geometric navmesh generator (knav/surfgen.hpp) on a building against the original's live capture.
 	add_executable(ksim_surfgen_grade tools/ksim_surfgen_grade.cpp)
 	target_link_libraries(ksim_surfgen_grade PRIVATE knav)
@@ -1060,7 +1065,7 @@ if(Python3_FOUND)
 			--min her_swings=7 --max her_swings=13 --min her_landed=2.5 --max her_landed=6 --min ko=45 --max ko=85)
 	# RUN_SERIAL (task CB, the peer): 30 runs of a heavy combat fixture take ~205 s alone but 719 s in the -j16 suite - it hogs
 	# cores and inflates the whole run. Running it alone costs ~3.5 min of the suite's wall clock and nothing else moves; its checks
-	# are statistical over the runs, not wall-clock. TIMEOUT stays 1800 as a hang guard.
+	# are statistical over the runs, not wall-clock. fight_gate.py runs the 30 seeds in 4 shard processes (kenshi-q0ou: serial it passed the queue's 1200 s cap). TIMEOUT stays 1800 as a hang guard.
 	set_tests_properties(ksim_fight_1v1 PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 1800 RUN_SERIAL TRUE)
 endif()
 # bar_crowd (28 bandits against the Hub bar's residents, KSCEN 2 orders, no player in the fight): the converted fixture, optional like ksim_fight_real.
@@ -1867,6 +1872,11 @@ add_executable(knav_object_census tools/knav_object_census.cpp)
 target_link_libraries(knav_object_census PRIVATE knav)
 target_compile_definitions(knav_object_census PRIVATE KENSHI_DATA="${KENSHI_DATA}")
 kdata_warnings(knav_object_census)
+# kenshi-k16.7.213: terrain-only first pass and straightening probe (maintainer tool).
+add_executable(knav_terrain_first tools/knav_terrain_first.cpp)
+target_link_libraries(knav_terrain_first PRIVATE knav)
+target_compile_definitions(knav_terrain_first PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(knav_terrain_first)
 add_executable(knav_object_probe tools/knav_object_probe.cpp)
 target_link_libraries(knav_object_probe PRIVATE knav)
 target_compile_definitions(knav_object_probe PRIVATE KENSHI_DATA="${KENSHI_DATA}")
@@ -2091,6 +2101,18 @@ target_compile_definitions(ksim_native_stale PRIVATE KENSHI_DATA="${KENSHI_DATA}
 kdata_warnings(ksim_native_stale)
 add_test(NAME ksim_native_stale COMMAND ksim_native_stale)
 set_tests_properties(ksim_native_stale PROPERTIES SKIP_RETURN_CODE 77)
+add_executable(ksim_nav_resident tests/ksim_nav_resident.cpp)
+target_link_libraries(ksim_nav_resident PRIVATE ksim)
+target_compile_definitions(ksim_nav_resident PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(ksim_nav_resident)
+add_test(NAME ksim_nav_resident COMMAND ksim_nav_resident)
+set_tests_properties(ksim_nav_resident PROPERTIES SKIP_RETURN_CODE 77)
+add_executable(knav_components_incremental tests/knav_components_incremental.cpp)
+target_link_libraries(knav_components_incremental PRIVATE ksim)
+target_compile_definitions(knav_components_incremental PRIVATE KENSHI_DATA="${KENSHI_DATA}")
+kdata_warnings(knav_components_incremental)
+add_test(NAME knav_components_incremental COMMAND knav_components_incremental)
+set_tests_properties(knav_components_incremental PROPERTIES SKIP_RETURN_CODE 77)
 
 # A heightless goal prefers the start's connected set; a walker off the mesh or in a smaller set is re-seated (PATHFINDING_STATIC 1.11).
 
@@ -4431,8 +4453,38 @@ if(KSIM_DEV)
 		ksim_stride_test(${stride_base})
 	endforeach()
 endif()
+if(NOT KSIM_NAV_TESTS)
+	# Whole-world navmesh landing (user 2026-11-25: "DISABLE ANY TESTS that goes anywhere near this. Off screen combat, any combat, anything! DO NOT
+	# GET BOGGED DOWN with 6 hours of testing before you merge a single line"; kenshi-k16.7.204): every test that reads a navmesh bake fixture, and
+	# every combat / movement / squad / off-screen test by name, is off too. The generator tests and the fixture bakes above stay on. Back on
+	# test by test after the whole-world mesh works (kenshi-k16.15.76 judges the reds then).
+	# It runs after every test is defined (the _s12 stride variants come after the fences above; CI df7ca1c4 still ran them, kenshi-3thz).
+	# By name too: the CI df7ca1c4 reds that walk, route or load the world without a matching name (kenshi-3thz, kenshi-edo3, kenshi-by2t).
+	set(navFenced 0)
+	get_property(fenceTests DIRECTORY PROPERTY TESTS)
+	foreach(test IN LISTS fenceTests)
+		get_test_property(${test} FIXTURES_REQUIRED testFixtures)
+		get_test_property(${test} DISABLED testDisabled)
+		if(testDisabled OR test MATCHES "^knav_(bake_(hub|hub_single|stack|world_sample)|ground|ground_features|ground_objects|ground_buildings|surfgen|cutover|longhouse_door|native_tiles|door)$")
+			continue()
+		endif()
+		if(testFixtures MATCHES "knav_" OR test MATCHES "^(knav_hub|ksim_(bw_orders|empty_machine|gate_crew|medic|self_aid|mine_node_cut|newgame_settled|reload_hygiene|road_exe_rule|road_lookahead|server_import|server_native_default|simlink|world_hub|cheat_slavers|shackle_orders))$" OR test MATCHES "(fight|combat|brawl|melee|duel|chase|aggro|attack|raid|army|squad|patrol|offscreen|off_screen|wild|hunt|caravan|travel|walk|route|move|follow|crowd|scen|town|guard|arrest|capture|slave|cage|carry|bar_|door|stair|nav|interact|path|stride|detail|token|promot|spawn|resident|home|bed|sleep)")
+			set_tests_properties(${test} PROPERTIES DISABLED TRUE)
+			math(EXPR navFenced "${navFenced} + 1")
+		endif()
+	endforeach()
+	# Every reader of the world_sample fixture is fenced above, and its bake runs past the 1200 s cap since the bakeZone cutover
+	# (kenshi-i6u4; CI f974f052 / 3bc7b3e7 spent 40 min per run on it, rerun included): off with its readers.
+	set_tests_properties(knav_bake_world_sample PROPERTIES DISABLED TRUE)
+	message(STATUS "navmesh landing fence: ${navFenced} more tests disabled (KSIM_NAV_TESTS=OFF)")
+endif()
+# A read-only shared nav cache root (kenshi-k16.7.190): empty = none. Only the dev bake job writes it; set it in a build dir's config.
+set(KSIM_NAV_CACHE_SHARED "" CACHE PATH "Read-only shared nav cache root (read through before baking)")
 get_property(all_tests DIRECTORY PROPERTY TESTS)
 foreach(any_test IN LISTS all_tests)
+	if(KSIM_NAV_CACHE_SHARED)
+		set_property(TEST ${any_test} APPEND PROPERTY ENVIRONMENT KENSHI_NAV_CACHE_SHARED=${KSIM_NAV_CACHE_SHARED})
+	endif()
 	set_property(TEST ${any_test} APPEND PROPERTY ENVIRONMENT KENSHI_NAV_CACHE=${CMAKE_BINARY_DIR}/navcache)
 endforeach()
 

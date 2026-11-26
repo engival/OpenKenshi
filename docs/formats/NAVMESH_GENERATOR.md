@@ -180,7 +180,7 @@ Questions: TQ3 carve = union of mask boxes (k16.7.142 UNSURE) used here.
 
 Code: `knav/zone_gen.hpp` / `src/knav/zone_gen.cpp`, `knav/assemble.cpp`, wired in `MeshNavigator::bakeNativeZone`. Switch: `NativeCacheOptions::surfaceBuilder` (Shapes by default; env `KSIM_NAV_SURFACE=recast` forces Recast), a byte of the zone cache key; `kNativeCacheRecipe` 53 on this branch (the lead assigns the merge number; the assembly changes since 53 need a bump).
 
-**What runs.** A walkable building with `interior terrain` 0 and an interior mask (`AreaBuilding::mask`) is generated (`surfgen::generate`, interior side and zone side) only when its box plus 16 u meets the zone's tile window (a neighbour zone's building touches none of the window's tiles; its own zone generates it). A building the generator throws on, or one that has doors but whose generated surfaces hold no door face (a town gate: ksim_raid_goals' locked gate had no door polygon), stays in the Recast pass. Recast bakes without the generated buildings; every tile of the window that a generated building's box (+16 u) touches is built by `assembly::assembleTile`; those tiles are never kept from the shipped navtiles (stale check, fresh zones too). A tile the assembly returns empty for (over the 512-polygon cap or the vertex limit, or an exception) is baked again from every shape (fallback by tile square). The log line `nav surface generator zone X,Z: ...` names each fallen-back tile with its reason (`over the polygon cap (n polygons from r Recast faces, z zone-side, world w, i interiors of f faces)`).
+**What runs.** A walkable building with `interior terrain` 0 and an interior mask (`AreaBuilding::mask`) is generated (`surfgen::generate`, interior side and zone side) only when its box plus 16 u meets the zone's tile window (a neighbour zone's building touches none of the window's tiles; its own zone generates it). A building fails only when the generator throws or leaves no walkable face on either side (`ZoneGenReport::failedIds` with `failedWhy`; knav_bake prints the text). Before kenshi-k16.7.216 two more checks failed it, which with the Recast pass gone left the building with no mesh at all (397 buildings in 172 zones of the world bake: 297 "doors but no door face", 100 "no interior faces", each with a zone side of 4-47 faces): a building whose floor is all outside the mask hull (no interior mesh, zone side kept) and one whose door volume paints no face (the door stays unpainted) now generate. Recast bakes without the generated buildings; every tile of the window that a generated building's box (+16 u) touches is built by `assembly::assembleTile`; those tiles are never kept from the shipped navtiles (stale check, fresh zones too). A tile the assembly returns empty for (over the 512-polygon cap or the vertex limit, or an exception) is baked again from every shape (fallback by tile square). The log line `nav surface generator zone X,Z: ...` names each fallen-back tile with its reason (`over the polygon cap (n polygons from r Recast faces, z zone-side, world w, i interiors of f faces)`).
 
 **The assembly** (`assembleWorld` + `nativeTiles`):
 - `recastFaces` converts the Recast tile: polygon corner heights come from `tile->verts` (`detailVerts` holds only the extra vertices; reading it for the corners gave 30 of 146 corners another vertex's height at the Hub bar tile and was the cause of the earlier plane-off and island symptoms); a polygon whose detail vertices all lie within 0.25 u of its corner plane stays ONE face (outline keeps the detail vertices on its edges), else its detail triangles are the faces.
@@ -485,9 +485,16 @@ building with no mask ("with no mask: keep everything", section 0), so there is 
 | Obstacle | path mode 2, `is unwalkable roof` parts, collided foliage | cut by the span rule: (ground + 0.1, ground + 18] | none |
 | Walkable | path mode 3, `walkable` foliage, **map features that are bridges** (O2: other features are Obstacle) | cut by the span rule | up-facing faces, as below |
 
+Walkable foliage lying within the climb (5 u) of the terrain at every vertex is left to the ground: no cut, no tops (`cuttersOfArea`, full-detail
+terrain, so every window decides alike; kenshi-ffmi.14). TreeFall01 at (-77686, -83856) is a slab 1-3 u over the terrain that the original walks
+straight across (kenshi-rwh.331: path straight through, standing height = terrain; the shipped face there has no hole). Where a walkable log stands
+higher the shipped mesh lies on its top (object census, TreeFall02 / 03 in zone 15.12: 34 of 58 and 40 of 58 top cells with a shipped face within
+3 u), so the class keeps its tops. The collision is posed like the drawn instance (live PhysX, kenshi-rwh.333: TreeFall01's
+global pose = the drawn quaternion with its slope arc, times the z-up fold; the slab's top 2.5 u over the terrain).
+
 So: bedrolls, campfires, tents, turrets, torches, farms, ore markers: nothing (census 1: ~2,000 IGNORE placements, as today). Barrels,
 generators: a hole. Mines, windmills, rocks, market stalls, wells: a hole, no top. Wall-walks, gates' ramps, outhouses, walkboards, platforms,
-walkable rocks and fallen trees, bridges: a hole plus their walkable tops. Every other collided map feature (cliff blocks, wrecks, rock arches): a hole, no top (O2). No class gets its own branch; a census
+walkable rocks and fallen trees, bridges: a hole plus their walkable tops (a walkable foliage piece within the climb of the ground: nothing). Every other collided map feature (cliff blocks, wrecks, rock arches): a hole, no top (O2). No class gets its own branch; a census
 class that needs one is a finding against this table, raised on kenshi-k16.7.194 before it is coded.
 
 **Walkable tops** (Walkable shapes only):
@@ -590,9 +597,10 @@ and the nav cache key do not move); `gatherCutters` adds them as cutters. Done i
   Step 2 terrain cut: each face is clipped to the grid's terrain triangles (the diagonal rule of `build`), and over each the part more than 0.25 u above the
   terrain stays (the line where the two planes differ by 0.25 u); a face wholly above every terrain sample under its box skips the split. F4: the span rule of
   the ground cut (`cutByCutter`, now shared with the ground cut) against every cutter above the face, its own shape's other faces included (hits within 0.05 u of
-  the face's own plane do not count). Pieces under 0.04 u2 or thinner than 0.02 u are dropped. Step 3 link: `linkTops`, after the planar merge (the tops go through
+  the face's own plane do not count); a part of a piece that a cutter takes nothing from comes back whole, not as the fragments of its cut lines (the split tree
+  of `cutByCutter`, kenshi-k16.7.212: zone 52,52 was 4.4 M top pieces and 311,536 faces, 31 tiles over the polygon cap, now 88,959 and 17,920). Pieces under 0.04 u2 or thinner than 0.02 u are dropped. Step 3 link: `linkTops`, after the planar merge (the tops go through
   the same Hertel-Mehlhorn pass as the ground, no merge across the two since they share no vertices): boundary edges of different faces, at least one a top, run against
-  each other (cos < -0.9), within 2 u in xz over 0.2 u or more, at most 5 u step at both ends of the overlap; stretches are claimed longest first, edges are split
+  each other (cos < -0.9), within 2 u in xz and 5 u in height over 0.2 u or more: the stretch of the overlap where both hold (two long edges that run together for part of their length link over that part, kenshi-k16.7.212; with both ends of the whole overlap tested, a link hung on how finely the faces were cut); every pair of faces whose edges meet this rule is one component for the prunes (step 4 and `pruneJoined`, `Stats::topTouching`), linked or not: a stretch links once, and a deck that met its neighbour only along an edge already linked to another face was dropped whole (zone 41,54); stretches are claimed longest first, edges are split
   at the overlap ends (each edge at its own end, ends within 0.01 u snap), and the sub-edges are paired as opposite edges (`Edge::oppositeEdge`; the two sides may
   differ in height). Step 4 prune: union-find over shared edges and links; a component stays when it holds a ground seed point or a rim edge (a top's seed test is
   skipped: a bridge over a seed point proves nothing); the dropped top area is reported per `Cutter::label` (`Stats::topDropped`; a placement id, "foliage" or
@@ -614,7 +622,8 @@ and the nav cache key do not move); `gatherCutters` adds them as cutters. Done i
   vertices 60+ u up). The parts of the shape that reach nothing are dropped (-54433: 527 faces, 42,186 u2).
 - Fixture sites (`knav_ground_objects`, the census README's first sample site per class, a sampling box of the object's reach; hole = ground area lost against the same
   window built without obstacles; tops = a top face in the box whose component reaches a ground face over a link): building with no mask, wall ramp, outhouse, pm3
-  walkboard, walkable foliage (TreeFall01), Trestle and Metal Arch bridges: hole + tops linked. Mines, windmill, generator, pm1 barrel, pm2 stall, Obstacle foliage,
+  walkboard, walkable foliage over the climb (TreeFall03, -75884 / -88229), Trestle and Metal Arch bridges: hole + tops linked. Walkable foliage level with the
+  ground (TreeFall01): no hole, no top. Mines, windmill, generator, pm1 barrel, pm2 stall, Obstacle foliage,
   cage, gate (masked): hole, no top. Ore node, turret, camp bed, torch, farm, pm0, grass: no hole. An isolated wall segment: hole, its wall-walk top is dropped (no ramp
   reaches it; the ramp site links its wall-walk to the ground over 313 faces in 200 u). Rock arch (-30922, -18912): hole, 199 top faces in reach, not linked (kept by the
   window rim: the arch is bigger than the sampling window). Wreck piece: hole, no top (1,132 faces dropped).

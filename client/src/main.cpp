@@ -2116,6 +2116,19 @@ bool place_session_camera()
 	double f[3];
 	const bool haveFocus = app.sim.focus(f);
 	if (!haveFocus && !app.spectating) { return false; }
+	// --fly with a server (kenshi-ez2x): the free camera stays where --at / --pos / --alt put it, so set_view and the navmesh overlay follow the fly
+	// camera from the first frame, not the squad
+	if (app.opt.fly && app.opt.explicitPos)
+	{
+		set_follow(false);
+		app.rts = false;
+		app.simCamera = true;
+		app.centerOnStart = false;
+		begin_session_load();
+		set_camera_target("fly");
+		if (app.scripted()) { printf("session: camera placed at %.0f,%.0f (%s)\n", app.pos[0], app.pos[2], app.targetReason); }
+		return true;
+	}
 	// once: the floating camera over the focus character, looking along -z (MINE pitch). A spectator has no focus character:
 	// the floating camera starts where --pos (and --alt / --yaw / --pitch) put it, and its interest is what streams the world.
 	set_follow(false);

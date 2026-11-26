@@ -272,6 +272,7 @@ struct Demo
 	std::string optsTab = "Interface", optsRow = "ui.progress_bars";	// --options-tab TITLE --options-row KEY: the tab and row the options shot hovers
 	std::string optsSearch;	// --options-search TEXT: the options shot on that find's match
 	int optsHit = 1;	// --options-hit N: its Nth match (1-based)
+	std::string worldOpts;	// --world-options FEED,SHARE (e.g. on,off): the options' world group fed a stand-in state (kenshi-bjv2)
 	bool showOptions = false;	// --show options: the screenshot ends on the options window
 	bool showStats = false;	// --show stats: the screenshot ends on the stats window, a skill's tooltip shown
 	std::unique_ptr<ui::Dialogue> talk;
@@ -3254,6 +3255,51 @@ void script()
 			check(p && b && b->tip() == "Character stats (C)" && std::fabs(p->screen().right() - (sapp_widthf() - p->rect.x * s)) < 2
 				&& std::fabs(p->screen().bottom() - sapp_heightf()) < 2, ("hud: the shortcut panel's place and key tooltips (" + (b ? b->tip() : "") + ")").c_str());
 		}
+		{	// The Game tab's world options (kenshi-bjv2): disabled with no game; a click asks the host, the box follows only the host's state.
+			ui::Options& o = *demo.opts;
+			std::string sent;
+			o.onWorldOption = [&sent](uint8_t opt, bool on) { sent += std::to_string(opt) + (on ? "=on;" : "=off;"); };
+			o.setWorldOptions({});
+			const ui::Widget* game = nullptr;
+			for (size_t i = 0; o.tab(i); i++) { if (static_cast<const ui::Button*>(o.tab(i))->text == "Game") { game = o.tab(i); } }
+			check(game && clickOn(game), "world options: the Options' Game tab");
+			o.update();
+			ui::frame(0);
+			ui::Button* feed = o.worldBox(ui::kFeedAnimals);
+			ui::Button* share = o.worldBox(ui::kShareFood);
+			const std::vector<std::string> g = o.groups();
+			check(feed && share && !g.empty() && g[0] == "World (this game)" && !feed->enabled && !share->enabled && !feed->checked
+				&& o.worldNote()->text == "Needs a running game." && !o.worldStats()->visible,
+				("world options: first group on the Game tab, disabled with no game (" + (g.empty() ? std::string() : g[0]) + ")").c_str());
+			if (feed && share)
+			{
+				clickOn(feed);
+				check(sent.empty() && !feed->checked, ("world options: no game, a click sends nothing (" + sent + ")").c_str());
+				ui::WorldOptionsState s;
+				s.known = true;
+				s.feedAnimals = true;
+				s.cod = 0.5f;
+				s.gdm = 2;
+				s.ht = 4;
+				o.setWorldOptions(s);
+				ui::frame(0);
+				check(feed->enabled && share->enabled && feed->checked && !share->checked && o.worldStats()->visible
+					&& o.worldStats()->text.find("Chance of death 0.5, damage 2, hunger time 4") == 0,
+					("world options: the host's state shown, feed on / share off (" + o.worldStats()->text + ")").c_str());
+				clickOn(share);
+				clickOn(feed);
+				check(sent == "1=on;0=off;" && feed->checked && !share->checked, ("world options: a click sends (option, !shown), the boxes keep the state (" + sent + ")").c_str());
+				o.update();
+				ui::frame(0);
+				check(feed->checked && !share->checked, "world options: no new state (a refusal), the boxes stay");
+				s.shareFood = true;
+				s.feedAnimals = false;
+				o.setWorldOptions(s);
+				check(!feed->checked && share->checked, "world options: the next state moves the boxes");
+			}
+			o.onWorldOption = nullptr;
+			o.setWorldOptions({});
+		}
 		demo.opts->show(false);
 		demo.ds.conversation = 1;
 		talkNode(0);
@@ -4868,6 +4914,14 @@ void script()
 	}
 	if (demo.frame == 64)
 	{
+		if (!demo.worldOpts.empty())	// --world-options FEED,SHARE (on/off each): a stand-in GAME_OPTIONS for the shot (kenshi-bjv2)
+		{
+			ui::WorldOptionsState s;
+			s.known = true;
+			s.feedAnimals = demo.worldOpts.compare(0, 2, "on") == 0;
+			s.shareFood = demo.worldOpts.size() > 3 && demo.worldOpts.compare(demo.worldOpts.find(',') + 1, 2, "on") == 0;
+			demo.opts->setWorldOptions(s);
+		}
 		demo.opts->show(demo.showOptions);	// --show options: opened after the item grid's drag checks (57-63), which it would cover (k16.3.28)
 		if (!demo.showTrade)
 		{
@@ -7639,6 +7693,7 @@ sapp_desc sokol_main(int argc, char** argv)
 		else if (a == "--options-tab" && more) { demo.optsTab = argv[++i]; }
 		else if (a == "--options-row" && more) { demo.optsRow = argv[++i]; }
 		else if (a == "--options-search" && more) { demo.optsSearch = argv[++i]; }
+		else if (a == "--world-options" && more) { demo.worldOpts = argv[++i]; }
 		else if (a == "--options-hit" && more) { demo.optsHit = std::max(1, atoi(argv[++i])); }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "options") { demo.showOptions = true; i++; }
 		else if (a == "--show" && more && std::string(argv[i + 1]) == "prompt") { demo.showPrompt = true; i++; }

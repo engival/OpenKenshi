@@ -23,20 +23,24 @@ std::string_view pathFailureCheck(PathResult::Failure failure) noexcept
 	return "path: incomplete";
 }
 
+void RouteSets::build(const NavMesh& mesh)
+{
+	if (sets_ && revision_ == mesh.revision())
+		return;
+	// Doors count as ground: a locked gate is the door check's business, not a reason to seat a walker elsewhere.
+	sets_.emplace(mesh, static_cast<std::uint16_t>(0xffff));
+	revision_ = mesh.revision();
+	sizes_.assign(sets_->count(), 0);
+	sets_->forEach([&](int, int, int, std::uint32_t label)
+	{
+		if (label != PolyComponents::kNone)
+			++sizes_[label];
+	});
+}
+
 std::uint32_t RouteSets::of(const NavMesh& mesh, const PolyLoc& loc)
 {
-	if (!sets_ || revision_ != mesh.revision())
-	{
-		// Doors count as ground: a locked gate is the door check's business, not a reason to seat a walker elsewhere.
-		sets_.emplace(mesh, static_cast<std::uint16_t>(0xffff));
-		revision_ = mesh.revision();
-		sizes_.assign(sets_->count(), 0);
-		sets_->forEach([&](int, int, int, std::uint32_t label)
-		{
-			if (label != PolyComponents::kNone)
-				++sizes_[label];
-		});
-	}
+	build(mesh);
 	return sets_->at(loc.tileX, loc.tileZ, loc.poly);
 }
 

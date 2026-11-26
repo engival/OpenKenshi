@@ -255,9 +255,30 @@ std::string currentWeather(const Context& cx)
 	return "";
 }
 
+// Offline the list gets one more row that clears the weather (the "default" of --weather); offlineWeather is the last offline pick ("" = auto)
+const std::string kDefaultWeatherRow = "default (clear)";
+std::string offlineWeather;
+
 // A weather row (DEBUG_SET_WEATHER 213) for the biome group under the first player character, full strength; "auto" releases the pin
 void debugWeather(const Context& cx, const std::string& label)
 {
+	if (!cx.sim.active())	// offline (fly mode, a scene): the same path as Ctrl+, / Ctrl+. and --weather NAME|default|auto (kenshi-k16.2.527)
+	{
+		std::string name = label;
+		if (label != "auto" && label != kDefaultWeatherRow)
+		{
+			const auto& rows = debugWeatherRows(cx);
+			const auto it = rows.find(label);
+			if (it == rows.end()) { debugReply = "unknown weather row '" + label + "'"; return; }
+			name = cx.wx.atlas().byId.at(it->second).name;
+		}
+		else if (label == kDefaultWeatherRow) { name = "default"; }
+		offlineWeather = label == "auto" ? "" : label;
+		cx.setWeather(name);
+		debugReply = "weather " + (name == "auto" ? std::string("auto (regional)") : name) + " (local)";
+		printf("weather: %s (local)\n", name.c_str());
+		return;
+	}
 	std::string sid;
 	if (label != "auto")
 	{
@@ -524,13 +545,15 @@ void debugPanelFrame(const Context& cx)
 	s.commands.push_back({ "debug.kill", "Kill", cheatOn, G::kCharacter });
 	if (cx.wx.ready())
 	{
+		if (!cx.sim.active()) { s.weathers.push_back(kDefaultWeatherRow); }
 		for (const auto& [label, sid] : debugWeatherRows(cx)) { s.weathers.push_back(label); }	// sorted by the map
-		s.weather = currentWeather(cx);
+		s.weather = cx.sim.active() ? currentWeather(cx) : offlineWeather;
 	}
 	s.hour = (float)std::fmod(cx.sky.clock.hours, 24.0);	// the dial's hand and daylight arc
 	s.sunrise = (float)cx.sky.constants().sunrise;
 	s.sunset = (float)cx.sky.constants().sunset;
-	s.weatherEnabled = s.timeEnabled = cx.sim.active();	// like the spawn button: DEBUG_INFO only comes with the overlay; a view that is off answers in the reply
+	s.timeEnabled = cx.sim.active();
+	s.weatherEnabled = cx.sim.active() || cx.wx.ready();	// offline the rows apply the weather locally	// like the spawn button: DEBUG_INFO only comes with the overlay; a view that is off answers in the reply
 	s.reply = debugReply;
 #endif
 	debugPanel->update(s);
@@ -560,6 +583,19 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 			dump_navmesh_faces(*cx.nav.mesh(), atof(a[1].c_str()), atof(a[2].c_str()), atof(a[3].c_str()), ref, 20, 30, [&](const double p[3]) { return cx.buildings.cutAway(p); });
 		}
 		else { printf("nav: no mesh\n"); }
+		return true;
+	}
+	if (a.size() == 1 && a[0] == "navzones")	// dump navzones: the wire NAV_TILE tiles held, counted per 4608-unit zone (a tile by its centre; kenshi-k16.2.527)
+	{
+		const auto& d = sim.decoder();
+		std::map<std::pair<int, int>, int> zones;
+		for (const auto& [key, tile] : d.navTiles)
+		{
+			const double x = d.nav.origin[0] + (key[0] + 0.5) * d.nav.tileWidth, z = d.nav.origin[2] + (key[1] + 0.5) * d.nav.tileWidth;
+			zones[{ (int)std::floor(x / 4608.0), (int)std::floor(z / 4608.0) }]++;
+		}
+		printf("navzones: %zu tiles in %zu zones (meshId %u, tile %.0f u)\n", d.navTiles.size(), zones.size(), d.nav.meshId, d.nav.tileWidth);
+		for (const auto& [z, n] : zones) { printf("  zone %d,%d: %d tiles\n", z.first, z.second, n); }
 		return true;
 	}
 	if (a.size() >= 3 && a[0] == "navtile")	// dump navtile TX TZ [FILE]: the wire NAV_TILE held for (TX, TZ), every layer (stdout; bytes to FILE)
@@ -705,6 +741,22 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 			if (t.kind != simlink::Interactable::kDoor) { continue; }
 			const DoorSlide& d = doorSlides[sim.sidOf(t.record)];
 			printf("door %llu state %u at %.0f %.0f %.0f slide axis %d dist %.0f out %.0f\n", (unsigned long long)id, t.state, t.use[0], t.use[1], t.use[2], d.axis, d.dist, d.out);
+		}
+		return true;
+	}
+	if (a.size() == 1 && a[0] == "gameoptions")	// dump gameoptions: the last GAME_OPTIONS frame (SIMLINK 6; stdout, kenshi-ehn5)
+	{
+		const auto& g = sim.decoder().gameOptions;
+		if (!g.received) { printf("game options: none received\n"); }
+		else { printf("game options: feed_animals %d share_food %d cod %.2f gdm %.2f ht %.2f tick %llu\n", g.feedAnimals, g.shareFood, (double)g.cod, (double)g.gdm, (double)g.ht, (unsigned long long)g.tick); }
+		return true;
+	}
+	if (a.size() == 1 && a[0] == "body")	// dump body: every drawn character's body size numbers (kenshi-5j7p): index, sim id, muscle m, factor M1, the right forearm's width scale; stdout
+	{
+		for (size_t i = 0; i < chars.size(); i++)
+		{
+			float m = 0, m1 = 1, fa = 1;
+			if (chars.bodySize(i, m, m1, fa)) { printf("body %zu id %llu muscle %.4f M1 %.4f forearm x %.4f\n", i, (unsigned long long)chars.live(i).id, (double)m, (double)m1, (double)fa); }
 		}
 		return true;
 	}

@@ -54,6 +54,11 @@ static int dump(const simlink::SimLinkDecoder& d)
 		for (uint64_t o : s.by) { printf(" %llu", (unsigned long long)o); }
 		printf("\n");
 	}
+	if (d.gameOptions.received)
+	{
+		const SimLinkDecoder::GameOptions& g = d.gameOptions;
+		printf("game options: feed_animals %d share_food %d cod %.2f gdm %.2f ht %.2f tick %llu\n", g.feedAnimals, g.shareFood, (double)g.cod, (double)g.gdm, (double)g.ht, (unsigned long long)g.tick);
+	}
 	for (const Event& e : d.events) { printf("  event tick %llu kind %u a %llu b %llu str \"%s\"\n", (unsigned long long)e.tick, e.kind, (unsigned long long)e.a, (unsigned long long)e.b, d.str(e.str).c_str()); }
 	if (d.profile.valid)
 	{
@@ -282,6 +287,41 @@ static int selftest()
 	check(ow.profileQuery(o) == 6 && o.size() == 30 + 35 + 20 + 29 + 29 + 38 + 12, "profile query order");
 	// set_camera_follow 4+2+4+2+8 = 20
 	check(ow.setCameraFollow(o, 9) == 7 && o.size() == 30 + 35 + 20 + 29 + 29 + 38 + 12 + 20, "set_camera_follow order");
+	// GAME_OPTIONS (67): the server's own fixture (cpp/tests/fixtures/game_options.hex, whole frames: connect, changed) and a longer frame whose tail is skipped
+	{
+		const std::string path = std::string(KSIM_FIXTURES_DIR) + "/game_options.hex";
+		FILE* hf = fopen(path.c_str(), "r");
+		check(hf != nullptr, "game_options.hex opens");
+		char line[512];
+		int seen = 0;
+		while (hf && fgets(line, sizeof line, hf))
+		{
+			char name[32], hex[400];
+			if (line[0] == '#' || sscanf(line, "%31s %399s", name, hex) != 2) { continue; }
+			std::vector<uint8_t> fr;
+			for (size_t i = 0; hex[i] && hex[i + 1]; i += 2) { fr.push_back((uint8_t)strtoul(std::string(hex + i, 2).c_str(), nullptr, 16)); }
+			std::vector<uint8_t> hello;
+			{ W w(hello, kHello); w.put(kMagic); w.put(kProtocol); w.put((uint8_t)1); w.put((uint64_t)1); w.str("selftest"); }
+			SimLinkDecoder g;
+			const bool ok = g.feed(hello.data(), hello.size()) && g.feed(fr.data(), fr.size());
+			const bool changed = !strcmp(name, "changed");
+			check(ok && g.gameOptions.received && g.gameOptions.feedAnimals == changed && g.gameOptions.shareFood == changed
+				&& g.gameOptions.cod == 1.0f && g.gameOptions.gdm == 1.0f && g.gameOptions.ht == 4.0f && g.gameOptions.tick == 0, "game options fixture frame");
+			seen++;
+		}
+		if (hf) { fclose(hf); }
+		check(seen == 2, "game options fixture has two frames");
+		std::vector<uint8_t> t;
+		{ W w(t, kGameOptions); w.put((uint64_t)9); w.put((uint8_t)0xfd); w.put(2.0f); w.put(0.5f); w.put(8.0f); w.put((uint32_t)7); }	// unknown bits ignored, a tail skipped
+		std::vector<uint8_t> hello;
+		{ W w(hello, kHello); w.put(kMagic); w.put(kProtocol); w.put((uint8_t)1); w.put((uint64_t)1); w.str("selftest"); }
+		SimLinkDecoder g;
+		check(g.feed(hello.data(), hello.size()) && g.feed(t.data(), t.size()) && g.gameOptions.feedAnimals && !g.gameOptions.shareFood && g.gameOptions.cod == 2.0f && g.gameOptions.gdm == 0.5f
+			&& g.gameOptions.ht == 8.0f && g.gameOptions.tick == 9, "game options longer frame");
+		std::vector<uint8_t> go;
+		check(ow.setGameOption(go, 1, 1) == 8 && go.size() == 4 + 2 + 4 + 2 + 1 + 2, "set_game_option order");
+	}
+	// ksimlink_dump prints type 67 below (dump)
 	printf("selftest %s\n", fails ? "FAILED" : "ok");
 	return fails ? 1 : 0;
 }

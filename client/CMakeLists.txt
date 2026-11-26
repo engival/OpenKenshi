@@ -574,6 +574,7 @@ if(KCLIENT_DEV_TOOLS)
 	# SIMLINK decoder test CLI (docs/formats/SIMLINK.md): decodes a recorded server stream, or --selftest.
 	add_executable(ksimlink_dump src/dev/tools/ksimlink_dump.cpp src/net/simlink.cpp)
 	target_include_directories(ksimlink_dump PRIVATE src)
+	target_compile_definitions(ksimlink_dump PRIVATE KSIM_FIXTURES_DIR="${KENSHI_TREE_ROOT}/cpp/tests/fixtures")
 	target_compile_options(ksimlink_dump PRIVATE -Wall -Wextra)
 endif()
 

@@ -89,6 +89,7 @@ int main(int argc, char** argv)
 		attacking = attackers.size();
 
 		// The patrol: the world squad of template 1532649 nearest the player (ids shift with the data, so no fixed character id).
+		const state::Fighter& playerNow = *playerOf(sim); // `player` above is a reference into storage the ticks may have moved: read it afresh
 		std::uint64_t paladinId = 0;
 		double nearest = 1.0e18;
 		ecsOf(sim).each([&](flecs::entity squad, const state::SquadInstance& instance, const Detail& detail)
@@ -98,7 +99,7 @@ int main(int argc, char** argv)
 			for (const flecs::entity member : membersOf(sim, squad))
 			{
 				const state::Fighter* f = fighterOf(sim, member.get<state::Id>()->value);
-				const double d = f != nullptr ? std::hypot(f->x - player.x, f->z - player.z) : 1.0e18;
+				const double d = f != nullptr ? std::hypot(f->x - playerNow.x, f->z - playerNow.z) : 1.0e18;
 				if (d < nearest)
 				{
 					nearest = d;

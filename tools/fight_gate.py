@@ -14,10 +14,12 @@ import json, os, subprocess, sys, glob
 def main():
 	args = sys.argv[1:]
 	exe, scenario, navworld, out = args[:4]
-	runs, gates, i = 10, [], 4
+	runs, gates, i, shards = 10, [], 4, 4
 	while i < len(args):
 		if args[i] == '--runs':
 			runs = int(args[i + 1]); i += 2
+		elif args[i] == '--shards':
+			shards = int(args[i + 1]); i += 2
 		elif args[i] in ('--max', '--min'):
 			name, value = args[i + 1].split('=')
 			gates.append((args[i] == '--max', name, float(value))); i += 2
@@ -27,9 +29,22 @@ def main():
 		print('fight_gate: %s absent, skipped' % scenario)
 		return 77
 	os.makedirs(out, exist_ok=True)
-	r = subprocess.run([exe, scenario] + ([] if navworld == '-' else ['--navworld', navworld]) + ['--runs', str(runs), '--out', out])
-	if r.returncode != 0:
-		return r.returncode
+	# The runs are independent (seed 1+i each), so they go to `shards` processes at once, each with its own --seed/--out, and the summaries are
+	# renamed to the global run index (kenshi-q0ou: 30 serial runs passed the queue's 1200 s per-test cap). Each process loads the world once.
+	shards = min(shards, runs)
+	procs = []
+	for k in range(shards):
+		first, last = runs * k // shards, runs * (k + 1) // shards
+		sub = os.path.join(out, 's%d' % k)
+		os.makedirs(sub, exist_ok=True)
+		procs.append((first, last, sub, subprocess.Popen([exe, scenario] + ([] if navworld == '-' else ['--navworld', navworld])
+			+ ['--seed', str(1 + first), '--runs', str(last - first), '--out', sub])))
+	for first, last, sub, p in procs:
+		if p.wait() != 0:
+			for q in procs: q[3].wait()
+			return p.returncode
+		for j in range(last - first):
+			os.replace(os.path.join(sub, 'r%d_summary.json' % (j + 1)), os.path.join(out, 'r%d_summary.json' % (first + j + 1)))
 	rows = []
 	for f in sorted(glob.glob(os.path.join(out, 'r*_summary.json'))):
 		j = json.load(open(f))

@@ -603,19 +603,24 @@ Characters::Spec SimView::specOf(uint64_t id, const Characters& chars, bool low)
 	if (!hand.empty() || !hip.empty()) { s.weapons.push_back(hand.empty() ? hip : hand); s.drawn = drawn; }
 	if (!back.empty()) { if (s.weapons.empty()) { s.weapons.push_back(""); } s.weapons.push_back(back); }
 	// Operating a producer (CHAR_STATS goal 87 OPERATE_MACHINERY, targetId = the producer, SIMLINK row 16): its functionality's `special tool` ITEM is
-	// held in the right hand (the stonemine / farming clips have `has weapon R`), and the weapon goes back to its sheath. The sheathing is MINE: the
-	// original's weapon handling during the tool is NOT TRACED (Task_OperateMachine::vf1 1400b64b0).
+	// held in the right hand (the stonemine / farming clips have `has weapon R`). The weapon's sheathing comes from the wire alone
+	// (kFlagDrawn is clear while operating, kenshi-k16.6.680); no client override.
 	if (const auto cs = dec_.charStats.find(id); cs != dec_.charStats.end() && cs->second.hasAi && cs->second.goalEnum == 87 && !specialTools_.empty())
 	{
 		const auto th = dec_.things.find(cs->second.targetId);
 		const auto tool = th != dec_.things.end() && th->second.kind == simlink::Interactable::kProducer ? specialTools_.find(dec_.str(th->second.record)) : specialTools_.end();
-		if (tool != specialTools_.end() && !tool->second.empty()) { s.tool = tool->second; s.drawn = false; }
+		if (tool != specialTools_.end() && !tool->second.empty()) { s.tool = tool->second; }
 	}
 	s.loaded = a.crossbowAmmo > 0;
 	s.loco = true;	// an up character is drawn by the locomotion controller; its speed is the live vFwd (line 404), which may be negative
 	s.move = 0;
 	s.carry = c.cur.flags & kCarryL ? 1 : c.cur.flags & kCarryR ? 2 : 0;	// carrying a body (CHAR_DYNAMIC flag bits 7 / 8)
 	s.severed = severedOf(id, s.race, chars);
+	// The body key "muscle" (CHAR_APPEARANCE, kenshi-k16.6.568): the original's unclamped bulk m = (S * 0.01 - 0.2) / 0.79, sent for every character; a stat-1 body is
+	// -0.2405 (never clamped here, charload.cpp muscle note). A wire without it (an old server) is loud, never a silent 0 (kenshi-5j7p).
+	bool haveMuscle = false;
+	for (const auto& [key, val] : a.body) { if (dec_.str(key) == "muscle") { s.muscle = val; haveMuscle = true; break; } }
+	if (!haveMuscle && warnedNoMuscle_.insert(id).second) { fprintf(stderr, "kclient: ERROR: character %llu's CHAR_APPEARANCE has no body key \"muscle\" (old server?): Spec::muscle stays 0, the body is drawn at the wrong size\n", (unsigned long long)id); }
 	return s;
 }
 
@@ -1703,6 +1708,15 @@ void SimView::answers()
 		}
 		if (e.kind != 9 && e.kind != 10) { continue; }
 		if (menuSent_.erase((uint32_t)e.a)) { menuAnswers_.push_back({ (uint32_t)e.a, e.kind == 9, e.kind == 9 ? std::string() : dec_.str(e.str) }); }	// order 99: the host takes it off takeMenuAnswers
+		if (const auto go = gameOptionSent_.find((uint32_t)e.a); go != gameOptionSent_.end())	// order 121: a log line either way; the checkbox follows GAME_OPTIONS
+		{
+			if (e.kind == 9) { printf("simlink: %s applied at tick %llu\n", go->second.c_str(), (unsigned long long)e.b); }
+			else { printf("simlink: %s refused: %s\n", go->second.c_str(), dec_.str(e.str).c_str()); }
+			gameOptionSent_.erase(go);
+			sent_.erase((uint32_t)e.a);
+			quiet_.erase((uint32_t)e.a);
+			continue;
+		}
 		if (profileSent_.erase((uint32_t)e.a))	// order 120: the answer is the PROFILE frame; a refusal is the profiling overlay's own line, never a toast
 		{
 			if (e.kind == 10) { profileStatus_ = dec_.str(e.str); }
@@ -1879,7 +1893,9 @@ void SimView::view(double x, double z)
 	}
 	if (!viewOnce_ || std::hypot(x - viewSent_[0], z - viewSent_[1]) > kViewMove)
 	{
-		quiet_.insert(orders_.setView(out, (float)x, (float)z));
+		const uint32_t viewSeq = orders_.setView(out, (float)x, (float)z);
+		quiet_.insert(viewSeq);
+		printf("simlink: set_view %.0f %.0f (order %u)\n", x, z, viewSeq);	// rare (kViewMove): the camera's view area the server streams NAV_TILE for (kenshi-k16.2.527)
 		viewSent_[0] = x;
 		viewSent_[1] = z;
 	}
@@ -1898,6 +1914,18 @@ void SimView::cameraFollow(uint64_t id)
 	followOnce_ = true;
 	printf("simlink: set_camera_follow %llu (order %u)\n", (unsigned long long)id, followSeq_);
 	send(out, "camera_follow");
+}
+
+bool SimView::setGameOption(uint8_t option, bool on)
+{
+	if (mode_ != Live || !helloSent_ || fd_ == kutil::net::kNoSocket || option > 1) { return false; }
+	std::vector<uint8_t> out;
+	const uint32_t seq = orders_.setGameOption(out, option, on ? 1 : 0);
+	const std::string name = std::string("set_game_option ") + (option ? "share_food " : "feed_animals ") + (on ? "on" : "off") + " (order " + std::to_string(seq) + ")";
+	gameOptionSent_[seq] = name;
+	if (!send(out, "game option")) { gameOptionSent_.erase(seq); return false; }
+	printf("simlink: %s sent\n", name.c_str());
+	return true;
 }
 
 bool SimView::drive(uint64_t id, uint8_t drive, float heading, int strafe)
