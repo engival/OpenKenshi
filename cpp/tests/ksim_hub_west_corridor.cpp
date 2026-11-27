@@ -1,5 +1,6 @@
 // kenshi-e9s9.30 (rwh.308): the Hub click A (-49729.2, 4882.8) -> B (-49868.6, 5181.9). The original's corridor goes west round the buildings to
-// x -49968; ours must not cut through the one-body gap near (-49896, 4892).
+// x -49968; ours must not cut through the one-body gap near (-49896, 4892). Both ends snap from the walking height (A 1519, B ~1645) within
+// 200 u: a snap from y 0 with an unbounded vertical reach picked whatever polygon Detour met first (kenshi-f6l2: B off the mesh after 260).
 #include "ksim/nav/navigator.hpp"
 #include "ksim/net/simlink_scenario.hpp"
 
@@ -29,8 +30,8 @@ int main()
 			for (int dx = -1; dx <= 1; ++dx)
 				hub.push_back({ ksim::simlink::kHubZoneX + dx, ksim::simlink::kHubZoneZ + dz });
 		const auto nav = ksim::MeshNavigator::openNative(KENSHI_DATA, hub);
-		const auto from = nav->walker().snap({ -49729.2, 0.0, 4882.8 }, 40.0, nullptr, 1.0e6);
-		const auto goal = nav->walker().snap({ -49868.6, 0.0, 5181.9 }, 40.0, nullptr, 1.0e6);
+		const auto from = nav->walker().snap({ -49729.2, 1519.0, 4882.8 }, 40.0, nullptr, 200.0);
+		const auto goal = nav->walker().snap({ -49868.6, 1519.0, 5181.9 }, 40.0, nullptr, 200.0);
 		test::require(goal.has_value(), "goal off the mesh");
 		test::require(from.has_value(), "start off the mesh");
 		double minX = 1.0e9;

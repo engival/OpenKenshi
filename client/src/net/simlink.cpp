@@ -161,6 +161,7 @@ bool SimLinkDecoder::frame(uint16_t type, const uint8_t* p, size_t n)
 		else if ((d.flags & kProne) && r.at < r.n) { d.restYaw = r.f32(); d.hasRest = true; }	// rest tail (SIMLINK CHAR_DYNAMIC, sim BG): x, y, z are the rest point
 		if ((d.flags & kAim) && r.at + 4 <= r.n) { d.aimYaw = r.f32(); d.hasAim = true; }	// aim tail (SIMLINK CHAR_DYNAMIC aimYaw)
 		if ((d.flags & kMounted) && r.at + 8 <= r.n) { d.turret = r.u64(); }	// mounted tail (SIMLINK CHAR_DYNAMIC turret): the record's last bytes
+		if ((d.flags & kInMachine) && r.at + 12 <= r.n) { d.mSpace = r.u8(); d.mBuilding = r.u64(); d.mPiece = r.u16(); d.mSlot = r.u8(); d.hasMachine = true; }	// machine tail (SIMLINK CHAR_DYNAMIC space, building, piece, slot): the very end
 		if (c.samples > 1) { c.past.push_back(c.prev); if (c.past.size() > Character::kPastSamples) { c.past.pop_front(); } }
 		if (c.samples > 0) { c.prev = c.cur; }
 		c.cur = d;

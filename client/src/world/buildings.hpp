@@ -129,12 +129,16 @@ struct BuildingInstance
 	// lives on the instance because furniture instances share the record but their transform is already composed with the parent's.
 	uint32_t firstEffect = 0, effectCount = 0;
 	uint32_t firstOwnLight = 0, ownLightCount = 0;
+	// Use nodes (`is node`, `node type` 4 instances of the BUILDING record, in the record's own order; kenshi-2g4v): a range in BuildingSet::nodes, the
+	// local pose of each, and the functionality's `animation` (an index in BuildingSet::animNames, 0 none). The machine tail resolves (building, piece, slot) here.
+	uint32_t firstNode = 0, nodeCount = 0, animation = 0;
 };
 
 struct BuildingSet
 {
 	std::vector<BuildingPartDef> parts;
 	std::vector<BuildingInstance> instances;
+	std::vector<BuildingInstance> meshless;	// layout pieces with no geometry: appended after every drawn instance (loadBuildings), so a drawn instance keeps its index (the lamp variance seed uses it)
 	std::vector<uint32_t> partRefs;		// indices into parts
 	std::vector<LightDef> lights;		// BuildingPartDef::firstLight
 	std::vector<EffectDef> effects;		// BuildingPartDef::firstEffect; BuildingInstance::firstEffect is the building/feature-level list
@@ -152,6 +156,9 @@ struct BuildingSet
 	std::vector<uint32_t> floorable;
 	std::unordered_map<uint64_t, uint32_t> byKey;	// building instances by kworld::doorKey(placementId): the wire's CHAR_DYNAMIC `building`
 	std::vector<std::string> names;
+	struct Node { float pos[3], quat[4]; };	// a use node in the record's frame (record units, scale not applied); rotation w, x, y, z
+	std::vector<Node> nodes;
+	std::vector<std::string> animNames = { "" };	// functionality `animation` names, index 0 = none
 	int editorPlatformRef = -1;	// index in partRefs of the character editor's platform part (BUILDING_PART 5370-platform_otto.mod), -1 when absent
 	// Storage (BUILDING `has inventory`: crates, barrels, shelves): shell parts by record stringID, for the sim's containers that no placed instance
 	// draws (WorldBuildings::setProps). Resolved with the stringID as seed: one look per record.

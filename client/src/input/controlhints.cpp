@@ -524,9 +524,10 @@ void thing_hints(Hover& h, const Pick& p, const Context& ctx)
 		const bool automatic = ctx.producerAutomatic && ctx.producerAutomatic(id);
 		const std::string cursor = ctx.producerCursor ? ctx.producerCursor(id) : "mine";
 		const bool machine = t && t->kind == simlink::Interactable::kMachine;
-		if (machine && t->hasMachine && t->machineKind == 3)	// a turret: the original's RMB mans it (k16.6.19); the sim has no order for it (event 49 / the mounted tail are its only wire)
+		if (machine && t->hasMachine && t->machineKind == 3)	// a turret: RMB mans it, order 60 action 4 (SIMLINK "kind 12 target", ksim 95fc0dbe6; kenshi-8nn2): no client gate, the sim refuses (full, not_allowed, bad_target)
 		{
-			order_rows(h, "man_turret", "man_turret_queue", "Man " + name, cursor, "man turret " + ull(id), [](bool) { return false; }, false, "the sim has no order to man a placed turret (reported)");
+			order_rows(h, "man_turret", "man_turret_queue", "Man " + name, cursor, "man turret " + ull(id),
+				[pu = ctx.producerUse, id](bool q) { return pu && pu(id, q); });
 		}
 		else if (machine && automatic && !(t->hasMachine && t->machineKind == 4))	// an automatic converter / power building: the original's RMB is OPERATE_AUTOMATIC_MACHINERY (152), not in the sim
 		{
@@ -756,14 +757,14 @@ void thing_menu(Hover& h, uint64_t id, const Context& ctx)
 	else if (t->machineLike())
 	{
 		// an automatic machine (max operators 0: the sim answers no_slot to a use) offers no operate row; its right click is the loot (Open).
-		// A kind 12 machine opens only when it holds contents (the furnace: machineKind 4); a turret's man row waits on a sim order.
+		// A kind 12 machine opens only when it holds contents (the furnace: machineKind 4); a turret's Man row is the same use order (kenshi-8nn2).
 		const bool kind12 = t->kind == simlink::Interactable::kMachine;
 		const bool automatic = ctx.producerAutomatic && ctx.producerAutomatic(id);
 		const bool turret = kind12 && t->hasMachine && t->machineKind == 3, furnace = kind12 && t->hasMachine && t->machineKind == 4;
-		if (!automatic && !turret)
+		if (!automatic || turret)
 		{
 			const bool mine = ctx.producerCursor && ctx.producerCursor(id) == "mine";
-			menu_row(h, "menu_operate", mine ? "Mine" : "Operate", "use", id, [pu = ctx.producerUse, id] { return pu && pu(id, false); });
+			menu_row(h, "menu_operate", mine ? "Mine" : turret ? "Man" : "Operate", "use", id, [pu = ctx.producerUse, id] { return pu && pu(id, false); });
 		}
 		if (!kind12 || furnace) { menu_row(h, "menu_open", "Open", "open", id, open); }
 	}

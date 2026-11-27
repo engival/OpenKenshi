@@ -125,9 +125,11 @@ void Simulation::imprison(std::uint64_t carrierId, std::uint64_t bodyId, const r
 	dropCarried(carrierId);
 	if (state::Fighter* put = combat_->find(bodyId))
 	{
-		put->x = cage.occupantX();
+		// The plain stand point: the cage's walk spot on the carrier's floor. The machine tail (enterMachine below) carries the slot and
+		// the client draws the prisoner from it (k16.6.731): no cage centre, no cage floor height here.
+		put->x = cage.x;
 		put->y = carrierY;
-		put->z = cage.occupantZ();
+		put->z = cage.z;
 		put->yaw = carrierYaw;
 		put->velX = 0.0;
 		put->velZ = 0.0;
@@ -135,6 +137,7 @@ void Simulation::imprison(std::uint64_t carrierId, std::uint64_t bodyId, const r
 		put->cageBuilding = cage.site.object;
 		lockErase(false, cage.site.object); // a prisoner put in auto-locks the cage (item28 b1)
 		put->cageSlot = cage.site.slot;
+		put->enterMachine(cage.site.object, cage.piece);
 		put->clearRoute();
 		put->forwardSpeed = 0.0;
 		put->lateralSpeed = 0.0;

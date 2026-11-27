@@ -706,6 +706,9 @@ public:
 		std::optional<prospect::Env> env;
 	};
 	std::optional<ProspectZone> prospectZone(double x, double z) const;
+	// A zone-placed mine's richness (kenshi-rwh.298 / rwh.318; the machine panel's and the mining rate's one source): the stone noise at x,z x the
+	// zone's `stone mult` for resource 2 (an iron / copper lookup reads 0), and a lookup of 0 gives 0.5. Other resources (water) keep 1.0.
+	double placementRichness(double x, double z, std::int32_t resource) const;
 	// What the results window shows for a prospector standing at (x, z) with that Science (null without the data). prospectNow reads the
 	// character's own position and Science. Pure: changes nothing.
 	std::shared_ptr<const prospect::Result> prospectAt(std::uint64_t id, double x, double z, double science) const;
@@ -770,7 +773,9 @@ public:
 	std::optional<BuildingView> producerView(std::uint64_t id) const;
 	// The BUILDING row (SIMLINK "BUILDING", kind 4 / 12 / 3 join) of a placed machine, any owner: a producer's own view while its entity
 	// exists, else built from the data (workers 0). `mounted` = a turret somebody mans. nullopt: a producer with no entity yet.
-	std::optional<BuildingView> machineView(const MachineSite& site, bool mounted) const;
+	/// Machine id -> members holding a Use order on it (a converter's workers on its BUILDING row, k16.6.839).
+	std::unordered_map<std::uint64_t, std::uint32_t> machineOperators() const;
+	std::optional<BuildingView> machineView(const MachineSite& site, int workers) const;
 	// The BUILDING row of a placed container (World ContainerSite; INTERACTABLE kind 3, id = the entity's Id), any owner; nullopt when `id` is none.
 	std::optional<BuildingView> containerView(std::uint64_t id) const;
 	// The machine record of every placed machine BUILDING (machines.hpp), in placement order; the inspect panel's fields (kenshi-gzto).
@@ -1844,6 +1849,10 @@ public:
 	// ring fallback (no seat in the data), a walking member, and any member of a squad that holds no table.
 	// `faceYaw`, when given and the member is seated, receives the yaw that faces the table it serves (yaw 0 = +z toward +x).
 	bool seated(std::uint64_t memberId, double* faceYaw = nullptr) const;
+	// The machine the member is in (SIMLINK CHAR_DYNAMIC bit 26, k16.6.730): the fighter's stored `machineUse` (bed, cage, turret), else the
+	// real layout chair it sits at (a seat has no enter / leave event: it is the position test of seatedAt). Bar-table chairs carry no piece
+	// key, so a bar sitter has none yet. A floor-sit and a synthetic bed are no machine.
+	std::optional<state::FighterMachineUse> machineUse(std::uint64_t memberId) const;
 	// SIMLINK CHAR_DYNAMIC pose tail (kinspect bed_seat_pose.md): where a seated (flag 15) or asleep (flag 16) member's body lies, its
 	// facing and clip. A seat: the furniture origin, its +Z (or its table, for a `chair` / `sit on floor` seat), its functionality clip.
 	// A real bed: its use node, the node's -X, its clip. A synthetic bed (yards, no furniture): the member's own spot and yaw, sleeponfloor.
@@ -1871,6 +1880,21 @@ public:
 	// Whether `actor` may lie in the bed `id` names now: "" yes, else an event 10 word, "occupied" / "bad_target" / "not_allowed"
 	// (UNSURE: the exe's own words). A bed is occupied while any other character's routine targets it, asleep or walking to it.
 	std::string sleepRefusal(std::uint64_t actor, std::uint64_t id) const;
+	// Order 60 action 4 on a kind 12 machine (kenshi-k16.6.788): the placed converter or turret a wire id names, or nullptr (a producer, a
+	// furnace, a container and every id that is no machine are found by their entity).
+	const MachineSite* machineSiteOf(std::uint64_t id) const;
+	// "" when `actor` may operate / man the machine now, else an event 10 word: "not_allowed" (another faction's), "bad_target" (an automatic
+	// or power machine: 152 is not ordered), "full" (the turret is manned) / "no_slot" (every operator slot of a converter is taken).
+	std::string machineRefusal(std::uint64_t actor, const MachineSite& site) const;
+	// A turret's manning spot (its use node), facing and GUN_DATA row, from its placement; nullptr for a key that is no turret.
+	struct TurretPost
+	{
+		double x = 0.0, y = 0.0, z = 0.0, yaw = 0.0;
+		std::string gunSid;
+	};
+	const TurretPost* turretPostOf(std::uint64_t key) const;
+	// The machine site a character holds a Use order on once it stands at it (the converter it operates, the turret it mans), else nullptr.
+	const MachineSite* machineOperated(std::uint64_t actor) const;
 	// SIMLINK INTERACTABLE kind 5 (client-approved 2026-11-06): every real bed, with the owning building (the doorKey the wire's
 	// `building` carries), its furniture BUILDING record, the lie-down spot and facing, its clip and its occupant (0 free). The id
 	// is routines::siteId of the layout placement's site key, never a runtime index: it survives a save/load and a restart.
@@ -2498,7 +2522,7 @@ private:
 		std::uint8_t cause = 0;
 		bool sent = false;
 	};
-	std::map<std::uint64_t, CaughtAct> caughtActs_; // per thief while its theft record lives (wire bookkeeping, not saved: restore() seeds it sent from the loaded theft records)
+	std::map<std::uint64_t, CaughtAct> caughtActs_; // per thief while its theft record lives (wire bookkeeping; restore() seeds `sent` from the saved CrimeRecord::announced || committed; an older save has no announced bit)
 	std::function<void(const DismissEvent&)> dismissObserver_;
 	std::function<void(const crime::DialogueEvent&)> dialogueObserver_;
 	std::map<int, std::uint64_t> dialogueCounts_;
@@ -2582,6 +2606,7 @@ private:
 	bool offscreenFights_ = false;
 	FightStats fightStats_;
 	bool turretManning_ = false;
+	mutable std::unordered_map<std::uint64_t, std::optional<TurretPost>> turretPosts_; // by door key; derived from the placements, not saved
 	bool barTablesDue_ = false; // enableAi set it: the next tick attaches the bar tables, so no squad step runs without them
 	bool barBookKnown_ = false; // the book was rebuilt from the loaded claims by the first trader table step (a game with no combat never calls enableCombat's rebuild)
 	mutable std::shared_ptr<struct ResidentData> residentData_;

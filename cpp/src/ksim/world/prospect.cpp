@@ -237,6 +237,15 @@ std::optional<double> Simulation::groundHeight(double x, double z) const
 	return data->terrain.terrainHeight(x, z);
 }
 
+double Simulation::placementRichness(double x, double z, std::int32_t resource) const
+{
+	if (resource != 1 && resource != 2 && resource != 3)
+		return 1.0;
+	const auto zone = prospectZone(x, z);
+	const double lookup = zone && zone->env && resource == 2 ? prospect::stoneAt(*zone->env, x, z) : 0.0;
+	return lookup > 0.0 ? lookup : 0.5;
+}
+
 std::optional<Simulation::ProspectZone> Simulation::prospectZone(double x, double z) const
 {
 	const std::shared_ptr<const ProspectData> data = prospectData();

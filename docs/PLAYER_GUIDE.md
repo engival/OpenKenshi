@@ -863,6 +863,7 @@ follows the selection; pin it (the caption's pin) and it stays on the character 
   item is picked up; a door opens or closes; a bed is slept in; a container opens (someone else's shows the red magnifier; a right click on someone else's container, shop counter or locked safe walks you there and says to hold `Left Alt` to steal items or pick the lock; `Alt` + right click does it. Setting `orders.foreign_walk_to` off: the hint only, no walk); the ground is a move order. Shift
   makes attack, follow and first aid into jobs, and queues the rest.
 - **Doors, beds and machines**: a right click on a mine or deposit sends the selection to mine it; on a machine with operators, to operate it;
+  on a placed turret, to man it (another order, such as a move, gets the gunner off; a manned turret answers that it is full);
   a machine that needs no operators (a well, a furnace) opens its window instead. A locked door is not opened by a right click (the hold menu has
   Unlock, Pick Lock and Bash) and a broken door has nothing to open. Shift + right click queues each of these after the current orders. The `F6` hints
   list the click for each state.
@@ -878,7 +879,7 @@ follows the selection; pin it (the caption's pin) and it stays on the character 
 - **Hold right click for a moment on a target** opens its action menu where the button went down; releasing over a row
   picks it. The rows depend on the target: a character (Follow, Bodyguard, Talk / Attack, Loot, First aid, Pick up /
   Put down), an item (Pick up), a door (Open / Close, Lock / Unlock, Pick Lock, Bash), a container (Open, Take all, Pick
-  Lock), a production building (Mine or Operate, Open). A machine that needs no operators (a well, a furnace) has no Mine / Operate row,
+  Lock), a production building (Mine or Operate, Open), a placed turret (Man). A machine that needs no operators (a well, a furnace) has no Mine / Operate row,
   and its right click opens its window.
 - **Lock / Unlock a door**: only on a door your faction owns, and only the one that applies (Lock on a shut door, Unlock on a locked
   one; the server decides). Your selected character walks to the door and locks or unlocks it there. A door that is not yours has

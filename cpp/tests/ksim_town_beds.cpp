@@ -258,6 +258,8 @@ void sleepAndWake(const kworld::LoadOrder& order, const std::shared_ptr<const Co
 	{
 		const state::Fighter& f = fighterOf(sim, idOf(member));
 		const state::Routine& r = *member.get<state::Routine>();
+		if (!f.asleep && f.cageBuilding == 0 && !f.mount.mounted())
+			test::require(!f.machineUse.in(), "an awake member is in a machine");
 		if (f.asleep)
 		{
 			test::require(isBed(r.goal), "only a member on a bed goal is asleep");
@@ -282,6 +284,9 @@ void sleepAndWake(const kworld::LoadOrder& order, const std::shared_ptr<const Co
 				const double expect = std::atan2(bed->faceX, bed->faceZ) - (pose->clip == routines::kClipSleepOnFloor ? 1.57079632679489662 : 0.0);
 				test::require(std::fabs(pose->yaw - expect) < 1e-9, "a real bed's yaw: the node's -X, a quarter turn more for sleeponfloor");
 			}
+			test::require(f.machineUse.in() == (!bed->synthetic), "a sleeper is in a bed machine exactly when its bed is a real piece (k16.6.730)");
+			if (!bed->synthetic)
+				test::require(f.machineUse.building == bed->site.object && f.machineUse.piece == bed->piece && f.machineUse.piece != 0xFFFF, "the machine use is the bed's building and layout piece");
 			asleepAtStart.insert(idOf(member));
 		}
 	}

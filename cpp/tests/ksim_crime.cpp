@@ -308,20 +308,22 @@ void caughtStealing(const Data& w)
 		check(sent.size() == 1 && sent[0].who == thief && sent[0].other == guard && sent[0].cause == 2 && sent[0].container == box,
 			"a seen lockpick sends EVENT 51 once with cause 2 (" + std::to_string(sent.size()) + ")");
 	}
-	// A save and load mid-act. The save holds no "a witness saw it" bit; a committed record (a witness reacted, the bounty went in) is
-	// derived as announced, any other loaded act is pending: the first witness after the load names it. (watched: seen before the save.)
-	for (const bool watched : {false, true})
+	// A save and load mid-act. The record saves its announced bit (EVENT 51 sent): an act seen before the save, by a law witness (committed)
+	// or a civilian (not committed), is not sent again; an unseen one is named once by its first witness after the load.
+	for (const int mode : {0, 1, 2}) // 0 unseen, 1 seen by a law witness (committed), 2 seen by a civilian (watched, uncommitted)
 	{
+		const bool watched = mode != 0;
 		Rig rig(w);
 		std::vector<Event> sent;
 		rig.sim->setCrimeObserver([&](const Event& e) { sent.push_back(e); });
-		const std::uint64_t guard = rig.add(w.holy, 1, 1, 0.0, 0.0, watched ? 0.0 : 3.14159265, false);
+		const std::uint64_t guard = rig.add(w.holy, mode == 2 ? 4 : 1, 1, 0.0, 0.0, watched ? 0.0 : 3.14159265, false);
 		const std::uint64_t thief = rig.add(w.nameless, 9, 0, 0.0, 60.0, 3.14159265, true);
 		rig.tick(20 * 3);
 		rig.steal(thief, w.holy, 100.0); // thievery 100: the take lands, no roll event
 		rig.tick(watched ? 20 * 5 : 1);
 		const state::CrimeRecord* held = rig.sim->crimeRecord(thief);
-		check(held != nullptr && held->crime == cr::kTheft && held->committed == watched, std::string("a record is pending at the save, committed ") + (watched ? "yes" : "no"));
+		check(held != nullptr && held->crime == cr::kTheft && held->committed == (mode == 1) && held->announced == watched,
+			"a record is pending at the save, mode " + std::to_string(mode));
 		const std::size_t seen = sent.size();
 		std::ostringstream out;
 		rig.sim->save(out);
@@ -336,6 +338,41 @@ void caughtStealing(const Data& w)
 		check(watched ? seen == 1 && resent.empty() : seen == 0 && resent.size() == 1 && resent[0].who == thief && resent[0].other == guard && resent[0].cause == 1,
 			std::string(watched ? "an act announced before a save is not announced again" : "an unannounced act is announced once by its first witness after the load")
 			+ " (" + std::to_string(seen) + " before, " + std::to_string(resent.size()) + " after)");
+	}
+	// A REUSED record: caught (announced, committed), the timer expires with the bounty kept, the thief steals again unseen. The
+	// record must not carry the old announced bit into the new act: after a save and load its first witness names it once.
+	{
+		Rig rig(w);
+		std::vector<Event> sent;
+		rig.sim->setCrimeObserver([&](const Event& e) { sent.push_back(e); });
+		const std::uint64_t guard = rig.add(w.holy, 1, 1, 0.0, 0.0, 0.0, false);
+		const std::uint64_t thief = rig.add(w.nameless, 9, 0, 0.0, 60.0, 3.14159265, true);
+		rig.tick(20 * 3);
+		rig.steal(thief, w.holy, 100.0);
+		rig.tick(20 * 5);
+		check(sent.size() == 1, "the first act is announced once");
+		const_cast<state::Fighter*>(rig.sim->combat()->find(guard))->yaw = 3.14159265; // looks away: nothing keeps the record alive
+		const_cast<state::CrimeRecord*>(rig.sim->crimeRecord(thief))->timer = 0.0; // the 20 s run out
+		rig.tick(20 * 3);
+		const state::CrimeRecord* held = rig.sim->crimeRecord(thief);
+		check(held != nullptr && held->crime == cr::kNone && !held->announced && !held->bounties.empty(), "the timer ended the act, the bounty is kept, announced is cleared (crime " + std::to_string(held ? held->crime : -1) + ", announced " + std::to_string(held ? held->announced : -1) + ", bounties " + std::to_string(held ? held->bounties.size() : 0) + ", timer " + std::to_string(held ? held->timer : 0.0) + ")");
+		rig.steal(thief, w.holy, 100.0);
+		rig.tick(1);
+		held = rig.sim->crimeRecord(thief);
+		check(held != nullptr && held->crime == cr::kTheft && !held->committed && !held->announced, "the second act on the reused record starts unannounced");
+		const std::size_t before = sent.size();
+		std::ostringstream out;
+		rig.sim->save(out);
+		std::istringstream in(out.str());
+		Simulation restored = Simulation::restore(World::empty(), in, RegionConfig{}, true);
+		restored.setGameData(w.gd);
+		restored.enableCombat(w.data, rig.settings);
+		std::vector<Event> resent;
+		restored.setCrimeObserver([&](const Event& e) { resent.push_back(e); });
+		const_cast<state::Fighter*>(restored.combat()->find(guard))->yaw = 0.0; // sees the thief again
+		restored.run(20 * 12);
+		check(before == 1 && resent.size() == 1 && resent[0].who == thief && resent[0].cause == 1,
+			"the second act of a reused record is announced once after the load (" + std::to_string(resent.size()) + ")");
 	}
 }
 

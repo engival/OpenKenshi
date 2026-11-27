@@ -39,13 +39,19 @@ struct ZoneGenReport
 	std::size_t groundFaces = 0, topFaces = 0; // the zone window's faces, and the walkable tops among them
 	std::size_t reflexFaces = 0, selfOverlapFaces = 0; // the welded mesh's faces with a reflex corner (turn against the face's winding over 0.01 u^2), and those whose vertex-0 fan overlaps itself (concave faces: a count of non-convex faces, not of folds)
 	std::size_t welded = 0, weldSplit = 0, weldPaired = 0, weldDropped = 0, weldOrphanOpen = 0, weldOrphanGap = 0, seamPruned = 0, weldThrough = 0, weldByLive[4] = {}; // ground::weldMesh over the window
+	std::size_t collinearDropped = 0; // ground::dropCollinearWallVertices after the weld
 	std::size_t stitched = 0; // rim vertices inserted by stitchRims over the four neighbour windows
 	std::size_t doorFaces = 0, doorFacesPainted = 0; // zone-side door faces (data 4 / 5) and ground faces painted from them
+	std::size_t doorsFromShapes = 0; // doors with no zone-side face (volume misses the building's floor) keyed by cutting their shape's hull out of the ground
+	std::size_t doorsUnkeyed = 0; // doors that keyed no face at all (no centre inside, none within 3 u, no strip cut)
 	std::size_t tiles = 0, overfullTiles = 0; // tiles built / left out over the polygon cap
 	int maxPolys = 0; // most polygons in one tile
 	std::size_t openLinks = 0, openShared = 0; // NativeTileStats: streaming-link / shared edges that found no partner polygon
 	std::map<std::pair<int, int>, std::vector<std::uint32_t>> polyFace; // see NativeTileStats::polyFace
 	std::vector<std::uint32_t> fannedFaces;
+	std::size_t weldCutRefused = 0;
+	std::size_t nativeRepaired = 0;
+	double nativeRepairStep = 0.0; // see NativeTileStats::repairStep
 	std::size_t nativeFanned = 0; // faces nativeTiles could not ear-clip
 	std::map<std::pair<int, int>, std::vector<std::uint8_t>> topPolys; // see NativeTileStats::topPolys
 	std::size_t topNonConvex = 0; // see ground::Stats::topNonConvex

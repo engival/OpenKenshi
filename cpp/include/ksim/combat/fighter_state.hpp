@@ -389,6 +389,29 @@ struct FighterMount
 	}
 };
 
+// A machine the body is in or using (SIMLINK CHAR_DYNAMIC bit 26, kenshi-k16.6.730): a bed (asleep or put in), a cage, a turret, a layout seat,
+// later a pole, a bedroll or a crafting bench. One generic state with no per-machine case: `space` 0 = `building` is a world placement's doorKey,
+// 1 = a player-built thing's BUILDING id; `piece` = the layout piece (0xFFFF = the building itself); `slot` = the use node (0xFF = the one slot;
+// the order waits on kenshi-rwh.312). `building` 0 = in no machine. Save v135.
+struct FighterMachineUse
+{
+	std::uint8_t space = 0;
+	std::uint64_t building = 0;
+	std::uint16_t piece = 0xFFFF;
+	std::uint8_t slot = 0xFF;
+
+	bool in() const noexcept { return building != 0; }
+
+	template <typename Archive, typename Self>
+	static void fields(Archive& ar, Self& self)
+	{
+		ar(self.space);
+		ar(self.building);
+		ar(self.piece);
+		ar(self.slot);
+	}
+};
+
 // A stealth KO under way (task ds/stealth-ko S4, dt41_C Task_StealthKO): the target, and the task's state (`task+0x78`): 0 approach, 1 the
 // "knockout" clip plays, 2 the clip's tail holds. `target` 0 = none. Save v98, additive.
 struct FighterStealthKo
@@ -686,6 +709,10 @@ struct Fighter
 	FighterWeapon weapon;
 	FighterRanged ranged; // the carried crossbow (save v96); `weapon` stays the melee one
 	FighterStealthKo stealthKo; // the stealth KO it is carrying out (save v98)
+	FighterMachineUse machineUse; // the machine it is in (save v135); set by enterMachine, cleared by leaveMachine, on every path that moves a body in or out
+	void enterMachine(std::uint64_t building, std::uint16_t piece = 0xFFFF, std::uint8_t space = 0, std::uint8_t slot = 0xFF) noexcept { machineUse = {space, building, piece, slot}; }
+	void leaveMachine() noexcept { machineUse = {}; }
+	void leaveBed() noexcept { if (cageBuilding == 0 && !mount.mounted()) machineUse = {}; } // waking: a cage or a turret it is still in stays
 	FighterMount mount; // the turret this fighter mans (save v97); while mounted its gun replaces `ranged`
 	// The gun a shot reads: the turret's while mounted, else the carried crossbow.
 	FighterRanged& gun() noexcept { return mount.mounted() ? mount.gun : ranged; }
@@ -1387,6 +1414,9 @@ struct Fighter
 		// Save v133: the walk's time off its route (kenshi-rmw6): a load mid-walk continues the 5 s re-path count as the straight run does.
 		if (ar.version >= 133)
 			ar(self.offPath);
+		// Save v135: the machine it is in (k16.6.730). An older save loads in no machine: the next bed / cage / turret step sets it again.
+		if (ar.version >= 135)
+			ar(self.machineUse);
 	}
 };
 

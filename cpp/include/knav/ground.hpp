@@ -1,7 +1,7 @@
 #pragma once
 // knav::ground: a bespoke terrain navmesh generator (kenshi-ffmi.2), no Recast, no voxels. The terrain is a height grid, one level by
 // construction, so the job is 2.5D:
-//   1. the grid as triangles (2 per cell, the diagonal that follows the ground), the walkable ones kept (slope <= 40 deg, the original's
+//   1. the grid as triangles (2 per cell, always split on the (i,j)-(i+1,j+1) diagonal, as the original), the walkable ones kept (slope <= 40 deg, the original's
 //      zone setting, navbake_static C42);
 //   2. greedy vertex removal, cheapest first: an inner vertex goes when every original sample it covered stays within `heightError` of the
 //      new surface; a border vertex (walkable / not) by the original's border rule (rwh291): projected cap area under `borderArea`
@@ -49,11 +49,10 @@ struct Grid
 // below the point, paired into spans, an odd count meaning a shell open at the bottom (a rock), each hit also a span of its own.
 // `projected`: the xz cover cuts at every height (NavUse::Projected).
 // `top`: the walkable tops it keeps (NAVMESH_GENERATOR.md section 12, kenshi-k16.7.197). Zone: the up-facing faces of a Walkable shape
-// (a no-mask building's walkable parts, walkable foliage); Deck: a map feature's faces, only where the clear space under them exceeds
-// characterHeight (the deck rule). The triangles of a closed solid are wound outward.
+// (a no-mask building's walkable parts, walkable foliage, a map feature: kept by the seed prune only). The triangles of a closed solid are wound outward.
 struct Cutter
 {
-	enum class Top { None, Zone, Deck };
+	enum class Top { None, Zone };
 	std::vector<std::array<double, 3>> tris;	// 3 points per triangle
 	bool projected = false;
 	Top top = Top::None;
@@ -66,13 +65,33 @@ struct Cutter
 	std::array<double, 3> min{}, max{};
 };
 
+// What owns a piece of border: a building's shapes, the terrain, a map feature, foliage (the original's path material: building 1, terrain and
+// other physics shapes -1). By a cutter's label as cuttersOfArea sets it.
+enum class Material { Terrain, Building, Feature, Foliage };
+Material materialOfLabel(const std::string& label);
+
 struct Params
 {
 	double slopeDeg = 40;
 	double heightError = 15;	// inner vertices: max vertical distance of any covered sample to the simplified surface
-	double borderArea = 10;		// border vertices: projected cap area (u2), convex corner; the zone job's override (rwh291) is 10 u2 / 1 u
-	double concaveArea = 1.5;	// concave corner
-	double borderHeight = 1;	// vertical distance of the border vertex to its chord
+	double borderArea = 100;	// border vertices: projected cap area (u2), convex corner; measured on the shipped tiles (kenshi-ffmi.23): rwh291's global block, 100 u2 / 15 u, not the job override's 10 u2 / 1 u
+	double borderDepth = 1.5;	// convex corner: its distance (xz) to the chord that replaces it, at most (a long thin cut narrows a passage under the area rule)
+	double concaveArea = 1.5;	// concave corner (UNSURE: neither confirmed nor refuted by the shipped tiles)
+	double concaveHeight = 1;	// concave corner: vertical distance to its chord
+	double borderHeight = 15;	// convex corner: vertical distance of the border vertex to its chord
+	double loopShrink = 0.75;	// a convex removal is undone when the border loop's area drops to this share of it or flips sign (FUN_140de3df0)
+	double corridorMin = 4;		// a removal that narrows a corridor of the loop's own stretches from <= corridorMax to under corridorMin is undone (FUN_140de1e10)
+	double corridorMax = 6;
+	// The border rule by material (kenshi-k16.7.244; the original's one simplifier over the merged mesh, rwh335 / TOPS_SIMPLIFIER): a border loop with a
+	// building region on either side keeps every corner but the collinear ones (`buildingTol` u off the chord); a terrain loop with a vertex within
+	// `rimBand` u of the window rim takes `rimBorderArea` / `rimBorderHeight` instead of borderArea / borderHeight. Off: borderArea / borderHeight everywhere.
+	bool materialRule = true;
+	double buildingTol = 0.01;
+	double topCollinearTol = 1e-4;	// the same for a top face's outline vertex: tight, the tops must stay convex (a looser drop made a top 4e-4 reflex)
+	double rimBand = 10;
+	double rimBorderArea = 10;
+	double rimBorderHeight = 1;
+	bool areaOrder = true;		// border removals go smallest cap area first, after the inner ones (the original, FUN_140df1c50); off: by height error with the inner ones (before kenshi-k16.7.231)
 	double planarCos = 0.99;	// merge: polygon normals at least this aligned
 	bool keepRim = true;		// pruning keeps components that reach the window rim
 	int stride = 2;				// the caller's sampling: fullmap.tif every 2nd sample is the original's 36 u zone grid
@@ -87,9 +106,7 @@ struct Params
 	// Walkable tops (section 12 steps 1-5)
 	double topSlopeDeg = 60;	// surfgen's building slope limit
 	double topTerrainTol = 0.25;	// a top piece this close to the terrain (or under it) is the ground's
-	double deckShare = 0.5;		// a feature face is a deck when more than characterHeight is clear under this share of its area
-	double deckMaxSlopeDeg = 90;	// a feature deck face is no steeper than this (90 = off)
-	double deckShapeShare = 0.2;	// a feature shape's tops count only when its seed faces cover this share of its up-facing area (0 = off; F1: a cliff block 0.05-0.1, a Trestle Bridge >= 0.3)
+	double featureSlopeDeg = 40;	// a map feature's top: the generic Havok slope limit (kenshi-rwh.338: no filter, every feature triangle is an input; the prune keeps what links to a seed)
 	double matchSeparation = 2;	// the edge matcher of surfgen.hpp (Settings::matchSeparationMax / matchStep / matchOverlap)
 	double matchStep = 5;
 	double matchOverlap = 0.2;
@@ -111,6 +128,10 @@ struct Stats
 	std::size_t cells = 0, walkableTris = 0, rimKept = 0, removed = 0, trisAfter = 0, faces = 0, components = 0, droppedComponents = 0,
 		droppedFaces = 0;
 	double maxError = 0;		// the largest sample error accepted
+	std::size_t buildingLoops = 0, rimLoops = 0, terrainLoops = 0;	// the simplifier's border loops by rule (materialRule)
+	std::size_t topCollinearDropped = 0;	// materialRule: collinear outline vertices dropped from building tops
+	std::size_t removedBuilding = 0, removedRim = 0, removedTerrain = 0;	// border removals by rule
+	std::size_t refusedLoop = 0, refusedCorridor = 0, refusedDepth = 0;	// convex removals a guard refused, counted per evaluation (a vertex is evaluated more than once)
 	double msGrid = 0, msSimplify = 0, msMerge = 0, msPrune = 0;
 	std::size_t cutters = 0, cutGroundTris = 0, piecesKept = 0, piecesDropped = 0, cutVertices = 0, tjunctions = 0, slivers = 0, clipFailed = 0;
 	double msCut = 0;
@@ -120,7 +141,8 @@ struct Stats
 	double postTrimmedArea = 0;
 	std::vector<std::array<std::array<double, 3>, 3>> culled;	// the trim's dropped triangles, world
 	// Walkable tops
-	std::size_t topShapes = 0, topTris = 0, deckTris = 0, deckRejected = 0, topPieces = 0, topFaces = 0, topLinks = 0, topDroppedFaces = 0;
+	std::size_t topShapes = 0, topTris = 0, topPieces = 0, topFaces = 0, topLinks = 0, topDroppedFaces = 0;
+	std::size_t topForeignCut = 0;	// prebuilt (zone side) face cuts that a solid of another building made (kenshi-k16.7.234)
 	double topArea = 0, topDroppedArea = 0;	// xz, of the output faces / of the faces the prune dropped
 	double msTops = 0, msLink = 0;
 	std::map<std::string, double> topDropped;	// dropped xz area per Cutter::label
@@ -138,6 +160,11 @@ struct Stats
 // (bigger first splits less).
 native::Mesh generate(const Grid& grid, const std::vector<std::array<double, 2>>& seeds, const std::vector<Cutter>& cutters, const Params& params,
 	Stats* stats = nullptr);
+
+// Dev report: the material of every wall edge of `m` (an edge with no opposite and no link; others Terrain) of a mesh made from `cutters`. A top face's
+// wall is its top cutter's; a ground face's wall is the cutter whose span takes the ground out just beyond it, else the terrain's.
+// `owner` (optional): per edge, the index in `cutters` of the one that decided it, -1 for the terrain's.
+std::vector<Material> wallMaterials(const native::Mesh& m, const std::vector<Cutter>& cutters, const Params& params, std::vector<int>* owner = nullptr);
 
 // A surfgen zone-side mesh (surfgen::Side::Zone, world coordinates) as a prebuilt top cutter: the faces fanned into up-facing triangles, the
 // `linked` boundary edges (the seam to the interior) as `seam`.
@@ -166,6 +193,7 @@ struct WeldStats
 	std::size_t refused = 0; // faces the merge would have made reflex, flipped or pinched: their moved corners went back
 	std::size_t declared = 0; // boundary edge pairs declared opposite with their ends apart (up to grid), no vertex moved
 	std::size_t split = 0; // vertices inserted into a boundary edge they lie on
+	std::size_t cutRefused = 0; // faces whose cuts would have made them cross themselves: left uncut
 	std::size_t dropped = 0; // faces left with no width (area / half perimeter < 1/32 u)
 	std::size_t byLive[4] = {}; // dropped faces by the number of edges that had an opposite (0, 1, 2, 3 or more)
 	std::size_t through = 0; // neighbour pairs joined across a dropped collapsed strip
@@ -183,6 +211,11 @@ struct WeldStats
 // fewer than three edges is dropped). `climb` is float noise, not a step: a step between levels is a link (linkTops), never a weld (it pulled a deck
 // corner 4 u down onto the ground when it was 5).
 WeldStats weldMesh(native::Mesh& m, double grid = 0.125, double climb = 0.5);
+
+// After weldMesh (kenshi-k16.7.247): on a ground face (a top keeps its outline: dropping there opened shared edges), a vertex that only one face holds, between two wall edges of that face, and within `tol` (xz) and `tolY` (height)
+// of the chord of its neighbours, is no corner: the original's border rule keeps none (building loops: collinear only). It leaves the face (the
+// face keeps three vertices at least; faces keep their order). A vertex another face holds stays (the weld put it there). Returns the vertices dropped.
+std::size_t dropCollinearWallVertices(native::Mesh& m, double tol = 0.01, double tolY = 0.05);
 
 // What gatherCutters collected.
 struct CutterCounts

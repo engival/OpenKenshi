@@ -349,6 +349,7 @@ void testArrest(Game& game)
 	test::require(arrest(game, guard, first, goap::kLiftPersonSnatchingInTown, 6000), "203: the target was not put in a cage");
 	const state::Fighter* caged = sim.combat()->find(first);
 	test::require(caged->cageBuilding == home.building, "203: the cage is the home's");
+	test::require(caged->machineUse.in() && caged->machineUse.building == home.building, "203: the prisoner is in the cage machine (k16.6.730)");
 	const state::CrimeRecord* record = sim.crimeRecord(first);
 	test::require(record != nullptr && record->sentenceHours == crime::sentenceHours(1000) && record->sentenceHours > 0.0,
 		"112: the cage owner's legal bounty started the sentence");
@@ -388,7 +389,7 @@ void testArrest(Game& game)
 	for (int i = 0; i < 5 && !freed; ++i)
 	{
 		game.tick();
-		freed = sim.combat()->find(first)->cageBuilding == 0;
+		freed = sim.combat()->find(first)->cageBuilding == 0 && !sim.combat()->find(first)->machineUse.in();
 	}
 	test::require(sim.combat()->find(second)->cageBuilding == home.building, "211: freed a prisoner that has not served its sentence");
 	test::require(freed, "211: the served prisoner was not released");

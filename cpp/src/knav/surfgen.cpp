@@ -836,7 +836,7 @@ bool decompose(const c2::Paths64& paths, std::size_t part, std::vector<IFace>& o
 		for (const c2::Point64& v : merged)
 			seen.push_back(keyOf(v));
 		std::sort(seen.begin(), seen.end());
-		if (!convex || std::adjacent_find(seen.begin(), seen.end()) != seen.end())
+		if (!convex || merged.size() >= 255 || std::adjacent_find(seen.begin(), seen.end()) != seen.end())	// 255: the original's maxNumEdgesPerFace (kenshi-rwh.337)
 			continue;
 		for (std::size_t f : { A, B })
 			for (std::size_t k = 0; k < faces[f].size(); ++k)

@@ -237,7 +237,9 @@ void Simulation::spawnProducer(const ProducerSite& site, double useX, double use
 	producer.boxMaxZ = site.boxMaxZ;
 	// A resource node is as rich as its zone says (prospect.hpp depositRichness); a resource the prospecting does not know, or no
 	// zone data, gives 1.0.
-	if (spec->resource != 0)
+	if (site.placement && (spec->resource == 1 || spec->resource == 2 || spec->resource == 3))
+		producer.richness = placementRichness(site.x, site.z, spec->resource); // the panel's richness (machines.cpp)
+	else if (spec->resource != 0)
 	{
 		if (const auto zone = prospectZone(site.x, site.z); zone && zone->env)
 		{
@@ -414,7 +416,7 @@ std::optional<Simulation::BuildingView> Simulation::producerView(std::uint64_t i
 	// BUILDINGS_SLICE "Stats list": max = richness x the BUILDING's `output rate` (+0x1a8) x research (1.0: no research model, unowned or owned);
 	// efficiency = power (1: a node uses none) x HP fraction (1) x worker fraction x max. Fully automatic: no worker term.
 	v.maxEfficiency = producer->richness * spec.outputRate;
-	v.efficiency = v.maxEfficiency * (v.maxWorkers == 0 ? 1.0 : std::min(1.0, static_cast<double>(v.workers) / v.maxWorkers));
+	v.efficiency = std::min(v.maxEfficiency, v.maxEfficiency * (v.maxWorkers == 0 ? 1.0 : std::min(1.0, static_cast<double>(v.workers) / v.maxWorkers)));
 	if (v.maxWorkers == 0)
 		v.flags |= 1u << 11;
 	v.version = producer->version + stock->version;

@@ -288,6 +288,7 @@ struct ProducerSite
 	double boxMaxX = 0.0;
 	double boxMinZ = 0.0;
 	double boxMaxZ = 0.0;
+	bool placement = false; // a zone-placed mine / machine (richness per placement, Simulation::placementRichness), not a wild deposit
 };
 
 // A placed BUILDING that is a machine (machines.hpp kindOf: producer, converter, power, turret, furnace), foliage excepted. The sim's

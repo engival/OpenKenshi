@@ -13,6 +13,7 @@
 // stateHash() is FNV-1a over the same body bytes the save writes.
 
 #include "ksim/core/command.hpp"
+#include "ksim/save/save_version.hpp"
 
 #include <flecs.h>
 
@@ -111,7 +112,9 @@ namespace ksim {
 // 133: Fighter::offPath (task ds/rmw6, kenshi-rmw6; coded as 131, then 132; renumbered at the ksim merge: 131 is k16.6.514's, 132 is k16.17.13.14's): the walk's time off its route, so a save mid-walk re-paths on the straight run's tick.
 // 134: PlayerBuilding::placement (task ds/k16.7.156; coded as 133, renumbered at the ksim merge: 133 is rmw6's; the lead assigns the final number): the id of the placement a stood building has in the world; a load stands it again (collision, nav, doors). An older
 // save's player buildings are not stood on load (their placement was not saved). 
-inline constexpr std::uint32_t kSaveVersion = 134;
+// 135: Fighter::machineUse (task ds/k16.6.730; coded as 131, renumbered at the ksim merge): the machine (bed / cage / turret) a body is in; an older save loads in no machine.
+// 136: CrimeRecord::announced (task ds/k16.6.457): see save_version.hpp, where the number lives.
+inline constexpr std::uint32_t kSaveVersion = kCrimeAnnouncedVersion; // the newest gate: a later bump adds its own constant there and points this at it
 
 class SaveError : public std::runtime_error
 {

@@ -3432,6 +3432,9 @@ void Session::writeDynamic(RecordWriter& out, std::uint64_t tick, const CombatAr
 		flags |= kFlagAimTail;
 	if (fighter.mount.mounted())
 		flags |= kFlagMounted;
+	const std::optional<state::FighterMachineUse> machine = sim_.machineUse(m.id);
+	if (machine)
+		flags |= kFlagInMachine;
 	if (fighter.driveStrafe < 0)
 		flags |= kFlagStrafeLeft;
 	else if (fighter.driveStrafe > 0)
@@ -3487,6 +3490,14 @@ void Session::writeDynamic(RecordWriter& out, std::uint64_t tick, const CombatAr
 	{
 		// The mounted tail (client-approved 2026-11-10): the turret being manned, the very end of the record.
 		out.u64("turret", fighter.mount.building);
+	}
+	if (machine)
+	{
+		// The machine tail (client-approved 2026-11-23, k16.6.730): the very end of the record, after the mounted tail.
+		out.u8("machineSpace", machine->space);
+		out.u64("machineBuilding", machine->building);
+		out.u16("machinePiece", machine->piece);
+		out.u8("machineSlot", machine->slot);
 	}
 	out.end();
 }
@@ -4195,6 +4206,8 @@ void Session::sendTick(RecordWriter& out, bool initial)
 			if (m.fighter.mount.mounted())
 				mounted.insert(m.fighter.mount.building);
 	}
+	// The members holding a Use order on a converter (by machine id): its BUILDING row's workers (client-approved 2026-11-26, k16.6.838).
+	const std::unordered_map<std::uint64_t, std::uint32_t> operators = sim_.machineOperators();
 	// BUILDING: on connect every building of the faction, later the ones whose version the client has not heard (a rate or status change
 	// bumps it; hp alone does not: the client extrapolates progress from the rate).
 	std::vector<Simulation::BuildingView> buildingsOut;
@@ -4245,7 +4258,9 @@ void Session::sendTick(RecordWriter& out, bool initial)
 				machineRowsSent_.erase(site.id);
 				continue;
 			}
-			std::uint32_t version = mounted.count(site.key) != 0 ? 2 : 1;
+			const auto operating = operators.find(site.id);
+			const int workers = (mounted.count(site.key) != 0 ? 1 : 0) + (operating != operators.end() ? static_cast<int>(operating->second) : 0);
+			std::uint32_t version = 1 + workers;
 			if (site.producerId != 0)
 			{
 				const auto live = producerVersion.find(site.producerId);
@@ -4258,7 +4273,7 @@ void Session::sendTick(RecordWriter& out, bool initial)
 			}
 			if (unchanged(site.id, version))
 				continue;
-			if (std::optional<Simulation::BuildingView> row = sim_.machineView(site, mounted.count(site.key) != 0))
+			if (std::optional<Simulation::BuildingView> row = sim_.machineView(site, workers))
 			{
 				machineRowsSent_[site.id] = row->version;
 				buildingsOut.push_back(std::move(*row));

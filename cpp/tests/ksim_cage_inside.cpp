@@ -1,11 +1,10 @@
-// kenshi-k16.6.370 (playtest cage_prisoner, third report): the caged Prisoner stands INSIDE its cage, not beside it. cage_prisoner loaded as scenario
-// files load it; the prisoner's position, read from the sim (the Fighter the CHAR_DYNAMIC snapshot is written from), is inside a solid prop's collision
-// (the cage's closed box, prop_clip.hpp) at the spawn and every second of 60 game s of the fight, and never moves. Needs the world navmesh bake
+// kenshi-k16.6.370 (playtest cage_prisoner, third report): the caged Prisoner is in its cage. cage_prisoner loaded as scenario
+// files load it; since k16.6.731 the sim holds no cage centre / floor height: the prisoner stays in the same cage machine slot (the machine tail the client
+// draws from) at its plain stand point at the spawn and every second of 60 game s of the fight. Needs the world navmesh bake
 // (argv[1], exit 77 without the Heft region).
 #include "ksim/net/simlink.hpp"
 #include "ksim/core/simulation.hpp"
 
-#include "prop_clip.hpp"
 #include "scenario_rig.hpp"
 #include "test_util.hpp"
 #include "ksim/dev/build_paths.hpp"
@@ -30,24 +29,26 @@ int main(int argc, char** argv)
 		}
 		scenario_rig::Rig rig(file, world, scenario_rig::Window{4, 7, 6, 9, 4});
 		Simulation& sim = rig.sim;
-		prop_clip::PropClip clip(*rig.gameData);
 		sim.newWorld();
 		sim.run(1);
 		const scenario::Placed placed = scenario::apply(sim, *rig.gameData, *rig.combatData, rig.context, file, 3);
 		const std::uint64_t prisoner = placed.idOf.at(2);
 		const state::Fighter* held = sim.combat()->find(prisoner);
 		test::require(held != nullptr && held->cageBuilding != 0, "the prisoner is caged");
+		test::require(held->machineUse.in() && held->machineUse.building == held->cageBuilding, "the caged prisoner is in the cage machine (k16.6.730)");
+		// k16.6.731: the sim holds no cage centre or floor height any more; the machine tail places the drawing. The body stays at its plain
+		// stand point and in the same cage machine slot for the whole fight.
 		const double x0 = held->x;
 		const double z0 = held->z;
-		std::cout << "prisoner at (" << x0 << ", " << held->y << ", " << z0 << ")" << clip.near(x0, z0, 12.0) << "\n";
+		const state::FighterMachineUse use0 = held->machineUse;
 		std::size_t bad = 0;
 		const auto check = [&](const std::string& when)
 		{
 			const state::Fighter* f = sim.combat()->find(prisoner);
-			const std::string in = clip.inside(f->x, f->y + 1.0, f->z);
-			if (in.empty() || std::hypot(f->x - x0, f->z - z0) > 0.5)
+			if (!f->machineUse.in() || f->machineUse.building != use0.building || f->machineUse.piece != use0.piece || f->machineUse.slot != use0.slot
+				|| f->cageBuilding != use0.building || std::hypot(f->x - x0, f->z - z0) > 0.5)
 			{
-				std::cout << when << ": the prisoner at (" << f->x << ", " << f->y << ", " << f->z << ") is in no cage solid" << clip.near(f->x, f->z, 12.0) << "\n";
+				std::cout << when << ": the prisoner left its cage machine or stand point (" << f->x << ", " << f->y << ", " << f->z << ")\n";
 				++bad;
 			}
 		};
@@ -59,7 +60,7 @@ int main(int argc, char** argv)
 			if (tick % 20 == 0)
 				check("t=" + std::to_string(tick / 20) + "s");
 		}
-		test::require(bad == 0, std::to_string(bad) + " samples with the prisoner outside its cage's collision");
+		test::require(bad == 0, std::to_string(bad) + " samples with the prisoner out of its cage machine");
 		std::cout << "ksim_cage_inside ok\n";
 		return 0;
 	} catch (const std::exception& e) {

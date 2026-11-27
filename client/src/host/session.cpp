@@ -843,6 +843,7 @@ void sim_opened()
 				const int r = app.buildings.groundDrawn(x, z, wy, up, std::max(down, SimView::kDrawnDown), y);
 				return r == 1 ? 2 : r; },
 			[]() -> const void* { return app.buildings.groundDrawnGen(); });
+		app.sim.setMachineSlot([](uint8_t space, uint64_t building, uint16_t piece, uint8_t slot, double pos[3], double& yaw, std::string& clip) { return app.buildings.machineSlot(space, building, piece, slot, pos, yaw, clip); });
 		app.sim.setGroundDirty([]() { return app.buildings.groundSeq(); }, [](uint64_t since, double x, double z) { return app.buildings.groundDirtySince(since, x, z); });
 	}
 	// kenshi-k16.2.414.2: the ground solver's terrain (the drawn terrain triangles) and its sunk-dune rule: inside an interior mask whose BUILDING has `interior terrain` 0 the terrain is not ground

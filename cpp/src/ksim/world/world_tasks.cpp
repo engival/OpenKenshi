@@ -1419,7 +1419,10 @@ void Simulation::stepWorldTasks()
 		{
 			// A floor sleeper whose package window closes (the animals' 22-6 / 23-6 rows) wakes with it; endTask mirrors the wake.
 			if (r.goal == routines::task::SleepOnFloor)
+			{
 				f.asleep = false;
+				f.leaveBed();
+			}
 			// A sitter's window can close too (a contract replacing its package): its sheathe is undone with the task.
 			if (r.goal == routines::task::SitAround && r.chainElapsed >= 1.0)
 				drawWeapon(id);
@@ -2226,6 +2229,7 @@ void Simulation::stepWorldTasks()
 			if (!f.walking() && std::hypot(f.x - body->x, f.z - body->z) <= kInteractReach)
 			{
 				body->cageBuilding = 0;
+				body->leaveMachine();
 				body->cageSlot = 0;
 				body->followTarget = id;
 				body->followAge = 0.0;
@@ -2406,16 +2410,15 @@ void Simulation::stepWorldTasks()
 			}
 			if (f.walking())
 				continue;
-			f.x = cage->occupantX();
-			if (cage->hasY)
-				f.y = cage->y;
-			f.z = cage->occupantZ();
+			f.x = cage->x; // the plain stand point; the machine tail below places the drawing (k16.6.731)
+			f.z = cage->z;
 			f.velX = 0.0;
 			f.velZ = 0.0;
 			f.building = cage->site.object;
 			f.cageBuilding = cage->site.object;
 			lockErase(false, cage->site.object); // the put-in locks the cage again (item28 b1)
 			f.cageSlot = cage->site.slot;
+			f.enterMachine(cage->site.object, cage->piece);
 			f.clearRoute();
 			f.drive = state::DriveMode::Stop;
 			f.driveStrafe = 0;
@@ -2513,6 +2516,7 @@ void Simulation::stepWorldTasks()
 				if (body != nullptr && body->cageBuilding != 0)
 				{
 					body->cageBuilding = 0; // a body taken out of a cage frees its slot (the gather goal 173's rule)
+					body->leaveMachine();
 					body->cageSlot = 0;
 					mirrorFighter(r.chainTarget);
 				}
@@ -3159,6 +3163,7 @@ void Simulation::stepWorldTasks()
 			if (f.dead || f.unconscious || f.down)
 			{
 				f.asleep = false;
+				f.leaveBed();
 				endTask();
 				continue;
 			}
@@ -3187,6 +3192,7 @@ void Simulation::stepWorldTasks()
 			if (f.target != 0 || underAttack || now >= r.holdUntil)
 			{
 				f.asleep = false;
+				f.leaveBed();
 				endTask();
 				continue;
 			}

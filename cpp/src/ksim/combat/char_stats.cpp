@@ -419,6 +419,22 @@ Simulation::CharStats Simulation::charStats(std::uint64_t id) const
 			live.z = producer->z;
 		}
 	}
+	// Operating a placed converter (kenshi-k16.6.788): the same goal while the character holds its Use order on it, standing in reach.
+	if (live.source == kSourceNone || live.source == kSourceRoutine || live.source == kSourceGroup)
+	{
+		if (const MachineSite* machine = machineOperated(id); machine != nullptr && world_.machineInfo(*machine).kind == machines::Kind::Converter)
+		{
+			const state::Jobs* jobs = entity.get<state::Jobs>();
+			live = {};
+			live.task = kOperateMachinery;
+			live.name = taskName(live.task);
+			live.source = jobs != nullptr && jobs->running != 0 ? kSourceJob : kSourceOrder;
+			live.target = machine->id;
+			live.hasPoint = true;
+			live.x = machine->x;
+			live.z = machine->z;
+		}
+	}
 	stats.goal = live.name;
 	stats.goalEnum = live.task;
 	stats.source = live.source;

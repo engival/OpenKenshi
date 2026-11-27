@@ -94,10 +94,6 @@ Observed observe(const std::string& dataDir, const kworld::Heightmap& terrain, c
 	const double w = fx.window;
 	ground::Params params;
 	params.keepLooseTops = std::getenv("KEEP_LOOSE") != nullptr;
-	if (const char* e = std::getenv("DECK_SLOPE"))
-		params.deckMaxSlopeDeg = std::atof(e);
-	if (const char* e = std::getenv("DECK_SHAPE"))
-		params.deckShapeShare = std::atof(e);
 	const auto t0 = std::chrono::steady_clock::now();
 	const Mesh cut = ground::generateBox(dataDir, terrain, fx.x - w, fx.z - w, fx.x + w, fx.z + w, params, {}, true, &o.stats);
 	o.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -204,8 +200,8 @@ int main()
 			{ "feature: bridge", "Metal Arch Bridge", -54433, -95121, true, true, 600, 900 },
 			{ "feature: bridge", "Metal Arch Bridge", 12399, -29427, true, true, 600, 900 },
 			{ "feature: bridge", "Trestle Bridge001", -45980, -55948, true, true, 400, 700 },
-			{ "feature: cliff block (F1: an overhanging underside passes the face test; the shape-level share drops its tops)", "Canyonland Cliffblock 01", -85611, -130729, true, false, 300, 700 },
-			{ "feature: rock arch (a top only as a deck)", "ROCK-Arch Type 01", -30922, -18912, true, false, 300, 700 },
+			{ "feature: cliff block (a plain candidate: its tops stay where the seed prune finds a link, kenshi-k16.7.252)", "Canyonland Cliffblock 01", -85611, -130729, true, true, 300, 700 },
+			{ "feature: rock arch (a plain candidate, kenshi-k16.7.252)", "ROCK-Arch Type 01", -30922, -18912, true, true, 300, 700 },
 			{ "feature: wreck", "Barge WreckPiece02", 93381, 50112, true, false, 100, 400 },
 		};
 		if (const char* one = std::getenv("OBJ_SITE"))
@@ -214,7 +210,7 @@ int main()
 			std::sscanf(one, "%lf,%lf,%lf,%lf", &fx.x, &fx.z, &fx.reach, &fx.window);
 			const Observed o = observe(dataDir, terrain, fx);
 			std::cout << "lost " << o.lost << " of " << o.total << ", tops " << o.topFaces << (o.linked ? " linked" : " not linked") << ", " << o.stats.topFaces << " top faces in the window, "
-				<< o.stats.topDroppedFaces << " dropped (" << o.stats.topDroppedArea << " u2), deck tris " << o.stats.deckTris << " rejected " << o.stats.deckRejected << ", links " << o.stats.topLinks << ", ms tops " << o.stats.msTops << " link " << o.stats.msLink << "\n";
+				<< o.stats.topDroppedFaces << " dropped (" << o.stats.topDroppedArea << " u2), links " << o.stats.topLinks << ", ms tops " << o.stats.msTops << " link " << o.stats.msLink << "\n";
 			for (const auto& [label, area] : o.stats.topDropped)
 				std::cout << "  dropped " << area << " u2: " << label << "\n";
 			if (std::getenv("EDGES"))

@@ -276,6 +276,7 @@ bool Simulation::orderRunAwayGoal(std::uint64_t id, std::uint64_t target)
 	f->hold = false;
 	f->orderTarget = 0;
 	f->asleep = false;
+	f->leaveBed();
 	f->goal = state::IndividualGoal{};
 	if (!walkGoal(id, *f, run.x, run.z) && !rerollFlee(id, *f, run.x, run.z))
 	{
@@ -384,6 +385,7 @@ bool Simulation::giveIndividualGoal(std::uint64_t id, state::IndividualKind kind
 	f->hold = false;
 	f->orderTarget = 0;
 	f->asleep = false;
+	f->leaveBed();
 	f->goal = goal;
 	// 35 is the plan step under 32: with no way to run at all there is no step, and 32 stays with the fight (the caller's goal)
 	if (kind == state::IndividualKind::RunAway && !walkGoal(id, *f, goal.x, goal.z) && !rerollFlee(id, *f, goal.x, goal.z))

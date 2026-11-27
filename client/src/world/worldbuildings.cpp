@@ -1564,3 +1564,58 @@ std::vector<lightbake::Tri> WorldBuildings::buildTris(const std::vector<ProbePar
 	}
 	return tris;
 }
+
+// The slot a body draws at while CHAR_DYNAMIC bit 26 is set (kenshi-2g4v, SIMLINK machine tail): (space, building, piece, slot) -> the node's world point,
+// the body's yaw and the machine's clip. One rule for every machine: the piece (or the placement itself when piece is 0xFFFF) carries use nodes
+// (`is node`, `node type` 4, the record's own order; slot 0xFF = node 0); the body stands / lies at the node facing its -X (node.q x the
+// instance's, the exe's bed rule, bed_seat_pose.md 2) and, with no node, at the instance's origin facing its +Z (the seat rule). The clip is the
+// functionality's `animation`, "" when it names none (the caller picks from the body's flags). False: the machine is not in this build / not loaded.
+bool WorldBuildings::machineSlot(uint8_t space, uint64_t building, uint16_t piece, uint8_t slot, double pos[3], double& yaw, std::string& clip) const
+{
+	if (space != 0) { return false; }	// a player-built machine (space 1) is drawn by its BUILDING row; none is a node source yet
+	int index = -1;
+	if (piece != 0xFFFF) { index = layoutPieceInstance(building, piece); }
+	else if (const auto it = data_.byKey.find(building); it != data_.byKey.end()) { index = (int)it->second; }
+	if (index < 0) { return false; }
+	const BuildingInstance& b = data_.instances[(size_t)index];
+	const float q[4] = { b.qw, b.qx, b.qy, b.qz };
+	clip = data_.animNames[b.animation < data_.animNames.size() ? b.animation : 0];
+	double face[3];
+	if (b.nodeCount > 0)
+	{
+		// slot 0xFF = one slot: the node nearest the piece's origin (xz, the first of equals), which is the sim's own choice for a lone body (routines bedPieces);
+		// it is node 0 whenever the record has one node. A numbered slot is the record's own order.
+		uint32_t pick = slot < b.nodeCount ? slot : 0;
+		if (slot == 0xFF)
+		{
+			double best = 1e30;
+			for (uint32_t k = 0; k < b.nodeCount; k++)
+			{
+				const BuildingSet::Node& c = data_.nodes[b.firstNode + k];
+				const double cl[3] = { c.pos[0] * b.scale, c.pos[1] * b.scale, c.pos[2] * b.scale };
+				double cr[3];
+				rotate(q, cl, cr);
+				const double dd = std::hypot(cr[0], cr[2]);
+				if (dd < best - 1e-6) { best = dd; pick = k; }
+			}
+		}
+		const BuildingSet::Node& n = data_.nodes[b.firstNode + pick];
+		const double local[3] = { n.pos[0] * b.scale, n.pos[1] * b.scale, n.pos[2] * b.scale };
+		double r[3];
+		rotate(q, local, r);
+		for (int a = 0; a < 3; a++) { pos[a] = (a == 0 ? b.x : a == 1 ? b.y : b.z) + r[a]; }
+		// node.q composed under the instance's: world = q * nodeQ, applied to -X
+		const double nx[3] = { -1, 0, 0 };
+		double inner[3];
+		rotate(n.quat, nx, inner);
+		rotate(q, inner, face);
+	}
+	else
+	{
+		pos[0] = b.x; pos[1] = b.y; pos[2] = b.z;
+		const double pz[3] = { 0, 0, 1 };
+		rotate(q, pz, face);
+	}
+	yaw = std::atan2(face[0], face[2]);
+	return true;
+}

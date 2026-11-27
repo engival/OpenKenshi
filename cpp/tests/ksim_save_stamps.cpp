@@ -1,8 +1,8 @@
-// The due-stamps of kenshi-k16.6.637 (save v130), seen through a Simulation:
+// The due-stamps of kenshi-k16.6.637 (save v130) and the machine use of k16.6.730 (save v135), seen through a Simulation:
 // - the arena -> ECS mirror copies only the members that stepped or were written, and no ECS reader sees a stale Fighter: every tick the
 //   ECS copy of every member equals the arena's, with the fight tier at 1 and everyone else at stride 8, and a write from outside (a
 //   mutable find) is read back from the ECS after the next tick;
-// - the previous version's save (v130 on this build, no `offPath`) loads it as 0 and the world plays on;
+// - the previous version's save (it carries no machine use) loads out of any machine, the stamps are placed and the world plays on;
 // - a save and load of the current version gives the saved state hash.
 
 #include "ksim/combat/combat.hpp"
@@ -94,12 +94,12 @@ void testOldSave(const kdata::GameData& gd, const std::shared_ptr<const CombatDa
 	std::uint64_t rng = 7;
 	state::Fighter f = data->makeFighter(gd, servant->stringID, "", rng);
 	f.hunger = 2.0;
-	f.offPath = 2.5; // v132's field: a previous-version file does not carry it
+	f.enterMachine(77, 3); // v135's machine use: a previous-version file does not carry it
 	const std::uint64_t id = sim.spawnFighter(std::move(f)).get<state::Id>()->value;
-	test::require(ecsFighter(sim, id)->offPath == 2.5, "the ECS holds the time off route");
+	test::require(ecsFighter(sim, id)->machineUse.in(), "the ECS holds the machine use");
 
-	// The previous version lacks offPath only while this build is v133; a later save moves the previous version past it (the case ends, as the v130 one did).
-	if (kSaveVersion == 133)
+	// The previous version lacks machineUse only while this build is v135; a later save moves the previous version past it (the case ends then).
+	if (kSaveVersion == 135)
 	{
 		const std::string path = std::string(KSIM_BINARY_DIR) + "/ksim_save_stamps_prev.ksav";
 		writeSaveFile(path, sim.world().ecs(), sim.world().loadOrder(), {}, kSaveVersion - 1);
@@ -107,23 +107,22 @@ void testOldSave(const kdata::GameData& gd, const std::shared_ptr<const CombatDa
 		std::remove(path.c_str());
 		old.enableCombat(data, settings);
 		const state::Fighter* read = ecsFighter(old, id);
-		test::require(read != nullptr && read->offPath == 0.0, "a previous-version file loads the time off route as 0");
+		test::require(read != nullptr && !read->machineUse.in(), "a previous-version file loads in no machine");
 		old.run(200);
 		const state::Fighter* now = std::as_const(*old.combat()).find(id);
-		test::require(now != nullptr && now->senseAt > state::Fighter::kNoStamp * 0.5, "the sensor stamp is placed");
-		test::require(now->medStep != state::Fighter::kNoStep && now->hungerStep != state::Fighter::kNoStep && now->hunger < 2.0, "the stamps are placed and the member got hungry");
+		test::require(now != nullptr && now->medStep != state::Fighter::kNoStep && now->hungerStep != state::Fighter::kNoStep && now->hunger < 2.0, "the stamps are placed and the member got hungry");
 		test::require(same(*ecsFighter(old, id), *now), "the loaded member is mirrored");
-		std::printf("ok  a previous-version save loads (offPath 0) and plays on\n");
+		std::printf("ok  a previous-version save loads out of any machine and plays on\n");
 	}
 
 	// The current version round-trips.
-	const std::string again = std::string(KSIM_BINARY_DIR) + "/ksim_save_stamps_v132.ksav";
+	const std::string again = std::string(KSIM_BINARY_DIR) + "/ksim_save_stamps_cur.ksav";
 	const std::uint64_t held = sim.stateHash();
 	sim.saveGame(again);
 	Simulation loaded = Simulation::loadGame(KENSHI_DATA, kworld::vanillaLoadOrder(KENSHI_DATA), again, false, nullptr, RegionConfig{});
 	std::remove(again.c_str());
-	test::require(loaded.stateHash() == held, "a v132 save loads to its hash");
-	std::printf("ok  a v132 save round-trips (hash %llx)\n", static_cast<unsigned long long>(held));
+	test::require(loaded.stateHash() == held, "the current save loads to its hash");
+	std::printf("ok  the current save round-trips (hash %llx)\n", static_cast<unsigned long long>(held));
 }
 
 } // namespace

@@ -5,6 +5,8 @@
 #include "knav/surfgen.hpp"
 #include "kworld/coords.hpp"
 
+#include <clipper2/clipper.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -127,11 +129,303 @@ double msSince(std::chrono::steady_clock::time_point start)
 	return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
 
-// Door faces of the zone sides (data 4 / 5), painted on the ground mesh's faces whose centre lies inside them (the zone side's tops come out of
-// knav::ground as plain faces: kenshi-k16.7.188 D2). Returns {door faces, faces painted}.
-std::pair<std::size_t, std::size_t> paintDoors(native::Mesh& world, const std::vector<GeneratedBuilding>& generated)
+// A zone-side door face (data 4 / 5): its ring, height band and winding sign.
+struct DoorRing
 {
-	std::size_t doors = 0, painted = 0;
+	std::int32_t data = 4;
+	std::uint64_t key = 0;
+	std::vector<std::array<double, 3>> ring;
+	double lo = 1e30, hi = -1e30, sign = 1.0, mx = 0, mz = 0;
+};
+
+DoorRing doorRing(const native::Mesh& side, const native::Face& door)
+{
+	DoorRing out;
+	out.data = door.data;
+	out.key = door.door;
+	for (std::uint32_t k = 0; k < door.numEdges; ++k)
+		out.ring.push_back(side.vertices[side.edges[door.startEdge + k].a]);
+	double area2 = 0;
+	for (std::size_t k = 0; k < out.ring.size(); ++k)
+	{
+		const auto& a = out.ring[k];
+		const auto& b = out.ring[(k + 1) % out.ring.size()];
+		area2 += a[0] * b[2] - b[0] * a[2];
+		out.lo = std::min(out.lo, a[1]);
+		out.hi = std::max(out.hi, a[1]);
+		out.mx += a[0] / out.ring.size();
+		out.mz += a[2] / out.ring.size();
+	}
+	out.sign = area2 < 0 ? -1.0 : 1.0;
+	return out;
+}
+
+std::array<double, 3> faceCentre(const native::Mesh& mesh, const native::Face& face)
+{
+	std::array<double, 3> c{};
+	for (std::uint32_t k = 0; k < face.numEdges; ++k)
+		for (int i = 0; i < 3; ++i)
+			c[i] += mesh.vertices[mesh.edges[face.startEdge + k].a][i] / face.numEdges;
+	return c;
+}
+
+bool centreInside(const DoorRing& d, double cx, double cz)
+{
+	for (std::size_t k = 0; k < d.ring.size(); ++k)
+	{
+		const auto& a = d.ring[k];
+		const auto& b = d.ring[(k + 1) % d.ring.size()];
+		if (d.sign * ((b[0] - a[0]) * (cz - a[2]) - (b[2] - a[2]) * (cx - a[0])) < -1e-3)
+			return false;
+	}
+	return true;
+}
+
+// The walkable face nearest the door's middle within 3 u, in its height band (nullptr: none).
+native::Face* nearestFace(native::Mesh& world, const DoorRing& d)
+{
+	native::Face* best = nullptr;
+	double bestD = 3.0 * 3.0;
+	for (native::Face& face : world.faces)
+	{
+		if (face.data == 4 || face.data == 5)
+			continue;
+		const auto c = faceCentre(world, face);
+		const double dist = (c[0] - d.mx) * (c[0] - d.mx) + (c[2] - d.mz) * (c[2] - d.mz);
+		if (c[1] < d.lo - 2.0 || c[1] > d.hi + 2.0 || dist >= bestD)
+			continue;
+		bestD = dist;
+		best = &face;
+	}
+	return best;
+}
+
+// Cuts the door's own strip out of every floor face its ring crosses (in the door's height band) and keys the strip; the rest of the face stays as
+// hole-free pieces. A face the cut would leave with a hole is left alone. Runs BEFORE weldMesh, so the weld shares the new vertices, splits the
+// T-junctions and links the pieces; pieces keep the source face's winding, and an edge lying on one of its edges keeps that edge's flags and linked
+// bit. Heights come from the face's plane. Returns strips keyed (kenshi-k16.7.218).
+std::size_t cutDoorStrip(native::Mesh& world, const DoorRing& d)
+{
+	using namespace Clipper2Lib;
+	constexpr double S = 1024.0;
+	const auto toPath = [&](const std::vector<std::array<double, 3>>& pts)
+	{
+		Path64 path;
+		for (const auto& v : pts)
+			path.push_back(Point64(std::llround(v[0] * S), std::llround(v[2] * S)));
+		if (Clipper2Lib::Area(path) < 0)
+			std::reverse(path.begin(), path.end());
+		return path;
+	};
+	// a door ring can be a sliver (0.2 u wide, ~0.005 u2): widen it by 0.3 u so the cut has an area
+	const Paths64 clip = InflatePaths({ toPath(d.ring) }, 0.3 * S, JoinType::Miter, EndType::Polygon);
+	const Rect64 clipBox = GetBounds(clip);
+	std::size_t keyed = 0;
+	const std::size_t count = world.faces.size();
+	for (std::size_t f = 0; f < count; ++f)
+	{
+		const native::Face face = world.faces[f];
+		if (face.data == 4 || face.data == 5 || face.numEdges < 3)
+			continue;
+		std::vector<std::array<double, 3>> pts;
+		double ylo = 1e30, yhi = -1e30, twice = 0;
+		for (std::uint32_t k = 0; k < face.numEdges; ++k)
+		{
+			pts.push_back(world.vertices[world.edges[face.startEdge + k].a]);
+			ylo = std::min(ylo, pts.back()[1]);
+			yhi = std::max(yhi, pts.back()[1]);
+		}
+		if (yhi < d.lo - 2.0 || ylo > d.hi + 2.0)
+			continue;
+		const Paths64 subject{ toPath(pts) };
+		const Rect64 faceBox = GetBounds(subject);
+		if (faceBox.right < clipBox.left || faceBox.left > clipBox.right || faceBox.bottom < clipBox.top || faceBox.top > clipBox.bottom)
+			continue; // xz boxes apart: no overlap, skip the clipper call
+		for (std::size_t k = 0; k < pts.size(); ++k)
+			twice += pts[k][0] * pts[(k + 1) % pts.size()][2] - pts[(k + 1) % pts.size()][0] * pts[k][2];
+		const Paths64 strip = Intersect(subject, clip, FillRule::NonZero);
+		if (strip.empty())
+			continue;
+		const Paths64 rest = Difference(subject, clip, FillRule::NonZero);
+		bool hole = false;
+		for (const Path64& piece : rest)
+			hole = hole || Clipper2Lib::Area(piece) < 0;
+		if (hole)
+			continue;
+		// the face's plane: y = y0 + gx * (x - x0) + gz * (z - z0) from the corner triple with the largest area
+		const auto& p0 = pts[0];
+		double gx = 0, gz = 0, best = 0;
+		for (std::size_t i = 1; i + 1 < pts.size(); ++i)
+		{
+			const double ax = pts[i][0] - p0[0], az = pts[i][2] - p0[2], bx = pts[i + 1][0] - p0[0], bz = pts[i + 1][2] - p0[2];
+			const double det = ax * bz - az * bx;
+			if (std::fabs(det) > best)
+			{
+				best = std::fabs(det);
+				gx = ((pts[i][1] - p0[1]) * bz - (pts[i + 1][1] - p0[1]) * az) / det;
+				gz = ((pts[i + 1][1] - p0[1]) * ax - (pts[i][1] - p0[1]) * bx) / det;
+			}
+		}
+		const std::vector<native::Edge> source(world.edges.begin() + face.startEdge, world.edges.begin() + face.startEdge + face.numEdges);
+		const std::vector<std::array<double, 3>> sourceCorners = pts;
+		// the source edge a piece edge lies on (both ends within 2 / S of the segment), if any
+		const auto onSource = [&](const std::array<double, 3>& p, const std::array<double, 3>& q) -> int
+		{
+			const auto near = [&](const std::array<double, 3>& r, const std::array<double, 3>& a, const std::array<double, 3>& b)
+			{
+				const double ex = b[0] - a[0], ez = b[2] - a[2], len2 = ex * ex + ez * ez;
+				const double t = len2 > 0 ? std::clamp(((r[0] - a[0]) * ex + (r[2] - a[2]) * ez) / len2, 0.0, 1.0) : 0.0;
+				return std::hypot(r[0] - (a[0] + t * ex), r[2] - (a[2] + t * ez)) < 3.0 / S;
+			};
+			for (std::size_t k = 0; k < sourceCorners.size(); ++k)
+			{
+				const auto& a = sourceCorners[k];
+				const auto& b = sourceCorners[(k + 1) % sourceCorners.size()];
+				if (near(p, a, b) && near(q, a, b))
+					return static_cast<int>(k);
+			}
+			return -1;
+		};
+		std::vector<char> relinked(source.size(), 0);
+		bool first = true;
+		const auto emit = [&](Path64 path, std::int32_t data, std::uint64_t key)
+		{
+			if (twice < 0)
+				std::reverse(path.begin(), path.end()); // the face's own winding (clipper's is positive)
+			native::Face made = face;
+			made.startEdge = static_cast<std::uint32_t>(world.edges.size());
+			made.numEdges = static_cast<std::uint16_t>(path.size());
+			made.data = data;
+			made.door = key;
+			const std::uint32_t base = static_cast<std::uint32_t>(world.vertices.size());
+			std::vector<std::array<double, 3>> corners;
+			for (const Point64& q : path)
+			{
+				const double x = q.x / S, z = q.y / S;
+				corners.push_back({ x, p0[1] + gx * (x - p0[0]) + gz * (z - p0[2]), z });
+			}
+			world.vertices.insert(world.vertices.end(), corners.begin(), corners.end());
+			for (std::size_t k = 0; k < path.size(); ++k)
+			{
+				native::Edge edge;
+				edge.a = base + static_cast<std::uint32_t>(k);
+				edge.b = base + static_cast<std::uint32_t>((k + 1) % path.size());
+				if (const int sk = onSource(corners[k], corners[(k + 1) % path.size()]); sk >= 0)
+				{
+					const auto at = static_cast<std::size_t>(sk);
+					edge.flags = source[at].flags;
+					edge.linked = source[at].linked;
+					// the whole source edge survives: it takes over the neighbour's link
+					const auto& c0 = sourceCorners[at];
+					const auto& c1 = sourceCorners[(at + 1) % sourceCorners.size()];
+					if (source[at].oppositeEdge >= 0 && relinked[at] == 0 && std::hypot(corners[k][0] - c0[0], corners[k][2] - c0[2]) < 2.0 / S
+						&& std::hypot(corners[(k + 1) % path.size()][0] - c1[0], corners[(k + 1) % path.size()][2] - c1[2]) < 2.0 / S)
+					{
+						relinked[at] = 1;
+						edge.oppositeEdge = source[at].oppositeEdge;
+						edge.oppositeFace = source[at].oppositeFace;
+						native::Edge& neighbour = world.edges[static_cast<std::size_t>(source[at].oppositeEdge)];
+						neighbour.oppositeEdge = static_cast<std::int32_t>(world.edges.size());
+						neighbour.oppositeFace = first ? static_cast<std::int32_t>(f) : static_cast<std::int32_t>(world.faces.size());
+					}
+				}
+				world.edges.push_back(edge);
+			}
+			if (first) { world.faces[f] = made; first = false; }
+			else world.faces.push_back(made);
+		};
+		for (const Path64& path : strip)
+			emit(path, d.data, d.key);
+		for (const Path64& path : rest)
+			emit(path, face.data, face.door);
+		// a neighbour whose edge met only part of a source edge now has an open edge there (the weld splits and links it)
+		for (std::size_t k = 0; k < source.size(); ++k)
+			if (source[k].oppositeEdge >= 0 && relinked[k] == 0)
+			{
+				native::Edge& neighbour = world.edges[static_cast<std::size_t>(source[k].oppositeEdge)];
+				neighbour.oppositeEdge = -1;
+				neighbour.oppositeFace = -1;
+			}
+		++keyed;
+	}
+	return keyed;
+}
+
+// The convex hull (xz) of a door shape's vertices, with its height band, as a DoorRing keyed by the shape's door key (data 4: open).
+bool shapeDoorRing(const kworld::WorldShape& shape, DoorRing& out)
+{
+	std::vector<std::array<double, 2>> points;
+	for (std::size_t v = 0; v + 2 < shape.vertices.size(); v += 3)
+		points.push_back({ shape.vertices[v], shape.vertices[v + 2] });
+	std::sort(points.begin(), points.end());
+	points.erase(std::unique(points.begin(), points.end()), points.end());
+	if (points.size() < 3)
+		return false;
+	const auto turn = [](const auto& o, const auto& a, const auto& b) { return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]); };
+	std::vector<std::array<double, 2>> hull(2 * points.size());
+	std::size_t k = 0;
+	for (std::size_t p = 0; p < points.size(); ++p)
+	{
+		while (k >= 2 && turn(hull[k - 2], hull[k - 1], points[p]) <= 0.0)
+			--k;
+		hull[k++] = points[p];
+	}
+	for (std::size_t p = points.size() - 1, lower = k + 1; p-- > 0;)
+	{
+		while (k >= lower && turn(hull[k - 2], hull[k - 1], points[p]) <= 0.0)
+			--k;
+		hull[k++] = points[p];
+	}
+	hull.resize(k > 1 ? k - 1 : k);
+	if (hull.size() < 3)
+		return false;
+	out = DoorRing{};
+	out.data = 4;
+	out.key = shape.door;
+	out.lo = shape.min[1];
+	for (const auto& h : hull)
+		out.ring.push_back({ h[0], shape.min[1], h[1] });
+	out.sign = 1.0;
+	return true;
+}
+
+// Before the weld: every door's ring is cut out of the floor faces it crosses and keyed, so a locked door covers its whole opening (a face keyed by
+// centre alone leaves the rest of the opening walkable). A door the generator painted no face for (its volume misses the building's own floor: a
+// wall gate over open ground) has no zone-side face; its shape's hull is cut (from `area`: a cached `generated` can outlive its building pointers). Returns the keys cut, and in `fromShapes` how many were shape-only.
+std::set<std::uint64_t> cutUnkeyedDoors(native::Mesh& world, const std::vector<GeneratedBuilding>& generated, const kworld::AreaGeometry& area,
+	std::size_t& fromShapes)
+{
+	std::set<std::uint64_t> cut, faced;
+	for (const GeneratedBuilding& one : generated)
+	{
+		for (const native::Mesh* side : { &one.zoneSide, &one.interior })
+			for (const native::Face& door : side->faces)
+				if (door.data == 4 || door.data == 5)
+					faced.insert(door.door);
+		for (const native::Face& door : one.zoneSide.faces)
+			if ((door.data == 4 || door.data == 5) && cutDoorStrip(world, doorRing(one.zoneSide, door)) > 0)
+				cut.insert(door.door);
+	}
+	for (const kworld::AreaBuilding& building : area.buildings)
+		for (std::size_t i = 0; building.shapes && i < building.shapes->size(); ++i)
+		{
+			const kworld::WorldShape& shape = (*building.shapes)[i];
+			DoorRing d;
+			if (shape.use != kworld::NavUse::Door || shape.door == 0 || faced.count(shape.door) != 0 || !shapeDoorRing(shape, d))
+				continue;
+			d.hi = shape.max[1];
+			if (cutDoorStrip(world, d) > 0 && cut.insert(shape.door).second)
+				++fromShapes;
+		}
+	return cut;
+}
+
+// Door faces of the zone sides (data 4 / 5), painted on the ground mesh's faces whose centre lies inside them (the zone side's tops come out of
+// knav::ground as plain faces: kenshi-k16.7.188 D2); a door with none keys the face nearest its middle within 3 u. Returns {door faces, faces
+// painted, doors that keyed nothing}; a door in `cut` was keyed by its strip before the weld.
+std::array<std::size_t, 3> paintDoors(native::Mesh& world, const std::vector<GeneratedBuilding>& generated, const std::set<std::uint64_t>& cut)
+{
+	std::size_t doors = 0, painted = 0, unkeyed = 0;
 	for (const GeneratedBuilding& one : generated)
 	{
 		for (const native::Face& door : one.zoneSide.faces)
@@ -139,49 +433,37 @@ std::pair<std::size_t, std::size_t> paintDoors(native::Mesh& world, const std::v
 			if (door.data != 4 && door.data != 5)
 				continue;
 			++doors;
-			std::vector<std::array<double, 3>> ring;
-			for (std::uint32_t k = 0; k < door.numEdges; ++k)
-				ring.push_back(one.zoneSide.vertices[one.zoneSide.edges[door.startEdge + k].a]);
-			double area2 = 0, lo = 1e30, hi = -1e30;
-			for (std::size_t k = 0; k < ring.size(); ++k)
+			if (cut.count(door.door) != 0)
 			{
-				const auto& a = ring[k];
-				const auto& b = ring[(k + 1) % ring.size()];
-				area2 += a[0] * b[2] - b[0] * a[2];
-				lo = std::min(lo, a[1]);
-				hi = std::max(hi, a[1]);
+				++painted;
+				continue;
 			}
-			const double sign = area2 < 0 ? -1.0 : 1.0;
+			const DoorRing d = doorRing(one.zoneSide, door);
+			const std::size_t before = painted;
 			for (native::Face& face : world.faces)
 			{
 				if (face.data == 4 || face.data == 5)
 					continue;
-				double cx = 0, cy = 0, cz = 0;
-				for (std::uint32_t k = 0; k < face.numEdges; ++k)
-				{
-					const auto& v = world.vertices[world.edges[face.startEdge + k].a];
-					cx += v[0] / face.numEdges;
-					cy += v[1] / face.numEdges;
-					cz += v[2] / face.numEdges;
-				}
-				if (cy < lo - 2.0 || cy > hi + 2.0)
-					continue;
-				bool inside = true;
-				for (std::size_t k = 0; k < ring.size() && inside; ++k)
-				{
-					const auto& a = ring[k];
-					const auto& b = ring[(k + 1) % ring.size()];
-					inside = sign * ((b[0] - a[0]) * (cz - a[2]) - (b[2] - a[2]) * (cx - a[0])) >= -1e-3;
-				}
-				if (!inside)
+				const auto c = faceCentre(world, face);
+				if (c[1] < d.lo - 2.0 || c[1] > d.hi + 2.0 || !centreInside(d, c[0], c[2]))
 					continue;
 				face.data = door.data;
 				face.door = door.door;
 				++painted;
 			}
+			if (painted != before)
+				continue;
+			if (native::Face* best = nearestFace(world, d))
+			{
+				best->data = door.data;
+				best->door = door.door;
+				++painted;
+			} else {
+				++unkeyed;
+			}
 		}
 	}
-	return { doors, painted };
+	return { doors, painted, unkeyed };
 }
 
 } // namespace
@@ -374,11 +656,14 @@ std::vector<BakedTile> bakeZone(const NavConfig& config, const kworld::Heightmap
 		local.seamPruned = ground::pruneJoined(world, stats.topFaceIndex, joined, &stats.topTouching);
 		stats.topFaces -= local.seamPruned;
 	}
+	const std::set<std::uint64_t> cutDoors = cutUnkeyedDoors(world, generated, area, local.doorsFromShapes);
 	if (wantWelded)
 		local.preWeldWorld = world;
 	const ground::WeldStats weld = ground::weldMesh(world);
+	local.collinearDropped = ground::dropCollinearWallVertices(world);
 	local.welded = weld.welded;
 	local.weldSplit = weld.split;
+	local.weldCutRefused = weld.cutRefused;
 	local.weldPaired = weld.paired;
 	local.weldDropped = weld.dropped;
 	local.weldOrphanOpen = weld.orphanOpen;
@@ -422,9 +707,10 @@ std::vector<BakedTile> bakeZone(const NavConfig& config, const kworld::Heightmap
 	local.topNonConvex = stats.topNonConvex;
 	local.topKept = stats.topKept;
 	local.msGround = msSince(groundStart);
-	const auto painted = paintDoors(world, generated);
-	local.doorFaces = painted.first;
-	local.doorFacesPainted = painted.second;
+	const auto painted = paintDoors(world, generated, cutDoors);
+	local.doorFaces = painted[0];
+	local.doorFacesPainted = painted[1];
+	local.doorsUnkeyed = painted[2];
 	// one nativeTiles call over the world mesh and the interiors
 	const auto tileStart = std::chrono::steady_clock::now();
 	std::vector<native::Mesh> meshes;
@@ -447,6 +733,8 @@ std::vector<BakedTile> bakeZone(const NavConfig& config, const kworld::Heightmap
 	local.topPolys = std::move(tileStats.topPolys);
 	local.polyFace = std::move(tileStats.polyFace);
 	local.nativeFanned = tileStats.fanned;
+	local.nativeRepaired = tileStats.repaired;
+	local.nativeRepairStep = tileStats.repairStep;
 	local.fannedFaces = tileStats.fannedFaces;
 	local.msTiles = msSince(tileStart);
 	if (report != nullptr)

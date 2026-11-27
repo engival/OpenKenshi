@@ -3,6 +3,7 @@
 #include <DetourAlloc.h>
 #include <DetourNavMesh.h>
 #include <DetourNavMeshBuilder.h>
+#include <clipper2/clipper.h>
 
 #include <algorithm>
 #include <cmath>
@@ -85,6 +86,21 @@ double outlineArea(const Outline& o)
 	return area;
 }
 
+// An outline with no width: twice its area under a 32nd of its perimeter (the weld's thin-face rule). Collinear corners are never ears, so an ear clip
+// of a big face leaves its collinear chain as a remainder whose rounding area is far over any fixed epsilon at world coordinates (Heft face 1413: a
+// 19000 u2 quad left its 4-corner edge chain, area 0.07 over 288 u, and was left out of every tile it touches; kenshi-k16.7.207).
+bool noWidth(const Outline& o)
+{
+	double perimeter = 0.0;
+	for (std::size_t i = 0; i < o.points.size(); ++i)
+	{
+		const Point3& p = o.points[i];
+		const Point3& q = o.points[(i + 1) % o.points.size()];
+		perimeter += std::hypot(q.x - p.x, q.z - p.z);
+	}
+	return std::fabs(outlineArea(o)) <= perimeter / 32.0;
+}
+
 // Ear clipping of a negative-wound simple outline. False when no ear is left over a remainder that still has area (the outline is not simple):
 // `out` is then empty and the face is left out of the tile, never fanned (a fan over a non-simple outline lays triangles over its neighbours,
 // kenshi-k16.7.207). A remainder with no area (corners on one line) is cut down to zero-width triangles, the bridges they are.
@@ -110,7 +126,7 @@ bool earClip(Outline outline, std::vector<Outline>& out)
 		}
 		if (ear == n)
 		{
-			if (std::fabs(outlineArea(outline)) > 1e-3)
+			if (!noWidth(outline))
 			{
 				out.clear();
 				return false;
@@ -189,10 +205,9 @@ bool simplify(Outline outline, std::vector<Outline>& loops)
 				}
 		if (split)
 			continue;
-		const double area = outlineArea(o);
-		if (area > 1e-3)
+		if (outlineArea(o) > 0.0 && !noWidth(o))
 			return false; // a lobe the other way round: a hole
-		if (std::fabs(area) <= 1e-3)
+		if (noWidth(o))
 		{
 			loops.push_back(std::move(o)); // no area: kept as it is (the zero-width bridge between its neighbours)
 			continue;
@@ -210,6 +225,68 @@ bool simplify(Outline outline, std::vector<Outline>& loops)
 			}
 		loops.push_back(std::move(o));
 	}
+	return true;
+}
+
+// A non-simple outline made simple by a NonZero union on a 1/64 u grid (kenshi-k16.7.207): the crossings and pinches resolve into outer loops, a
+// corner takes the height and edge kind of the nearest original corner. False when the union leaves a hole (a real hole is a hole) or nothing.
+bool repairByUnion(const Outline& in, std::vector<Outline>& loops, double& worstStep)
+{
+	constexpr double kScale = 64.0;
+	Clipper2Lib::Path64 path;
+	for (const Point3& p : in.points)
+		path.push_back({ std::llround(p.x * kScale), std::llround(p.z * kScale) });
+	if (Clipper2Lib::IsPositive(path))
+		std::reverse(path.begin(), path.end());
+	const Clipper2Lib::Paths64 solved = Clipper2Lib::Union({ path }, Clipper2Lib::FillRule::NonZero);
+	std::vector<Outline> made;
+	for (const Clipper2Lib::Path64& r : solved)
+	{
+		if (!Clipper2Lib::IsPositive(r))
+			return false; // a hole
+		Outline o;
+		for (auto it = r.rbegin(); it != r.rend(); ++it) // Detour's winding is the negative one
+		{
+			const Clipper2Lib::Point64& q = *it;
+			const double x = static_cast<double>(q.x) / kScale, z = static_cast<double>(q.y) / kScale;
+			// height: interpolated along every original edge the corner lies on (a crossing lies on two: their mean);
+			// the nearest original corner only for a corner on no edge
+			double ySum = 0.0;
+			int onEdges = 0;
+			std::size_t best = 0;
+			double d = std::numeric_limits<double>::max();
+			for (std::size_t i = 0; i < in.points.size(); ++i)
+			{
+				const Point3& a = in.points[i];
+				const Point3& b = in.points[(i + 1) % in.points.size()];
+				const double e = std::hypot(a.x - x, a.z - z);
+				if (e < d) { d = e; best = i; }
+				const double dx = b.x - a.x, dz = b.z - a.z, len2 = dx * dx + dz * dz;
+				const double t = len2 > 0.0 ? std::clamp(((x - a.x) * dx + (z - a.z) * dz) / len2, 0.0, 1.0) : 0.0;
+				if (std::hypot(a.x + dx * t - x, a.z + dz * t - z) <= 1.5 / kScale)
+				{
+					ySum += a.y + (b.y - a.y) * t;
+					++onEdges;
+				}
+			}
+			const double y = onEdges ? ySum / onEdges : in.points[best].y;
+			worstStep = std::max(worstStep, std::abs(y - in.points[best].y));
+			o.points.push_back({ x, y, z });
+			o.kinds.push_back(EdgeKind::Diagonal);
+		}
+		// an edge that is still an original edge keeps its kind: a corner at an original corner takes that corner's edge
+		for (std::size_t i = 0; i < o.points.size(); ++i)
+			for (std::size_t j = 0; j < in.points.size(); ++j)
+				if (std::hypot(o.points[i].x - in.points[j].x, o.points[i].z - in.points[j].z) < 1.0 / kScale
+					&& std::hypot(o.points[(i + 1) % o.points.size()].x - in.points[(j + 1) % in.points.size()].x,
+						o.points[(i + 1) % o.points.size()].z - in.points[(j + 1) % in.points.size()].z) < 1.0 / kScale)
+					o.kinds[i] = in.kinds[j];
+		made.push_back(std::move(o));
+	}
+	if (made.empty())
+		return false;
+	for (Outline& o : made)
+		loops.push_back(std::move(o));
 	return true;
 }
 
@@ -691,9 +768,23 @@ std::optional<BakedTile> buildTile(const NavConfig& c, const std::vector<native:
 			continue;
 		std::vector<Outline> triangles;
 		std::vector<Outline> loops;
-		bool placed = simplify(faceOutline(mesh, faces[f].mesh, vertices[faces[f].mesh], face, splits), loops);
+		const Outline outline = faceOutline(mesh, faces[f].mesh, vertices[faces[f].mesh], face, splits);
+		bool placed = simplify(outline, loops);
 		for (const Outline& loop : loops)
 			placed = placed && earClip(loop, triangles);
+		if (!placed)
+		{
+			// a union of the outline on a 1/64 u grid resolves crossings and pinches; a hole it cannot
+			triangles.clear();
+			loops.clear();
+			placed = repairByUnion(outline, loops, stats.repairStep);
+			++stats.repaired;
+			std::vector<Outline> again;
+			for (const Outline& loop : loops)
+				placed = placed && simplify(loop, again);
+			for (const Outline& loop : again)
+				placed = placed && earClip(loop, triangles);
+		}
 		if (!placed)
 		{
 			// not a simple outline: left out of the tile (a hole is better than a fold), counted and listed
@@ -794,45 +885,31 @@ std::optional<BakedTile> buildTile(const NavConfig& c, const std::vector<native:
 		}
 		polys = std::move(unique);
 	}
-	if (polys.empty())
-		return std::nullopt;
-	stats.maxPolys = std::max(stats.maxPolys, static_cast<int>(polys.size()));
-	stats.tilePolys.push_back({ tx, tz, static_cast<int>(polys.size()) });
-	{
-		std::vector<std::uint8_t>& marks = stats.topPolys[{ tx, tz }];
-		std::vector<std::uint32_t>& src = stats.polyFace[{ tx, tz }];
-		for (const TilePoly& poly : polys)
-		{
-			marks.push_back(poly.top);
-			src.push_back(poly.srcMesh == 0 ? poly.srcFace : 0xffffffffu); // the world mesh is mesh 0
-		}
-	}
-	if (polys.size() > static_cast<std::size_t>(kMaxPolysPerTile) || tile.verts.size() >= 0xffff)
-	{
-		++stats.overfull;
-		return std::nullopt;
-	}
-	stats.polys += polys.size();
-
 	// Neighbours: the reversed edge; else, for a native edge with an opposite, the polygon edge cut from that opposite which
 	// overlaps this one most along it; else (not a wall) another polygon with the same edge the same way round (a folded
 	// pair of faces, opposite in the original); else a portal on the tile side both ends lie on; else a wall.
 	std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> edgeOwners;
 	std::unordered_map<std::uint64_t, std::vector<std::pair<std::uint32_t, std::uint32_t>>> nativeOwners; // (poly, edge)
 	const auto edgeKey = [](std::uint32_t a, std::uint32_t b) { return static_cast<std::uint64_t>(a) << 32 | b; };
-	for (std::size_t p = 0; p < polys.size(); ++p)
+	const auto fillOwners = [&]()
 	{
-		const auto& corners = polys[p].piece.corners;
-		for (std::size_t k = 0; k < corners.size(); ++k)
+		edgeOwners.clear();
+		nativeOwners.clear();
+		for (std::size_t p = 0; p < polys.size(); ++p)
 		{
-			edgeOwners[edgeKey(static_cast<std::uint32_t>(corners[k]), static_cast<std::uint32_t>(corners[(k + 1) % corners.size()]))].push_back(
-				static_cast<std::uint32_t>(p));
-			const EdgeTag& tag = polys[p].piece.kinds[k];
-			if (tag.edge >= 0)
-				nativeOwners[edgeKey(tag.mesh, static_cast<std::uint32_t>(tag.edge))].push_back(
-					{ static_cast<std::uint32_t>(p), static_cast<std::uint32_t>(k) });
+			const auto& corners = polys[p].piece.corners;
+			for (std::size_t k = 0; k < corners.size(); ++k)
+			{
+				edgeOwners[edgeKey(static_cast<std::uint32_t>(corners[k]), static_cast<std::uint32_t>(corners[(k + 1) % corners.size()]))].push_back(
+					static_cast<std::uint32_t>(p));
+				const EdgeTag& tag = polys[p].piece.kinds[k];
+				if (tag.edge >= 0)
+					nativeOwners[edgeKey(tag.mesh, static_cast<std::uint32_t>(tag.edge))].push_back(
+						{ static_cast<std::uint32_t>(p), static_cast<std::uint32_t>(k) });
+			}
 		}
-	}
+	};
+	fillOwners();
 	const auto overlap = [&](int a, int b, int c, int d)
 	{
 		// Length of c-d's projection onto a-b within a-b, in quanta; none when c-d runs more than 2 u off the line.
@@ -976,6 +1053,82 @@ std::optional<BakedTile> buildTile(const NavConfig& c, const std::vector<native:
 			return 3;
 		return -1;
 	};
+	// A sliver (no area on the 1/8 u grid) is a bridge only where a neighbour edge has no partner without it; every other one is left out, as it
+	// is a zero-width polygon the clearance search refuses and a fold of its neighbours (the Hub bar's door strip met its floor through one:
+	// ksim_storm_door 'door shut: no route', kenshi-k16.7.236). The neighbours are found twice, with and without them.
+	if (std::any_of(polys.begin(), polys.end(), [](const TilePoly& poly) { return poly.piece.sliver; }))
+	{
+		std::vector<TilePoly> all = polys;
+		std::vector<std::size_t> origin;
+		polys.clear();
+		for (std::size_t p = 0; p < all.size(); ++p)
+			if (!all[p].piece.sliver)
+			{
+				origin.push_back(p);
+				polys.push_back(all[p]);
+			}
+		fillOwners();
+		struct Open
+		{
+			std::size_t poly;
+			int a, b;
+			EdgeTag tag;
+		};
+		std::vector<Open> open;
+		for (std::size_t p = 0; p < polys.size(); ++p)
+		{
+			const auto& corners = polys[p].piece.corners;
+			for (std::size_t k = 0; k < corners.size(); ++k)
+			{
+				const int a = corners[k];
+				const int b = corners[(k + 1) % corners.size()];
+				const EdgeTag& tag = polys[p].piece.kinds[k];
+				if (tag.kind != EdgeKind::Wall && partnerOf(p, a, b, tag) < 0 && portal(tile.verts[static_cast<std::size_t>(a)], tile.verts[static_cast<std::size_t>(b)]) < 0)
+					open.push_back({ origin[p], a, b, tag });
+			}
+		}
+		polys = all;
+		fillOwners();
+		std::vector<char> needed(all.size(), 0);
+		std::vector<Open> queue = std::move(open);
+		for (std::size_t head = 0; head < queue.size(); ++head)
+		{
+			const Open edge = queue[head];
+			const int partner = partnerOf(edge.poly, edge.a, edge.b, edge.tag);
+			if (partner < 0 || !all[static_cast<std::size_t>(partner)].piece.sliver || needed[static_cast<std::size_t>(partner)])
+				continue;
+			needed[static_cast<std::size_t>(partner)] = 1;
+			// the bridge's own edges are partnered through the polygons it joins, whichever are slivers too
+			const auto& corners = all[static_cast<std::size_t>(partner)].piece.corners;
+			for (std::size_t k = 0; k < corners.size(); ++k)
+				queue.push_back({ static_cast<std::size_t>(partner), corners[k], corners[(k + 1) % corners.size()], all[static_cast<std::size_t>(partner)].piece.kinds[k] });
+		}
+		polys.clear();
+		for (std::size_t p = 0; p < all.size(); ++p)
+			if (!all[p].piece.sliver || needed[p])
+				polys.push_back(std::move(all[p]));
+		fillOwners();
+	}
+	if (polys.empty())
+		return std::nullopt;
+	stats.maxPolys = std::max(stats.maxPolys, static_cast<int>(polys.size()));
+	stats.tilePolys.push_back({ tx, tz, static_cast<int>(polys.size()) });
+	{
+		std::vector<std::uint8_t>& marks = stats.topPolys[{ tx, tz }];
+		std::vector<std::uint32_t>& src = stats.polyFace[{ tx, tz }];
+		for (const TilePoly& poly : polys)
+		{
+			marks.push_back(poly.top);
+			src.push_back(poly.srcMesh == 0 ? poly.srcFace : 0xffffffffu); // the world mesh is mesh 0
+		}
+	}
+	if (polys.size() > static_cast<std::size_t>(kMaxPolysPerTile) || tile.verts.size() >= 0xffff)
+	{
+		++stats.overfull;
+		return std::nullopt;
+	}
+	stats.polys += polys.size();
+
 	std::vector<unsigned short> verts;
 	for (const QuantVertex& v : tile.verts)
 		verts.insert(verts.end(), { static_cast<unsigned short>(v.x), static_cast<unsigned short>(v.y), static_cast<unsigned short>(v.z) });

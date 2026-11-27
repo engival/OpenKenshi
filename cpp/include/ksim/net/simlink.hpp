@@ -173,6 +173,8 @@ enum Flag : std::uint32_t
 	// Not bit 13 (kFlagHold, the order-4 stand-and-stay state). Approved by the client 2026-11-16 (k16.6.312; additive, no protocol bump).
 	kFlagPassive = 1u << 24,
 	kFlagHoldPosition = 1u << 25,
+	// In a machine (26, k16.6.730, approved by the client 2026-11-23 with amendments C1-C5): the machine tail follows the mounted tail.
+	kFlagInMachine = 1u << 26,
 };
 
 // Limits on what a client may send (SIMLINK.md section 11).

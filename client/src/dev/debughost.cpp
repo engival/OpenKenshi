@@ -827,6 +827,33 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 		}
 		return true;
 	}
+	if (a.size() == 2 && a[0] == "machine")	// dump machine ID: the machine tail's slot (building, piece, slot -> node) against the drawn body's node and Bip01 root; "machine-check PASS / FAIL" when within 3 u in xz and 2 u in y (kenshi-2g4v; stdout)
+	{
+		if (a[1] == "all")	// dump machine all: every character with bit 26 set
+		{
+			size_t n = 0;
+			for (const auto& [cid, cch] : sim.decoder().chars) { if (cch.cur.flags & simlink::kInMachine) { n++; dumpOp(cx, { "machine", std::to_string(cid) }); } }
+			printf("machine-all %zu\n", n);
+			return true;
+		}
+		const uint64_t id = strtoull(a[1].c_str(), nullptr, 10);
+		const auto it = sim.decoder().chars.find(id);
+		const int index = it == sim.decoder().chars.end() ? -1 : sim.charIndex(id);
+		if (index < 0) { printf("machine-check %llu FAIL (no drawn character)\n", (unsigned long long)id); return true; }
+		const simlink::Dynamic& d = it->second.cur;
+		double slot[3] = {}, yaw = 0;
+		std::string clip;
+		if (!(d.flags & simlink::kInMachine) || !d.hasMachine) { printf("machine-check %llu FAIL (bit 26 clear, flags 0x%x)\n", (unsigned long long)id, d.flags); return true; }
+		const bool ok = cx.buildings.machineSlot(d.mSpace, d.mBuilding, d.mPiece, d.mSlot, slot, yaw, clip);
+		double node[3], root[3] = {};
+		chars.nodeWorld((size_t)index, node);
+		const bool haveRoot = chars.boneWorld((size_t)index, "Bip01", root);
+		const double dxz = std::hypot(node[0] - slot[0], node[2] - slot[2]), dy = node[1] - slot[1];
+		printf("machine %llu building %llu piece %u slot %u resolved %d slot %.2f %.2f %.2f yaw %.2f clip \"%s\" | node %.2f %.2f %.2f dxz %.2f dy %+.2f | Bip01 %.2f %.2f %.2f (%.2f from slot xz) | pose tail %.2f %.2f %.2f yaw %.2f\n", (unsigned long long)id, (unsigned long long)d.mBuilding, (unsigned)d.mPiece, (unsigned)d.mSlot,
+			ok ? 1 : 0, slot[0], slot[1], slot[2], yaw, clip.c_str(), node[0], node[1], node[2], dxz, dy, root[0], root[1], root[2], haveRoot ? std::hypot(root[0] - slot[0], root[2] - slot[2]) : -1.0, d.pose[0], d.pose[1], d.pose[2], d.pose[3]);
+		printf("machine-check %llu %s\n", (unsigned long long)id, ok && dxz < 3.0 && std::fabs(dy) < 2.0 ? "PASS" : "FAIL");
+		return true;
+	}
 	if (a.size() == 1 && a[0] == "chars")	// dump chars: every character on the wire (id, name, flags, position, yaw, CHAR_MEDICAL severed part bits, CHAR_STATS goal/strength/encumbrance, the AI tail goal/source/step/target, the stats window tail carry/resist/each skill's bar; stdout)
 	{
 		for (const auto& [id, ch] : sim.decoder().chars)
@@ -837,8 +864,11 @@ bool dumpOp(const Context& cx, const std::vector<std::string>& a)
 			const auto med = sim.decoder().medical.find(id);
 			char rest[96] = "";
 			if (ch.cur.hasRest) { snprintf(rest, sizeof rest, " rest %.2f %.2f %.2f restYaw %.2f", ch.cur.pos[0], ch.cur.pos[1], ch.cur.pos[2], ch.cur.restYaw); }
-			char mounted[48] = "";
+			char machine[96] = "";
+			if (ch.cur.flags & simlink::kInMachine) { snprintf(machine, sizeof machine, " MACHINE bit26 space %u building %llu piece %u slot %u%s", (unsigned)ch.cur.mSpace, (unsigned long long)ch.cur.mBuilding, (unsigned)ch.cur.mPiece, (unsigned)ch.cur.mSlot, ch.cur.hasMachine ? "" : " (no tail)"); }
+			char mounted[160] = "";
 			if (ch.cur.flags & simlink::kMounted) { snprintf(mounted, sizeof mounted, " MOUNTED turret %llu", (unsigned long long)ch.cur.turret); }
+			strncat(mounted, machine, sizeof mounted - strlen(mounted) - 1);
 			printf("char %llu \"%s\" race %s (%s) flags 0x%x%s%s%s at %.0f %.0f %.0f building %llu floor %d yaw %.2f severed 0x%x%s\n", (unsigned long long)id, sim.decoder().str(ch.look.name).c_str(), sim.decoder().str(ch.look.race).c_str(), chars.nameOf(sim.decoder().str(ch.look.race)).c_str(), ch.cur.flags, ch.cur.flags & simlink::kHostile ? " HOSTILE" : "", ch.cur.flags & simlink::kIndoors ? " INDOORS" : "", mounted, at[0], at[1], at[2], (unsigned long long)ch.cur.building, (int)ch.cur.floor, ch.cur.yaw, med == sim.decoder().medical.end() ? 0 : med->second.severed, rest);
 			const auto cs = sim.decoder().charStats.find(id);
 			if (cs != sim.decoder().charStats.end())

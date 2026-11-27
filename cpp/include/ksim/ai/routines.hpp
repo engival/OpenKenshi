@@ -718,6 +718,7 @@ struct Piece
 	bool hasIn = false;
 	double inX = 0.0;
 	double inZ = 0.0;
+	std::uint16_t piece = 0xFFFF; // LayoutPiece::index of the layout piece (the machine tail's `piece`)
 };
 
 // Classifies a layout's pieces against the BUILDING records (None are dropped).
@@ -794,6 +795,7 @@ struct SiteEntry
 	bool hasIn = false; // a cage: the occupant stands at (inX, inZ), the cage's centre, not at the walk spot (x, z)
 	double inX = 0.0;
 	double inZ = 0.0;
+	std::uint16_t piece = 0xFFFF; // the layout piece (Piece::piece); 0xFFFF for a synthetic site
 	double occupantX() const noexcept { return hasIn ? inX : x; }
 	double occupantZ() const noexcept { return hasIn ? inZ : z; }
 };

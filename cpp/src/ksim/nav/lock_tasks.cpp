@@ -151,6 +151,7 @@ void Simulation::leaveCage(std::uint64_t id, std::uint16_t goal, bool escape)
 		logTask(line.str());
 	}
 	f->cageBuilding = 0;
+	f->leaveMachine();
 	f->cageSlot = 0;
 	if (escape && f->slaveState == 1)
 		setSlaveState(id, 2);
@@ -486,6 +487,7 @@ std::string Simulation::orderShackleAction(std::uint64_t actor, std::uint64_t we
 	state::Fighter* f = combat_->find(actor);
 	CombatArena::endFollow(*f);
 	f->asleep = false;
+	f->leaveBed();
 	const bool cage = action >= kPickCageAction;
 	const std::uint8_t shackleAction = cage ? static_cast<std::uint8_t>(action - kPickCageAction + kPickShacklesAction) : action;
 	const std::uint16_t task = cage

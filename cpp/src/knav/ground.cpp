@@ -28,6 +28,19 @@ namespace
 
 using P3 = std::array<double, 3>;
 
+// The signed loop area a corner removal takes away: the loop runs b -> v -> a (the boundary edge v -> a leaves v; a = the ring's first vertex)
+double loopCut(const P3& a, const P3& v, const P3& b)
+{
+	return 0.5 * ((b[0] * v[2] - v[0] * b[2]) + (v[0] * a[2] - a[0] * v[2]) - (b[0] * a[2] - a[0] * b[2]));
+}
+
+double segDist(const P3& a, const P3& b, const P3& c)	// xz distance of point c to segment a-b
+{
+	const double dx = b[0] - a[0], dz = b[2] - a[2], len2 = dx * dx + dz * dz;
+	const double u = len2 < 1e-12 ? 0 : std::clamp(((c[0] - a[0]) * dx + (c[2] - a[2]) * dz) / len2, 0.0, 1.0);
+	return std::hypot(c[0] - (a[0] + u * dx), c[2] - (a[2] + u * dz));
+}
+
 // Orientation in xz: > 0 when a, b, c turn counter-clockwise (x right, z up on the page).
 double cross2(const P3& a, const P3& b, const P3& c)
 {
@@ -65,6 +78,14 @@ bool properCross(const P3& p0, const P3& p1, const P3& q0, const P3& q1)
 {
 	const double d1 = cross2(p0, p1, q0), d2 = cross2(p0, p1, q1), d3 = cross2(q0, q1, p0), d4 = cross2(q0, q1, p1);
 	return ((d1 > 1e-9 && d2 < -1e-9) || (d1 < -1e-9 && d2 > 1e-9)) && ((d3 > 1e-9 && d4 < -1e-9) || (d3 < -1e-9 && d4 > 1e-9));
+}
+
+// The two triangles of a terrain cell a (i,j), b (i+1,j), c (i,j+1), d (i+1,j+1): always split on a-d, as the original does (every shipped
+// vertex that tells the diagonals apart lies on it; kenshi-ffmi.24.1). Every place that splits a cell goes through here.
+template <class T>
+std::array<std::array<T, 3>, 2> cellSplit(const T& a, const T& b, const T& c, const T& d)
+{
+	return { { { a, b, d }, { a, d, c } } };
 }
 
 struct Tri
@@ -173,6 +194,7 @@ struct PreparedCutter
 	Box2 box;
 	std::vector<CutTri> tris;
 	std::vector<Wall> walls;	// Projected only
+	bool band = false;	// cuts only where a surface lies in the rwh293 band (ground + cutBase .. + characterHeight): no solid inferred from hit parity or pairs
 	// xz cells of 32 u -> triangles whose box touches the cell, built on first use (the deck test's vertical queries)
 	mutable std::unordered_map<uint64_t, std::vector<int>> cells;
 	mutable bool indexed = false;
@@ -231,31 +253,11 @@ void trisNear(const PreparedCutter& pc, const Box2& box, double tol, std::vector
 	}
 }
 
-// The cutter's surface heights straight over / under q, by the cell index.
-// Each hit with whether it faces up (the cooker's winding: cross2 < 0 in the generator's order, CutTri::sign < 0).
-void hitsIndexed(const PreparedCutter& pc, const P2& q, std::vector<std::pair<double, bool>>& hits)
-{
-	buildIndex(pc);
-	const auto it = pc.cells.find(cellKeyOf((int64_t)std::floor(q[0] / kIndexCell), (int64_t)std::floor(q[1] / kIndexCell)));
-	if (it == pc.cells.end())
-		return;
-	for (const int k : it->second)
-	{
-		const CutTri& t = pc.tris[k];
-		if (!t.box.contains(q))
-			continue;
-		bool inside = true;
-		for (int i = 0; i < 3 && inside; ++i)
-			inside = t.sign * t.edge[i].at(q) >= -1e-9;
-		if (inside)
-			hits.push_back({ t.A * q[0] + t.B * q[1] + t.C, t.sign < 0 });
-	}
-}
-
 PreparedCutter prepare(const Cutter& c)
 {
 	PreparedCutter pc;
 	pc.src = &c;
+	pc.band = !c.projected && (c.label == "foliage" || c.label.rfind("feature @", 0) == 0);
 	pc.box.add(c.min[0], c.min[2]);
 	pc.box.add(c.max[0], c.max[2]);
 	for (size_t k = 0; k + 2 < c.tris.size(); k += 3)
@@ -367,6 +369,7 @@ public:
 		}
 	}
 	void tops(const std::vector<Cutter>& cutters, const Params& prm, Stats& st);
+	bool buildingAt(const P2& q, double y) const;	// a building cutter takes the ground out at q (xz) over height y
 	native::Mesh finish(const std::vector<std::array<double, 2>>& seeds, Stats& st);
 
 private:
@@ -375,6 +378,9 @@ private:
 		double cost = 0;
 		std::vector<int> ring;
 		std::vector<std::array<int, 3>> tris;
+		double key = 0;		// the queue order: an inner vertex by its height error, a border vertex after those by its cap area (smallest first, the original's order)
+		double cut = 0;		// a border removal: the signed loop area it takes away
+		bool border = false;
 		int pa = -1, pb = -1;	// straighten: the border chord the removal makes and the original outline points it now stands for
 		std::vector<P3> owned;
 	};
@@ -384,6 +390,19 @@ private:
 	std::unordered_set<int> pinchV_;	// straighten: vertices where two pieces touch (a zero-width pinch)
 	void indexOutline();
 	bool pinched(const Plan& plan, int v) const;
+	bool loopGuard(int v, int a, int b, double cut) const;
+	void indexLoops();
+	void classifyBorder(Stats& st);
+	std::vector<uint8_t> bld_, nearRim_;	// materialRule: per vertex, on a building-owned border loop / on a terrain loop within rimBand of the window rim
+	void addLoopSeg(int s, int e, int loop);
+	std::vector<int> loopOf_;	// vertex -> its border loop (-1: none, or a pinched one: no guard)
+	std::vector<double> loopArea_;	// the loops' signed xz area, carried through the removals
+	struct LoopSeg { int s, e, loop; };
+	std::vector<LoopSeg> loopSegs_;	// the loops' edges, the removed ones skipped; a chord is added when a corner goes
+	std::unordered_map<int64_t, std::vector<int>> loopCells_;	// 8 u cells -> loopSegs_ indexes
+public:
+	std::size_t refusedLoop_ = 0, refusedCorridor_ = 0, refusedDepth_ = 0;	// evaluations a guard refused (a vertex is evaluated more than once)
+private:
 	std::map<std::pair<int, int>, std::vector<P3>> dropped_;	// straighten: per border edge (smaller id first), the outline points dropped under it
 	static std::pair<int, int> edgeKey(int a, int b) { return { std::min(a, b), std::max(a, b) }; }
 
@@ -441,9 +460,7 @@ private:
 		Line edge[3];
 	};
 	void terrTris(int i, int j, TerrTri out[2]) const;
-	double terrainAt(double x, double z) const;
 	int topVertex(double x, double y, double z);
-	double clearUnder(const P2& q, double y) const;
 	void linkTops(std::vector<std::vector<int>>& poly, std::vector<uint8_t>& dead, std::vector<uint8_t>& isTop, std::unordered_map<uint64_t, int>& owner,
 		std::vector<Link>& links, std::vector<std::pair<int, int>>& touching, Stats& st);
 };
@@ -470,10 +487,7 @@ void Gen::build(Stats& st)
 		{
 			const int a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;	// a (i,j)  b (i+1,j)  c (i,j+1)  d (i+1,j+1)
 			++st.cells;
-			// the diagonal with the smaller height step follows ridges and valleys
-			const bool ad = std::fabs(P_[a][1] - P_[d][1]) <= std::fabs(P_[b][1] - P_[c][1]);
-			const std::array<std::array<int, 3>, 2> two = ad ? std::array<std::array<int, 3>, 2>{ { { a, b, d }, { a, d, c } } }
-				: std::array<std::array<int, 3>, 2>{ { { a, b, c }, { b, d, c } } };
+			const std::array<std::array<int, 3>, 2> two = cellSplit(a, b, c, d);
 			for (const auto& t : two)
 			{
 				if (!walkable(P_[t[0]], P_[t[1]], P_[t[2]]))
@@ -526,6 +540,33 @@ void Gen::build(Stats& st)
 	side(nz, [&](int k) { return k * nx + nx - 1; });
 	for (size_t v = 0; v < P_.size(); ++v)
 		st.rimKept += rim_[v] && fixed_[v];
+}
+
+// Whether the cutter takes the ground out at m (xz) over ground height g: the span rule of cutByCutter on the hits at m (sorted heights, a copy is
+// edited).
+bool cutterDrops(const PreparedCutter& pc, const P2& m, double g, double lo, double hi, std::vector<double>& hits)
+{
+	bool drop = false;
+	if (pc.src->projected)
+	{
+		// any surface over it, or inside the walls' outline (an open shell, no caps): even-odd crossings of a ray towards +x
+		bool in = false;
+		for (const Wall& wall : pc.walls)
+			if ((wall.a[1] > m[1]) != (wall.b[1] > m[1]) && m[0] < wall.a[0] + (m[1] - wall.a[1]) * (wall.b[0] - wall.a[0]) / (wall.b[1] - wall.a[1]))
+				in = !in;
+		drop = in || !hits.empty();
+	} else {
+		const double y0 = g + lo, y1 = g + hi;
+		for (const double h : hits)
+			drop = drop || (h > y0 && h < y1);
+		if (pc.band)
+			return drop;
+		if (hits.size() % 2)
+			hits.insert(hits.begin(), -1e300);	// a shell open at the bottom (a rock sunk in the ground)
+		for (size_t k = 0; k + 1 < hits.size() && !drop; k += 2)
+			drop = hits[k] < y1 && hits[k + 1] > y0;
+	}
+	return drop;
 }
 
 // Cuts `pieces` (convex xz polygons lying on the plane y = gA x + gB z + gC) by one cutter: split along its triangles' xz edges and the lines where
@@ -619,24 +660,7 @@ std::size_t cutByCutter(const PreparedCutter& pc, std::vector<std::vector<P2>>& 
 			const double g = gA * m[0] + gB * m[1] + gC;
 			if (skipSelf >= 0)
 				hits.erase(std::remove_if(hits.begin(), hits.end(), [&](double h) { return std::fabs(h - g) <= skipSelf; }), hits.end());
-			bool drop = false;
-			if (pc.src->projected)
-			{
-				// any surface over it, or inside the walls' outline (an open shell, no caps): even-odd crossings of a ray towards +x
-				bool in = false;
-				for (const Wall& wall : pc.walls)
-					if ((wall.a[1] > m[1]) != (wall.b[1] > m[1]) && m[0] < wall.a[0] + (m[1] - wall.a[1]) * (wall.b[0] - wall.a[0]) / (wall.b[1] - wall.a[1]))
-						in = !in;
-				drop = in || !hits.empty();
-			} else {
-				const double y0 = g + lo, y1 = g + hi;
-				for (const double h : hits)
-					drop = drop || (h > y0 && h < y1);
-				if (hits.size() % 2)
-					hits.insert(hits.begin(), -1e300);	// a shell open at the bottom (a rock sunk in the ground)
-				for (size_t k = 0; k + 1 < hits.size() && !drop; k += 2)
-					drop = hits[k] < y1 && hits[k + 1] > y0;
-			}
+			const bool drop = cutterDrops(pc, m, g, lo, hi, hits);
 			nodes[at].kept = !drop;
 			dropped += drop;
 		}
@@ -1149,12 +1173,16 @@ bool Gen::evaluate(int v, Plan& plan)
 		return false;
 
 	const P3& V = P_[v];
+	double capArea = 0;
+	plan.border = boundary;
+	plan.cut = 0;
 	if (boundary)
 	{
 		const int p = plan.ring.front(), n = plan.ring.back();
 		const P3& A = P_[p], & B = P_[n];
 		const double turn = cross2(V, A, B);	// > 0: the walkable wedge at v is under 180 deg, a convex corner
 		const double area = std::fabs(turn) * 0.5;
+		capArea = area;
 		const double dx = B[0] - A[0], dz = B[2] - A[2], len2 = dx * dx + dz * dz;
 		if (len2 < 1e-6)
 			return false;
@@ -1165,7 +1193,13 @@ bool Gen::evaluate(int v, Plan& plan)
 		{
 			if (area > 1e-6 || chord > prm_.heightError)
 				return false;
+		} else if (prm_.materialRule && bld_[v]) {
+			// a building-owned loop: only a corner on its chord goes (the original keeps every corner of a building shape's loop)
+			if (std::sqrt(len2) < 1e-3 || std::fabs(turn) / std::sqrt(len2) > prm_.buildingTol || chord > prm_.buildingTol)
+				return false;
 		} else {
+			const bool nearRim = prm_.materialRule && nearRim_[v];
+			const double limArea = nearRim ? prm_.rimBorderArea : prm_.borderArea, limHeight = nearRim ? prm_.rimBorderHeight : prm_.borderHeight;
 			bool bounded = false;	// straighten: the chord stands for the outline points it drops within slopXZ / slopY, and joins no pinch
 			if (prm_.straighten)
 			{
@@ -1191,7 +1225,15 @@ bool Gen::evaluate(int v, Plan& plan)
 				}
 			}
 			// a removal that drifts past the straighten bound may still pass the production rule (small area, small chord)
-			if (!bounded && (area > (turn > 0 ? prm_.borderArea : prm_.concaveArea) || chord > prm_.borderHeight))
+			if (!bounded && (area > (turn > 0 ? limArea : prm_.concaveArea) || chord > (turn > 0 ? limHeight : prm_.concaveHeight)))
+				return false;
+			// a long thin cut is under the area rule yet takes a corner of a passage off (the Hub bar's stoop: two 3 u cuts left 8 u of 14)
+			if (turn > 0 && std::fabs(turn) > prm_.borderDepth * std::sqrt(len2))
+			{
+				++refusedDepth_;
+				return false;
+			}
+			if (turn > 0 && !loopGuard(v, p, n, loopCut(A, V, B)))
 				return false;
 		}
 		// the closing edge n -> p must not cross the ring
@@ -1232,11 +1274,22 @@ bool Gen::evaluate(int v, Plan& plan)
 	if (worst > prm_.heightError)
 		return false;
 	plan.cost = worst;
+	if (boundary)
+	{
+		const P3& A = P_[plan.ring.front()], & B = P_[plan.ring.back()];
+		plan.cut = loopCut(A, V, B);
+	}
+	plan.key = boundary && prm_.areaOrder ? 1e6 + capArea : worst;
 	return true;
 }
 
 void Gen::apply(int v, const Plan& plan)
 {
+	if (plan.border && v < (int)loopOf_.size() && loopOf_[v] >= 0)
+	{
+		loopArea_[loopOf_[v]] -= plan.cut;
+		addLoopSeg(plan.ring.front(), plan.ring.back(), loopOf_[v]);
+	}
 	if (plan.pa >= 0)
 	{
 		dropped_.erase(edgeKey(plan.pa, v));
@@ -1346,16 +1399,224 @@ bool Gen::pinched(const Plan& plan, int v) const
 	return false;
 }
 
+// The border loops before the pass: each loop's signed xz area and its edges in an 8 u grid (the guards below). A vertex with two outgoing
+// border edges (a pinch) puts its loop out of the guard: -1.
+void Gen::indexLoops()
+{
+	loopOf_.assign(P_.size(), -1);
+	loopArea_.clear();
+	loopSegs_.clear();
+	loopCells_.clear();
+	std::set<std::pair<int, int>> dir;
+	for (const Tri& t : T_)
+		if (t.alive)
+			for (int k = 0; k < 3; ++k)
+				dir.insert({ t.v[k], t.v[(k + 1) % 3] });
+	std::unordered_map<int, int> next;
+	std::unordered_set<int> pinch;
+	for (const auto& [a, b] : dir)
+		if (!dir.count({ b, a }))
+			if (!next.emplace(a, b).second)
+				pinch.insert(a);
+	std::unordered_set<int> seen;
+	for (const auto& [start, first] : next)
+	{
+		if (seen.count(start))
+			continue;
+		std::vector<int> loop;
+		bool ok = true;
+		for (int u = start; !seen.count(u); )
+		{
+			seen.insert(u);
+			loop.push_back(u);
+			ok = ok && !pinch.count(u);
+			const auto it = next.find(u);
+			if (it == next.end())
+			{
+				ok = false;
+				break;
+			}
+			u = it->second;
+			if (u == start)
+				break;
+		}
+		if (!ok || next.at(loop.back()) != start)
+			continue;
+		const int id = (int)loopArea_.size();
+		double area = 0;
+		for (size_t i = 0; i < loop.size(); ++i)
+		{
+			const P3& p = P_[loop[i]], & q = P_[loop[(i + 1) % loop.size()]];
+			area += p[0] * q[2] - q[0] * p[2];
+			loopOf_[loop[i]] = id;
+			addLoopSeg(loop[i], loop[(i + 1) % loop.size()], id);
+		}
+		loopArea_.push_back(area * 0.5);
+	}
+}
+
+void Gen::addLoopSeg(int s, int e, int loop)
+{
+	loopSegs_.push_back({ s, e, loop });
+	const P3& S = P_[s], & E = P_[e];
+	const int c0x = (int)std::floor(std::min(S[0], E[0]) / 8), c1x = (int)std::floor(std::max(S[0], E[0]) / 8);
+	const int c0z = (int)std::floor(std::min(S[2], E[2]) / 8), c1z = (int)std::floor(std::max(S[2], E[2]) / 8);
+	for (int cx = c0x; cx <= c1x; ++cx)
+		for (int cz = c0z; cz <= c1z; ++cz)
+			loopCells_[cellKey(cx, cz)].push_back((int)loopSegs_.size() - 1);
+}
+
+// The original's two border-loop guards on a convex removal of v (chord a-b; `cut` is the signed loop area it takes away), as the helper
+// measured them (rwh291; FUN_140de3df0 / FUN_140de1e10): the loop through v may not shrink to 0.75 of its area or flip its sign, and a corridor
+// between the loop's own stretches (min 4 / max 6 u) that the chord would narrow from within the maximum to under the minimum keeps its corner.
+// UNSURE: the corridor test's exact form, and its "both sides the same region" condition (every ground loop here is one region, so it is not
+// tested); only loop-internal corridors are seen. The loop area is carried, the corridor test looks at the loop's edges within reach of the chord.
+bool Gen::loopGuard(int v, int a, int b, double cut) const
+{
+	if (v >= (int)loopOf_.size() || loopOf_[v] < 0)
+		return true;
+	const int loop = loopOf_[v];
+	const double area = loopArea_[loop], after = area - cut;
+	if (after * area <= 0 || std::fabs(after) <= prm_.loopShrink * std::fabs(area))
+	{
+		const_cast<Gen*>(this)->refusedLoop_++;
+		return false;
+	}
+	const P3& A = P_[a], & B = P_[b], & V = P_[v];
+	const double r = prm_.corridorMax;
+	const int c0x = (int)std::floor((std::min(A[0], B[0]) - r) / 8), c1x = (int)std::floor((std::max(A[0], B[0]) + r) / 8);
+	const int c0z = (int)std::floor((std::min(A[2], B[2]) - r) / 8), c1z = (int)std::floor((std::max(A[2], B[2]) + r) / 8);
+	std::vector<int> seen;
+	for (int cx = c0x; cx <= c1x; ++cx)
+		for (int cz = c0z; cz <= c1z; ++cz)
+		{
+			const auto it = loopCells_.find(cellKey(cx, cz));
+			if (it == loopCells_.end())
+				continue;
+			for (const int k : it->second)
+			{
+				const LoopSeg& g = loopSegs_[k];
+				if (g.loop != loop || removed_[g.s] || removed_[g.e] || g.s == v || g.e == v || g.s == a || g.e == b
+					|| std::find(seen.begin(), seen.end(), k) != seen.end())
+					continue;
+				seen.push_back(k);
+				const P3& S = P_[g.s], & E = P_[g.e];
+				const double before = std::min({ segDist(S, E, V), segDist(S, E, A), segDist(S, E, B) });
+				const double now = std::min({ segDist(A, B, S), segDist(A, B, E), segDist(S, E, A), segDist(S, E, B) });
+				if (before <= prm_.corridorMax && now < prm_.corridorMin && now < before)
+				{
+					const_cast<Gen*>(this)->refusedCorridor_++;
+					return false;
+				}
+			}
+		}
+	return true;
+}
+
+bool Gen::buildingAt(const P2& q, double y) const
+{
+	static thread_local std::vector<double> hits;
+	static thread_local std::vector<int> near;
+	for (const PreparedCutter& pc : pcs_)
+	{
+		if (pc.src->prebuilt || !pc.box.contains(q) || materialOfLabel(pc.src->label) != Material::Building)
+			continue;
+		hitsAt(pc, q, hits, near);
+		if (cutterDrops(pc, q, y, prm_.cutBase, prm_.characterHeight, hits))
+			return true;
+	}
+	return false;
+}
+
+// materialRule: which rule each border vertex takes. A loop is building-owned when a building cutter takes the ground out just beside any of its
+// edges (an edge on the window rim has no owner: the window ends there); the whole loop then keeps its corners. A loop (open at the rim or not) with a
+// vertex within rimBand of the window rim takes the rim rule. A vertex on no loop (a pinch) goes by its own edges.
+void Gen::classifyBorder(Stats& st)
+{
+	bld_.assign(P_.size(), 0);
+	nearRim_.assign(P_.size(), 0);
+	const double x1 = g_.x0 + (g_.nx - 1) * g_.step, z1 = g_.z0 + (g_.nz - 1) * g_.step;
+	std::set<std::pair<int, int>> dir;
+	for (const Tri& t : T_)
+		if (t.alive)
+			for (int k = 0; k < 3; ++k)
+				dir.insert({ t.v[k], t.v[(k + 1) % 3] });
+	std::map<int, std::vector<int>> byLoop;	// loop id -> its vertices
+	std::vector<char> loopBld(loopArea_.size(), 0), loopRim(loopArea_.size(), 0), loopRimEdge(loopArea_.size(), 0);
+	const auto near = [&](int v)
+	{
+		const P3& p = P_[v];
+		return std::min({ p[0] - g_.x0, x1 - p[0], p[2] - g_.z0, z1 - p[2] }) < prm_.rimBand;
+	};
+	for (const Tri& t : T_)
+	{
+		if (!t.alive)
+			continue;
+		for (int k = 0; k < 3; ++k)
+		{
+			const int a = t.v[k], b = t.v[(k + 1) % 3];
+			if (dir.count({ b, a }))
+				continue;
+			const P3& A = P_[a], & B = P_[b], & W = P_[t.v[(k + 2) % 3]];
+			const double dx = B[0] - A[0], dz = B[2] - A[2], len = std::hypot(dx, dz);
+			if (len < 1e-9)
+				continue;
+			const bool onRim = (rim_[a] & rim_[b]) != 0;
+			bool bld = false;
+			if (!onRim)
+			{
+				const double side = cross2(A, B, W) > 0 ? -1 : 1;	// away from the triangle
+				const P2 q = { (A[0] + B[0]) / 2 + side * 0.05 * -dz / len, (A[2] + B[2]) / 2 + side * 0.05 * dx / len };
+				bld = buildingAt(q, (A[1] + B[1]) / 2);
+			}
+			const int lp = loopOf_[a];
+			for (const int v : { a, b })
+			{
+				bld_[v] = bld_[v] | bld;
+				nearRim_[v] = nearRim_[v] | (uint8_t)near(v);
+			}
+			if (lp >= 0)
+			{
+				loopBld[lp] = loopBld[lp] | bld;
+				loopRimEdge[lp] = loopRimEdge[lp] | onRim;
+			}
+		}
+	}
+	for (int v = 0; v < (int)P_.size(); ++v)
+		if (loopOf_[v] >= 0)
+			byLoop[loopOf_[v]].push_back(v);
+	for (const auto& [lp, vs] : byLoop)
+	{
+		bool b = loopBld[lp], r = false;
+		for (const int v : vs)
+			r = r || nearRim_[v];
+		if (loopRimEdge[lp])
+			b = false;	// the window's outer loop: its building parts are flagged edge by edge
+		for (const int v : vs)
+		{
+			if (!loopRimEdge[lp])
+				bld_[v] = bld_[v] | b;
+			nearRim_[v] = nearRim_[v] | r;
+		}
+		st.buildingLoops += b;
+		st.rimLoops += !b && r;
+		st.terrainLoops += !b && !r;
+	}
+}
+
 void Gen::simplify(Stats& st)
 {
 	if (prm_.straighten)
 		indexOutline();
+	indexLoops();
+	if (prm_.materialRule)
+		classifyBorder(st);
 	using Item = std::tuple<double, int, uint32_t>;
 	std::priority_queue<Item, std::vector<Item>, std::greater<Item>> pq;
 	Plan plan;
 	for (int v = 0; v < (int)P_.size(); ++v)
 		if (evaluate(v, plan))
-			pq.push({ plan.cost, v, stamp_[v] });
+			pq.push({ plan.key, v, stamp_[v] });
 	while (!pq.empty())
 	{
 		const auto [cost, v, stamp] = pq.top();
@@ -1364,12 +1625,18 @@ void Gen::simplify(Stats& st)
 			continue;
 		if (!evaluate(v, plan))
 			continue;
-		if (plan.cost > cost + 1e-9 && !pq.empty() && plan.cost > std::get<0>(pq.top()))
+		if (plan.key > cost + 1e-9 && !pq.empty() && plan.key > std::get<0>(pq.top()))
 		{
-			pq.push({ plan.cost, v, ++stamp_[v] });
+			pq.push({ plan.key, v, ++stamp_[v] });
 			continue;
 		}
 		st.maxError = std::max(st.maxError, plan.cost);
+		if (plan.border && prm_.materialRule)
+		{
+			st.removedBuilding += bld_[v];
+			st.removedRim += !bld_[v] && nearRim_[v];
+			st.removedTerrain += !bld_[v] && !nearRim_[v];
+		}
 		apply(v, plan);
 		++st.removed;
 		const std::vector<int> ring = plan.ring;
@@ -1377,23 +1644,24 @@ void Gen::simplify(Stats& st)
 		{
 			++stamp_[r];
 			if (evaluate(r, plan))
-				pq.push({ plan.cost, r, stamp_[r] });
+				pq.push({ plan.key, r, stamp_[r] });
 		}
 	}
+	st.refusedLoop = refusedLoop_;
+	st.refusedCorridor = refusedCorridor_;
+	st.refusedDepth = refusedDepth_;
 }
 
 // ---- walkable tops (NAVMESH_GENERATOR.md section 12 steps 1-5) ----
 
-// The two terrain triangles of grid cell (i, j), the diagonal that follows the ground, as build() splits them.
+// The two terrain triangles of grid cell (i, j), split as build() does (cellSplit).
 void Gen::terrTris(int i, int j, TerrTri out[2]) const
 {
 	const int nx = g_.nx;
 	const int a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
 	const auto pt = [&](int id) { return P3{ g_.x0 + (id % nx) * g_.step, g_.y[id], g_.z0 + (id / nx) * g_.step }; };
 	const P3 pa = pt(a), pb = pt(b), pc = pt(c), pd = pt(d);
-	const bool ad = std::fabs(pa[1] - pd[1]) <= std::fabs(pb[1] - pc[1]);
-	const std::array<std::array<P3, 3>, 2> tri = ad ? std::array<std::array<P3, 3>, 2>{ { { pa, pb, pd }, { pa, pd, pc } } }
-		: std::array<std::array<P3, 3>, 2>{ { { pa, pb, pc }, { pb, pd, pc } } };
+	const std::array<std::array<P3, 3>, 2> tri = cellSplit(pa, pb, pc, pd);
 	for (int t = 0; t < 2; ++t)
 	{
 		TerrTri& o = out[t];
@@ -1410,17 +1678,6 @@ void Gen::terrTris(int i, int j, TerrTri out[2]) const
 			o.edge[k] = Line{ -dz / len, dx / len, (dz * p[0] - dx * p[2]) / len };
 		}
 	}
-}
-
-double Gen::terrainAt(double x, double z) const
-{
-	const int i = std::clamp((int)std::floor((x - g_.x0) / g_.step), 0, g_.nx - 2), j = std::clamp((int)std::floor((z - g_.z0) / g_.step), 0, g_.nz - 2);
-	TerrTri tt[2];
-	terrTris(i, j, tt);
-	const P2 q = { x, z };
-	const bool first = tt[0].edge[0].at(q) >= -1e-9 && tt[0].edge[1].at(q) >= -1e-9 && tt[0].edge[2].at(q) >= -1e-9;
-	const TerrTri& t = first ? tt[0] : tt[1];
-	return t.A * x + t.B * z + t.C;
 }
 
 int Gen::topVertex(double x, double y, double z)
@@ -1441,46 +1698,11 @@ int Gen::topVertex(double x, double y, double z)
 	return v;
 }
 
-// The clear space straight under a feature face at height y over q (xz): going down, the first surface under the face tells what the face is.
-// An underside (down-facing): the face is the top of a solid, which ends there: the clear space is from that underside to the next top surface or
-// the terrain, and none when the underside is not above the terrain (a solid standing in the ground). A top surface (up-facing) or nothing: the
-// face is a sheet, clear down to that surface or the terrain. (The cooker's outward winding, as surfgen reads open meshes.)
-double Gen::clearUnder(const P2& q, double y) const
-{
-	std::vector<std::pair<double, bool>> hits, one;	// height, up-facing
-	for (const PreparedCutter& pc : pcs_)
-	{
-		if (!pc.box.contains(q))
-			continue;
-		one.clear();
-		hitsIndexed(pc, q, one);
-		for (const auto& h : one)
-			if (h.first < y - 0.05)
-				hits.push_back(h);
-	}
-	const double t = terrainAt(q[0], q[1]);
-	std::sort(hits.begin(), hits.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-	if (hits.empty())
-		return y - t;
-	if (hits[0].second)
-		return y - std::max(t, hits[0].first);
-	if (hits[0].first <= t)
-		return 0;
-	double next = t;
-	for (size_t i = 1; i < hits.size(); ++i)
-		if (hits[i].second)
-		{
-			next = std::max(t, hits[i].first);
-			break;
-		}
-	return hits[0].first - next;
-}
-
 void Gen::tops(const std::vector<Cutter>& cutters, const Params& prm, Stats& st)
 {
 	const auto t0 = std::chrono::steady_clock::now();
 	const double x1 = g_.x0 + (g_.nx - 1) * g_.step, z1 = g_.z0 + (g_.nz - 1) * g_.step;
-	const double minNy = std::cos(prm.topSlopeDeg * 3.14159265358979 / 180.0) - 1e-9;
+	const auto minNyOf = [](double deg) { return std::cos(deg * 3.14159265358979 / 180.0) - 1e-9; };
 	const std::array<Line, 4> window = { Line{ 1, 0, -g_.x0 }, Line{ -1, 0, x1 }, Line{ 0, 1, -g_.z0 }, Line{ 0, -1, z1 } };
 	const auto clipKeep = [](std::vector<P2>& p, const Line& L)
 	{
@@ -1511,6 +1733,9 @@ void Gen::tops(const std::vector<Cutter>& cutters, const Params& prm, Stats& st)
 		}
 		++st.topShapes;
 		int label = -1;
+		// a map feature is a plain Havok input: its top is walkable below 40 deg (kenshi-rwh.338), a building's by surfgen's limit
+		const double slopeDeg = materialOfLabel(c.label) == Material::Feature ? prm.featureSlopeDeg : prm.topSlopeDeg;
+		const double minNy = minNyOf(slopeDeg);
 		// the up-facing faces of the shape (normal() is w x u, y > 0 for the xz-counter-clockwise order cross2 takes; a mesh's outward normal is
 		// u x w, so up-facing is cross2 < 0), 200 u round the window so a deck's far end is known
 		struct Up
@@ -1545,73 +1770,6 @@ void Gen::tops(const std::vector<Cutter>& cutters, const Params& prm, Stats& st)
 			u.nyz = n[1] / len;
 			ups.push_back(u);
 		}
-		if (c.top == Cutter::Top::Deck)
-		{
-			// the deck rule: a face is a deck face when more than characterHeight is clear under at least half of it. A face of the same shape
-			// that touches a deck face and has clear space under any part of it is the deck's end (the span that meets the ground): it stays too,
-			// a face that stands solid on the ground (a cliff block's top) never qualifies. Second condition (F1): a shape whose seed faces cover less than
-			// deckShapeShare of its up-facing area is no deck at all (a cliff block overhangs the terrain but its tops are rock, not a span).
-			for (Up& u : ups)
-			{
-				const P3& a = c.tris[u.k], & b = c.tris[u.k + 1], & d = c.tris[u.k + 2];
-				const int sub = std::clamp((int)std::ceil(std::sqrt(u.area / 100)), 1, 4);
-				int clear = 0, total = 0;
-				for (int i = 0; i < sub; ++i)
-					for (int j = 0; i + j < sub; ++j)
-						for (int down = 0; down < 2 && i + j + down < sub; ++down)
-						{
-							const double s1 = (i + (down ? 2.0 : 1.0) / 3) / sub, s2 = (j + (down ? 2.0 : 1.0) / 3) / sub;
-							const P2 q = { a[0] + s1 * (b[0] - a[0]) + s2 * (d[0] - a[0]), a[2] + s1 * (b[2] - a[2]) + s2 * (d[2] - a[2]) };
-							const double room = clearUnder(q, u.fA * q[0] + u.fB * q[1] + u.fC);
-							++total;
-							clear += room > prm.characterHeight;
-							u.clearMax = std::max(u.clearMax, room);
-						}
-				u.seed = clear >= prm.deckShare * total - 1e-9 && clear > 0;
-				u.ok = u.seed;
-			}
-			// second conditions (F1): a slope cap for deck faces, and a shape-level share of seed area
-			const double capNy = std::cos(prm.deckMaxSlopeDeg * 3.14159265358979 / 180.0) - 1e-9;
-			double seedArea = 0, upArea = 0;
-			for (Up& u : ups)
-			{
-				u.steep = u.nyz < capNy;
-				if (u.steep)
-					u.seed = u.ok = false;
-				upArea += u.area;
-				seedArea += u.seed ? u.area : 0;
-			}
-			const bool shapeOk = seedArea >= prm.deckShapeShare * upArea - 1e-9 && seedArea > 0;
-			if (!shapeOk)
-				for (Up& u : ups)
-					u.seed = u.ok = false;
-			std::unordered_map<uint64_t, std::vector<size_t>> at;	// vertex (xz, y at 1e-2) -> faces
-			const auto vkey = [](const P3& p) { return cellKeyOf((int64_t)std::llround(p[0] * 1e2) ^ ((int64_t)std::llround(p[1] * 1e2) << 20), (int64_t)std::llround(p[2] * 1e2)); };
-			for (size_t i = 0; i < ups.size(); ++i)
-				for (int v = 0; v < 3; ++v)
-					at[vkey(c.tris[ups[i].k + v])].push_back(i);
-			std::vector<size_t> stack;
-			for (size_t i = 0; i < ups.size(); ++i)
-				if (ups[i].seed)
-					stack.push_back(i);
-			while (!stack.empty())
-			{
-				const size_t i = stack.back();
-				stack.pop_back();
-				for (int v = 0; v < 3; ++v)
-					for (const size_t j : at[vkey(c.tris[ups[i].k + v])])
-						if (!ups[j].ok && !ups[j].steep && ups[j].clearMax > prm.cutBase)
-						{
-							ups[j].ok = true;
-							stack.push_back(j);
-						}
-			}
-			for (const Up& u : ups)
-			{
-				st.deckTris += u.ok;
-				st.deckRejected += !u.ok;
-			}
-		}
 		// Step 1 by surfgen (kenshi-ffmi.7; section 12: "an object uses the same machinery as a building with no mask"): the kept up-facing
 		// triangles are the walkable shape, the whole object an obstacle shape for its own cuts (railings, posts), no mask, no pruning (the prune
 		// is step 4's). Its faces (merged, welded, the narrow cut) replace the raw triangles; steps 2-4 run on them as before. Without this every
@@ -1632,9 +1790,43 @@ void Gen::tops(const std::vector<Cutter>& cutters, const Params& prm, Stats& st)
 						s.vertices.push_back((float)(*q)[i]);
 				}
 			};
+			// A building's own other shapes cut its top as the original does (kenshi-k16.7.251, oracle rwh.337): on each INPUT triangle, whole:
+			// 4 samples (the centroid and the 3 corners pulled in to 0.51) that must all fall under the solid; the triangle is never clipped, so a
+			// thin plank across a long top leaves no hole. Before surfgen merges and cuts the top into other pieces.
+			std::vector<double> hits;
+			std::vector<int> near;
 			for (const Up& u : ups)
-				if (u.ok)
-					addTri(walk, c.tris[u.k], c.tris[u.k + 1], c.tris[u.k + 2]);
+			{
+				if (!u.ok)
+					continue;
+				const P3& a = c.tris[u.k], & b = c.tris[u.k + 1], & d = c.tris[u.k + 2];
+				const P3 n = normal(a, b, d);
+				const double fA = -n[0] / n[1], fB = -n[2] / n[1], fC = a[1] - fA * a[0] - fB * a[2];
+				const P2 cen = { (a[0] + b[0] + d[0]) / 3, (a[2] + b[2] + d[2]) / 3 };
+				const P2 samples[4] = { cen, { cen[0] + 0.51 * (a[0] - cen[0]), cen[1] + 0.51 * (a[2] - cen[1]) },
+					{ cen[0] + 0.51 * (b[0] - cen[0]), cen[1] + 0.51 * (b[2] - cen[1]) }, { cen[0] + 0.51 * (d[0] - cen[0]), cen[1] + 0.51 * (d[2] - cen[1]) } };
+				// each sample's ray starts 0.01 u below the face and reaches 18 u up; it hits any triangle of the building's other shapes
+				// (no span or inside-solid rule), and all 4 must hit (they may hit different shapes)
+				bool cut = true;
+				for (const P2& m : samples)
+				{
+					const double g = fA * m[0] + fB * m[1] + fC;
+					bool hit = false;
+					for (const PreparedCutter& pc : pcs_)
+					{
+						if (hit || pc.src == &c || pc.src->label != c.label || !pc.box.contains(m))
+							continue;
+						hitsAt(pc, m, hits, near);
+						for (const double h : hits)
+							hit = hit || (h >= g - 0.01 && h <= g - 0.01 + 18.0);
+					}
+					cut = cut && hit;
+					if (!cut)
+						break;
+				}
+				if (!cut)
+					addTri(walk, a, b, d);
+			}
 			for (size_t k = 0; k + 2 < c.tris.size(); k += 3)
 				addTri(whole, c.tris[k], c.tris[k + 1], c.tris[k + 2]);
 			for (kworld::WorldShape* s : { &walk, &whole })
@@ -1653,7 +1845,7 @@ void Gen::tops(const std::vector<Cutter>& cutters, const Params& prm, Stats& st)
 			in.shapes = { &walk, &whole };
 			in.paintDoors = false;
 			surfgen::Settings sg;
-			sg.slopeDegrees = prm.topSlopeDeg;
+			sg.slopeDegrees = slopeDeg;
 			sg.characterHeight = prm.characterHeight;
 			sg.cutBase = prm.cutBase;
 			sg.keepIslands = true;
@@ -1738,13 +1930,18 @@ void Gen::tops(const std::vector<Cutter>& cutters, const Params& prm, Stats& st)
 				continue;
 			// F4: the cut rule against every other solid above the face (surfgen cut the object by its own shape)
 			const Box2 fb = boxOf(poly);
+			// A prebuilt top (a building's zone side) is cut by every solid that is not its own building's (kenshi-k16.7.234: a tall wall piece of another
+			// building stood on the floor faces of Shark's wall complex and left a walkable lane under its body, round the end of the wall line)
 			for (const PreparedCutter& pc : pcs_)
 			{
-				if (pieces.empty() || c.prebuilt)
+				if (pieces.empty())
 					break;
-				if (pc.src == &c || !pc.box.overlaps(fb))
+				if (pc.src == &c || !pc.box.overlaps(fb) || pc.src->label == c.label)	// a building's own shapes cut the source triangles above
 					continue;
-				cutByCutter(pc, pieces, fA, fB, fC, prm.cutBase, prm.characterHeight, 0.05);
+				const std::size_t before = pieces.size();
+				const std::size_t dropped = cutByCutter(pc, pieces, fA, fB, fC, prm.cutBase, prm.characterHeight, 0.05);
+				if (c.prebuilt && (dropped > 0 || pieces.size() != before))
+					++st.topForeignCut;
 			}
 			for (const std::vector<P2>& piece : pieces)
 			{
@@ -2325,7 +2522,7 @@ native::Mesh Gen::finish(const std::vector<std::array<double, 2>>& seeds, Stats&
 					convex = m[k] != m[l];
 			for (size_t k = 0; k < m.size() && convex; ++k)
 				convex = cross2(P_[m[k]], P_[m[(k + 1) % m.size()]], P_[m[(k + 2) % m.size()]]) >= -1e-9;
-			if (!convex)
+			if (!convex || m.size() >= 255)	// the original's maxNumEdgesPerFace: nA + nB - 2 < 255 (kenshi-rwh.337)
 				continue;
 			if (!aligned)
 			{
@@ -2451,6 +2648,72 @@ native::Mesh Gen::finish(const std::vector<std::array<double, 2>>& seeds, Stats&
 		}
 	}
 	const auto t2 = std::chrono::steady_clock::now();
+
+	// materialRule: a building's top keeps every corner of its outline but the collinear ones (the original's one simplifier takes a building shape's
+	// loop that way). A vertex goes from a top face when it belongs to that face alone, both its edges are walls (no face across, no seam, no rim link)
+	// and it lies within buildingTol of the chord of its neighbours. Feature and foliage tops stay as they are (kenshi-k16.7.246).
+	if (prm_.materialRule)
+	{
+		std::unordered_map<int, int> users;
+		std::set<std::pair<int, int>> dirEdges;
+		for (size_t f = 0; f < poly.size(); ++f)
+			if (!dead[f])
+				for (size_t k = 0; k < poly[f].size(); ++k)
+				{
+					++users[poly[f][k]];
+					dirEdges.insert({ poly[f][k], poly[f][(k + 1) % poly[f].size()] });
+				}
+		std::unordered_set<int> linkEnds;
+		for (const Link& l : links)
+			linkEnds.insert({ l.a0, l.a1, l.b0, l.b1 });
+		for (size_t f = 0; f < poly.size(); ++f)
+		{
+			if (dead[f] || !isTop[f] || materialOfLabel(topLabels_[polyLabel[f]]) != Material::Building || poly[f].size() < 4)
+				continue;
+			const Cutter& src = *topCutter_[polyLabel[f]];
+			const auto wall = [&](int a, int b)
+			{
+				if (dirEdges.count({ b, a }) || (rim_[a] & rim_[b]))
+					return false;
+				const P3& u = P_[a], & w = P_[b];
+				const P3 mid = { (u[0] + w[0]) / 2, (u[1] + w[1]) / 2, (u[2] + w[2]) / 2 };
+				for (const auto& sg : src.seam)
+				{
+					const double dx = sg[1][0] - sg[0][0], dz = sg[1][2] - sg[0][2], l2 = dx * dx + dz * dz;
+					const double t = l2 > 0 ? std::clamp(((mid[0] - sg[0][0]) * dx + (mid[2] - sg[0][2]) * dz) / l2, 0.0, 1.0) : 0.0;
+					if (std::hypot(sg[0][0] + t * dx - mid[0], sg[0][2] + t * dz - mid[2]) <= 0.25 && std::fabs(sg[0][1] + t * (sg[1][1] - sg[0][1]) - mid[1]) <= 1.0)
+						return false;
+				}
+				return true;
+			};
+			std::vector<int> ring = poly[f];
+			for (size_t k = 0; k < ring.size() && ring.size() > 3;)
+			{
+				const int prev = ring[(k + ring.size() - 1) % ring.size()], v = ring[k], next = ring[(k + 1) % ring.size()];
+				bool drop = false;
+				if (users[v] == 1 && !linkEnds.count(v) && !rim_[v] && wall(prev, v) && wall(v, next))
+				{
+					const P3& A = P_[prev], & B = P_[next], & V = P_[v];
+					const double dx = B[0] - A[0], dy = B[1] - A[1], dz = B[2] - A[2], l2 = dx * dx + dy * dy + dz * dz;
+					const double t = l2 > 0 ? std::clamp(((V[0] - A[0]) * dx + (V[1] - A[1]) * dy + (V[2] - A[2]) * dz) / l2, 0.0, 1.0) : 0.0;
+					drop = std::sqrt((A[0] + t * dx - V[0]) * (A[0] + t * dx - V[0]) + (A[1] + t * dy - V[1]) * (A[1] + t * dy - V[1])
+						+ (A[2] + t * dz - V[2]) * (A[2] + t * dz - V[2])) <= prm_.topCollinearTol && l2 > 1e-6;
+				}
+				if (drop)
+				{
+					dirEdges.erase({ prev, v });
+					dirEdges.erase({ v, next });
+					dirEdges.insert({ prev, next });
+					--users[v];
+					ring.erase(ring.begin() + k);
+					++st.topCollinearDropped;
+				} else {
+					++k;
+				}
+			}
+			poly[f] = std::move(ring);
+		}
+	}
 
 	native::Mesh mesh;
 	std::vector<int> remap(P_.size(), -1), meshFace(poly.size(), -1);
@@ -2893,7 +3156,7 @@ WeldStats weldMesh(native::Mesh& m, double grid, double climb)
 	// must stay so, unless it collapses (the thin-face drop below takes it). A face that fails gets its moved corners back (rep = itself), and
 	// the faces round them are checked again. Nothing re-checked after the first weld: 40 of 43 reflex tops on the Metal Arch Bridge were its moves.
 	{
-		const auto shape = [&](std::uint32_t f, bool welded, double& reflex, double& area2, bool& simple, double& perimeter)
+		const auto shape = [&](std::uint32_t f, bool welded, double& reflex, double& area2, bool& simple, double& perimeter, bool& crossing)
 		{
 			std::vector<std::uint32_t> ring;
 			for (std::uint32_t k = m.faces[f].startEdge; k < m.faces[f].startEdge + m.faces[f].numEdges; ++k)
@@ -2908,6 +3171,7 @@ WeldStats weldMesh(native::Mesh& m, double grid, double climb)
 			area2 = 0;
 			perimeter = 0;
 			simple = true;
+			crossing = false;
 			const std::size_t n = ring.size();
 			for (std::size_t k = 0; k < n; ++k)
 			{
@@ -2918,6 +3182,20 @@ WeldStats weldMesh(native::Mesh& m, double grid, double climb)
 				for (std::size_t j = k + 1; j < n && simple; ++j)
 					simple = ring[j] != ring[k];
 			}
+			// two non-adjacent edges crossing properly in xz (the fold the census counts as a self-crossing face)
+			const auto orient = [&](std::uint32_t a, std::uint32_t b, std::uint32_t c)
+			{
+				return (m.vertices[b][0] - m.vertices[a][0]) * (m.vertices[c][2] - m.vertices[a][2]) - (m.vertices[b][2] - m.vertices[a][2]) * (m.vertices[c][0] - m.vertices[a][0]);
+			};
+			for (std::size_t i = 0; i < n && !crossing; ++i)
+				for (std::size_t j = i + 2; j < n && !crossing; ++j)
+				{
+					if (i == 0 && j == n - 1)
+						continue;
+					const std::uint32_t a = ring[i], b = ring[(i + 1) % n], c = ring[j], d = ring[(j + 1) % n];
+					const double o1 = orient(a, b, c), o2 = orient(a, b, d), o3 = orient(c, d, a), o4 = orient(c, d, b);
+					crossing = ((o1 > 1e-6 && o2 < -1e-6) || (o1 < -1e-6 && o2 > 1e-6)) && ((o3 > 1e-6 && o4 < -1e-6) || (o3 < -1e-6 && o4 > 1e-6));
+				}
 			const double s = area2 >= 0 ? 1 : -1;
 			for (std::size_t k = 0; k < n && n >= 3; ++k)
 			{
@@ -2940,16 +3218,16 @@ WeldStats weldMesh(native::Mesh& m, double grid, double climb)
 		struct Before
 		{
 			double reflex, area2;
-			bool simple;
+			bool simple, crossing;
 		};
 		std::vector<Before> before(m.faces.size());
 		std::vector<std::uint32_t> check;
 		for (std::uint32_t f = 0; f < m.faces.size(); ++f)
 		{
 			double r, a, p;
-			bool s;
-			shape(f, false, r, a, s, p);
-			before[f] = { r, a, s };
+			bool s, x;
+			shape(f, false, r, a, s, p, x);
+			before[f] = { r, a, s, x };
 			check.push_back(f);
 		}
 		std::vector<uint8_t> queued(m.faces.size(), 1);
@@ -2959,12 +3237,12 @@ WeldStats weldMesh(native::Mesh& m, double grid, double climb)
 			check.pop_back();
 			queued[f] = 0;
 			double r, a, p;
-			bool s;
-			const std::size_t n = shape(f, true, r, a, s, p);
+			bool s, x;
+			const std::size_t n = shape(f, true, r, a, s, p, x);
 			if (n < 3 || std::fabs(a) / 2 < p / 2 / 32)
 				continue;	// collapsed: the thin-face drop's
 			// 0.05 u: at 0.005 the given-back corners left Deadlands 189 open edge pairs; 0.05 keeps the worst merge-made reflex corner near 0.1 u
-			const bool ok = (s || !before[f].simple) && (a > 0) == (before[f].area2 > 0) && r <= std::max(0.05, before[f].reflex + 1e-9);
+			const bool ok = (s || !before[f].simple) && (!x || before[f].crossing) && (a > 0) == (before[f].area2 > 0) && r <= std::max(0.05, before[f].reflex + 1e-9);
 			if (ok)
 				continue;
 			++stats.refused;
@@ -3171,6 +3449,34 @@ WeldStats weldMesh(native::Mesh& m, double grid, double climb)
 			}
 			list.push_back({ from, en.b, -1, false, en.flags });
 		}
+		// a cut that makes the face cross itself (a vertex beside a thin lobe): the face keeps its uncut edges
+		if (list.size() != loops[f].size())
+		{
+			const auto crosses = [&](const std::vector<Entry>& ring)
+			{
+				const auto orient = [&](std::uint32_t a, std::uint32_t b, std::uint32_t c)
+				{
+					return (m.vertices[b][0] - m.vertices[a][0]) * (m.vertices[c][2] - m.vertices[a][2]) - (m.vertices[b][2] - m.vertices[a][2]) * (m.vertices[c][0] - m.vertices[a][0]);
+				};
+				const std::size_t n = ring.size();
+				for (std::size_t i = 0; i < n; ++i)
+					for (std::size_t j = i + 2; j < n; ++j)
+					{
+						if (i == 0 && j == n - 1)
+							continue;
+						const double o1 = orient(ring[i].a, ring[i].b, ring[j].a), o2 = orient(ring[i].a, ring[i].b, ring[j].b);
+						const double o3 = orient(ring[j].a, ring[j].b, ring[i].a), o4 = orient(ring[j].a, ring[j].b, ring[i].b);
+						if (((o1 > 1e-6 && o2 < -1e-6) || (o1 < -1e-6 && o2 > 1e-6)) && ((o3 > 1e-6 && o4 < -1e-6) || (o3 < -1e-6 && o4 > 1e-6)))
+							return true;
+					}
+				return false;
+			};
+			if (crosses(list) && !crosses(loops[f]))
+			{
+				list = loops[f];
+				++stats.cutRefused;
+			}
+		}
 		if (list.size() < 3)
 			continue;
 		native::Face face = m.faces[f];
@@ -3351,6 +3657,139 @@ WeldStats weldMesh(native::Mesh& m, double grid, double climb)
 	return stats;
 }
 
+std::size_t dropCollinearWallVertices(native::Mesh& m, double tol, double tolY)
+{
+	std::vector<std::uint16_t> holders(m.vertices.size(), 0);
+	for (const native::Edge& e : m.edges)
+		++holders[e.a];	// every face has one edge starting at each of its vertices
+	std::vector<std::uint8_t> drop(m.edges.size(), 0);	// the edge ending at a dropped vertex
+	std::size_t dropped = 0;
+	for (const native::Face& f : m.faces)
+	{
+		if (f.top)	// a top's drop opened shared edges in knav_cutover (+1 / +6 / +6 on its three zones): the tops keep theirs (their link matcher reads the outline)
+			continue;
+		std::uint32_t keep = f.numEdges;
+		for (std::uint32_t k = 0; k < f.numEdges && keep > 3; ++k)
+		{
+			const std::uint32_t e1 = f.startEdge + k, e2 = f.startEdge + (k + 1) % f.numEdges;
+			const std::uint32_t pe = f.startEdge + (k + f.numEdges - 1) % f.numEdges;
+			if (!m.wall(e1) || !m.wall(e2) || drop[e1] || drop[e2] || drop[pe] || holders[m.edges[e2].a] != 1)
+				continue;
+			const auto& a = m.vertices[m.edges[e1].a], & b = m.vertices[m.edges[e2].a], & c = m.vertices[m.edges[e2].b];
+			const double len = std::hypot(c[0] - a[0], c[2] - a[2]);
+			if (len < 1e-9)
+				continue;
+			const double dx = (c[0] - a[0]) / len, dz = (c[2] - a[2]) / len;
+			const double t = (b[0] - a[0]) * dx + (b[2] - a[2]) * dz;
+			if (t <= 0 || t >= len || std::fabs((b[0] - a[0]) * dz - (b[2] - a[2]) * dx) > tol || std::fabs(b[1] - (a[1] + (c[1] - a[1]) * t / len)) > tolY)
+				continue;
+			drop[e1] = 1;	// e1 (a -> b) is merged with e2 (b -> c): the merged edge is e2's slot, starting at a
+			--keep;
+			++dropped;
+		}
+	}
+	if (dropped == 0)
+		return 0;
+	native::Mesh out = m;
+	out.faces.clear();
+	out.edges.clear();
+	std::vector<std::int32_t> remap(m.edges.size(), -1);
+	for (const native::Face& f : m.faces)
+	{
+		native::Face nf = f;
+		nf.startEdge = (std::uint32_t)out.edges.size();
+		nf.numEdges = 0;
+		for (std::uint32_t k = 0; k < f.numEdges; ++k)
+		{
+			const std::uint32_t e = f.startEdge + k;
+			if (drop[e])
+				continue;
+			remap[e] = (std::int32_t)out.edges.size();
+			native::Edge ne = m.edges[e];
+			const std::uint32_t pe = f.startEdge + (k + f.numEdges - 1) % f.numEdges;
+			if (drop[pe])
+				ne.a = m.edges[pe].a;	// starts where the dropped edge did
+			out.edges.push_back(ne);
+			++nf.numEdges;
+		}
+		out.faces.push_back(nf);
+	}
+	for (native::Edge& e : out.edges)
+		if (e.oppositeEdge >= 0)
+			e.oppositeEdge = remap[e.oppositeEdge];
+	m = std::move(out);
+	return dropped;
+}
+
+Material materialOfLabel(const std::string& label)
+{
+	return label == "foliage" ? Material::Foliage : label.rfind("feature @", 0) == 0 ? Material::Feature : Material::Building;
+}
+
+std::vector<Material> wallMaterials(const native::Mesh& m, const std::vector<Cutter>& cutters, const Params& params, std::vector<int>* owner)
+{
+	std::vector<PreparedCutter> pcs;
+	for (const Cutter& c : cutters)
+		pcs.push_back(prepare(c));
+	std::vector<Material> out(m.edges.size(), Material::Terrain);
+	if (owner)
+		owner->assign(m.edges.size(), -1);
+	std::vector<double> hits;
+	std::vector<int> near;
+	for (const native::Face& f : m.faces)
+	{
+		P2 mid = { 0, 0 };
+		for (std::uint32_t k = 0; k < f.numEdges; ++k)
+		{
+			const auto& v = m.vertices[m.edges[f.startEdge + k].a];
+			mid[0] += v[0] / f.numEdges;
+			mid[1] += v[2] / f.numEdges;
+		}
+		for (std::uint32_t k = 0; k < f.numEdges; ++k)
+		{
+			const std::uint32_t e = f.startEdge + k;
+			if (!m.wall(e))
+				continue;
+			const auto& A = m.vertices[m.edges[e].a], & B = m.vertices[m.edges[e].b];
+			const double dx = B[0] - A[0], dz = B[2] - A[2], len = std::hypot(dx, dz);
+			if (len < 1e-9)
+				continue;
+			double nx = -dz / len, nz = dx / len;
+			const P2 c = { (A[0] + B[0]) / 2, (A[2] + B[2]) / 2 };
+			if (nx * (mid[0] - c[0]) + nz * (mid[1] - c[1]) > 0)
+			{
+				nx = -nx;
+				nz = -nz;
+			}
+			const double y = (A[1] + B[1]) / 2;
+			for (const PreparedCutter& pc : pcs)
+			{
+				if (pc.src->prebuilt && !f.top)
+					continue;
+				const bool topHit = f.top;
+				const P2 q = topHit ? P2{ c[0] - 0.05 * nx, c[1] - 0.05 * nz } : P2{ c[0] + 0.05 * nx, c[1] + 0.05 * nz };
+				if (!pc.box.contains(q) || (topHit && pc.src->top == Cutter::Top::None))
+					continue;
+				hitsAt(pc, q, hits, near);
+				bool hit = false;
+				if (topHit)
+					for (const double h : hits)
+						hit = hit || std::fabs(h - y) < 1.0;
+				else
+					hit = cutterDrops(pc, q, y, params.cutBase, params.characterHeight, hits);
+				if (hit)
+				{
+					out[e] = materialOfLabel(pc.src->label);
+					if (owner)
+						(*owner)[e] = (int)(&pc - pcs.data());
+					break;
+				}
+			}
+		}
+	}
+	return out;
+}
+
 Cutter zoneSideCutter(const native::Mesh& m, const std::string& label)
 {
 	Cutter c;
@@ -3494,7 +3933,7 @@ std::vector<Cutter> cuttersOfArea(const kworld::AreaGeometry& area, const kworld
 			add(s, n.foliage, Cutter::Top::Zone, "foliage");
 	if (area.features)
 		for (const kworld::WorldShape& s : *area.features)
-			add(s, n.features, Cutter::Top::Deck, "feature @ " + std::to_string((int)((s.min[0] + s.max[0]) / 2)) + ", " + std::to_string((int)((s.min[2] + s.max[2]) / 2)));
+			add(s, n.features, Cutter::Top::Zone, "feature @ " + std::to_string((int)((s.min[0] + s.max[0]) / 2)) + ", " + std::to_string((int)((s.min[2] + s.max[2]) / 2)));
 	std::stable_sort(cutters.begin(), cutters.end(), [](const Cutter& a, const Cutter& b)
 	{
 		return (a.max[0] - a.min[0]) * (a.max[2] - a.min[2]) > (b.max[0] - b.min[0]) * (b.max[2] - b.min[2]);

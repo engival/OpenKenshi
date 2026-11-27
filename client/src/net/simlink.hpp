@@ -25,7 +25,7 @@ namespace simlink
 		kIndoors = 1u << 19,
 		kAim = 1u << 20,
 		kMounted = 1u << 21, kStrafeLeft = 1u << 22, kStrafeRight = 1u << 23,
-		kPassive = 1u << 24, kHoldPosition = 1u << 25 };	// passive / hold position: order 10 which 6 / 7 (k16.6.313); NOT kHold (bit 13, the order-4 stand state).	// mounted: manning a turret, its doorKey in the mounted tail. kAim: the aim tail follows (a swinging technique's clip root aim)	// bits 17-18 are the speed mode: in a building's interior AND under a ceiling (Fighter::indoors), so a roof / top deck is clear (SIMLINK, sim 5ac25fbc)
+		kPassive = 1u << 24, kHoldPosition = 1u << 25, kInMachine = 1u << 26 };	// kInMachine: the machine tail (space, building, piece, slot) is the record's last 12 bytes (kenshi-k16.6.729)	// passive / hold position: order 10 which 6 / 7 (k16.6.313); NOT kHold (bit 13, the order-4 stand state).	// mounted: manning a turret, its doorKey in the mounted tail. kAim: the aim tail follows (a swinging technique's clip root aim)	// bits 17-18 are the speed mode: in a building's interior AND under a ceiling (Fighter::indoors), so a roof / top deck is clear (SIMLINK, sim 5ac25fbc)
 	enum Section : uint8_t { kBack, kBack2, kHip, kHead, kShirt, kArmour, kLegs, kBoots, kBackpack, kHand };
 
 	struct Item { uint32_t item = 0, spec = 0, colour = 0; uint8_t section = 0; };
@@ -62,6 +62,12 @@ namespace simlink
 		bool hasAim = false;
 		// mounted tail (sim 00f1d450), only while flag kMounted: the manned turret's placement, kworld::doorKey (the `building` key space)
 		uint64_t turret = 0;
+		// machine tail (sim bbdc07f98, k16.6.730), only while flag kInMachine, after the mounted tail: space 0 = building is a kworld::doorKey, 1 = a player-built
+		// BUILDING id; piece 0xFFFF = the building itself is the machine; slot 0xFF = one slot, node 0
+		uint8_t mSpace = 0, mSlot = 0xFF;
+		uint16_t mPiece = 0xFFFF;
+		uint64_t mBuilding = 0;
+		bool hasMachine = false;
 	};
 	// CHAR_ROUTE (SIMLINK 6): the waypoints still ahead, the first being the next; empty = no route
 	struct Route

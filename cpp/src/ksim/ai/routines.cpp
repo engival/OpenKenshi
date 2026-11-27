@@ -753,8 +753,10 @@ std::vector<Piece> classifyLayout(const kdata::GameData& data, const Layout& lay
 			const std::array<double, 3> face = rotate({piece.qw, piece.qx, piece.qy, piece.qz}, {-1.0, 0.0, 0.0});
 			const double length = std::hypot(face[0], face[2]);
 			out.push_back({kind, piece.x, piece.z, piece.y, length > 0.0 ? face[0] / length : 0.0, length > 0.0 ? face[2] / length : 1.0});
+			out.back().piece = piece.index;
 		} else if (kind != SiteKind::None) {
 			out.push_back({kind, piece.x, piece.z, piece.y});
+			out.back().piece = piece.index;
 		}
 	}
 	return out;
@@ -892,6 +894,7 @@ std::vector<Piece> bedPieces(const kdata::GameData& data, const Layout& layout)
 		const double length = std::hypot(face[0], face[2]);
 		out.push_back({SiteKind::Bed, at[0], at[1], piece->y, length > 0.0 ? face[0] / length : 0.0, length > 0.0 ? face[2] / length : 1.0,
 			functionClip(data, *record, kClipSleepInBed), record->stringID, nodeY, std::move(nodes)});
+		out.back().piece = piece->index;
 	}
 	return out;
 }
@@ -945,6 +948,7 @@ void SiteIndex::add(const BuildingSpec& spec)
 			site.inZ = spec.cz - spec.yawSin * piece->inX + spec.yawCos * piece->inZ;
 			site.hasNodeY = kind == SiteKind::Bed && spec.hasHeight;
 			site.nodeY = spec.originY + piece->nodeY;
+			site.piece = piece->piece;
 			for (const BedNode& node : piece->nodes)
 				site.nodes.push_back({spec.cx + spec.yawCos * node.x + spec.yawSin * node.z, spec.cz - spec.yawSin * node.x + spec.yawCos * node.z,
 					spec.originY + node.y, spec.yawCos * node.faceX + spec.yawSin * node.faceZ, -spec.yawSin * node.faceX + spec.yawCos * node.faceZ});

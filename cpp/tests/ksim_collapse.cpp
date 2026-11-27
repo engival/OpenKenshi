@@ -169,6 +169,14 @@ int main(int argc, char** argv)
 		sim.run(2);
 		test::require(fighter->getUpLeft == 0.0, "a caged wake ends 65 at once");
 		fighter->cageBuilding = 0;
+		fighter->unconscious = true;
+		fighter->koTimer = 0.5;
+		fighter->enterMachine(7, 0);
+		for (int t = 0; t < 100 && (t == 0 || fighter->unconscious); ++t)
+			sim.run(1);
+		sim.run(2);
+		test::require(fighter->getUpLeft == 0.0, "a wake in a bed ends 65 at once");
+		fighter->leaveMachine();
 
 		// ---- a severed limb is always down, fires the same writer (3.0 floor), and leaks (H + pool) x -0.002 ----
 		leg->health = -10.0;

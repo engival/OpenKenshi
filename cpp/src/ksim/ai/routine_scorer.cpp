@@ -235,6 +235,33 @@ void knowBuildingSites(ResidentData& data, const World& world)
 // functionality function 12). The exe's finder queries its building registry; ours is the world's placements (task ds/turret: a turret has
 // no door and no hull of its own, so it is never a BuildingSite - the finder read the sites and found none in the vanilla world; 695 placements
 // are turrets). The key is the placement's, the one a BuildingSite would carry.
+// The turret post of a placement (nullopt when its BUILDING is no turret). A turret is a placed BUILDING whose functionality function is 12
+// (routines::isTurretBuilding): the exe's turret database is its building registry.
+std::optional<ResidentData::TurretInfo> turretInfoOf(const kdata::GameData& gameData, const kworld::PlacedInstance& placed)
+{
+	const kdata::Record* record = gameData.find(placed.buildingID);
+	if (record == nullptr || !routines::isTurretBuilding(gameData, *record))
+		return std::nullopt;
+	// The manning spot: the turret's own `n-use node` child instance (every turret BUILDING has one - it is the operator position the
+	// exe's OperateMachine start walks to), placed by the placement's quaternion. OURS: no use node -> the placement's origin.
+	const std::array<double, 4> q{placed.qw, placed.qx, placed.qy, placed.qz};
+	double x = placed.x;
+	double z = placed.z;
+	double y = placed.y;
+	const std::vector<routines::UseNode> nodes = routines::useNodePoses(gameData, *record);
+	if (!nodes.empty())
+	{
+		const std::array<double, 3> local = routines::rotate(q, nodes.front().at);
+		x += local[0];
+		y += local[1];
+		z += local[2];
+	}
+	const std::array<double, 3> ahead = routines::rotate(q, {0.0, 0.0, 1.0});
+	const kdata::RefCategory* gun = record->findRefs("gun turret");
+	return ResidentData::TurretInfo{kworld::doorKey(kworld::placementId(placed)), x, z, y, std::atan2(ahead[0], ahead[2]), -2,
+		gun != nullptr && !gun->entries.empty() ? gun->entries.front().targetID : std::string()};
+}
+
 void knowTurrets(ResidentData& data, const World& world, const kdata::GameData& gameData, bool manning)
 {
 	if (data.turretsKnown)
@@ -243,29 +270,8 @@ void knowTurrets(ResidentData& data, const World& world, const kdata::GameData& 
 	if (!manning) // Simulation::setTurretManning: no turret is offered (the state before ds/turret, when the sites list held none)
 		return;
 	for (const kworld::PlacedInstance& placed : world.placements())
-	{
-		const kdata::Record* record = gameData.find(placed.buildingID);
-		if (record == nullptr || !routines::isTurretBuilding(gameData, *record))
-			continue;
-		// The manning spot: the turret's own `n-use node` child instance (every turret BUILDING has one - it is the operator position the
-		// exe's OperateMachine start walks to), placed by the placement's quaternion. OURS: no use node -> the placement's origin.
-		const std::array<double, 4> q{placed.qw, placed.qx, placed.qy, placed.qz};
-		double x = placed.x;
-		double z = placed.z;
-		double y = placed.y;
-		const std::vector<routines::UseNode> nodes = routines::useNodePoses(gameData, *record);
-		if (!nodes.empty())
-		{
-			const std::array<double, 3> local = routines::rotate(q, nodes.front().at);
-			x += local[0];
-			y += local[1];
-			z += local[2];
-		}
-		const std::array<double, 3> ahead = routines::rotate(q, {0.0, 0.0, 1.0});
-		const kdata::RefCategory* gun = record->findRefs("gun turret");
-		data.turretSites.push_back({kworld::doorKey(kworld::placementId(placed)), x, z, y, std::atan2(ahead[0], ahead[2]), -2,
-			gun != nullptr && !gun->entries.empty() ? gun->entries.front().targetID : std::string()});
-	}
+		if (std::optional<ResidentData::TurretInfo> info = turretInfoOf(gameData, placed))
+			data.turretSites.push_back(std::move(*info));
 	std::sort(data.turretSites.begin(), data.turretSites.end(),
 		[](const ResidentData::TurretInfo& a, const ResidentData::TurretInfo& b) { return a.key < b.key; });
 }
@@ -497,6 +503,7 @@ void addLayoutFurniture(ResidentData& data, const World& world, flecs::world& ec
 		std::array<double, 3> face; // its +Z, building-local
 		std::int32_t flags; // the chair functionality's `flags`
 		std::string clip;
+		std::uint16_t piece; // LayoutPiece::index
 	};
 	std::vector<Chair> chairs;
 	for (const routines::LayoutPiece& piece : layout->pieces)
@@ -505,6 +512,7 @@ void addLayoutFurniture(ResidentData& data, const World& world, flecs::world& ec
 		if (record == nullptr)
 			continue;
 		const routines::SiteKind kind = routines::isShopkeeperNode(*record) ? routines::SiteKind::ShopkeeperNode : routines::classifyPiece(gameData, *record);
+		const std::size_t keptBefore = pieces.size();
 		if (kind == routines::SiteKind::Table || kind == routines::SiteKind::Counter || kind == routines::SiteKind::GuardNode
 			|| kind == routines::SiteKind::Throne || kind == routines::SiteKind::ShopkeeperNode)
 		{
@@ -558,8 +566,10 @@ void addLayoutFurniture(ResidentData& data, const World& world, flecs::world& ec
 			pieces.back().inZ = piece.z;
 		} else if (isChairPiece(gameData, *record)) {
 			chairs.push_back({piece.x, piece.z, piece.y, routines::rotate({piece.qw, piece.qx, piece.qy, piece.qz}, {0.0, 0.0, 1.0}),
-				chairFlags(gameData, *record), routines::functionClip(gameData, *record, routines::kClipSittingChair)});
+				chairFlags(gameData, *record), routines::functionClip(gameData, *record, routines::kClipSittingChair), piece.index});
 		}
+		if (pieces.size() > keptBefore)
+			pieces.back().piece = piece.index;
 	}
 	for (const routines::Piece& bed : routines::bedPieces(gameData, *layout))
 		pieces.push_back(bed);
@@ -592,6 +602,7 @@ void addLayoutFurniture(ResidentData& data, const World& world, flecs::world& ec
 			const double nodeY = kind == routines::SiteKind::Bed ? world3(bestHand, piece.x, piece.nodeY, piece.z)[1] : 0.0;
 			spec.pieces.push_back({kind, spec.yawCos * dx - spec.yawSin * dz, spec.yawSin * dx + spec.yawCos * dz, at[1],
 				spec.yawCos * fx - spec.yawSin * fz, spec.yawSin * fx + spec.yawCos * fz, piece.clip, piece.record, nodeY});
+			spec.pieces.back().piece = piece.piece;
 			for (const routines::BedNode& node : piece.nodes)
 			{
 				// The same mapping as the piece itself: building-local, in the spec's frame.
@@ -646,6 +657,7 @@ void addLayoutFurniture(ResidentData& data, const World& world, flecs::world& ec
 			const double dz = at[2] - building->cz;
 			spec.pieces.push_back({routines::SiteKind::Seat, spec.yawCos * dx - spec.yawSin * dz, spec.yawSin * dx + spec.yawCos * dz, at[1],
 				spec.yawCos * fx - spec.yawSin * fz, spec.yawSin * fx + spec.yawCos * fz, chair.clip, "", 0.0});
+			spec.pieces.back().piece = chair.piece;
 			const double facing = std::hypot(fx, fz);
 			loose.emplace_back(0.0, std::array<double, 2>{at[0], at[2]}, ResidentData::SeatPose{at[1], facing > 0.0 ? fx / facing : 0.0,
 				facing > 0.0 ? fz / facing : 1.0, false, chair.clip});
@@ -2662,6 +2674,7 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 	if ((!bedGoal || best->doorStep) && f.asleep)
 	{
 		f.asleep = false;
+		f.leaveBed();
 		mirrorFighter(id);
 	}
 	if (goal == routines::task::ShooStrangers || goal == routines::task::ShooStrangersPrivate || (best->chainTarget != 0 && !best->plan.empty() && best->doorStep == false
@@ -2765,6 +2778,8 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 		{
 			runWeaponPrefix(id, goal); // lying down needs hasWeaponEquipped = 0 (a placed sleeper arrives past the adoption's sheathe)
 			f.asleep = true;
+			if (const routines::SiteEntry* bed = residentData_ != nullptr ? residentData_->sites.siteAt(best->site) : nullptr; bed != nullptr && !bed->synthetic)
+				f.enterMachine(bed->site.object, bed->piece);
 			r.lastSleep = gameHoursNow;
 			mirrorFighter(id);
 		}
@@ -2790,6 +2805,8 @@ void Simulation::scoreMember(flecs::entity member, flecs::entity squad, bool pla
 		{
 			runWeaponPrefix(id, goal);
 			f.asleep = true;
+			if (const routines::SiteEntry* bed = residentData_ != nullptr ? residentData_->sites.siteAt(best->site) : nullptr; bed != nullptr && !bed->synthetic)
+				f.enterMachine(bed->site.object, bed->piece);
 			++townStats_.slept;
 			f.clearRoute();
 			mirrorFighter(id);
@@ -3036,6 +3053,30 @@ bool Simulation::seated(std::uint64_t memberId, double* faceYaw) const
 	return false;
 }
 
+std::optional<state::FighterMachineUse> Simulation::machineUse(std::uint64_t memberId) const
+{
+	if (combat_ == nullptr)
+		return std::nullopt;
+	const auto& members = combat_->members();
+	for (std::size_t i = 0; i < members.size(); ++i)
+	{
+		if (members[i].id != memberId)
+			continue;
+		if (members[i].fighter.machineUse.in())
+			return members[i].fighter.machineUse;
+		const routines::SiteEntry* chair = nullptr;
+		if (residentData_ != nullptr && homeSitAt(i, &chair) && chair != nullptr && !chair->synthetic && chair->piece != 0xFFFF)
+		{
+			state::FighterMachineUse use;
+			use.building = chair->site.object;
+			use.piece = chair->piece;
+			return use;
+		}
+		return std::nullopt;
+	}
+	return std::nullopt;
+}
+
 std::optional<Simulation::Pose> Simulation::pose(std::uint64_t memberId) const
 {
 	if (combat_ == nullptr)
@@ -3109,6 +3150,80 @@ const routines::SiteEntry* Simulation::bedOf(std::uint64_t id) const
 			if (routines::siteId(bed->site) == id)
 				return bed;
 	return nullptr;
+}
+
+const MachineSite* Simulation::machineSiteOf(std::uint64_t id) const
+{
+	if (id < machines::kMachineIdBase)
+		return nullptr;
+	const std::vector<MachineSite>& sites = world_.machineSites();
+	const std::uint64_t index = id - machines::kMachineIdBase;
+	return index < sites.size() && sites[index].id == id && sites[index].producerId == 0 ? &sites[index] : nullptr;
+}
+
+const Simulation::TurretPost* Simulation::turretPostOf(std::uint64_t key) const
+{
+	if (gameData_ == nullptr)
+		return nullptr;
+	auto found = turretPosts_.find(key);
+	if (found == turretPosts_.end())
+	{
+		std::optional<TurretPost> post;
+		for (const kworld::PlacedInstance& placed : world_.placements())
+			if (kworld::doorKey(kworld::placementId(placed)) == key)
+			{
+				if (const std::optional<ResidentData::TurretInfo> info = turretInfoOf(*gameData_, placed))
+					post = TurretPost{info->x, info->y, info->z, info->yaw, info->gunSid};
+				break;
+			}
+		found = turretPosts_.emplace(key, std::move(post)).first;
+	}
+	return found->second ? &*found->second : nullptr;
+}
+
+const MachineSite* Simulation::machineOperated(std::uint64_t actor) const
+{
+	const flecs::entity self = fighterEntity(actor);
+	const state::InteractTask* task = self.is_valid() ? self.get<state::InteractTask>() : nullptr;
+	if (task == nullptr || task->action != static_cast<std::uint8_t>(InteractAction::Use))
+		return nullptr;
+	const MachineSite* site = machineSiteOf(task->target);
+	const state::Fighter* who = site != nullptr && combat_ != nullptr ? combat_->find(actor) : nullptr;
+	if (who == nullptr || who->walking())
+		return nullptr;
+	if (world_.machineInfo(*site).kind == machines::Kind::Turret)
+		return who->mount.building == site->key ? site : nullptr;
+	const InteractTarget target = findInteractTarget(world_.ecs(), combat_.get(), task->target, this);
+	return target.within(*who) ? site : nullptr;
+}
+
+std::string Simulation::machineRefusal(std::uint64_t actor, const MachineSite& site) const
+{
+	if (isForeignOwner(world_.ecs(), actor, site.ownerFaction))
+		return "not_allowed";
+	const machines::Static& info = world_.machineInfo(site);
+	if (combat_ == nullptr)
+		return "unsupported";
+	if (info.kind == machines::Kind::Turret)
+	{
+		// One gunner per turret (UNSURE: the slot count of a turret is not in the data; Fighter::mount is one building per fighter).
+		if (turretPostOf(site.key) == nullptr)
+			return "bad_target";
+		for (const CombatArena::Member& m : combat_->members())
+			if (m.id != actor && m.fighter.mount.building == site.key && m.fighter.mount.mounted() && !m.fighter.dead)
+				return "full";
+		return {};
+	}
+	if (info.kind != machines::Kind::Converter || info.maxWorkers <= 0)
+		return "bad_target"; // automatic (152), power, furnace
+	std::int32_t others = 0;
+	for (const CombatArena::Member& m : combat_->members())
+	{
+		const state::InteractTask* task = m.id != actor ? fighterEntity(m.id).get<state::InteractTask>() : nullptr;
+		if (task != nullptr && task->target == site.id && task->action == static_cast<std::uint8_t>(InteractAction::Use))
+			++others;
+	}
+	return others >= info.maxWorkers ? "no_slot" : std::string();
 }
 
 const routines::SiteEntry* Simulation::cageOf(std::uint64_t key) const
@@ -3490,8 +3605,6 @@ bool Simulation::imprisonScenario(std::uint64_t bodyId, const std::string& which
 	setScenarioLocked(best->site.object); // the Locked a cage_prisoner file means (CHAR_STATS 5), not the Unlocked a warden that has not locked yet reads as (6): kenshi-k16.6.98
 	if (peeler)
 		setPeeler(best->site.object, true);
-	if (best->hasY)
-		combat_->find(bodyId)->y = best->y; // the cage's floor, not the y the file gave the character
 	return true;
 }
 
@@ -3584,6 +3697,7 @@ void Simulation::getOutOfBed(flecs::entity member, std::uint64_t id)
 	if (f == nullptr)
 		return;
 	f->asleep = false;
+	f->leaveBed();
 	routineBook_.release(id); // the bed's occupancy (140345620: the building's release of my slot)
 	if (const state::Routine* routine = member.get<state::Routine>())
 	{
@@ -3866,7 +3980,7 @@ void Simulation::stepRoutines()
 						break;
 					}
 			}
-			if (gunner.mount.mounted() && (post == nullptr || post->key != gunner.mount.building))
+			if (gunner.mount.mounted() && (post == nullptr || post->key != gunner.mount.building) && !(gunner.playerControlled && entity.has<state::InteractTask>()))
 				combat_->dismountTurret(members[i].id);
 			else if (post != nullptr && !gunner.mount.mounted() && !gunner.walking() && std::hypot(gunner.x - post->x, gunner.z - post->z) <= kMountReach)
 				if (const kdata::Record* gun = gameData_->find(post->gunSid); gun != nullptr)

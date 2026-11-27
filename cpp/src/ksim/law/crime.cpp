@@ -226,7 +226,10 @@ bool setCrime(state::CrimeRecord& record, std::uint8_t crime, std::string_view v
 		}
 	}
 	if (record.crime != crime)
+	{
 		record.committed = false;
+		record.announced = false;
+	}
 	record.crime = crime;
 	record.victimFaction = std::string(victimFaction);
 	record.victimChar = victimChar;
@@ -339,6 +342,7 @@ bool forgive(state::CrimeRecord& record, std::string_view holder) noexcept
 	record.victimChar = 0;
 	record.timer = -1.0;
 	record.committed = false;
+	record.announced = false;
 	return had;
 }
 
@@ -363,6 +367,7 @@ bool tick(state::CrimeRecord& record, double dt, double nowHours, bool inCage)
 			record.victimFaction.clear();
 			record.victimChar = 0;
 			record.timer = 0.0;
+			record.announced = false;
 		} else {
 			record.timer -= dt;
 		}
@@ -1112,6 +1117,7 @@ void Simulation::stepCrime(std::uint64_t now)
 			if (auto act = caughtActs_.find(held.id); act != caughtActs_.end() && !act->second.sent && crimeObserver_)
 			{
 				act->second.sent = true;
+				record.announced = true;
 				CrimeEvent caught;
 				caught.kind = CrimeEvent::Kind::CaughtStealing;
 				caught.who = held.id;

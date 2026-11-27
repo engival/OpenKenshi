@@ -120,6 +120,21 @@ InteractTarget findInteractTarget(const flecs::world& ecs, const CombatArena* ar
 			target.reach = kReachCage;
 			target.reachStopped = 2.0 * kReachCage;
 		}
+		// A kind 12 machine (converter, turret): no entity, so last; a furnace's container entity and a producer answered above.
+		if (const MachineSite* site = sim->machineSiteOf(id))
+		{
+			const machines::Static& info = sim->world().machineInfo(*site);
+			const bool turret = info.kind == machines::Kind::Turret;
+			const Simulation::TurretPost* post = turret ? sim->turretPostOf(site->key) : nullptr;
+			target.kind = InteractKind::Machine;
+			target.id = id;
+			target.x = post != nullptr ? post->x : site->x;
+			target.y = post != nullptr ? post->y : site->y;
+			target.z = post != nullptr ? post->z : site->z;
+			target.reach = info.useRange; // the functionality record's `use range`, x2 once stopped (functionalityReach)
+			target.reachStopped = 2.0 * info.useRange;
+			target.reachY = kProducerReachY;
+		}
 	}
 	return target;
 }
@@ -329,6 +344,12 @@ std::string checkInteract(const flecs::world& ecs, const CombatArena& arena, std
 	}
 	case InteractAction::Use:
 	{
+		// A kind 12 machine (kenshi-k16.6.788): the converter the player's faction may operate, the turret it may man.
+		if (target.kind == InteractKind::Machine)
+		{
+			const MachineSite* site = sim != nullptr ? sim->machineSiteOf(target.id) : nullptr;
+			return site != nullptr ? sim->machineRefusal(actor, *site) : std::string("bad_target");
+		}
 		// A producer with a free operator slot and room in its output. The actor that already works it keeps its slot.
 		if (target.kind != InteractKind::Producer)
 			return "bad_target";
@@ -1288,7 +1309,7 @@ void Simulation::stepOrderQueues()
 				if (next.kind == 1)
 					return navigation_->routeFrom({fighter.x, fighter.y, fighter.z}, next.x, next.z, next.y, false, body(fighter));
 				const InteractTarget target = findInteractTarget(ecs, combat_.get(), next.target, this);
-				if (target.kind == InteractKind::None || !checkInteract(ecs, *combat_, id, target, next.action, next.flags, gameData_.get()).empty()
+				if (target.kind == InteractKind::None || !checkInteract(ecs, *combat_, id, target, next.action, next.flags, gameData_.get(), this).empty()
 					|| target.arrived(fighter))
 					return Route{true};
 				return routeToInteract(*navigation_, fighter, target, next.action, false, body(fighter));
@@ -2395,6 +2416,13 @@ void Simulation::stepInteractions()
 			continue; // (kenshi-k16.6.639)
 		const flecs::entity actor = ecs.entity(combatEntities_[i]);
 		const state::InteractTask* found = actor.get<state::InteractTask>();
+		// A player character mans a turret only while its Use order on it stands: a replacing order lets go (the routine gunner's own rule is in the scorer).
+		if (members[i].fighter.mount.mounted() && members[i].fighter.playerControlled)
+		{
+			const MachineSite* held = found != nullptr && found->action == static_cast<std::uint8_t>(InteractAction::Use) ? machineSiteOf(found->target) : nullptr;
+			if (held == nullptr || held->key != members[i].fighter.mount.building)
+				combat_->dismountTurret(members[i].id);
+		}
 		if (found == nullptr)
 			continue;
 		const state::InteractTask task = *found;
@@ -2658,6 +2686,35 @@ void Simulation::stepInteractions()
 			break;
 		case InteractAction::Use:
 		{
+			if (target.kind == InteractKind::Machine)
+			{
+				// Task_OperateMachine at a kind 12 machine: the converter's worker stands and works (goal 87, char_stats), the turret's mans it
+				// (the gunner of the routine path: CombatArena::mountTurret). The order stays until a replacing order or the machine's refusal.
+				state::Fighter* body = combat_->find(members[i].id);
+				const MachineSite* site = machineSiteOf(task.target);
+				const TurretPost* post = site != nullptr && world_.machineInfo(*site).kind == machines::Kind::Turret ? turretPostOf(site->key) : nullptr;
+				if (body == nullptr || site == nullptr)
+				{
+					finish(InteractEvent::kGone);
+					continue;
+				}
+				if (post != nullptr)
+				{
+					const kdata::Record* gun = gameData_->find(post->gunSid);
+					if (!body->mount.mounted())
+					{
+						sheatheWeapon(members[i].id, true);
+						if (gun == nullptr || !combat_->mountTurret(members[i].id, site->key, post->x, post->z, post->yaw, combat_->data().makeTurretGun(*gameData_, *gun)))
+							finish(InteractEvent::kRefused);
+					}
+					continue;
+				}
+				if (std::hypot(site->x - body->x, site->z - body->z) > 1.0e-6)
+					body->yaw = knav::turnToward(body->yaw, std::atan2(site->x - body->x, site->z - body->z), knav::kTurnRate, kTickSeconds);
+				if (weaponInHands(members[i].id))
+					sheatheWeapon(members[i].id, true);
+				continue;
+			}
 			// Operating a producer: the first arrival takes a slot and the order then stays until stepProducers ends it (full) or a
 			// replacing order cancels it. The checks above already refused a full producer and a taken last slot.
 			state::Producer producer = *entity.get<state::Producer>();
@@ -2707,6 +2764,8 @@ void Simulation::stepInteractions()
 			state::Routine routine;
 			routine.target = {static_cast<std::uint8_t>(routines::SiteKind::Bed), bed->site.object, bed->site.slot};
 			sleeper->asleep = true;
+			if (!bed->synthetic)
+				sleeper->enterMachine(bed->site.object, bed->piece);
 			actor.set<state::Routine>(routine);
 			mirrorFighter(members[i].id);
 			break;

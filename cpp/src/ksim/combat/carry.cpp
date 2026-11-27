@@ -137,7 +137,7 @@ void Simulation::captiveNoticesCarrier(std::uint64_t captiveId, std::uint64_t ca
 void Simulation::putInBed(std::uint64_t carrierId, std::uint64_t bodyId, const routines::SiteEntry& bed)
 {
 	const state::Fighter* carrier = combat_->find(carrierId);
-	const double carrierY = carrier != nullptr ? carrier->y : 0.0;
+	const double carrierY = carrier != nullptr ? carrier->y : bed.hasY ? bed.y : 0.0; // the carrier's own floor: the machine tail places the drawing (k16.6.731)
 	const double carrierYaw = carrier != nullptr ? carrier->yaw : 0.0;
 	const double carrierX = carrier != nullptr ? carrier->x : bed.x;
 	const double carrierZ = carrier != nullptr ? carrier->z : bed.z;
@@ -147,7 +147,7 @@ void Simulation::putInBed(std::uint64_t carrierId, std::uint64_t bodyId, const r
 		// The nearest use node to the carrier (bed_seat_pose.md 2); the pose tail re-reads it from this position.
 		const routines::BedNode node = routines::bedNodeNear(bed, carrierX, carrierZ);
 		put->x = node.x;
-		put->y = bed.hasY ? bed.y : carrierY;
+		put->y = carrierY;
 		put->z = node.z;
 		put->yaw = carrierYaw;
 		put->velX = 0.0;
@@ -157,6 +157,8 @@ void Simulation::putInBed(std::uint64_t carrierId, std::uint64_t bodyId, const r
 		put->forwardSpeed = 0.0;
 		put->lateralSpeed = 0.0;
 		put->asleep = true;
+		if (!bed.synthetic)
+			put->enterMachine(bed.site.object, bed.piece);
 		mirrorFighter(bodyId);
 	}
 	routineBook_.release(bodyId);
@@ -1822,6 +1824,7 @@ void Simulation::stepCorpsePot()
 					if (body->cageBuilding != 0)
 					{
 						body->cageBuilding = 0;
+						body->leaveMachine();
 						body->cageSlot = 0;
 						mirrorFighter(bodyId);
 					}
@@ -1930,6 +1933,7 @@ bool Simulation::removeSlaveStatus(std::uint64_t character)
 	setSlaveState(character, 0);
 	f->captorSid.clear();
 	f->cageBuilding = 0;
+	f->leaveMachine();
 	f->cageSlot = 0;
 	f->goal = state::IndividualGoal{};
 	cancelOrders(character);

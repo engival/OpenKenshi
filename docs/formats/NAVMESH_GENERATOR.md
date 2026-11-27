@@ -517,15 +517,13 @@ class that needs one is a finding against this table, raised on kenshi-k16.7.194
 cliff blocks and rock arches are single meshes 1,300-2,400 u deep: the terrain cut (2) removes everything under the ground, the slope rule
 removes the walls.
 
-**Which feature is a bridge: the deck rule** (ksim 2026-11-25, after O2; no record names, no list, kenshi-k16.7.197). Map features carry
-no use flag, so the table's "bridges" means geometry: an up-facing feature face is a **deck face** when the clear space straight under it,
-down to the terrain or the next solid of any shape, exceeds characterHeight (18 u, the cut rule's own number) over at least half of its
-area. Deck faces are Walkable tops (steps 1-5); every other face of a feature is Obstacle (it cuts, no top). Cliff blocks and wreck pieces,
-solid down into the ground, only cut; bridges keep their decks; a rock arch keeps its top only as a deck, and step 4's prune drops a deck
-that nothing reaching the ground links to. The rule does not depend on whether the original drops cliff tops as non-walkable or as
-unreachable (196's unsure 1). The shipped mesh is not the target for bridges: it has a broken strip on the Metal Arch Bridge that the user
-could not cross (BRIDGE_FEATURE.md), and 1 of 914 cells on the 345 u deck at (12399, -29427). Zone placements and foliage keep the table
-as is: their use is in the data.
+**Which feature gets a walkable top: the original's rule** (kenshi-rwh.338, kenshi-k16.7.252; replaces the deck rule of kenshi-k16.7.197). The original
+has no feature filter: every feature triangle enters the gather as material -1, and a top is walkable by the generic 40 deg slope alone
+(`Params::featureSlopeDeg`; a building's tops keep surfgen's 60). The seed prune then keeps a top only when it is connected to a seed through
+shared or matched edges (5 u step, 2 u separation), never over a steep face (a steep face has no walkable triangle, so it links nothing).
+Most feature tops fail that link in the original, which is why the shipped mesh has few. Not covered: the zone scope (a top reached from the
+ground only across the zone border loses its seed in the original; ours is per window), the world-level cull (kenshi-k16.7.226), and the
+Ashlands records' collision (data).
 
 **Windows and run time.** The ground is built per window (GROUND_NAVGEN.md); an object belongs to every window its xz bound touches, the
 window's clip keeps the part inside, the rim rule keeps the seam vertices equal. An object placed or removed at run time (construction,

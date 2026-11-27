@@ -124,8 +124,8 @@ void bridge(const std::string& dataDir, const kworld::Heightmap& terrain, double
 	ground::CutterCounts counts;
 	ground::Stats stats;
 	const knav::native::Mesh mesh = ground::generateBox(dataDir, terrain, cx - r, cz - r, cx + r, cz + r, params, {}, true, &stats, &counts);
-	std::cout << "  cutters: " << counts.buildingShapes << " building, " << counts.foliage << " foliage, " << counts.features << " feature; tops: " << stats.topTris << " tris ("
-		<< stats.deckTris << " deck, " << stats.deckRejected << " rejected), " << stats.topFaces << " faces, " << stats.topLinks << " links, " << stats.topDroppedFaces << " dropped ("
+	std::cout << "  cutters: " << counts.buildingShapes << " building, " << counts.foliage << " foliage, " << counts.features << " feature; tops: " << stats.topTris << " tris, "
+		<< stats.topFaces << " faces, " << stats.topLinks << " links, " << stats.topDroppedFaces << " dropped ("
 		<< stats.topDroppedArea << " u2); ms: tops " << stats.msTops << " + link " << stats.msLink << "\n";
 	test::require(counts.features > 0, "map feature shapes reach the ground as cutters");
 

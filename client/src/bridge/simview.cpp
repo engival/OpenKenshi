@@ -225,6 +225,13 @@ int SimView::standRayAt(double x, double z, double wireY, double terrain, double
 	return res;
 }
 
+uint32_t SimView::machineClipId(const std::string& name)
+{
+	for (size_t i = 0; i < machineClips_.size(); i++) { if (machineClips_[i] == name) { return 0x80000000u | (uint32_t)i; } }
+	machineClips_.push_back(name);
+	return 0x80000000u | (uint32_t)(machineClips_.size() - 1);
+}
+
 void SimView::update(double dt, Characters& chars, const std::function<double(double, double)>& ground)
 {
 	if (mode_ == None) { return; }
@@ -915,14 +922,21 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		float yaw = ia->yaw + dy * t;
 		if (id == local_.id) { predictYOff_ = 0; predict(c, p, yaw); }
 		float byaw = yaw;	// the drawn body's yaw: the sim's, or the travel facing (kenshi-k16.2.237.10); sl.yaw (the camera follow's) stays the sim's
-		const bool posed = (b.flags & (kSeated | kAsleep)) && b.poseClip;	// snapped to the furniture (kinspect bed_seat_pose.md): no interpolation, no ground fit
+		// kenshi-2g4v: while bit 26 is set the body draws at the machine's slot (the building / piece / slot the wire names, resolved from the data), the pose
+		// tail unused; a machine this build cannot resolve falls back to the pose tail. A floor-sit and a synthetic bed have no machine: the pose tail.
+		double mp[3] = {};
+		double myaw = 0;
+		sl.mOn = false;
+		sl.mClip.clear();
+		if ((b.flags & kInMachine) && b.hasMachine && machineSlot_) { sl.mOn = machineSlot_(b.mSpace, b.mBuilding, b.mPiece, b.mSlot, mp, myaw, sl.mClip); }
+		const bool posed = sl.mOn || ((b.flags & (kSeated | kAsleep)) && b.poseClip);	// snapped to the furniture (kinspect bed_seat_pose.md): no interpolation, no ground fit
 		// The drawn y is the sim's wire y (kenshi-k16.2.339, standing height stage 1: no terrain blend, no interior hull or indoors-flag branch; the
 		// sim's ground ray is the one authority, retired/simview_ground_blend.cpp). Only without a navmesh y (yValid clear) the heightmap stands in.
 		const double terrain = ground(p[0], p[2]);
 		const double simY = p[1];
 		int ylogRes = -9;	// the stand ray's result this frame (KYLOG only; -9: no ray)
 		if (!(ib->flags & kYValid)) { p[1] = terrain; }
-		else if (groundRay_ && !((b.flags & (kSeated | kAsleep)) && b.poseClip))
+		else if (groundRay_ && !posed)
 		{
 			// kenshi-k16.2.344: the wire y is the sim's point; the body stands on the nearest DRAWN floor / stair / ramp under its x, z (WorldBuildings::groundDrawn, .382.2) or the
 			// heightmap there, within [wire - kRayDown, wire + kRayUp]. No hit / not loaded: the wire y, counted.
@@ -955,7 +969,12 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 				}
 			}
 		}
-		if (posed)
+		if (sl.mOn)
+		{
+			for (int k = 0; k < 3; k++) { p[k] = mp[k]; }
+			yaw = (float)myaw;
+		}
+		else if (posed)
 		{
 			for (int k = 0; k < 3; k++) { p[k] = b.pose[k]; }
 			yaw = b.pose[3];
@@ -1245,6 +1264,30 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 			sl.vLat = std::clamp(ib->lat, -cap, cap);
 			sl.vSim = sl.vFwd;
 		}
+		// kenshi-2g4v (C5): entering or leaving a machine blends from the drawn pose to the slot and back, never a snap. The offset (drawn minus target) is taken
+		// on the frame the machine state changes and eases to 0 (tau 0.25 s, paused frames hold it).
+		{
+			if (wasDrawn && sl.mOn != sl.mWas)
+			{
+				for (int k = 0; k < 3; k++) { sl.mBlend[k] = sl.pos[k] - p[k]; }
+				double dy = sl.yaw - yaw;
+				dy -= 6.283185307179586 * std::floor((dy + 3.141592653589793) / 6.283185307179586);
+				sl.mBlend[3] = dy;
+				sl.mBlendOn = true;
+			}
+			sl.mWas = sl.mOn;
+			if (sl.mBlendOn)
+			{
+				for (int k = 0; k < 3; k++) { p[k] += sl.mBlend[k]; }
+				yaw += (float)sl.mBlend[3];
+				if (dtSim_ > 0)
+				{
+					const double keep = std::exp(-dtSim_ / 0.25);
+					for (double& v : sl.mBlend) { v *= keep; }
+				}
+				if (std::hypot(sl.mBlend[0], sl.mBlend[1], sl.mBlend[2]) < 0.02 && std::fabs(sl.mBlend[3]) < 0.01) { sl.mBlendOn = false; }
+			}
+		}
 		// drawjump (kenshi-k16.2.74): a drawn character that moved further in one frame than its sim speed allows is a pop. K = 2: the catch-up
 		// draws at most 1.5x the sim's own speed, so 2x is beyond the design and reads as a slip; the 1.5 u floor is just under one frame of the old
 		// catch-up's 100 u/s minimum at 60 fps (1.67 u) and above the display slop's first eased step (~0.5 u), so it counts the old chase and not
@@ -1288,9 +1331,10 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 		const auto carrier = b.carriedBy ? slots_.find(b.carriedBy) : slots_.end();
 		const bool carried = carrier != slots_.end() && carrier->second.index >= 0 && carrier->second.carry != 0;
 		// a KO'd character put into a bed (kenshi-k16.2.224.1: KO + asleep + the pose tail) lies in the bed, not as a ragdoll under the mattress; dead stays Lying
-		const Down down = carried ? Carried : b.flags & kDead ? Lying : (b.flags & kKO) && (b.flags & kAsleep) && b.poseClip ? Asleep : b.flags & kKO ? Lying : b.flags & kSeated ? Seated : b.flags & kAsleep ? Asleep
+		const Down down = carried ? Carried : b.flags & kDead ? Lying : (b.flags & kKO) && (b.flags & kAsleep) && (b.poseClip || sl.mOn) ? Asleep : b.flags & kKO ? Lying : b.flags & kSeated ? Seated : b.flags & kAsleep ? Asleep
 			: !(b.flags & kProne) ? Up : b.fwd > 0.5f ? Crawling : Lying;
-		const uint32_t poseClip = down == Seated || down == Asleep ? b.poseClip : 0;
+		// a machine's clip is its functionality's `animation` (id with bit 31 set, machineClips_), none: the state's default below; the pose tail's only without a machine
+		const uint32_t poseClip = down == Seated || down == Asleep ? (sl.mOn ? (sl.mClip.empty() ? 0 : machineClipId(sl.mClip)) : b.poseClip) : 0;
 		bool forced = false;	// a get-up cut by the sim (down again, carried, seated): the state rebuilds even when the down state's name is unchanged
 		if (sl.rising && down != Up) { sl.rising = false; forced = true; }
 		// a state whose rebuild failed: the old pose stays and there is no retry while the wire still reads it (the error prints once)
@@ -1303,7 +1347,7 @@ void SimView::sync(Characters& chars, const std::function<double(double, double)
 			else if (down != Up)
 			{
 				s.loco = false;
-				s.clip = down == Lying ? "crawl idle down" : down == Crawling ? "crawl loop" : poseClip ? dec_.str(poseClip) : down == Seated ? "sitting chair" : "sleepinbed";
+				s.clip = down == Lying ? "crawl idle down" : down == Crawling ? "crawl loop" : poseClip ? (poseClip & 0x80000000u ? machineClips_[poseClip & 0x7FFFFFFFu] : dec_.str(poseClip)) : down == Seated ? "sitting chair" : "sleepinbed";
 				s.speed = down == Lying ? 0.0f : 1.0f;
 				s.drawn = false;	// MINE: sheathed (the drawn weapon would stand up out of the pose's hand)
 				s.posed = down == Seated || down == Asleep;	// furniture pose: no body-posture layers (Characters::Spec::posed)

@@ -88,6 +88,13 @@ bool blocks(const ground::Cutter& c, double x, double z, double lo, double hi)
 	std::sort(hits.begin(), hits.end());
 	if (c.projected && !hits.empty())
 		return true;
+	if (c.label == "foliage" || c.label.rfind("feature @", 0) == 0) // the rwh293 band only: no solid inferred from parity or pairs (kenshi-k16.7.261)
+	{
+		for (const double h : hits)
+			if (h > lo && h < hi)
+				return true;
+		return false;
+	}
 	if (hits.empty() || hits.front() >= hi) // nothing at or below the band: an overhead feature whose open bottom the odd count below would reach down to the ground (52.52 patch, kenshi-k16.7.216)
 		return false;
 	if (hits.size() % 2)

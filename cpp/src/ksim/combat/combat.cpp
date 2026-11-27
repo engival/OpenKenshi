@@ -133,7 +133,7 @@ constexpr double kRestSnapReach = 6.0;
 // the clip progress passes 0.86 (exe constant, kenshi-rwh.322), not at the clip end: 0.86 x 8.6667 = ~7.45 s. UNSURE (rwh.322 U1-U4): that the progress is
 // linear in time; who reads the busy flag char+0x278 (we hold move and turn for the task, not decoded); whether goal 32 preempts a running 65 on a hit that
 // does not KO (we do not: the task has no hit or order test, only a KO or a carry stops it). A posture > 0 start (crawl: `down`) or a bed / cage ends it on the
-// first tick; beds are not modelled in combat, so only the cage (cageBuilding) is tested.
+// first tick; a bed is a machineUse that is neither the cage (cageBuilding) nor a turret seat (k16.6.777).
 constexpr double kGetUpClipSeconds = 8.6667;
 constexpr double kGetUpEndProgress = 0.86;
 constexpr double kGetUpSeconds = kGetUpClipSeconds * kGetUpEndProgress;
@@ -687,6 +687,7 @@ struct CombatArena::Ctx
 	// A body in a cage or prison is nobody's victim (kenshi-k16.6.29; the original's prisoner targeting is not decoded, UNSURE, deferred: playtesting):
 	// this one test gates every pick, keep, chase and shot (targetable(), setTarget, rangedFire), so a held target on a caged body is dropped.
 	static bool caged(const Fighter& f) { return f.cageBuilding != 0; }
+	static bool inBed(const Fighter& f) { return f.machineUse.in() && f.cageBuilding == 0 && !f.mount.mounted(); } // bed / bedroll (k16.6.777)
 	static bool targetable(const Fighter& f) { return usable(f) && !f.down && !caged(f); }
 
 	// The race's 'pathfind footprint radius' (human 2.6, Goat 4, Garru / Bull 7, Dog / Spider 10, Turtle 13, Beak Thing 20, Cage Beast 24,
@@ -4773,11 +4774,11 @@ struct CombatArena::Ctx
 		} else if (f.koSeen) {
 			f.koSeen = false;
 			if (f.carriedBy == 0) // posture > 0 (down) or a cage: the task starts and ends on its first tick
-				f.getUpLeft = f.down || f.cageBuilding != 0 ? dt : kGetUpSeconds;
+				f.getUpLeft = f.down || f.cageBuilding != 0 || inBed(f) ? dt : kGetUpSeconds;
 		} else if (f.getUpLeft > 0.0) {
 			// A carry, a cage or a limb collapse during the task ends it (the crawl branch below returns before the still gate, and a frozen clock
 			// would keep reporting 65 over the crawl: k16.6.764 review point 3).
-			f.getUpLeft = f.carriedBy != 0 || f.cageBuilding != 0 || f.down ? 0.0 : std::max(0.0, f.getUpLeft - dt); // runs down wherever the step returns below
+			f.getUpLeft = f.carriedBy != 0 || f.cageBuilding != 0 || inBed(f) || f.down ? 0.0 : std::max(0.0, f.getUpLeft - dt); // runs down wherever the step returns below
 		}
 		tickSlots(m);
 		trackPending(m);
@@ -5011,9 +5012,12 @@ struct CombatArena::Ctx
 		if (f.mount.mounted())
 		{
 			if (f.down || f.unconscious || f.carriedBy != 0 || std::hypot(f.x - f.mount.x, f.z - f.mount.z) > kPostSlack)
+			{
 				f.mount = {};
-			else
+				f.leaveMachine();
+			} else {
 				return mannedStep(m);
+			}
 		}
 		// A crossbow hand (task ds/ranged S2): the attack is the ranged task. The fighter stands and shoots while the target is in reach and the
 		// line is clear; out of reach, or with a wall or an ally in the line, it falls through to the usual approach (a chase round the wall).
@@ -6256,13 +6260,17 @@ bool CombatArena::mountTurret(std::uint64_t id, std::uint64_t building, double x
 	if (m == nullptr || building == 0 || m->fighter.dead || m->fighter.mount.mounted())
 		return false;
 	m->fighter.mount = {building, x, z, yaw, gun};
+	m->fighter.enterMachine(building); // the turret is the machine itself (piece 0xFFFF)
 	return true;
 }
 
 void CombatArena::dismountTurret(std::uint64_t id)
 {
 	if (Member* m = memberOf(id))
+	{
 		m->fighter.mount = {};
+		m->fighter.leaveMachine();
+	}
 }
 
 std::string CombatArena::checkStealthKo(std::uint64_t assassin, std::uint64_t victim) const

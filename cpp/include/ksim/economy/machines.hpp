@@ -40,6 +40,7 @@ struct Static
 {
 	Kind kind = Kind::Producer;
 	int maxWorkers = 0; // 0 = automatic (a furnace too); a turret's is its own slot count
+	double useRange = 20.0; // the functionality's `use range` (20 when the record has none, as functionalityReach); an order stops within it, x2 once stopped
 	std::int32_t powerOutput = 0;
 	std::string input; // a converter's first `consumes` item record, "" = none
 	std::string output; // the first `produces` item record, "" = none
@@ -54,7 +55,7 @@ struct Record
 {
 	std::string recordSid;
 	Kind kind = Kind::Producer;
-	std::string ownerFaction; // the placement's owner, "" = none (the original's Hybrid Stone Mine shows no label)
+	std::string ownerFaction; // the placement's owner, "" = no label (the original prints it only once the town is visited, kenshi-rwh.318)
 	std::string town; // the TOWN record's name of the circle holding the placement, "" = none
 	double x = 0.0, y = 0.0, z = 0.0;
 	Status status = Status::Normal;

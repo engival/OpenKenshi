@@ -7,6 +7,7 @@
 #include "knav/navmesh.hpp"
 #include "knav/seeds.hpp"
 #include "knav/zone_gen.hpp"
+#include "kworld/collision_area.hpp"
 #include "kworld/coords.hpp"
 #include "kworld/heightmap.hpp"
 
@@ -276,7 +277,7 @@ FaceFolds faceFolds(const knav::native::Mesh& m)
 }
 
 // Faces whose outline crosses itself (two non-adjacent edges cross properly in xz): counted by ground / top, the first of each listed.
-void selfCrossing(const knav::native::Mesh& m, const char* stage)
+std::size_t selfCrossing(const knav::native::Mesh& m, const char* stage)
 {
 	std::array<std::size_t, 2> count{};
 	std::array<std::string, 2> first;
@@ -307,6 +308,72 @@ void selfCrossing(const knav::native::Mesh& m, const char* stage)
 		}
 	}
 	std::cout << "  self-crossing faces " << stage << ": ground " << count[0] << ", top " << count[1] << " of " << m.faces.size() << "; first ground " << first[0] << "; first top " << first[1] << "\n";
+	return count[0] + count[1];
+}
+
+// Zero-area polygons (< 0.01 u2 in xz) after nativeTiles (kenshi-k16.7.236): the quantization slivers that bridge two faces. Counts them; lists the first few.
+std::size_t zeroAreaPolys(const knav::NavMesh& mesh, const char* name)
+{
+	std::size_t count = 0;
+	for (const knav::BakedTile& baked : mesh.tiles())
+	{
+		const dtMeshTile* tile = mesh.detour().getTileAt(baked.x, baked.z, 0);
+		if (!tile)
+			continue;
+		for (int p = 0; p < tile->header->polyCount; ++p)
+		{
+			const dtPoly& poly = tile->polys[p];
+			double twice = 0.0;
+			for (int k = 0; k < poly.vertCount; ++k)
+			{
+				const float* a = &tile->verts[poly.verts[k] * 3];
+				const float* b = &tile->verts[poly.verts[(k + 1) % poly.vertCount] * 3];
+				twice += static_cast<double>(a[0]) * b[2] - static_cast<double>(b[0]) * a[2];
+			}
+			if (std::abs(twice) * 0.5 >= 0.01)
+				continue;
+			if (++count <= 3)
+			{
+				std::cout << "    zero-area poly " << name << " tile " << baked.x << "," << baked.z << " poly " << p << " area " << int(poly.getArea()) << ":";
+				for (int k = 0; k < poly.vertCount; ++k)
+					std::cout << " (" << tile->verts[poly.verts[k] * 3] << "," << tile->verts[poly.verts[k] * 3 + 1] << "," << tile->verts[poly.verts[k] * 3 + 2] << ")";
+				std::cout << "\n";
+			}
+		}
+	}
+	return count;
+}
+
+// Zero-area faces (< 0.01 u2) of a face mesh; those within 12 u of the Hub bar door are listed.
+std::size_t zeroAreaFaces(const knav::native::Mesh& w, const char* stage)
+{
+	std::size_t count = 0;
+	for (std::size_t f = 0; f < w.faces.size(); ++f)
+	{
+		const knav::native::Face& face = w.faces[f];
+		double twice = 0.0;
+		for (std::uint32_t k = 0; k < face.numEdges; ++k)
+		{
+			const auto& p = w.vertices[w.edges[face.startEdge + k].a];
+			const auto& q = w.vertices[w.edges[face.startEdge + (k + 1) % face.numEdges].a];
+			twice += p[0] * q[2] - q[0] * p[2];
+		}
+		if (std::abs(twice) * 0.5 >= 0.01)
+			continue;
+		++count;
+		const auto& v = w.vertices[w.edges[face.startEdge].a];
+		if (std::hypot(v[0] + 50620.0, v[2] + 1156.0) < 12.0)
+		{
+			std::cout << "    zero-area face " << stage << " " << f << " top " << int(face.top) << ":";
+			for (std::uint32_t k = 0; k < face.numEdges; ++k)
+			{
+				const auto& a = w.vertices[w.edges[face.startEdge + k].a];
+				std::cout << " (" << a[0] << "," << a[1] << "," << a[2] << ")";
+			}
+			std::cout << "\n";
+		}
+	}
+	return count;
 }
 
 // The polygons within `radius` of a point (the 828 spot): index, vertex count, mean y, and the edges with no neighbour (wall or open).
@@ -328,7 +395,7 @@ void spotReport(const knav::NavMesh& mesh, const char* label, double x, double z
 				cy += v[1] / poly.vertCount;
 				near = std::min<double>(near, std::hypot(v[0] - x, v[2] - z));
 			}
-			if (near > radius || listed >= 40)
+			if (near > radius || listed >= 80)
 				continue;
 			++listed;
 			std::cout << "    " << label << " tile " << baked.x << "," << baked.z << " poly " << p << " area " << int(poly.getArea()) << " y " << cy << " verts";
@@ -344,9 +411,12 @@ void spotReport(const knav::NavMesh& mesh, const char* label, double x, double z
 	}
 }
 
-std::vector<knav::BakedTile> bake(const std::string& dataDir, const kworld::Heightmap& terrain, kworld::ZoneCell zone, knav::ZoneGenReport& report, double& ms)
+std::vector<knav::BakedTile> bake(const std::string& dataDir, const kworld::Heightmap& terrain, kworld::ZoneCell zone, knav::ZoneGenReport& report, double& ms, const kworld::PlacedInstance* stood = nullptr)
 {
-	const knav::AreaGeometry area = knav::gatherArea(dataDir, terrain, zone, zone);
+	kworld::AreaGatherer gatherer(dataDir, terrain);
+	if (stood != nullptr)
+		gatherer.addPlacement(*stood);
+	const knav::AreaGeometry area = gatherer.gather(zone, zone);
 	const knav::NavConfig config = knav::configForWorldZones(zone, zone);
 	const std::vector<std::array<double, 2>> seeds = knav::zoneBakeSeeds(terrain, area, knav::readSeedsDef(dataDir + "/navtiles"), zone, config.waterLevel);
 	report.wantWelded = true;
@@ -356,14 +426,14 @@ std::vector<knav::BakedTile> bake(const std::string& dataDir, const kworld::Heig
 	return tiles;
 }
 
-void zone(const std::string& dataDir, const kworld::Heightmap& terrain, const char* name, kworld::ZoneCell cell)
+void zone(const std::string& dataDir, const kworld::Heightmap& terrain, const char* name, kworld::ZoneCell cell, const kworld::PlacedInstance* stood = nullptr)
 {
 	knav::ZoneGenReport report;
 	double ms = 0;
-	const std::vector<knav::BakedTile> tiles = bake(dataDir, terrain, cell, report, ms);
+	const std::vector<knav::BakedTile> tiles = bake(dataDir, terrain, cell, report, ms, stood);
 	std::cout << name << " zone " << cell.x << "," << cell.z << ": " << tiles.size() << " tiles, " << report.buildings << " buildings generated, " << report.buildingsFailed
 		<< " failed, ground " << report.groundFaces << " faces (" << report.topFaces << " tops), stitched " << report.stitched << ", doors " << report.doorFacesPainted << "/"
-		<< report.doorFaces << ", seam prune dropped " << report.seamPruned << " tops, weld " << report.welded << " merged / " << report.weldSplit << " split / " << report.weldPaired << " paired / " << report.weldDropped << " dropped (" << report.weldThrough << " joined across; " << report.weldOrphanOpen << " neighbour edges still open, " << report.weldOrphanGap << " of them across a gap; dropped by neighbours 0/1/2/3+: " << report.weldByLive[0] << "/" << report.weldByLive[1] << "/" << report.weldByLive[2] << "/" << report.weldByLive[3] << "), open links " << report.openLinks << ", open shared " << report.openShared << ", max polygons per tile " << report.maxPolys << ", over the cap " << report.overfullTiles << "; surfaces " << static_cast<long>(report.msSurf)
+		<< report.doorFaces << " (" << report.doorsUnkeyed << " doors unkeyed, " << report.doorsFromShapes << " cut from door shapes), seam prune dropped " << report.seamPruned << " tops, weld " << report.welded << " merged / " << report.weldSplit << " split / " << report.weldPaired << " paired / " << report.weldDropped << " dropped (" << report.weldThrough << " joined across; " << report.weldOrphanOpen << " neighbour edges still open, " << report.weldOrphanGap << " of them across a gap; dropped by neighbours 0/1/2/3+: " << report.weldByLive[0] << "/" << report.weldByLive[1] << "/" << report.weldByLive[2] << "/" << report.weldByLive[3] << "), open links " << report.openLinks << ", open shared " << report.openShared << ", max polygons per tile " << report.maxPolys << ", over the cap " << report.overfullTiles << "; surfaces " << static_cast<long>(report.msSurf)
 		<< " ms, ground " << static_cast<long>(report.msGround) << " ms, tiles " << static_cast<long>(report.msTiles) << " ms, total " << static_cast<long>(ms) << " ms\n";
 	std::vector<std::array<int, 3>> polys = report.tilePolys;
 	std::sort(polys.begin(), polys.end(), [](const auto& a, const auto& b) { return a[2] > b[2]; });
@@ -385,13 +455,38 @@ void zone(const std::string& dataDir, const kworld::Heightmap& terrain, const ch
 	for (const std::string& id : report.failedIds)
 		std::cout << "  building not generated: " << id << "\n";
 	test::require(!tiles.empty(), std::string(name) + ": the zone has tiles");
+	{
+		// the mesh's up-facing faces wind one way (positive shoelace in x, z here; weldMesh calls it cross2 < 0): a cut piece must keep it (kenshi-k16.7.218)
+		const knav::native::Mesh& w = report.weldedWorld;
+		std::size_t flipped = 0;
+		for (const knav::native::Face& face : w.faces)
+		{
+			double twice = 0;
+			for (std::uint32_t k = 0; k < face.numEdges; ++k)
+			{
+				const auto& p = w.vertices[w.edges[face.startEdge + k].a];
+				const auto& q = w.vertices[w.edges[face.startEdge + (k + 1) % face.numEdges].a];
+				twice += p[0] * q[2] - q[0] * p[2];
+			}
+			flipped += twice < -1e-6;
+		}
+		std::cout << "  " << name << ": " << flipped << " of " << w.faces.size() << " welded faces wind against the mesh; open shared edges " << report.openShared << "\n";
+		test::require(flipped == 0, std::string(name) + ": every welded face is up-facing");
+	}
 	std::cout << "  non-convex top pieces (uniqueTops needs 0): " << report.topNonConvex << "\n";
 	test::require(report.topNonConvex == 0, std::string(name) + ": every top piece is convex");
 	{
 		const knav::NavMesh whole = knav::NavMesh::fromTiles(knav::configForWorldZones(cell, cell), tiles);
 		const FoldCensus fold = foldCensus(whole, 0.01, report.topPolys, report.polyFace);
 		std::cout << "  fold census " << name << ": " << fold.pairs << " overlapping polygon pairs (> 0.01 u^2), worst " << fold.worst << " u^2 " << fold.where << "\n";
-		std::cout << "  final fold pairs from one welded face: " << fold.sameFace << " of " << fold.pairs << "; above 0.25 u2 (over the 1/8 u quantization noise): " << fold.over025 << ", above 1 u2: " << fold.over1 << "; faces nativeTiles left out (not simple) " << report.nativeFanned << "\n";
+		std::cout << "  final fold pairs from one welded face: " << fold.sameFace << " of " << fold.pairs << "; above 0.25 u2 (over the 1/8 u quantization noise): " << fold.over025 << ", above 1 u2: " << fold.over1 << "; faces nativeTiles left out (not simple) " << report.nativeFanned << "; repaired by union " << report.nativeRepaired << ", worst height step vs nearest corner " << report.nativeRepairStep << " u\n";
+		{
+			const std::size_t zeroFinal = zeroAreaPolys(whole, name);
+			std::cout << "  zero-area (< 0.01 u2) " << name << ": faces before weld " << zeroAreaFaces(report.preWeldWorld, "preWeld") << ", after weld " << zeroAreaFaces(report.weldedWorld, "welded") << ", polygons after nativeTiles " << zeroFinal << "\n";
+			// Before kenshi-k16.7.236 nativeTiles kept every quantization sliver as a bridge: 247 / 176 / 52 / 19 / 250 in Heft / Hub / Hub east / Hub bar / stood TwoStorey.
+			// Now only a sliver an edge needs for its partner stays (a collinear bridge across a T-junction nothing else joins); the bound is the measured 52 / 42 / 13 / 6 / 53 plus slack.
+			test::require(zeroFinal <= 64, std::string(name) + ": zero-area polygons after nativeTiles stay a bridge's few, not every sliver");
+		}
 		for (std::size_t i = 0; i < report.fannedFaces.size() && i < 4; ++i)
 		{
 			const knav::native::Mesh& w = report.weldedWorld;
@@ -404,13 +499,47 @@ void zone(const std::string& dataDir, const kworld::Heightmap& terrain, const ch
 			}
 			std::cout << "\n";
 		}
+		{
+			// how big the left-out faces are: shoelace area (u2) of each in xz, the largest and the count over 0.1 / 1 u2
+			const knav::native::Mesh& w = report.weldedWorld;
+			double biggest = 0;
+			std::size_t over01 = 0, over1 = 0;
+			for (const std::uint32_t f : report.fannedFaces)
+			{
+				double area2 = 0;
+				for (std::uint32_t k = 0; k < w.faces[f].numEdges; ++k)
+				{
+					const auto& p = w.vertices[w.edges[w.faces[f].startEdge + k].a];
+					const auto& q = w.vertices[w.edges[w.faces[f].startEdge + (k + 1) % w.faces[f].numEdges].a];
+					area2 += p[0] * q[2] - q[0] * p[2];
+				}
+				const double area = std::fabs(area2) / 2;
+				double perim = 0;
+				for (std::uint32_t k = 0; k < w.faces[f].numEdges; ++k)
+				{
+					const auto& p = w.vertices[w.edges[w.faces[f].startEdge + k].a];
+					const auto& q = w.vertices[w.edges[w.faces[f].startEdge + (k + 1) % w.faces[f].numEdges].a];
+					perim += std::hypot(q[0] - p[0], q[2] - p[2]);
+				}
+				std::cout << "    left-out face " << f << " top " << (int)w.faces[f].top << " corners " << w.faces[f].numEdges << " net area " << area << " width " << 4 * area / perim << "\n";
+				biggest = std::max(biggest, area);
+				over01 += area > 0.1;
+				over1 += area > 1;
+			}
+			std::cout << "  left-out faces by area (net shoelace u2): largest " << biggest << ", above 0.1: " << over01 << ", above 1: " << over1 << " of " << report.fannedFaces.size() << "\n";
+		}
+		test::require(report.nativeFanned == 0, std::string(name) + ": nativeTiles leaves no face out (a hole in walkable ground)");
 		std::cout << "  welded mesh faces with a reflex corner " << report.reflexFaces << ", with a self-overlapping fan " << report.selfOverlapFaces << " of " << report.groundFaces << "\n";
 		static const char* const kClass[3] = { "ground/ground", "ground/top", "top/top" };
 		for (int c = 0; c < 3; ++c)
 			std::cout << "    " << kClass[c] << ": " << fold.byClass[c] << " pairs, worst " << fold.worstByClass[c] << " u^2 " << fold.whereByClass[c] << fold.shapeByClass[c] << "\n";
 		for (const auto& [stage, mesh] : { std::pair<const char*, const knav::native::Mesh*>{ "before weld", &report.preWeldWorld }, { "after weld", &report.weldedWorld } })
 		{
-			selfCrossing(*mesh, stage);
+			const std::size_t crossed = selfCrossing(*mesh, stage);
+			if (mesh == &report.weldedWorld)
+				test::require(crossed == 0, std::string(name) + ": the welded mesh has no self-crossing face");
+			if (mesh == &report.weldedWorld)
+				std::cout << "  weld cuts refused (would cross): " << report.weldCutRefused << "\n";
 			const FaceFolds ff = faceFolds(*mesh);
 			std::cout << "  face folds " << name << " " << stage << " (exact):";
 			for (int c = 0; c < 3; ++c)
@@ -444,6 +573,8 @@ void zone(const std::string& dataDir, const kworld::Heightmap& terrain, const ch
 				std::cout << "\n";
 			}
 		}
+		if (std::string(name) == "Hub bar")
+			spotReport(whole, "barDoor", -50620, -1156, 9);
 		if (cell.x == 46 && cell.z == 16)
 		{
 			spotReport(whole, "828a", 67037, -72177, 6);
@@ -457,7 +588,7 @@ void zone(const std::string& dataDir, const kworld::Heightmap& terrain, const ch
 		std::cout << "  OVER THE CAP: " << report.overfullTiles << " tiles left out of the mesh\n";
 	knav::ZoneGenReport again;
 	double ms2 = 0;
-	const std::vector<knav::BakedTile> second = bake(dataDir, terrain, cell, again, ms2);
+	const std::vector<knav::BakedTile> second = bake(dataDir, terrain, cell, again, ms2, stood);
 	test::require(second.size() == tiles.size(), std::string(name) + ": the bake is the same twice (tile count)");
 	for (std::size_t i = 0; i < tiles.size() && i < second.size(); ++i)
 		test::require(tiles[i].x == second[i].x && tiles[i].z == second[i].z && tiles[i].data == second[i].data, std::string(name) + ": the bake is the same twice (tile bytes)");
@@ -515,6 +646,17 @@ int main()
 		zone(dataDir, terrain, "Heft", { 46, 16 });
 		zone(dataDir, terrain, "Hub", kworld::zoneCellOf(-51181.133, 2638.970));
 		zone(dataDir, terrain, "Hub east", { 20, 33 });
+		zone(dataDir, terrain, "Hub bar", kworld::zoneCellOf(-50612.7, -1158.0)); // the storm door (kenshi-k16.7.236)
+		// a stood (player / save) TwoStorey, kenshi-k16.7.218: its doors must key faces too
+		kworld::PlacedInstance stood;
+		stood.instanceID = "player/N";
+		stood.buildingID = "4028-TwoStorey.mod";
+		stood.x = 68322.0;
+		stood.z = -71160.0;
+		stood.y = terrain.terrainHeight(stood.x, stood.z); // the placement's y: BuildOrder::y, the ground height at the click (Simulation::placeBuilding)
+		stood.qw = 1.0;
+		stood.cell = stood.positionCell = kworld::zoneCellOf(stood.x, stood.z);
+		zone(dataDir, terrain, "Heft with a stood TwoStorey", stood.cell, &stood);
 	} catch (const std::exception& e) {
 		std::cerr << "FAIL: " << e.what() << "\n";
 		return 1;

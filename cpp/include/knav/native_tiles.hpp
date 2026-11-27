@@ -33,6 +33,8 @@ struct NativeTileStats
 	std::size_t polys = 0;
 	std::size_t slivers = 0; // polygons with no area on the 1/8 u vertices, kept as bridges
 	std::size_t fanned = 0; // faces whose outline is not simple (after the spike and pinch repair): left out of the tile, once per tile they reach
+	std::size_t repaired = 0; // faces repaired by union (once per tile they reach)
+	double repairStep = 0.0; // worst height of a repaired corner minus that of its nearest original corner (u)
 	std::size_t overfull = 0; // tiles past kMaxPolysPerTile, left out
 	std::size_t duplicates = 0; // coincident polygons merged into one
 	std::size_t openLinks = 0; // streaming-link edges with no partner in their tile and not on its border

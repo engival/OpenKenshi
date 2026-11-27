@@ -235,6 +235,49 @@ struct Resolver
 		return { first, count };
 	}
 
+	// The record's use nodes (kenshi-2g4v): `is node`, `node type` 4 instances, as kworld's collision and the sim's routines read them
+	std::unordered_map<std::string, std::pair<uint32_t, uint32_t>> recNodes;
+	std::pair<uint32_t, uint32_t> nodesOf(const kdata::Record& rec)
+	{
+		const auto it = recNodes.find(rec.stringID);
+		if (it != recNodes.end()) { return it->second; }
+		const uint32_t first = (uint32_t)out.nodes.size();
+		for (const kdata::Instance& in : rec.instances)
+		{
+			const kdata::Record* node = in.targetStringID.empty() ? nullptr : gd.find(in.targetStringID);
+			if (!node || !node->boolOr("is node", false) || node->intOr("node type", 1) != 4) { continue; }
+			BuildingSet::Node n;
+			for (int k = 0; k < 3; k++) { n.pos[k] = transformAt(in.transform, k); }
+			for (int k = 0; k < 4; k++) { n.quat[k] = transformAt(in.transform, 3 + k); }
+			out.nodes.push_back(n);
+		}
+		return recNodes[rec.stringID] = { first, (uint32_t)out.nodes.size() - first };
+	}
+
+	// The first functionality's `animation` ANIMATION name (the sim's routines::functionClip), as an index in BuildingSet::animNames
+	uint32_t animationOf(const kdata::Record& rec)
+	{
+		const kdata::RefCategory* functionality = rec.findRefs("functionality");
+		for (size_t i = 0; functionality && i < functionality->entries.size(); i++)
+		{
+			const kdata::Record* function = gd.find(functionality->entries[i].targetID);
+			const kdata::RefCategory* clip = function ? function->findRefs("animation") : nullptr;
+			for (size_t k = 0; clip && k < clip->entries.size(); k++)
+			{
+				if (clip->entries[k].v0 == kdata::kReferenceRemoved) { continue; }
+				const kdata::Record* animation = gd.find(clip->entries[k].targetID);
+				if (animation && !animation->name.empty())
+				{
+					const auto f = std::find(out.animNames.begin(), out.animNames.end(), animation->name);
+					if (f != out.animNames.end()) { return (uint32_t)(f - out.animNames.begin()); }
+					out.animNames.push_back(animation->name);
+					return (uint32_t)out.animNames.size() - 1;
+				}
+			}
+		}
+		return 0;
+	}
+
 	// MATERIAL_SPEC `tile X` / `tile Y`, which scale the mesh UVs (mesh.glsl v_uv = texcoord0 * tile.xy). A 0 is not a collapse: the only three
 	// records that say a zero tile are hanging lamps (indoor_lamp1 behind the Ceiling Lamp, Indoor_GAS LAMP, Old-World_Flouresc-Light, all tile Y 0)
 	// and the original draws their shade from the whole texture, not a single texel row (kenshi-k16.2.203.1). 0 reads as 1, as the light bake
@@ -489,26 +532,26 @@ std::unordered_map<std::string, std::vector<LayoutItem>> loadLayouts(const std::
 		const std::string path = dataDir + "/newland/leveldata/" + layers[i] + "interiors.level";
 		files[i] = kdata::parse(readBytes(path), "interiors.level");
 	});
+	// The four layers overlay each other the way the sim's own loader does (kdata::GameData::apply: a later layer's collection merges into the earlier one by
+	// instance id, new ids append, an empty target deletes), so a piece's index in the merged list is the sim's (the wire's container / machine `piece`;
+	// kenshi-95j9: replacing the collection dropped 43 entries of one Slaver building and renumbered the rest).
+	kdata::GameData merged;
+	for (kdata::File& f : files) { merged.apply(std::move(f)); }
 	std::unordered_map<std::string, std::vector<LayoutItem>> out;
-	for (const kdata::File& f : files)
+	for (const kdata::Record* rp : merged.byType(collectionType))
 	{
-		std::unordered_map<std::string, const kdata::Record*> states;
-		for (const kdata::Record& r : f.records) { if (r.type == stateType) { states[r.stringID] = &r; } }
-		for (const kdata::Record& r : f.records)
+		const kdata::Record& r = *rp;
+		if (r.instances.empty()) { continue; }
+		std::vector<LayoutItem>& items = out[r.stringID];
+		for (size_t n = 0; n < r.instances.size(); n++)
 		{
-			if (r.type != collectionType || r.instances.empty()) { continue; }
-			std::vector<LayoutItem>& items = out[r.stringID];
-			items.clear();
-			for (size_t n = 0; n < r.instances.size(); n++)
-			{
-				const kdata::Instance& in = r.instances[n];
-				if (in.targetStringID.empty()) { continue; }
-				LayoutItem it = { in.id, in.targetStringID, { transformAt(in.transform, 0), transformAt(in.transform, 1), transformAt(in.transform, 2) },
-					{ transformAt(in.transform, 3), transformAt(in.transform, 4), transformAt(in.transform, 5), transformAt(in.transform, 6) }, -1, (uint32_t)n };
-				const auto st = in.states.empty() ? states.end() : states.find(in.states.front());
-				if (st != states.end()) { if (const kdata::FieldInt* fl = st->second->findInt("floor")) { it.floor = fl->value; } }
-				items.push_back(std::move(it));
-			}
+			const kdata::Instance& in = r.instances[n];
+			if (in.targetStringID.empty()) { continue; }
+			LayoutItem it = { in.id, in.targetStringID, { transformAt(in.transform, 0), transformAt(in.transform, 1), transformAt(in.transform, 2) },
+				{ transformAt(in.transform, 3), transformAt(in.transform, 4), transformAt(in.transform, 5), transformAt(in.transform, 6) }, -1, (uint32_t)n };
+			const kdata::Record* st = in.states.empty() ? nullptr : merged.find(in.states.front());
+			if (st && st->type == stateType) { if (const kdata::FieldInt* fl = st->findInt("floor")) { it.floor = fl->value; } }
+			items.push_back(std::move(it));
 		}
 	}
 	return out;
@@ -576,7 +619,9 @@ void addFurniture(BuildingSet& set, Resolver& rs, const kdata::GameData& gd, con
 		rotateBy(pq, local, rot);
 		rs.collect(*target, *target, hashString(p.instanceID + "/" + it.id), (float)(pb.x + rot[0]), (float)(pb.z + rot[2]), kworld::PartStage::Exterior, chosen);
 		rs.kind = 0;
-		if (chosen.empty()) { set.furnitureNoGeometry++; continue; }
+		// A piece with no geometry (a use-node marker, a chair record with no mesh) is still a piece: the wire names it (container / machine tail) and its nodes place a body.
+		// It is an instance with no parts, in no draw cell.
+		if (chosen.empty()) { set.furnitureNoGeometry++; }
 		BuildingInstance f;
 		f.x = pb.x + rot[0]; f.y = pb.y + rot[1]; f.z = pb.z + rot[2];
 		f.qw = pb.qw * it.quat[0] - pb.qx * it.quat[1] - pb.qy * it.quat[2] - pb.qz * it.quat[3];
@@ -593,9 +638,12 @@ void addFurniture(BuildingSet& set, Resolver& rs, const kdata::GameData& gd, con
 		f.ceiling = target->boolOr("ceiling placement", false);
 		std::tie(f.firstEffect, f.effectCount) = rs.ownEffectsOf(*target);	// a Campfire placed by a layout
 		std::tie(f.firstOwnLight, f.ownLightCount) = rs.ownLightsOf(*target);
+		std::tie(f.firstNode, f.nodeCount) = rs.nodesOf(*target);
+		f.animation = rs.animationOf(*target);
 		f.firstPart = (uint32_t)set.partRefs.size();
 		f.partCount = (uint32_t)chosen.size();
 		for (const uint32_t id : chosen) { set.partRefs.push_back(id); }
+		if (chosen.empty()) { set.meshless.push_back(f); set.furnitureInstances++; continue; }	// numbered after every drawn instance (loadBuildings)
 		(exterior ? set.cells : set.interiorCells)[kworld::zoneIndexOf(kworld::zoneCellOf(f.x, f.z))].push_back((uint32_t)set.instances.size());
 		set.instances.push_back(f);
 		set.furnitureInstances++;
@@ -656,6 +704,8 @@ BuildingSet BuildingSet::load(const std::string& dataDir, bool features)
 			if (b.nameId == set.names.size()) { set.names.push_back(building->name); }
 			std::tie(b.firstEffect, b.effectCount) = rs.ownEffectsOf(*building);	// Campfire / Cooking Pit flames
 			std::tie(b.firstOwnLight, b.ownLightCount) = rs.ownLightsOf(*building);	// campfire light (read, drawn in slice 2)
+			std::tie(b.firstNode, b.nodeCount) = rs.nodesOf(*building);
+			b.animation = rs.animationOf(*building);
 			const uint32_t index = (uint32_t)set.instances.size();
 			const uint64_t key = kworld::doorKey(kworld::placementId(p));	// the wire's `building` for its doors, characters and layout containers
 			set.cells[kworld::zoneIndexOf(kworld::zoneCellOf(p.x, p.z))].push_back(index);
@@ -763,8 +813,10 @@ BuildingSet BuildingSet::load(const std::string& dataDir, bool features)
 			rs.addPart(*platform, *platform, 0, chosen);
 			if (!chosen.empty()) { set.editorPlatformRef = (int)set.partRefs.size(); set.partRefs.push_back(chosen[0]); }
 		}
-		const size_t buildingInstances = set.instances.size() - set.furnitureInstances - set.doorInstances;
+		const size_t buildingInstances = set.instances.size() + set.meshless.size() - set.furnitureInstances - set.doorInstances;
 		if (features) { addFeatures(set, gd, terrain, dataDir); }
+		for (BuildingInstance& f : set.meshless) { set.instances.push_back(std::move(f)); }
+		set.meshless.clear();
 		char buf[640];
 		snprintf(buf, sizeof buf, "%zu placements from kworld (layer-merged), %zu missing target, %zu without mesh parts; %zu instances in %zu cells, %zu distinct parts;"
 			" part uses by shader DEFAULT %zu ALPHA %zu FOLIAGE %zu DUAL %zu EMISSIVE %zu;"

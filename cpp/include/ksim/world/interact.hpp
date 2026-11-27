@@ -165,6 +165,7 @@ enum class InteractKind : std::uint8_t
 	Character = 3, // a fighter (loot, first aid); never an INTERACTABLE record
 	Container = 4, // a storage building (state::Container); loot takes all
 	Producer = 5, // a mine, deposit or drill (state::Producer, producers.hpp); use works it
+	Machine = 8, // a placed converter or turret (a kind 12 wire row, World::machineSites); no entity: id names the site. Use operates / mans it (kenshi-k16.6.788)
 	Bed = 6, // a real layout bed (Simulation::bedOf): just after a site id (routines::siteId); action 9 sleeps in it
 	Cage = 7, // a cage building's key (Simulation::cageOf): a carrier's order on it, any action, is the put-in (exe 1407f9e20: N -> 0x6c)
 };

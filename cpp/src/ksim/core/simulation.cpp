@@ -747,13 +747,13 @@ Simulation Simulation::restore(World world, std::istream& in,
 	if (spawner != nullptr)
 		simulation.attachWilderness(std::move(gameData), std::move(spawner));
 	simulation.readPromotionSaved(); // before restoreBoards drops the RunStates singleton
-	// EVENT 51 bookkeeping is not saved. The record holds no "a witness saw it" bit, so the announced state is derived: a committed
-	// record (a witness reacted and the bounty went in) was announced, any other loaded act is still pending and its first witness
-	// after the load names it (cause by the crime, container unknown: 0). An act seen but not committed before the save may resend once.
+	// EVENT 51 bookkeeping is seeded from the record's saved announced bit (a save older than kCrimeAnnouncedVersion has none: a
+	// committed record counts as announced). An unannounced loaded act is still pending and its first witness after the load names it (cause by the crime,
+	// container unknown: 0).
 	simulation.world_.ecs().each([&](const state::Id& id, const state::CrimeRecord& held)
 	{
 		if (held.crime == crime::kTheft || held.crime == crime::kLooting || held.crime == crime::kBurglary)
-			simulation.caughtActs_[id.value] = {0, static_cast<std::uint8_t>(held.crime == crime::kBurglary ? 2 : 1), held.committed};
+			simulation.caughtActs_[id.value] = {0, static_cast<std::uint8_t>(held.crime == crime::kBurglary ? 2 : 1), held.announced || held.committed};
 	});
 	simulation.restoreBoards(); // the saved runtime state first; ensureBlackboards then only fills the squads the save did not hold
 	simulation.ensureBlackboards();
@@ -2569,6 +2569,7 @@ void Simulation::apply(const Command& command)
 		if (f->asleep)
 		{
 			f->asleep = false;
+			f->leaveBed();
 			// A player sleeper's bed came from the order (a Routine target the pose tail reads): it goes with the wake.
 			if (state::Routine* routine = fighterEntity(command.subject).get_mut<state::Routine>())
 				routine->target = {};

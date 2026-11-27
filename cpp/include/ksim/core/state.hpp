@@ -16,6 +16,7 @@
 // and the state hash all go through it.
 
 #include "ksim/combat/fighter_state.hpp"
+#include "ksim/save/save_version.hpp"
 
 #include <flecs.h>
 
@@ -1358,6 +1359,7 @@ struct CrimeRecord
 	double sentenceStart = 0.0; // game hours; with sentenceHours 0 = none
 	double sentenceHours = 0.0;
 	std::vector<Bounty> bounties; // sorted by factionSid
+	bool announced = false; // a witness saw the act and SIMLINK EVENT 51 went out (theft / looting / burglary), so a load does not send it again
 
 	template <typename Archive, typename Self>
 	static void fields(Archive& ar, Self& self)
@@ -1370,6 +1372,8 @@ struct CrimeRecord
 		ar(self.sentenceStart);
 		ar(self.sentenceHours);
 		ar(self.bounties);
+		if (ar.version >= kCrimeAnnouncedVersion)
+			ar(self.announced);
 	}
 };
 

@@ -7,9 +7,9 @@
 //     the data has them;
 //  3. overrides: SetDoorState locks and unlocks one door, saved with the game;
 //  4. stances: how the owner of a town sees a faction (no door effect);
-//  5. (needs a bake, usage: ksim_doors BAKEDIR RX0 RZ0 RX1 RZ1) Shark: with its gates locked (an override, Shark's
+//  5. (needs a bake, usage: ksim_doors BAKEDIR RX0 RZ0 RX1 RZ1) Squin: with its gates locked (an override, Squin's
 //     crews taken off them) every route in is refused, a raid that the locked gates refuse bashes one open for ever, the
-//     squads of Shark keep a goal (no terminal state); unlocked, everything is as before;
+//     squads of Squin keep a goal (no terminal state); unlocked, everything is as before;
 //  6. 1 worker == 4 workers with a town lost and an override in play, and save + load + run == the
 //     uninterrupted run, the book rebuilt after the load.
 
@@ -287,7 +287,7 @@ int main(int argc, char** argv)
 				<< " always lock) stay open; override lock/clear ok; " << fake->applies() << " books applied\n";
 		}
 
-		// 5. Shark on the real navmesh.
+		// 5. Squin on the real navmesh.
 		if (argc == 6)
 		{
 			const std::string bake = argv[1];
@@ -295,10 +295,10 @@ int main(int argc, char** argv)
 			const int rz0 = std::stoi(argv[3]);
 			const int rx1 = std::stoi(argv[4]);
 			const int rz1 = std::stoi(argv[5]);
-			// Shark (2 locking gates, 1085 and 1469 units from the centre, so a raid meets one mid-route): the Hub's gates are ruins
+			// Squin (2 locking gates, 1085 and 1469 units from the centre, so a raid meets one mid-route): the Hub's gates are ruins
 			// with no doors (7d6ac14, user-checked 2026-11-04); Stack's west gate is 257 units from its centre.
-			constexpr double kSharkX = -62461.0;
-			constexpr double kSharkZ = 16346.8;
+			constexpr double kSquinX = -62461.0;
+			constexpr double kSquinZ = 16346.8;
 			ksim::Simulation simulation = newGame(order, 1);
 			std::shared_ptr<ksim::KnavNavigator> navigator = ksim::KnavNavigator::open(KENSHI_DATA, bake,
 				rx0, rz0, rx1, rz1, 4);
@@ -306,33 +306,33 @@ int main(int argc, char** argv)
 			simulation.run(ksim::Simulation::kSquadIntervalTicks + 1);
 			const ksim::DoorSystem& doors = *simulation.ai()->doorSystem();
 
-			flecs::entity_t shark = 0;
+			flecs::entity_t squin = 0;
 			double best = 800.0;
 			simulation.world().ecs().each([&](flecs::entity entity, const ksim::state::TownState& town)
 			{
-				const double far = std::hypot(town.x - kSharkX, town.z - kSharkZ);
+				const double far = std::hypot(town.x - kSquinX, town.z - kSquinZ);
 				if (far < best)
 				{
 					best = far;
-					shark = entity.id();
+					squin = entity.id();
 				}
 			});
-			test::require(shark != 0, "no town at Shark");
-			const ksim::state::TownState townState = *entityOf(simulation, shark).get<ksim::state::TownState>();
+			test::require(squin != 0, "no town at Squin");
+			const ksim::state::TownState townState = *entityOf(simulation, squin).get<ksim::state::TownState>();
 			const flecs::entity_t owner = townState.owner.id;
-			test::require(owner != 0, "Shark has no owner");
+			test::require(owner != 0, "Squin has no owner");
 			flecs::entity_t hostile = 0;
 			simulation.world().ecs().each([&](flecs::entity entity, const ksim::state::FactionState&)
 			{
 				if (hostile == 0 && doors.classOf(entity.id(), owner) == DoorClass::Hostile)
 					hostile = entity.id();
 			});
-			test::require(hostile != 0, "nobody is hostile to Shark's owner");
+			test::require(hostile != 0, "nobody is hostile to Squin's owner");
 			std::vector<std::uint64_t> townGates;
 			for (const ksim::DoorSite& site : ksim::DoorData::fromWorld(simulation.world())->sites)
-				if (site.gate && doors.townOf(site.key) == shark)
+				if (site.gate && doors.townOf(site.key) == squin)
 					townGates.push_back(site.key);
-			test::require(townGates.size() >= 2, "Shark has fewer than two gate doors");
+			test::require(townGates.size() >= 2, "Squin has fewer than two gate doors");
 
 			// Start points a street away from the walls, all round the town.
 			struct Probe
@@ -355,27 +355,27 @@ int main(int argc, char** argv)
 			for (int k = 0; k < 12; ++k)
 			{
 				const double angle = k * 3.14159265358979 / 6.0;
-				Probe probe{kSharkX + 1300.0 * std::cos(angle), kSharkZ + 1300.0 * std::sin(angle), 0.0};
-				const ksim::Route open = navigator->routeFor(stranger, probe.x, probe.z, kSharkX, kSharkZ);
+				Probe probe{kSquinX + 1300.0 * std::cos(angle), kSquinZ + 1300.0 * std::sin(angle), 0.0};
+				const ksim::Route open = navigator->routeFor(stranger, probe.x, probe.z, kSquinX, kSquinZ);
 				if (!open.found)
 					continue;
 				probe.openLength = length(open);
 				probes.push_back(probe);
 			}
-			test::require(probes.size() >= 3, "fewer than three streets lead to the centre of Shark");
+			test::require(probes.size() >= 3, "fewer than three streets lead to the centre of Squin");
 			test::require(navigator->doors().settings().empty() || owner == 0
-				|| !navigator->doors().settings().contains(townGates.front()), "the gates of Shark start restricted");
+				|| !navigator->doors().settings().contains(townGates.front()), "the gates of Squin start restricted");
 
 			const auto reach = [&](const ksim::Traveller& who, const Probe& probe)
 			{
-				const auto goal = navigator->nearestReachableFor(who, kSharkX, kSharkZ, 250.0, probe.x, probe.z);
-				return goal && std::hypot(goal->x - kSharkX, goal->z - kSharkZ) < 260.0;
+				const auto goal = navigator->nearestReachableFor(who, kSquinX, kSquinZ, 250.0, probe.x, probe.z);
+				return goal && std::hypot(goal->x - kSquinX, goal->z - kSquinZ) < 260.0;
 			};
 			for (const Probe& probe : probes)
 				test::require(reach(stranger, probe) && reach(resident, probe),
-					"an open Shark is not reachable by goal pick");
+					"an open Squin is not reachable by goal pick");
 
-			// Take Shark's crews off its gates (a crew reopens a shut gate within seconds, gatecrew.hpp) and lock them all: a
+			// Take Squin's crews off its gates (a crew reopens a shut gate within seconds, gatecrew.hpp) and lock them all: a
 			// locked gate is a wall for everyone.
 			{
 				std::set<std::uint64_t> townKeys(townGates.begin(), townGates.end());
@@ -391,16 +391,16 @@ int main(int argc, char** argv)
 			for (const std::uint64_t key : townGates)
 				simulation.enqueue(ksim::Command::setDoorState(key, 2));
 			simulation.run(ksim::kTicksPerGameHour + ksim::Simulation::kSquadIntervalTicks + 1);
-			test::require(navigator->doors().get(townGates.front()).state == knav::DoorState::Locked, "the gates of Shark did not lock");
+			test::require(navigator->doors().get(townGates.front()).state == knav::DoorState::Locked, "the gates of Squin did not lock");
 			std::size_t refused = 0;
 			for (const Probe& probe : probes)
 			{
-				const ksim::Route inside = navigator->routeFor(resident, probe.x, probe.z, kSharkX, kSharkZ);
-				const ksim::Route out = navigator->routeFor(stranger, probe.x, probe.z, kSharkX, kSharkZ);
+				const ksim::Route inside = navigator->routeFor(resident, probe.x, probe.z, kSquinX, kSquinZ);
+				const ksim::Route out = navigator->routeFor(stranger, probe.x, probe.z, kSquinX, kSquinZ);
 				test::require(!inside.found || !out.found || length(out) >= probe.openLength * 0.95, "a locked gate changed nothing");
 				refused += (!inside.found && !out.found) ? 1 : 0;
 			}
-			test::require(refused >= 1, "no route into Shark was refused by its locked gates");
+			test::require(refused >= 1, "no route into Squin was refused by its locked gates");
 			const std::uint64_t refusedRoutes = navigator->stats().doorRefusedRoutes;
 			test::require(refusedRoutes >= 1, "refusals are not counted");
 
@@ -417,12 +417,12 @@ int main(int argc, char** argv)
 				{
 					if (ai.order.status != ksim::state::OrderStatus::None)
 						return;
-					const double far = std::hypot(at.x - kSharkX, at.z - kSharkZ);
+					const double far = std::hypot(at.x - kSquinX, at.z - kSquinZ);
 					if (far < 1000.0 || far > 40000.0 ||  !navigator->covers(at.x, at.z)
 						|| doors.classOf(hostile, owner) != DoorClass::Hostile)
 						return;
 					++hostiles;
-					const ksim::Route out = navigator->routeFor(stranger, at.x, at.z, kSharkX, kSharkZ);
+					const ksim::Route out = navigator->routeFor(stranger, at.x, at.z, kSquinX, kSquinZ);
 					if (!out.found && out.failure == ksim::state::AiReason::DoorRefused)
 					{
 						++refusedSquads;
@@ -430,8 +430,8 @@ int main(int argc, char** argv)
 						// the faction layer already counts the raid as arrived.
 						ksim::Traveller basher = stranger;
 						basher.bash = true;
-						const ksim::Route through = navigator->routeFor(basher, at.x, at.z, kSharkX, kSharkZ);
-						const ksim::GateBash target = doors.bashing(hostile, kSharkX, kSharkZ);
+						const ksim::Route through = navigator->routeFor(basher, at.x, at.z, kSquinX, kSquinZ);
+						const ksim::GateBash target = doors.bashing(hostile, kSquinX, kSquinZ);
 						if (!through.found || target.key == 0)
 							return;
 						double along = 0.0, total = 0.0, best = 1.0e300, bestAlong = 0.0;
@@ -458,7 +458,7 @@ int main(int argc, char** argv)
 						raiderZ = at.z;
 					}
 				});
-				test::require(raider.is_valid(), "no squad of the window is refused by Shark's gates mid-route: "
+				test::require(raider.is_valid(), "no squad of the window is refused by Squin's gates mid-route: "
 					+ std::to_string(hostiles) + " hostile squads, " + std::to_string(refusedSquads) + " refused");
 				ksim::state::SquadInstance squad = *raider.get<ksim::state::SquadInstance>();
 				squad.faction = ksim::state::EntityRef{hostile};
@@ -466,7 +466,7 @@ int main(int argc, char** argv)
 				ksim::state::GroupAI ai = *raider.get<ksim::state::GroupAI>();
 				ai.goal = GoalKind::None;
 				ai.order.status = ksim::state::OrderStatus::Issued;
-				ai.order.target = ksim::state::EntityRef{shark};
+				ai.order.target = ksim::state::EntityRef{squin};
 				ai.order.originX = raiderX;
 				ai.order.originZ = raiderZ;
 				ai.order.stay = 100;
@@ -490,33 +490,33 @@ int main(int argc, char** argv)
 				simulation.run(ksim::Simulation::kSquadIntervalTicks + 1);
 				const knav::DoorSetting broken = doors.book().get(gate);
 				test::require(broken.state == knav::DoorState::Open, "a broken gate is not open to everyone");
-				test::require(navigator->routeFor(stranger, raiderX, raiderZ, kSharkX, kSharkZ).found, "the broken gate still refuses strangers");
+				test::require(navigator->routeFor(stranger, raiderX, raiderZ, kSquinX, kSquinZ).found, "the broken gate still refuses strangers");
 				const ksim::state::GroupAI& after = *raider.get<ksim::state::GroupAI>();
 				test::require(after.order.status != ksim::state::OrderStatus::Failed && after.goal != GoalKind::None, "the raid lost its goal after the bash");
-				std::cout << "raid bash: a hostile raid refused by Shark's gates stopped " << seconds << " s at gate " << gate
+				std::cout << "raid bash: a hostile raid refused by Squin's gates stopped " << seconds << " s at gate " << gate
 					<< " and broke it open for ever (" << doors.stats().gatesBroken << " broken)\n";
 				// Put the gates back for the locked test below.
 				simulation.enqueue(ksim::Command::setDoorState(gate, -1));
 				simulation.run(ksim::Simulation::kSquadIntervalTicks + 1);
 			}
 
-			// Locked for everyone: Shark's own squads keep a goal and none is stuck.
+			// Locked for everyone: Squin's own squads keep a goal and none is stuck.
 			for (const std::uint64_t key : townGates)
 				simulation.enqueue(ksim::Command::setDoorState(key, 2));
 			simulation.run(ksim::Simulation::kSquadIntervalTicks + 1);
 			std::size_t lockedOut = 0;
 			for (const Probe& probe : probes)
-				lockedOut += navigator->routeFor(resident, probe.x, probe.z, kSharkX, kSharkZ).found ? 0 : 1;
+				lockedOut += navigator->routeFor(resident, probe.x, probe.z, kSquinX, kSquinZ).found ? 0 : 1;
 			simulation.run(2 * ksim::kTicksPerGameHour);
 			const ksim::AiAudit audit = simulation.ai()->audit(simulation.world().ecs());
 			test::require(audit.goalless == 0, "a squad has no goal behind locked gates");
 			std::size_t townSquads = 0;
 			simulation.world().ecs().each([&](const ksim::state::SquadInstance& squad, const ksim::state::GroupAI& ai)
 			{
-				if (squad.homeTown.id == shark)
+				if (squad.homeTown.id == squin)
 				{
 					++townSquads;
-					test::require(ai.goal != GoalKind::None, "a Shark squad has no goal");
+					test::require(ai.goal != GoalKind::None, "a Squin squad has no goal");
 				}
 			});
 			// Unlock: everything as on alert again, then as before.
@@ -524,10 +524,10 @@ int main(int argc, char** argv)
 				simulation.enqueue(ksim::Command::setDoorState(key, -1));
 			simulation.run(ksim::Simulation::kSquadIntervalTicks + 1);
 			for (const Probe& probe : probes)
-				test::require(navigator->routeFor(resident, probe.x, probe.z, kSharkX, kSharkZ).found,
-					"Shark did not reopen to its residents after the unlock");
-			std::cout << "shark: " << probes.size() << " streets, locked gates refused " << refused << " routes in; "
-				<< lockedOut << " resident routes refused, " << townSquads << " Shark squads kept a goal; "
+				test::require(navigator->routeFor(resident, probe.x, probe.z, kSquinX, kSquinZ).found,
+					"Squin did not reopen to its residents after the unlock");
+			std::cout << "squin: " << probes.size() << " streets, locked gates refused " << refused << " routes in; "
+				<< lockedOut << " resident routes refused, " << townSquads << " Squin squads kept a goal; "
 				<< navigator->stats().doorApplies << " books applied, " << navigator->stats().doorSkippedPolys
 				<< " polygons skipped\n";
 		}

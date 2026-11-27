@@ -334,7 +334,7 @@ int main(int argc, char** argv)
 	// reference had slits where a coplanar removal left a pinched star, and the drift counted those)
 	ground::Params refParams;
 	refParams.heightError = -1;
-	refParams.borderArea = refParams.concaveArea = refParams.borderHeight = -1;
+	refParams.borderArea = refParams.concaveArea = refParams.borderHeight = refParams.concaveHeight = -1;
 	knav::NavConfig navCfg;
 	navCfg.originX = navCfg.originZ = kworld::kWorldMin;
 	navCfg.tilesX = navCfg.tilesZ = (int)(-2 * kworld::kWorldMin / navCfg.tileSize);

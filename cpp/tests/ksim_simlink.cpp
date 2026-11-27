@@ -241,6 +241,16 @@ struct Extras
 	std::map<std::uint64_t, std::vector<std::pair<std::uint64_t, std::uint32_t>>> dynLog; // id -> (tick, flags) of every CHAR_DYNAMIC
 	std::set<std::uint64_t> aimCleared; // ids that streamed bit 20 and later a record without it
 	std::map<std::uint64_t, std::uint64_t> turrets; // the last CHAR_DYNAMIC mounted tail by id (flag bit 21)
+	struct Machine // the machine tail (client-approved 2026-11-23, flag bit 26): the last one by id
+	{
+		std::uint8_t space = 0;
+		std::uint64_t building = 0;
+		std::uint16_t piece = 0;
+		std::uint8_t slot = 0;
+	};
+	std::map<std::uint64_t, Machine> machines;
+	std::set<std::uint64_t> machineSeen; // ids streamed with bit 26
+	std::set<std::uint64_t> machineCleared; // ids that streamed bit 26 and later a record without it
 	std::map<std::uint64_t, std::size_t> mountedLength; // the record length of the last mounted frame, by id
 	std::set<std::uint64_t> mountedSeen; // ids streamed with bit 21
 	std::set<std::uint64_t> mountedCleared; // ids that streamed bit 21 and later a record without it
@@ -809,10 +819,25 @@ bool intercept(std::uint16_t type, const std::uint8_t* p, std::size_t n, Extras&
 		const bool aim = (flags & (1u << 20)) != 0;
 		// The mounted tail (client-approved 2026-11-10, bit 21): a u64 turret after the aim tail, the very end of the record.
 		const bool mounted = (flags & (1u << 21)) != 0;
-		const std::size_t mountedBytes = mounted ? 8 : 0;
+		// The machine tail (bit 26, 2026-11-23): 12 bytes at the very end, after the mounted tail.
+		const bool inMachine = (flags & (1u << 26)) != 0;
+		const std::size_t machineBytes = inMachine ? 12 : 0;
+		if (inMachine)
+		{
+			Extras::Machine machine;
+			machine.space = p[n - 12];
+			machine.building = readAt<std::uint64_t>(p, n - 11);
+			machine.piece = readAt<std::uint16_t>(p, n - 3);
+			machine.slot = p[n - 1];
+			extras.machines[id] = machine;
+			extras.machineSeen.insert(id);
+		} else if (extras.machineSeen.count(id) != 0) {
+			extras.machineCleared.insert(id);
+		}
+		const std::size_t mountedBytes = (mounted ? 8 : 0) + machineBytes;
 		if (mounted)
 		{
-			extras.turrets[id] = readAt<std::uint64_t>(p, n - 8);
+			extras.turrets[id] = readAt<std::uint64_t>(p, n - 8 - machineBytes);
 			extras.mountedLength[id] = n;
 			extras.mountedSeen.insert(id);
 		} else if (extras.mountedSeen.count(id) != 0) {
@@ -961,7 +986,7 @@ struct Client
 		  //   + the 2026-11-10 mounted tail (u64 turret) while flag 21 is set, last
 			const std::uint32_t flags = readAt<std::uint32_t>(p, 40);
 			const bool pose = (flags & ((1u << 15) | (1u << 16))) != 0;
-			cut = 1 + (pose ? 20 : 0) + (!pose && (flags & (1u << 5)) != 0 ? 4 : 0) + ((flags & (1u << 20)) != 0 ? 4 : 0) + ((flags & (1u << 21)) != 0 ? 8 : 0);
+			cut = 1 + (pose ? 20 : 0) + (!pose && (flags & (1u << 5)) != 0 ? 4 : 0) + ((flags & (1u << 20)) != 0 ? 4 : 0) + ((flags & (1u << 21)) != 0 ? 8 : 0) + ((flags & (1u << 26)) != 0 ? 12 : 0);
 		}
 		else if (type == simlink::kInteractable && n > 74 && p[16] == ks::kInteractableMachine) // 2026-11-22 kind 12: ownership tail (14), then u8 kind, u8 state, 2 strid, a turret's u64
 			cut = 14 + 10 + (p[74] == 3 ? 8 : 0);
@@ -3129,11 +3154,8 @@ int main()
 			victim->z = shooter->z + 200.0;
 			shooter->ranged = data->makeRanged(*crossbow, 0.5);
 			constexpr std::uint64_t kTurretKey = 0x1234567890abcdefULL;
-			shooter->mount.building = kTurretKey;
-			shooter->mount.x = shooter->x;
-			shooter->mount.z = shooter->z;
-			shooter->mount.yaw = 0.0; // the arc's middle: toward +z, where the victim stands
-			shooter->mount.gun = shooter->ranged;
+			// the arc's middle: toward +z, where the victim stands; mountTurret also puts the gunner in the turret machine (bit 26)
+			test::require(arena->mountTurret(rw.duel.player, kTurretKey, shooter->x, shooter->z, 0.0, shooter->ranged), "mountTurret refused the gunner");
 			std::promise<int> portPromise;
 			ks::ServerOptions options;
 			options.onListening = [&portPromise](int listening) { portPromise.set_value(listening); };
@@ -3165,6 +3187,12 @@ int main()
 			test::require(c.pump([&]() { return c.extras.turrets.count(rw.duel.player) != 0; }, 30000), "no CHAR_DYNAMIC carried the mounted tail (bit 21)");
 			test::require(c.extras.turrets.at(rw.duel.player) == kTurretKey, "the mounted tail is not the turret key");
 			test::require(c.extras.turrets.count(rw.duel.enemy) == 0, "an unmounted fighter carried a mounted tail");
+			// The machine tail (bit 26, k16.6.730): the gunner is in the turret machine itself (space 0, the turret's key, piece 0xFFFF, slot 0xFF).
+			test::require(c.extras.machines.count(rw.duel.player) != 0, "the mounted gunner sent no machine tail (bit 26)");
+			const Extras::Machine& turretMachine = c.extras.machines.at(rw.duel.player);
+			test::require(turretMachine.space == 0 && turretMachine.building == kTurretKey && turretMachine.piece == 0xFFFF && turretMachine.slot == 0xFF,
+				"the turret's machine tail is not (0, turret key, 0xFFFF, 0xFF)");
+			test::require(c.extras.machines.count(rw.duel.enemy) == 0, "an unmounted fighter carried a machine tail");
 			const std::size_t mountedLength = c.extras.mountedLength.at(rw.duel.player);
 			setPaused(8002, true);
 			// The shots, with the sim stopped: a turret miss (the deviation is huge at skill 0), a turret hit, a turret shot a wall holds (no event),
@@ -3208,7 +3236,7 @@ int main()
 				arena->environmentMutable().shotBlocker = [](const std::array<double, 3>&, const ksim::state::Fighter&) { return 0.5; };
 				fire(ksim::CombatArena::Shot::Blocked, 1, 1);
 				arena->environmentMutable().shotBlocker = nullptr;
-				shooter->mount = {}; // the dismount: the record loses bit 21 and its tail
+				arena->dismountTurret(rw.duel.player); // the dismount: the record loses bits 21 / 26 and their tails
 				shooter->skills.crossbows = 100.0;
 				shooter->ranged.deviation = 0.0;
 				fire(ksim::CombatArena::Shot::Hit, 0, 1);
@@ -3239,6 +3267,7 @@ int main()
 			test::require(seen[0] && !seen[1] && seen[2], "event 49: hit and missed are sent, a held (blocked) shot is not");
 			test::require(c.extras.shots.front().turret == kTurretKey && c.extras.shots.back().turret == 0, "event 49: turret key, then 0 for the hand crossbow");
 			test::require(c.pump([&]() { return c.extras.mountedCleared.count(rw.duel.player) != 0; }, 30000), "the mounted bit (21) never cleared");
+			test::require(c.pump([&]() { return c.extras.machineCleared.count(rw.duel.player) != 0; }, 30000), "the machine bit (26) never cleared after the dismount");
 			std::cout << "shot events: " << expect.size() << " event 49 (hit and missed, none for the held shot; turret " << kTurretKey << " then hand), mounted tail on a "
 				<< mountedLength << "-byte record, cleared after the dismount\n";
 		}

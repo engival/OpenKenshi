@@ -1031,7 +1031,8 @@ void World::placeBuildings(const kdata::GameData& gameData, std::string_view dat
 				machine->second});
 		}
 		if (producer)
-			producerSites_.push_back(ProducerSite{producers::kIdBase + producerSites_.size(), instance.buildingID, instance.ownerFaction, instance.x, instance.y, instance.z});
+			producerSites_.push_back(ProducerSite{producers::kIdBase + producerSites_.size(), instance.buildingID, instance.ownerFaction, instance.x, instance.y, instance.z,
+				0.0, 0.0, 0.0, 0.0, machineBuildings.count(instance.buildingID) != 0});
 		if (productionBuildings.count(instance.buildingID) != 0)
 			productionSites_.push_back(ProductionSite{instance.buildingID, instance.ownerFaction, instance.x, instance.y, instance.z});
 		if (const auto deposit = depositResource.find(instance.buildingID); deposit != depositResource.end())

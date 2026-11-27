@@ -94,6 +94,27 @@ struct Wire
 		}
 	}
 
+	// Order 1 (move), flags 0: an ordinary order (clears the queue), so a later queue=1 order waits behind it.
+	void moveTo(std::uint64_t who, double x, double z)
+	{
+		std::vector<std::uint8_t> frame;
+		ks::BinaryWriter w(frame);
+		w.begin(ks::kOrder);
+		w.u32("clientSeq", ++seq);
+		w.u16("kind", 1);
+		w.u16("n", 1);
+		w.u64("id", who);
+		w.f32("x", static_cast<float>(x));
+		w.f32("z", static_cast<float>(z));
+		w.f32("y", 0.0f);
+		w.u8("flags", 0);
+		w.end();
+		std::vector<std::uint8_t> out;
+		ks::BinaryWriter reply(out);
+		test::require(session->onFrame(ks::kOrder, frame.data() + 6, frame.size() - 6, reply), "a move order kicked the client");
+		parse(out);
+	}
+
 	void run(int ticks)
 	{
 		for (int i = 0; i < ticks; ++i)
@@ -107,7 +128,7 @@ struct Wire
 	}
 
 	// Order 60 (interact): the reply's reason, "" when applied.
-	std::string interact(std::uint64_t who, std::uint64_t target, std::uint8_t action)
+	std::string interact(std::uint64_t who, std::uint64_t target, std::uint8_t action, std::uint8_t queue = 0)
 	{
 		std::vector<std::uint8_t> frame;
 		ks::BinaryWriter w(frame);
@@ -118,7 +139,7 @@ struct Wire
 		w.u64("id", who);
 		w.u64("target", target);
 		w.u8("action", action);
-		w.u8("queue", 0);
+		w.u8("queue", queue);
 		w.end();
 		std::vector<std::uint8_t> out;
 		ks::BinaryWriter reply(out);
@@ -191,8 +212,11 @@ int main(int argc, char** argv)
 
 		// A carrier: the order walks to the cage and puts the body in, whatever the action byte (9 sleep here).
 		lift(wanderer, guard);
-		const std::string reply = wire.interact(wanderer, freeKey, 9);
-		test::require(reply.empty(), "the carrier's order on the free cage was refused: " + reply);
+		// Shift-queued from a distance (kenshi-k16.6.836): behind a short move, so stepOrderQueues plans the route; it asked checkInteract
+		// without the Simulation, got the cage refusal, and ended the order as unreachable.
+		wire.moveTo(wanderer, fighter(wanderer).x + 6.0, fighter(wanderer).z);
+		const std::string reply = wire.interact(wanderer, freeKey, 9, 1);
+		test::require(reply.empty(), "the carrier's queued order on the free cage was refused: " + reply);
 		bool done = false;
 		for (int i = 0; i < 1800 && !done; ++i)
 		{

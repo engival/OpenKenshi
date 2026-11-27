@@ -542,6 +542,8 @@ public:
 	bool propFromLayout(uint64_t id) const { return propLayout_.count(id) != 0; }
 	// The interior furniture instance a container's wire tail names, -1 when this build has no such piece (an older server, a layout not joined)
 	int layoutPieceInstance(uint64_t building, uint32_t piece) const;
+	// The slot a body in a machine draws at (CHAR_DYNAMIC machine tail, kenshi-2g4v): world point, yaw, the functionality's clip name ("" none)
+	bool machineSlot(uint8_t space, uint64_t building, uint16_t piece, uint8_t slot, double pos[3], double& yaw, std::string& clip) const;
 	// The instance a prop (a container) is drawn and picked by and each part's pick box in world space (dev `dump prop ID`)
 	std::string propReport(uint64_t id) const;
 	// drawn: refine each part's box entry against the mesh's own triangles (a round barrel's box corners are not the barrel; k16.2.239.4.1): t is then the

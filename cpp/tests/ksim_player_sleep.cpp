@@ -87,6 +87,11 @@ struct Wire
 	{
 		std::uint32_t flags = 0;
 		std::optional<Pose> pose;
+		bool inMachine = false; // flag 26: the machine tail (12 bytes, the very end), k16.6.730
+		std::uint8_t machineSpace = 0;
+		std::uint64_t machineBuilding = 0;
+		std::uint16_t machinePiece = 0;
+		std::uint8_t machineSlot = 0;
 	};
 	std::map<std::uint64_t, Dyn> dyn;
 	struct BedRecord
@@ -138,13 +143,22 @@ struct Wire
 			const std::uint16_t type = at<std::uint16_t>(bytes, p + 4);
 			test::require(len >= 2 && p + 4 + len <= bytes.size(), "a frame runs past the bytes");
 			const std::size_t b = p + 6;
-			const std::size_t size = p + 4 + len - b;
+			std::size_t size = p + 4 + len - b;
 			p += 4 + len;
 			if (type == ks::kDynamic)
 			{
 				const std::uint64_t id = at<std::uint64_t>(bytes, b + 8);
 				Dyn& d = dyn[id];
 				d.flags = at<std::uint32_t>(bytes, b + 40);
+				d.inMachine = (d.flags & ks::kFlagInMachine) != 0;
+				if (d.inMachine)
+				{
+					d.machineSpace = bytes[b + size - 12];
+					d.machineBuilding = at<std::uint64_t>(bytes, b + size - 11);
+					d.machinePiece = at<std::uint16_t>(bytes, b + size - 3);
+					d.machineSlot = bytes[b + size - 1];
+					size -= 12;
+				}
 				// The pose tail (flag 15 / 16) comes before the aim tail (4 bytes, a swing's clip: another phase of the world puts a fighter mid-swing).
 				if (size == 120 || size == 124)
 					d.pose = Pose{at<float>(bytes, b + 100), at<float>(bytes, b + 104), at<float>(bytes, b + 108), at<float>(bytes, b + 112),
@@ -393,6 +407,9 @@ void wireSleep(const kworld::LoadOrder& order, const kdata::GameData& gd, const 
 		const state::Fighter* put = sim.combat()->find(victim);
 		test::require(sim.combat()->find(carrier)->carrying == 0 && !sim.combat()->find(carrier)->asleep, "the carrier still carries, or lay down");
 		test::require(put->asleep && put->carriedBy == 0, "the carried one is not asleep in the bed");
+		test::require(put->machineUse.in() && put->machineUse.building == sim.bedOf(free->id)->site.object && put->machineUse.piece == sim.bedOf(free->id)->piece,
+			"the put-in body is not in the bed machine (k16.6.730)");
+		test::require(!sim.combat()->find(carrier)->machineUse.in(), "the carrier is in a machine");
 		test::require(w.beds[free->id].occupant == victim, "the bed does not report the carried one");
 		test::require(sim.lyingInBed(victim, *put), "the carried one is not lyingInBed (the CHAR_MEDICAL putIn bit 8 the client reads)");
 		const std::uint64_t other = spawnPlayer(sim, gd, data, servantSid, rngC, free->x + 4.0, free->y, free->z);
@@ -425,6 +442,9 @@ void wireSleep(const kworld::LoadOrder& order, const kdata::GameData& gd, const 
 	test::require(lw.beds[bed->id].version == 2 && lw.beds[bed->id].occupant == sleeper, "the loaded bed record is not the sleeper's");
 	test::require((lw.dyn[sleeper].flags & ks::kFlagAsleep) != 0, "the sleeper is not asleep after the load");
 	test::require(lw.dyn[sleeper].pose.has_value() && lw.dyn[sleeper].pose->clip == bed->clip, "the loaded sleeper has no pose tail");
+	// The machine tail survives the save (v134): the bed's building, its layout piece, one slot (0xFF until kenshi-rwh.312).
+	test::require(lw.dyn[sleeper].inMachine && lw.dyn[sleeper].machineSpace == 0 && lw.dyn[sleeper].machineBuilding == sim.bedOf(bed->id)->site.object
+		&& lw.dyn[sleeper].machinePiece == sim.bedOf(bed->id)->piece && lw.dyn[sleeper].machineSlot == 0xFF, "the loaded sleeper's machine tail is not its bed (space 0, building, piece, slot 0xFF)");
 	near(lw.dyn[sleeper].pose->x, bed->x, 0.01, "a loaded sleeper's poseX is its bed");
 	near(lw.dyn[sleeper].pose->z, bed->z, 0.01, "a loaded sleeper's poseZ is its bed");
 	std::remove(path.c_str());
@@ -486,11 +506,13 @@ void wireSleep(const kworld::LoadOrder& order, const kdata::GameData& gd, const 
 		for (int i = 0; i < 600 && !street.combat()->find(walker)->asleep; ++i)
 			sw.run(1);
 		test::require(street.combat()->find(walker)->asleep, "the walk from the street did not end asleep");
+		test::require(street.combat()->find(walker)->machineUse.in(), "the street sleeper is in no machine");
 		const auto inside = nav->walker().snap({-51181.0, bed->y, 2600.0}, 8.0);
 		test::require(inside.has_value(), "the client's inside spot is not on the mesh");
 		const std::uint32_t wakeSeq = sw.move(walker, inside->x, inside->y, inside->z);
 		sw.run(1);
 		test::require(sw.replies[wakeSeq].applied && !street.combat()->find(walker)->asleep, "the inside move did not wake the street sleeper");
+		test::require(!street.combat()->find(walker)->machineUse.in(), "the woken sleeper is still in the bed machine");
 		for (int i = 0; i < 600 && street.combat()->find(walker)->walking(); ++i)
 			sw.run(1);
 		const std::uint32_t backSeq = sw.interact(walker, bed->id, 9);

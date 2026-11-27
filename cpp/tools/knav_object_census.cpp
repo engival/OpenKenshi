@@ -31,8 +31,8 @@ namespace {
 namespace fs = std::filesystem;
 using kworld::WorldShape;
 
-// The ground the cutter rule sees: knav::ground::makeGrid's samples (stride 2 = 36 u), two triangles a cell split along the diagonal with the
-// smaller height step (ground.cpp Gen::build).
+// The ground the cutter rule sees: knav::ground::makeGrid's samples (stride 2 = 36 u), two triangles a cell split on the fixed a-d diagonal
+// (ground.cpp cellSplit).
 struct Ground
 {
 	const kworld::Heightmap& t;
@@ -50,9 +50,8 @@ struct Ground
 		const int i = static_cast<int>(std::floor(fx)), j = static_cast<int>(std::floor(fz));
 		const double u = fx - i, v = fz - j;
 		const double a = sample(i, j), b = sample(i + 1, j), c = sample(i, j + 1), d = sample(i + 1, j + 1);
-		if (std::fabs(a - d) <= std::fabs(b - c))	// a-d diagonal: (a, b, d) below it (u >= v), (a, d, c) above
-			return u >= v ? a + u * (b - a) + v * (d - b) : a + u * (d - c) + v * (c - a);
-		return u + v <= 1 ? a + u * (b - a) + v * (c - a) : d + (1 - u) * (c - d) + (1 - v) * (b - d);
+		// a-d diagonal: (a, b, d) below it (u >= v), (a, d, c) above
+		return u >= v ? a + u * (b - a) + v * (d - b) : a + u * (d - c) + v * (c - a);
 	}
 };
 

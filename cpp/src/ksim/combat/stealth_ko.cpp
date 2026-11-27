@@ -20,7 +20,10 @@ std::string Simulation::orderStealthKo(std::uint64_t actor, std::uint64_t victim
 	{
 		CombatArena::endFollow(*f);
 		if (f->asleep)
+		{
 			f->asleep = false;
+			f->leaveBed();
+		}
 	}
 	mirrorFighter(actor);
 	return {};
